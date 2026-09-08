@@ -215,11 +215,16 @@ Android refuses to update an app when the new APK is signed with a different key
 every release must be signed with one key that never changes. **If this keystore is ever lost,
 no future build can update an existing install; it has to be uninstalled and reinstalled.**
 
-Create it once and keep a backup somewhere safe:
+Create it once and keep a backup somewhere safe. `keytool` is not on the PATH on this machine -
+it ships inside Android Studio's bundled JDK, which is the same JDK Gradle builds with:
 
 ```bash
-keytool -genkeypair -v -keystore inkslate.jks -keyalg RSA -keysize 4096 -validity 10000 -alias inkslate
+"/c/Program Files/Android/Android Studio/jbr/bin/keytool.exe" -genkeypair -v   -keystore "$HOME/inkslate.jks" -storetype PKCS12   -keyalg RSA -keysize 4096 -validity 10000 -alias inkslate   -dname "CN=InkSlate, O=InkSlate, C=US"   -storepass YOUR_PASSWORD -keypass YOUR_PASSWORD
 ```
+
+Kept outside the project directory deliberately, so it cannot be committed by accident even
+though `*.jks` is git-ignored. PKCS12 keystores use one password for both the store and the key,
+so `KEYSTORE_PASSWORD` and `KEY_PASSWORD` below are the same value.
 
 Then add four repository secrets under **Settings → Secrets and variables → Actions**:
 
