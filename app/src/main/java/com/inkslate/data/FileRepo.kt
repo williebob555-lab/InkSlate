@@ -242,6 +242,9 @@ class FileRepo(private val context: Context) {
             require(file.delete()) { "Could not delete the file" }
             File(InkDocument.sidecarPathFor(file.absolutePath)).delete()
             savePrefs.clearOverride(file.absolutePath)
+            // The working store is keyed by path, so anything left here is inherited by the next
+            // document to take this name.
+            InkJournal(context).forget(file)
         }
         unpin(file)
         Unit

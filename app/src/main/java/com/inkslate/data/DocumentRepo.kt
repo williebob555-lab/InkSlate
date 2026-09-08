@@ -383,8 +383,12 @@ class DocumentRepo(private val context: Context) {
         // Parsing it again to merge it with itself is the single largest thing an open does.
         val inSync = embedded != null && embeddedStamp != null &&
             journal.isInSync(file, embeddedStamp)
-        val working =
-            if (inSync) null else journal.load(file)?.withoutSelfContradiction()
+        // Keyed by path, the working store cannot tell two documents that shared a name apart.
+        // Delete a document and make a new one called the same thing and the new one would open
+        // wearing the deleted one's handwriting, so the stored copy has to prove it belongs here.
+        val working = if (inSync) null else journal.load(file)
+            ?.takeIf { journal.belongsTo(file, embedded?.docId, it) }
+            ?.withoutSelfContradiction()
         val legacy = readSidecar(sidecar)?.withoutSelfContradiction()
 
         var doc = embedded ?: working ?: legacy ?: InkDocument.create(

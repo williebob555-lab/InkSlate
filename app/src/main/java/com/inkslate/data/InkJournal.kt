@@ -83,6 +83,7 @@ class InkJournal(context: Context) {
         // which is exactly what the snapshot will contain.
         snapshot(file, target, strokeCount(file))
         writeMeta(file, doc.totalStrokes)
+        noteOwner(file, doc)
         return write(target, doc)
     }
 
@@ -99,6 +100,7 @@ class InkJournal(context: Context) {
         // Compare against the recorded count rather than reading the stored document back.
         if (strokeCount(file) >= doc.totalStrokes && currentFile(file).isFile) return
         writeMeta(file, doc.totalStrokes)
+        noteOwner(file, doc)
         write(target, doc)
     }
 
@@ -126,6 +128,7 @@ class InkJournal(context: Context) {
      */
     fun setWorking(file: File, doc: InkDocument): Boolean {
         writeMeta(file, doc.totalStrokes)
+        noteOwner(file, doc)
         return write(currentFile(file), doc)
     }
 
@@ -283,6 +286,56 @@ class InkJournal(context: Context) {
      * Two lines rather than a format, because the only thing that ever reads it is this class and
      * a person trying to work out what is in the store.
      */
+    /**
+     * Record which document the working copy belongs to.
+     *
+     * The store is keyed by path, and a path is not an identity: delete a document and make a new
+     * one with the same name and it hashes to the same folder. Without this note the new document
+     * would open carrying the deleted one's handwriting, because the working copy is merged in
+     * whenever the document itself has none of its own.
+     *
+     * The document's own size and modification time are recorded alongside the id, because a
+     * brand-new document has no id to compare against - it has no handwriting in it yet.
+     */
+    private fun noteOwner(file: File, doc: InkDocument) {
+        runCatching {
+            val note = StringBuilder(doc.docId).appendLine()
+                .append(file.length()).appendLine()
+                .append(file.lastModified()).appendLine()
+            File(dirFor(file), OWNER).writeText(note.toString())
+        }
+    }
+
+    /**
+     * Whether [working] is handwriting for the document now at [file], rather than for a
+     * different document that once had the same name.
+     *
+     * [embeddedDocId] is the id carried by the document's own handwriting, or null when it has
+     * none. When the document names an id, that settles it outright. When it does not, the only
+     * evidence left is whether the document is still the file we wrote the working copy against;
+     * anything else is a different document wearing the same name.
+     */
+    fun belongsTo(file: File, embeddedDocId: String?, working: InkDocument): Boolean {
+        if (embeddedDocId != null) return embeddedDocId == working.docId
+        val owner = File(dirFor(file), OWNER).takeIf { it.isFile }?.readLines()
+            // An entry written before this note existed cannot prove it belongs here. It is left
+            // on disk rather than deleted - Settings can still recover it - but it is not merged
+            // into a document that never asked for it.
+            ?: return false
+        return owner.getOrNull(1)?.trim()?.toLongOrNull() == file.length() &&
+            owner.getOrNull(2)?.trim()?.toLongOrNull() == file.lastModified()
+    }
+
+    /**
+     * Forget everything stored for [file], working copy and history alike.
+     *
+     * Called when the document is deleted. Left behind, this is both dead weight and a trap: the
+     * next document to take that name would inherit it.
+     */
+    fun forget(file: File) {
+        runCatching { dirFor(file).deleteRecursively() }
+    }
+
     private fun writeMeta(file: File, strokes: Int = -1) {
         runCatching {
             val count = if (strokes >= 0) strokes else strokeCount(file)
@@ -332,6 +385,7 @@ class InkJournal(context: Context) {
         private const val META = "path.txt"
         private const val RESTRUCTURED = "restructured.txt"
         private const val SYNC = "insync.txt"
+        private const val OWNER = "owner.txt"
         private const val MAX_HISTORY = 40
         private val NAMED_VERSION =
             Regex("""(\d+)-(\d+)\.${InkDocument.EXTENSION}""")
