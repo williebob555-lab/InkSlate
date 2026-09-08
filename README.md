@@ -184,3 +184,61 @@ subtly different renderers is how "it looked different when I exported it" bugs 
   step or server-side rendering.
 - OCR for scanned PDFs (which have no text layer, so search and text snapping do nothing there),
   and audio notes.
+
+---
+
+## Releases and updating
+
+The app is on GitHub at `https://github.com/williebob555-lab/InkSlate`, and updates itself from
+there. **Settings → Updates → Check for updates** asks the GitHub releases API what the newest
+published version is, downloads the APK, and hands it to Android's installer.
+
+The version comparison and the download live in `core/UpdateCheck.kt`, deliberately, so the
+Windows build can use exactly the same code and only change which file it picks out of a release.
+
+### Cutting a release
+
+Version numbers come from the git tag and nowhere else — the build reads `INKSLATE_VERSION_NAME`
+and `INKSLATE_VERSION_CODE` from the workflow, so the APK, the release page and the in-app
+updater cannot disagree.
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+That builds a signed APK, attempts a Windows MSI, and publishes both to a new release.
+
+### The signing key (one-time setup, required)
+
+Android refuses to update an app when the new APK is signed with a different key — it says
+"App not installed" and stops. A debug key is generated fresh per machine and per CI run, so
+every release must be signed with one key that never changes. **If this keystore is ever lost,
+no future build can update an existing install; it has to be uninstalled and reinstalled.**
+
+Create it once and keep a backup somewhere safe:
+
+```bash
+keytool -genkeypair -v -keystore inkslate.jks -keyalg RSA -keysize 4096 -validity 10000 -alias inkslate
+```
+
+Then add four repository secrets under **Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+| --- | --- |
+| `KEYSTORE_BASE64` | `base64 -w0 inkslate.jks` (the whole file, one line) |
+| `KEYSTORE_PASSWORD` | the store password chosen above |
+| `KEY_ALIAS` | `inkslate` |
+| `KEY_PASSWORD` | the key password chosen above |
+
+To build a signed release locally, put the same values in a `keystore.properties` at the project
+root (it is git-ignored):
+
+```properties
+storeFile=C:/path/to/inkslate.jks
+storePassword=...
+keyAlias=inkslate
+keyPassword=...
+```
+
+Without a keystore, `assembleRelease` still works but signs with the debug key and prints a
+warning saying the APK cannot update anything.

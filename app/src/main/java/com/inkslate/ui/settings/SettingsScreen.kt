@@ -533,6 +533,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
             )
 
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            UpdateSection()
+
             Box(Modifier.padding(24.dp))
         }
     }
@@ -594,8 +597,9 @@ fun SettingsScreen(onBack: () -> Unit) {
 
 // ---- pieces ------------------------------------------------------------------
 
+// Shared with UpdateSection.kt so every heading on this screen is styled once.
 @Composable
-private fun SectionHeader(text: String) {
+internal fun SectionHeader(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleSmall,

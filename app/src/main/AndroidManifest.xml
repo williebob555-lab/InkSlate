@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Asking GitHub whether a newer build has been published, and fetching it. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Handing a downloaded APK to Android's installer. Android still requires the person to
+         allow InkSlate as a source first; this only makes the request possible. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Sideloaded build: full file-manager style access to shared storage. -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />

@@ -35,7 +35,15 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe)
             packageName = "InkSlate"
-            packageVersion = "1.0.0"
+            // The release workflow passes -Pinkslate.version so the installer carries the same
+            // number as the tag and the APK. MSI insists on a three-part version, so a tag like
+            // v1.2 is padded out rather than rejected at the end of a long build.
+            packageVersion = (findProperty("inkslate.version") as String? ?: "1.0.0")
+                .split("-")[0]
+                .split(".")
+                .let { it + listOf("0", "0") }
+                .take(3)
+                .joinToString(".")
         }
     }
 }
