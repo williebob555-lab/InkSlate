@@ -1,0 +1,17 @@
+# Normalise line endings so a Linux CI runner and a Windows checkout agree.
+* text=auto eol=lf
+
+# The Gradle wrapper script is run by /bin/sh on the CI runner. CRLF here means
+# "bad interpreter" and a build that fails before it starts.
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Windows-only files stay CRLF.
+gradlew.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never touch binaries.
+*.jar binary
+*.png binary
+*.pdf binary
+*.apk binary
