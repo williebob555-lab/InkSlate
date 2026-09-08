@@ -21,9 +21,19 @@ import java.security.MessageDigest
  * The document is still the system of record - it is what travels between devices. This is the
  * safety net under it.
  */
-class InkJournal(context: Context) {
+class InkJournal(root: File) {
 
-    private val root = File(context.filesDir, "ink").apply { mkdirs() }
+    /**
+     * The ordinary way in: the store lives in app-private storage.
+     *
+     * The [File] constructor above is what the app uses everywhere else, and exists so the rules
+     * about which working copy belongs to which document can be tested against a temporary
+     * directory. They are worth testing precisely because getting them wrong is silent - a
+     * document opens blank and nothing reports an error.
+     */
+    constructor(context: Context) : this(File(context.filesDir, "ink"))
+
+    private val root = root.apply { mkdirs() }
 
     /**
      * Documents are keyed by path, not by content.
@@ -83,7 +93,7 @@ class InkJournal(context: Context) {
         // which is exactly what the snapshot will contain.
         snapshot(file, target, strokeCount(file))
         writeMeta(file, doc.totalStrokes)
-        noteOwner(file, doc)
+        noteOwnership(file, doc)
         return write(target, doc)
     }
 
@@ -100,7 +110,7 @@ class InkJournal(context: Context) {
         // Compare against the recorded count rather than reading the stored document back.
         if (strokeCount(file) >= doc.totalStrokes && currentFile(file).isFile) return
         writeMeta(file, doc.totalStrokes)
-        noteOwner(file, doc)
+        noteOwnership(file, doc)
         write(target, doc)
     }
 
@@ -128,7 +138,7 @@ class InkJournal(context: Context) {
      */
     fun setWorking(file: File, doc: InkDocument): Boolean {
         writeMeta(file, doc.totalStrokes)
-        noteOwner(file, doc)
+        noteOwnership(file, doc)
         return write(currentFile(file), doc)
     }
 
@@ -296,8 +306,16 @@ class InkJournal(context: Context) {
      *
      * The document's own size and modification time are recorded alongside the id, because a
      * brand-new document has no id to compare against - it has no handwriting in it yet.
+     *
+     * **This has to be called again after the app itself rewrites the document.** Saving changes
+     * the file's size and timestamp, so a note taken before the write describes a file that no
+     * longer exists - and the working copy it vouches for would then be refused on the next open,
+     * as belonging to some other document that once had this name. That is not a hypothetical:
+     * a document this app last saved is deliberately not parsed when it is reopened, so the
+     * working copy is the *only* source of its handwriting, and refusing it opens the document
+     * blank.
      */
-    private fun noteOwner(file: File, doc: InkDocument) {
+    fun noteOwnership(file: File, doc: InkDocument) {
         runCatching {
             val note = StringBuilder(doc.docId).appendLine()
                 .append(file.length()).appendLine()
@@ -311,12 +329,27 @@ class InkJournal(context: Context) {
      * different document that once had the same name.
      *
      * [embeddedDocId] is the id carried by the document's own handwriting, or null when it has
-     * none. When the document names an id, that settles it outright. When it does not, the only
-     * evidence left is whether the document is still the file we wrote the working copy against;
-     * anything else is a different document wearing the same name.
+     * none. When the document names an id, that settles it outright.
+     *
+     * [isOurLastOutput] is true when the file on disk is still byte for byte what this app wrote
+     * the last time it saved this path. Nothing else can be that, so it is proof of identity on
+     * its own - and it is the case that matters most, because a document this app last saved is
+     * deliberately not parsed when reopened, which leaves the working copy as the only source of
+     * its handwriting. It is also what rescues a store written before ownership was re-stamped
+     * after each save, where the note on disk describes the document as it was before its last
+     * write and can never match again.
+     *
+     * Failing both, the only evidence left is whether the document is still the file we wrote the
+     * working copy against; anything else is a different document wearing the same name.
      */
-    fun belongsTo(file: File, embeddedDocId: String?, working: InkDocument): Boolean {
+    fun belongsTo(
+        file: File,
+        embeddedDocId: String?,
+        working: InkDocument,
+        isOurLastOutput: Boolean = false
+    ): Boolean {
         if (embeddedDocId != null) return embeddedDocId == working.docId
+        if (isOurLastOutput) return true
         val owner = File(dirFor(file), OWNER).takeIf { it.isFile }?.readLines()
             // An entry written before this note existed cannot prove it belongs here. It is left
             // on disk rather than deleted - Settings can still recover it - but it is not merged

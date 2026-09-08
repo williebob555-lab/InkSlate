@@ -266,7 +266,7 @@ class DocumentRepo(private val context: Context) {
         val conflictsBefore = findConflictFiles(sidecar)
         val conflictDevices = conflictsBefore.mapNotNull { describeConflict(it) }
 
-        val ink = loadInk(file, source, inspected.ink, inspected.inkStamp)
+        val ink = loadInk(file, source, inspected.ink, inspected.inkStamp, ourOwnOutput)
 
         // Has the page layout underneath the annotations actually changed?
         //
@@ -364,7 +364,8 @@ class DocumentRepo(private val context: Context) {
         file: File,
         source: PageSource,
         embeddedRaw: InkDocument?,
-        embeddedStamp: String?
+        embeddedStamp: String?,
+        ourOwnOutput: Boolean
     ): InkDocument {
         val embedded = embeddedRaw?.withoutSelfContradiction()
         val sidecar = File(InkDocument.sidecarPathFor(file.absolutePath))
@@ -386,8 +387,12 @@ class DocumentRepo(private val context: Context) {
         // Keyed by path, the working store cannot tell two documents that shared a name apart.
         // Delete a document and make a new one called the same thing and the new one would open
         // wearing the deleted one's handwriting, so the stored copy has to prove it belongs here.
+        // A document this app last saved is not parsed on open at all - see [open] - so for the
+        // commonest case of all, reopening something written a minute ago, this working copy is
+        // the only handwriting there is. Being able to say the file is still our own output is
+        // what proves it belongs here when the document itself was never asked.
         val working = if (inSync) null else journal.load(file)
-            ?.takeIf { journal.belongsTo(file, embedded?.docId, it) }
+            ?.takeIf { journal.belongsTo(file, embedded?.docId, it, ourOwnOutput) }
             ?.withoutSelfContradiction()
         val legacy = readSidecar(sidecar)?.withoutSelfContradiction()
 
@@ -527,7 +532,12 @@ class DocumentRepo(private val context: Context) {
         )
         journal.setWorking(file, ink)
         return InkEmbedder.write(file, ink)
-            .onSuccess { lastEmbedded[file.absolutePath] = it }
+            .onSuccess {
+                lastEmbedded[file.absolutePath] = it
+                // After the write, not before: [journal.setWorking] above noted the file as it
+                // was a moment ago, and this rewrote it.
+                journal.noteOwnership(file, ink)
+            }
             .onFailure { EventLog.error("canvas", "${file.name}: ${it.message}") }
             .map { }
     }
@@ -613,6 +623,9 @@ class DocumentRepo(private val context: Context) {
         result.getOrNull()?.let {
             lastEmbedded[doc.file.absolutePath] = it
             journal.noteInSync(doc.file, it)
+            // Same reason as in [exportLocked]: the document has just been rewritten, so the
+            // note that vouches for the working copy has to describe the file as it is now.
+            journal.noteOwnership(doc.file, doc.ink)
         }
         if (result.isSuccess) {
             EventLog.info(
@@ -1143,6 +1156,13 @@ class DocumentRepo(private val context: Context) {
                         doc.savedInk = ink
                         doc.pagesHadNoInk = false
                         stamp?.let { journal.noteInSync(doc.file, it) }
+                        // The write just changed the file's size and timestamp, and those are
+                        // what vouch for the working copy on the next open. Re-stamped here,
+                        // after the write, or reopening a document this app had just saved
+                        // found a note describing the file as it was beforehand, decided the
+                        // working copy belonged to some other document that once had this
+                        // name, and opened the document blank.
+                        journal.noteOwnership(doc.file, ink)
                         PristineStore.noteRewritten(
                             context, doc.file, doc.savedSignatures,
                             wasFullRewrite = !appended
