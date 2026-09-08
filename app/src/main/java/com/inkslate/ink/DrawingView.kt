@@ -2112,7 +2112,11 @@ class DrawingView @JvmOverloads constructor(
             }
             val box = if (previewAspect > 0f && r.width() > placeSlopPt &&
                 r.height() > placeSlopPt
-            ) fitAspect(r, previewAspect) else RectF(r)
+            ) {
+                val anchor = placeStart
+                if (anchor != null) fitAspect(r, previewAspect, anchor[0], anchor[1])
+                else fitAspect(r, previewAspect, r.left, r.top)
+            } else RectF(r)
 
             val o = originOf(livePage)
             val v = RectF(box); v.offset(o[0], o[1]); pageToView.mapRect(v)
@@ -2580,7 +2584,7 @@ class DrawingView @JvmOverloads constructor(
         val built: List<Stroke> = when (item) {
             is Placement.StampItem -> {
                 val aspect = Stamps.aspectFor(item.kind, item.options)
-                val bounds = if (dragged) fitAspect(box, aspect) else {
+                val bounds = if (dragged) fitAspect(box, aspect, start[0], start[1]) else {
                     // untouched default: wide enough to be usable, centred on the tap
                     var w = pageWidthPt * 0.42f
                     var h = w / aspect
@@ -2593,7 +2597,7 @@ class DrawingView @JvmOverloads constructor(
                 ) { ids.next() }
             }
             is Placement.ImageItem -> {
-                val bounds = if (dragged) fitAspect(box, item.aspect) else {
+                val bounds = if (dragged) fitAspect(box, item.aspect, start[0], start[1]) else {
                     // a tap gets something big enough to see, in the picture's own proportions
                     var w = pageWidthPt * 0.45f
                     var h = w / item.aspect
@@ -2649,13 +2653,26 @@ class DrawingView @JvmOverloads constructor(
     }
 
     /** Largest rectangle of the given aspect that fits inside [box], centred in it. */
-    private fun fitAspect(box: RectF, aspect: Float): RectF {
+    /**
+     * Shrinks [box] to [aspect], keeping the corner the drag started from exactly where it was
+     * put and moving only the opposite one.
+     *
+     * The anchor matters more than it looks. Fitting the aspect and then re-centring on the box
+     * makes the first point you placed drift as you drag the second, because the correction is
+     * shared between both corners - so the stamp never lands where you started it, and placement
+     * feels wobbly. Pinning [anchorX], [anchorY] makes the first touch a commitment: it is the
+     * corner, and the drag only ever decides the size.
+     */
+    private fun fitAspect(box: RectF, aspect: Float, anchorX: Float, anchorY: Float): RectF {
         if (aspect <= 0f) return RectF(box)
         var w = box.width()
         var h = w / aspect
         if (h > box.height()) { h = box.height(); w = h * aspect }
-        val cx = box.centerX(); val cy = box.centerY()
-        return RectF(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+        // The box is the normalised span of the two points, so the anchor is whichever corner it
+        // started from - left or right, top or bottom.
+        val left = if (anchorX <= box.centerX()) anchorX else anchorX - w
+        val top = if (anchorY <= box.centerY()) anchorY else anchorY - h
+        return RectF(left, top, left + w, top + h)
     }
 
     private fun onUp(cancelled: Boolean, t: Tool) {

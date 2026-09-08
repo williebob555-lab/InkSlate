@@ -1334,7 +1334,8 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             onSnapRuler = { drawingView.value?.snapRulerAngle() },
                             onRotateRuler = { d -> drawingView.value?.rotateRuler(d) },
                             onResetRuler = { drawingView.value?.placeRulerAcrossView() },
-                            onPickCustomColour = { colourPickerOpen = true }
+                            onPickCustomColour = { colourPickerOpen = true },
+                            onMessage = { scope.launch { snackbar.showSnackbar(it) } }
                         )
                     )
                 }
@@ -1863,6 +1864,13 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 tools.noteStampUsed(kind, options)
                 drawingView.value?.insertStamp(kind, options)
                 dirty = true; undoTick++
+            },
+            // A shape is a tool rather than something to place, so picking one just puts it in
+            // hand and closes the sheet - the next drag on the page draws it.
+            onPickShape = { shape ->
+                stampPickerOpen = false
+                tools.edit { it.tool = shape }
+                tools.applyTo(drawingView.value)
             }
         )
     }

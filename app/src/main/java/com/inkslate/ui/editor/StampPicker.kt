@@ -25,7 +25,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowOutward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CropSquare
+import androidx.compose.material.icons.filled.PanoramaFishEye
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -55,6 +58,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.inkslate.ink.*
+import com.inkslate.core.Tool
 import com.inkslate.ink.Stamps
 import com.inkslate.ink.StrokeRasteriser
 import kotlin.math.roundToInt
@@ -74,7 +78,8 @@ fun StampPickerDialog(
     recents: List<Stamps.Kind>,
     optionsFor: (Stamps.Kind) -> Stamps.StampOptions,
     onDismiss: () -> Unit,
-    onPick: (Stamps.Kind, Stamps.StampOptions) -> Unit
+    onPick: (Stamps.Kind, Stamps.StampOptions) -> Unit,
+    onPickShape: (Tool) -> Unit
 ) {
     var chosen by remember { mutableStateOf<Stamps.Kind?>(null) }
 
@@ -89,7 +94,7 @@ fun StampPickerDialog(
         ) {
             val kind = chosen
             if (kind == null) {
-                StampBrowser(recents, optionsFor, onDismiss) { chosen = it }
+                StampBrowser(recents, optionsFor, onDismiss, onPickShape) { chosen = it }
             } else {
                 StampConfigurer(
                     kind = kind,
@@ -111,6 +116,7 @@ private fun StampBrowser(
     recents: List<Stamps.Kind>,
     optionsFor: (Stamps.Kind) -> Stamps.StampOptions,
     onDismiss: () -> Unit,
+    onPickShape: (Tool) -> Unit,
     onChoose: (Stamps.Kind) -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -137,6 +143,23 @@ private fun StampBrowser(
                 .padding(horizontal = 12.dp)
                 .padding(bottom = 14.dp)
         ) {
+            // Line, arrow, box and oval used to sit in the dock beside the pen, which put four
+            // permanent buttons in the way of the tools actually used every minute. They are the
+            // same kind of thing as a stamp - a shape you drag out onto the page - so they live
+            // here now. They stay drawing tools rather than becoming stamps, because a dragged
+            // shape follows the ruler and the snapping and a stamp does not.
+            SectionLabel("Shapes")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                ShapeTile(Icons.Default.Remove, "Line") { onPickShape(Tool.LINE); onDismiss() }
+                ShapeTile(Icons.Default.ArrowOutward, "Arrow") { onPickShape(Tool.ARROW); onDismiss() }
+                ShapeTile(Icons.Default.CropSquare, "Box") { onPickShape(Tool.RECT); onDismiss() }
+                ShapeTile(Icons.Default.PanoramaFishEye, "Oval") { onPickShape(Tool.ELLIPSE); onDismiss() }
+            }
+
             if (recents.isNotEmpty()) {
                 SectionLabel("Recent")
                 FlowRow(
@@ -483,6 +506,45 @@ private fun StampTile(kind: Stamps.Kind, opts: Stamps.StampOptions, onClick: () 
         StampPreview(kind, opts, argb, Modifier.fillMaxWidth().aspectRatio(1f))
         Text(
             kind.label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+            textAlign = TextAlign.Center,
+            maxLines = 2
+        )
+    }
+}
+
+/**
+ * A shape tool in the stamp grid. Deliberately an icon rather than a rendered preview: a stamp
+ * tile shows what you will get because a stamp has a fixed drawing, whereas a box is whatever
+ * box you drag.
+ */
+@Composable
+private fun ShapeTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(104.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                icon, null,
+                Modifier.size(38.dp),
+                tint = MaterialTheme.colorScheme.onSurface
+            )
+        }
+        Text(
+            label,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
             textAlign = TextAlign.Center,
             maxLines = 2

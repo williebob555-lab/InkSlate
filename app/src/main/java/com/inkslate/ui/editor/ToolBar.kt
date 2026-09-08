@@ -127,7 +127,9 @@ class ToolBarActions(
     val onSnapRuler: () -> Unit,
     val onRotateRuler: (Float) -> Unit,
     val onResetRuler: () -> Unit,
-    val onPickCustomColour: () -> Unit
+    val onPickCustomColour: () -> Unit,
+    /** Shows a passing message on the editor's snackbar. */
+    val onMessage: (String) -> Unit
 )
 
 /**
@@ -333,6 +335,15 @@ fun ToolBar(
                     onClick = {
                         change {
                             state.edit { it.dynamicWidth = !it.dynamicWidth }
+                            // Said once, the first time it is switched on, and never again. The
+                            // tinted icon is the reminder after that.
+                            if (state.active.dynamicWidth && !state.dynamicWidthHintSeen) {
+                                state.noteDynamicWidthHintSeen()
+                                actions.onMessage(
+                                    "Width follows the zoom: strokes come out the same thickness " +
+                                        "on screen however far in you are."
+                                )
+                            }
                         }
                     },
                     modifier = Modifier.size(30.dp)
@@ -349,39 +360,9 @@ fun ToolBar(
                 }
             }
 
-            if (cfg.dynamicWidth) {
-                Text(
-                    "Width follows the zoom: strokes come out the same thickness on screen " +
-                        "however far in you are. The slider stays where you put it.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 58.dp, end = 12.dp, bottom = 2.dp)
-                )
-            }
-
-            // ---- what a held pen button does, only while its profile is the one on show ----
-            if (state.activeMode.isStylusButton) {
-                val action = state.actionFor(state.activeMode) ?: StylusButtonAction.PROFILE
-                Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
-                    Text(
-                        "Held, this button " + action.detail.replaceFirstChar { it.lowercase() } +
-                            ". Everything above is its own pen.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 4.dp)
-                    )
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        StylusButtonAction.entries.forEach { option ->
-                            Chip(option.label, option == action) {
-                                actions.onSetButtonAction(option)
-                            }
-                        }
-                    }
-                }
-            }
+            // The barrel profile deliberately shows nothing extra here. It is a third pen
+            // alongside Pen and Finger, with the same controls above and no second, differently
+            // shaped set of verbs of its own.
 
             // ---- eraser mode, only while the eraser is the tool in hand ----
             if (cfg.tool == Tool.ERASER) {
@@ -434,18 +415,9 @@ fun ToolBar(
                     change { state.edit { it.tool = Tool.PAN } }
                 }
                 ToolDivider()
-                ToolButton(Icons.Default.Remove, "Line", cfg.tool == Tool.LINE) {
-                    change { state.edit { it.tool = Tool.LINE } }
-                }
-                ToolButton(Icons.Default.ArrowOutward, "Arrow", cfg.tool == Tool.ARROW) {
-                    change { state.edit { it.tool = Tool.ARROW } }
-                }
-                ToolButton(Icons.Default.CropSquare, "Box", cfg.tool == Tool.RECT) {
-                    change { state.edit { it.tool = Tool.RECT } }
-                }
-                ToolButton(Icons.Default.PanoramaFishEye, "Oval", cfg.tool == Tool.ELLIPSE) {
-                    change { state.edit { it.tool = Tool.ELLIPSE } }
-                }
+                // Line, arrow, box and oval have moved into the stamp picker. They are shapes you
+                // drag out, like everything else in there, and having them here cost four
+                // permanent slots in front of the tools used constantly.
                 ToolButton(Icons.Default.TextFields, "Text", cfg.tool == Tool.TEXT) {
                     change { state.edit { it.tool = Tool.TEXT } }
                 }
@@ -459,7 +431,11 @@ fun ToolBar(
                 ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
                     change { state.rulerVisible = !state.rulerVisible; state.persistNow() }
                 }
-                ToolButton(Icons.Default.Interests, "Stamp", false) { actions.onInsertStamp() }
+                ToolButton(
+                    Icons.Default.Interests,
+                    "Shapes",
+                    cfg.tool.isShape
+                ) { actions.onInsertStamp() }
                 ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
                 ToolButton(Icons.Default.PhotoCamera, "Photo", false) { actions.onTakePhoto() }
                 if (actions.canPaste) {

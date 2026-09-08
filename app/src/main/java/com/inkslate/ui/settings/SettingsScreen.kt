@@ -246,19 +246,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
-            // The escape hatch. Some pens report their button on a press but not cleanly on a
-            // tap, and without this the profile would be unreachable on exactly those devices.
-            if (tools.hardwareButtons > 0 && !tools.button1Seen) {
-                SwitchRow(
-                    title = "Show the button profile anyway",
-                    subtitle = "Your pen has reported a button. Turn this on if tapping the " +
-                        "Pen/Finger switch while holding it does not reveal the profile.",
-                    checked = false
-                ) { if (it) tools.revealButtonProfiles() }
-            }
+            // There is deliberately no switch here to reveal the profile. Tapping the Pen/Finger
+            // control with the barrel held is the only way in, so there is one gesture to learn
+            // rather than a gesture and a settings toggle that do the same thing.
 
             Text(
-                "The eraser end of the pen always erases, whatever the button is set to.",
+                "The eraser end of the pen always erases.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)

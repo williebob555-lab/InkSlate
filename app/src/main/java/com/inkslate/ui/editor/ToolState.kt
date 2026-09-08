@@ -106,8 +106,15 @@ class ToolState(private val context: Context) {
     var snapHighlighterToText by mutableStateOf(true)
     var cropMargins by mutableStateOf(false)
     var rulerVisible by mutableStateOf(false)
-    /** What the barrel button does while it is held. */
-    var stylusButton by mutableStateOf(StylusButtonAction.ERASE)
+    /**
+     * What the barrel button does while it is held - always [StylusButtonAction.PROFILE], which
+     * is to say "draw with the barrel's own tool, colour and width".
+     *
+     * The other actions used to be pickable from the toolbar, which put a second, differently
+     * shaped set of controls inside a tab that already looked like a pen profile. The barrel tab
+     * is now simply a third profile alongside Pen and Finger, with the same options.
+     */
+    var stylusButton by mutableStateOf(StylusButtonAction.PROFILE)
     /** The same, for a second button on pens that have one. */
     var stylusButton2 by mutableStateOf(StylusButtonAction.PROFILE)
 
@@ -141,6 +148,20 @@ class ToolState(private val context: Context) {
         hardwareButtons = index
         sp.edit().putInt(K_BTN_HARDWARE, hardwareButtons).apply()
     }
+    /**
+     * Whether the "width follows the zoom" explanation has been shown once. It is a sentence
+     * worth reading the first time and clutter every time after, so it is said once and then
+     * kept out of the toolbar.
+     */
+    var dynamicWidthHintSeen by mutableStateOf(false)
+        private set
+
+    fun noteDynamicWidthHintSeen() {
+        if (dynamicWidthHintSeen) return
+        dynamicWidthHintSeen = true
+        sp.edit().putBoolean(K_DYNAMIC_HINT, true).apply()
+    }
+
     var flingEnabled by mutableStateOf(true)
     /** Reopen each document where it was left, at the same zoom and scroll. */
     var rememberView by mutableStateOf(true)
@@ -473,6 +494,7 @@ class ToolState(private val context: Context) {
         button1Seen = sp.getBoolean(K_BTN1_SEEN, false)
         button2Seen = sp.getBoolean(K_BTN2_SEEN, false)
         hardwareButtons = sp.getInt(K_BTN_HARDWARE, 0)
+        dynamicWidthHintSeen = sp.getBoolean(K_DYNAMIC_HINT, false)
         autoSwitchInput = sp.getBoolean(K_AUTO, true)
         pressureEnabled = sp.getBoolean(K_PRESSURE, true)
         snapShapes = sp.getBoolean(K_SNAP, false)
@@ -482,16 +504,11 @@ class ToolState(private val context: Context) {
         flingEnabled = sp.getBoolean(K_FLING, true)
         rememberView = sp.getBoolean(K_REMEMBER_VIEW, true)
         keepScreenOn = sp.getBoolean(K_KEEP_AWAKE, true)
-        runCatching {
-            stylusButton = StylusButtonAction.valueOf(
-                sp.getString(K_STYLUS_BUTTON, null) ?: StylusButtonAction.ERASE.name
-            )
-        }
-        runCatching {
-            stylusButton2 = StylusButtonAction.valueOf(
-                sp.getString(K_STYLUS_BUTTON_2, null) ?: StylusButtonAction.PROFILE.name
-            )
-        }
+        // Both barrel buttons are their own pen now, and nothing in the UI can change that, so
+        // an older install's saved ERASE is deliberately not read back - it would leave the
+        // barrel rubbing out with no control left to turn it off.
+        stylusButton = StylusButtonAction.PROFILE
+        stylusButton2 = StylusButtonAction.PROFILE
         flingScale = sp.getFloat(K_FLING_SCALE, 1.35f)
         tableRows = sp.getInt(K_ROWS, 3)
         tableCols = sp.getInt(K_COLS, 3)
@@ -536,6 +553,7 @@ class ToolState(private val context: Context) {
         private const val K_BTN2 = "cfg_button2"
         private const val K_BTN1_SEEN = "button1_seen"
         private const val K_BTN_HARDWARE = "button_hardware"
+        private const val K_DYNAMIC_HINT = "dynamic_width_hint_seen"
         private const val K_BTN2_SEEN = "button2_seen"
         private const val K_STAMPS = "stamp_options"
         private const val K_STAMP_RECENT = "stamp_recent"
