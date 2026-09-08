@@ -1109,6 +1109,32 @@ class DrawingView @JvmOverloads constructor(
         textSize = 12f * resources.displayMetrics.density
     }
 
+    // ---- cropping a picture ------------------------------------------------------
+    //
+    // The crop is a view of the picture, not a change to it: the stored bytes are shared between
+    // devices and by other copies of the same image, so trimming them would alter every one of
+    // them at once and could never be undone. While cropping, the whole source is shown in the
+    // place it would occupy uncropped, which is what lets a crop be widened again later rather
+    // than only ever tightened.
+    private var cropTargetId: String? = null
+    /** Where the entire source picture sits while cropping, in page points. */
+    private val cropFull = RectF()
+    /** The part being kept, in the same coordinates. */
+    private val cropRect = RectF()
+    /** 0 none, 1..4 the corners clockwise from top-left, 5 the whole rectangle. */
+    private var cropGrab = 0
+    private val cropGrabAt = floatArrayOf(0f, 0f)
+    var onCropModeChanged: ((Boolean) -> Unit)? = null
+
+    private val cropShade = Paint().apply { color = Color.argb(140, 0, 0, 0) }
+    /** Deliberately untinted: a crop is judged against the real picture, not the reading tint. */
+    private val imageOverlayPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val cropFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 2f * resources.displayMetrics.density
+        color = Color.WHITE
+    }
+
     private val selFrame = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 2f
         color = Color.parseColor("#3B82F6")
@@ -1560,6 +1586,141 @@ class DrawingView @JvmOverloads constructor(
         strokes.removeAll(before.toSet()); strokes.addAll(after)
         growCanvasForAll(after)
         pushOp(Op(after, before)); changed()
+    }
+
+    /** True when the selection is exactly one picture, which is the only thing worth cropping. */
+    fun croppableSelection(): Boolean {
+        val sel = selectedStrokes()
+        return sel.size == 1 && sel[0].kind == StrokeKind.IMAGE && sel[0].imageId != null
+    }
+
+    fun isCropping(): Boolean = cropTargetId != null
+
+    /**
+     * Enters crop mode on the selected picture. Returns false when there is nothing to crop.
+     */
+    fun beginCrop(): Boolean {
+        val s = selectedStrokes().singleOrNull() ?: return false
+        if (s.kind != StrokeKind.IMAGE || s.imageId == null) return false
+
+        val shown = s.rectOf()
+        // Work back from the visible rectangle to where the whole picture would sit. The stroke
+        // shows the sub-rect [cropLeft..cropRight] of it, so the full frame is that much larger.
+        val fw = (s.cropRight - s.cropLeft).coerceAtLeast(0.001f)
+        val fh = (s.cropBottom - s.cropTop).coerceAtLeast(0.001f)
+        val fullW = shown.width() / fw
+        val fullH = shown.height() / fh
+        val left = shown.left - s.cropLeft * fullW
+        val top = shown.top - s.cropTop * fullH
+        cropFull.set(left, top, left + fullW, top + fullH)
+        cropRect.set(shown)
+        cropTargetId = s.id
+        cropGrab = 0
+        onCropModeChanged?.invoke(true)
+        invalidate()
+        return true
+    }
+
+    fun cancelCrop() {
+        if (cropTargetId == null) return
+        cropTargetId = null
+        cropGrab = 0
+        onCropModeChanged?.invoke(false)
+        invalidate()
+    }
+
+    /** Widens the crop back out to the whole picture, without leaving crop mode. */
+    fun resetCrop() {
+        if (cropTargetId == null) return
+        cropRect.set(cropFull)
+        invalidate()
+    }
+
+    /**
+     * Commits the crop as one undo step. The stroke keeps the position and scale it has on
+     * screen: the kept rectangle becomes its new frame, so the picture does not jump or resize.
+     */
+    fun applyCrop() {
+        val id = cropTargetId ?: return
+        val before = strokes.firstOrNull { it.id == id }
+        if (before == null) { cancelCrop(); return }
+
+        val w = cropFull.width()
+        val h = cropFull.height()
+        if (w <= 0f || h <= 0f) { cancelCrop(); return }
+
+        // The kept rectangle as fractions of the whole picture. Clamped, because a handle can be
+        // dragged past the edge and a crop outside the source is meaningless.
+        val l = ((cropRect.left - cropFull.left) / w).coerceIn(0f, 1f)
+        val t = ((cropRect.top - cropFull.top) / h).coerceIn(0f, 1f)
+        val r = ((cropRect.right - cropFull.left) / w).coerceIn(0f, 1f)
+        val b = ((cropRect.bottom - cropFull.top) / h).coerceIn(0f, 1f)
+        if (r - l < 0.01f || b - t < 0.01f) { cancelCrop(); return }
+
+        val after = before.copy(
+            points = listOf(
+                InkPoint(cropRect.left, cropRect.top, 1f),
+                InkPoint(cropRect.right, cropRect.bottom, 1f)
+            ),
+            cropLeft = l, cropTop = t, cropRight = r, cropBottom = b,
+            updatedUtc = now()
+        )
+        strokes.remove(before); strokes.add(after)
+        growCanvasForAll(listOf(after))
+        pushOp(Op(listOf(after), listOf(before)))
+        cropTargetId = null
+        cropGrab = 0
+        onCropModeChanged?.invoke(false)
+        changed()
+    }
+
+    /** Handle radius on screen. Comfortable for a fingertip without hiding the corner. */
+    private val cropHandleRadius get() = 9f * resources.displayMetrics.density
+
+    /** The four corners of [r], clockwise from top-left. */
+    private fun cropCornersOf(r: RectF): List<FloatArray> = listOf(
+        floatArrayOf(r.left, r.top), floatArrayOf(r.right, r.top),
+        floatArrayOf(r.right, r.bottom), floatArrayOf(r.left, r.bottom)
+    )
+
+    /**
+     * What is under a touch at page point [px], [py]: a corner (1..4), the rectangle itself (5),
+     * or nothing (0). The tolerance is converted from screen to page points, so a handle stays
+     * the same size under the finger however far the page is zoomed.
+     */
+    private fun cropHandleAt(px: Float, py: Float): Int {
+        val tol = cropHandleRadius * 1.6f / currentScale().coerceAtLeast(0.01f)
+        cropCornersOf(cropRect).forEachIndexed { i, c ->
+            if (abs(px - c[0]) <= tol && abs(py - c[1]) <= tol) return i + 1
+        }
+        return if (cropRect.contains(px, py)) 5 else 0
+    }
+
+    /** Moves whatever [cropGrab] took hold of to the page point [px], [py]. */
+    private fun dragCrop(px: Float, py: Float) {
+        // A crop narrower than this is almost certainly a slip, and one of zero width would
+        // render as nothing at all.
+        val min = 8f
+        when (cropGrab) {
+            1 -> { cropRect.left = px.coerceIn(cropFull.left, cropRect.right - min)
+                   cropRect.top = py.coerceIn(cropFull.top, cropRect.bottom - min) }
+            2 -> { cropRect.right = px.coerceIn(cropRect.left + min, cropFull.right)
+                   cropRect.top = py.coerceIn(cropFull.top, cropRect.bottom - min) }
+            3 -> { cropRect.right = px.coerceIn(cropRect.left + min, cropFull.right)
+                   cropRect.bottom = py.coerceIn(cropRect.top + min, cropFull.bottom) }
+            4 -> { cropRect.left = px.coerceIn(cropFull.left, cropRect.right - min)
+                   cropRect.bottom = py.coerceIn(cropRect.top + min, cropFull.bottom) }
+            5 -> {
+                // Moving the whole rectangle: it slides within the picture and stops at the
+                // edges rather than being allowed to leave it and crop nothing.
+                var dx = px - cropGrabAt[0]
+                var dy = py - cropGrabAt[1]
+                dx = dx.coerceIn(cropFull.left - cropRect.left, cropFull.right - cropRect.right)
+                dy = dy.coerceIn(cropFull.top - cropRect.top, cropFull.bottom - cropRect.bottom)
+                cropRect.offset(dx, dy)
+                cropGrabAt[0] = px; cropGrabAt[1] = py
+            }
+        }
     }
 
     fun bringSelectionToFront() {
@@ -2126,6 +2287,37 @@ class DrawingView @JvmOverloads constructor(
             }
         }
 
+        // The crop overlay: the whole picture, with everything outside the kept rectangle
+        // dimmed. Drawn last so it sits over the page and over any selection frame.
+        cropTargetId?.let { id ->
+            val target = strokes.firstOrNull { it.id == id }
+            if (target != null) {
+                val o = originOf(target.pageIndex)
+                val full = RectF(cropFull); full.offset(o[0], o[1]); pageToView.mapRect(full)
+                val keep = RectF(cropRect); keep.offset(o[0], o[1]); pageToView.mapRect(keep)
+
+                // The source at full extent, so a crop can be widened as well as tightened.
+                val bmp = target.imageId?.let { StrokeRasteriser.imageResolver?.invoke(it) }
+                if (bmp != null && !bmp.isRecycled) {
+                    canvas.drawBitmap(bmp, null, full, imageOverlayPaint)
+                }
+
+                // Dimmed in four bands rather than with a clip, which keeps this to plain
+                // rectangles and avoids saveLayer on every frame of a drag.
+                canvas.drawRect(full.left, full.top, full.right, keep.top, cropShade)
+                canvas.drawRect(full.left, keep.bottom, full.right, full.bottom, cropShade)
+                canvas.drawRect(full.left, keep.top, keep.left, keep.bottom, cropShade)
+                canvas.drawRect(keep.right, keep.top, full.right, keep.bottom, cropShade)
+
+                canvas.drawRect(keep, cropFrame)
+                val hr = cropHandleRadius
+                for (p in cropCornersOf(keep)) {
+                    canvas.drawCircle(p[0], p[1], hr, handleFill)
+                    canvas.drawCircle(p[0], p[1], hr, cropFrame)
+                }
+            }
+        }
+
         // The pages we just drew are, by definition, the pages that need bitmaps. Deriving the
         // request from the draw itself means the two can never disagree - previously the viewport
         // was computed twice by separate code, and when those disagreed a page would render as
@@ -2433,6 +2625,18 @@ class DrawingView @JvmOverloads constructor(
             hypot(e.x - lastTapX, e.y - lastTapY) < 40f
         lastTapTime = System.currentTimeMillis(); lastTapX = e.x; lastTapY = e.y
 
+        // Cropping owns every touch while it is on: the handles and the rectangle are the only
+        // things a touch can mean, and letting a stray drag draw on the page underneath would
+        // be a mark you then have to find and undo.
+        if (cropTargetId != null) {
+            toPage(e.x, e.y)
+            val px = tmpPts[0]; val py = tmpPts[1]
+            cropGrab = cropHandleAt(px, py)
+            cropGrabAt[0] = px; cropGrabAt[1] = py
+            invalidate()
+            return
+        }
+
         // An armed item takes precedence over the current tool: while something is waiting to be
         // placed, that is unambiguously what the next touch is for.
         if (armedPlacement != null) {
@@ -2488,6 +2692,15 @@ class DrawingView @JvmOverloads constructor(
 
     private fun onMove(e: MotionEvent, isStylus: Boolean, t: Tool) {
         if (e.getPointerId(0) != drawingPointerId) return
+
+        if (cropTargetId != null) {
+            if (cropGrab != 0) {
+                toPage(e.x, e.y)
+                dragCrop(tmpPts[0], tmpPts[1])
+                invalidate()
+            }
+            return
+        }
 
         placeStart?.let { start ->
             toPage(e.x, e.y)
@@ -2676,6 +2889,16 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun onUp(cancelled: Boolean, t: Tool) {
+        if (cropTargetId != null) {
+            // The crop is not committed here. It is committed from the toolbar, so the rectangle
+            // can be adjusted over several drags before anything is decided.
+            cropGrab = 0
+            drawingPointerId = -1
+            parent?.requestDisallowInterceptTouchEvent(false)
+            invalidate()
+            return
+        }
+
         if (placeStart != null) {
             if (cancelled) { placeStart = null; placing = null; invalidate() }
             else finishPlacement()

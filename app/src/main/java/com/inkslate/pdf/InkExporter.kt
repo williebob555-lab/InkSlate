@@ -625,8 +625,16 @@ object InkExporter {
      */
     private fun drawEmbeddedImage(pdf: PDDocument, cs: PDPageContentStream, s: Stroke) {
         val id = s.imageId ?: return
-        val bmp = imageResolver?.invoke(id) ?: return
+        val source = imageResolver?.invoke(id) ?: return
         val r = s.rectOf()
+        // A cropped image is trimmed before it is embedded rather than clipped afterwards, so the
+        // discarded edges are not carried in the exported file at all.
+        val crop = s.cropPixels(source.width, source.height)
+        val bmp = if (crop == null) source else runCatching {
+            android.graphics.Bitmap.createBitmap(
+                source, crop[0], crop[1], crop[2] - crop[0], crop[3] - crop[1]
+            )
+        }.getOrDefault(source)
         runCatching {
             val img = if (bmp.hasAlpha()) LosslessFactory.createFromImage(pdf, bmp)
             else JPEGFactory.createFromImage(pdf, bmp, 0.92f)
@@ -635,6 +643,9 @@ object InkExporter {
             cs.drawImage(img, r.left, r.top, r.width(), r.height())
             cs.restoreGraphicsState()
         }
+        // Only the trimmed copy is ours to free. The source belongs to the image cache and may
+        // still be on screen.
+        if (bmp !== source) bmp.recycle()
     }
 
     /** Supplies bitmaps for embedded images; set by the caller before exporting. */

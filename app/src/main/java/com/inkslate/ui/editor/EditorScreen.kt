@@ -144,6 +144,8 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     var pendingPage by remember { mutableStateOf(-1) }
     var dirty by remember { mutableStateOf(false) }
     var selectionCount by remember { mutableStateOf(0) }
+    var canCrop by remember { mutableStateOf(false) }
+    var cropping by remember { mutableStateOf(false) }
     // DrawingView owns the undo stacks, which are not Compose state; this counter is bumped on
     // every edit so the buttons re-evaluate whether they should be enabled.
     var undoTick by remember { mutableStateOf(0) }
@@ -1265,6 +1267,8 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                     ToolBar(
                         state = tools,
                         selectionCount = selectionCount,
+                        canCrop = canCrop,
+                        cropping = cropping,
                         actions = ToolBarActions(
                             onChanged = {
                                 tools.applyTo(drawingView.value)
@@ -1335,7 +1339,20 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             onRotateRuler = { d -> drawingView.value?.rotateRuler(d) },
                             onResetRuler = { drawingView.value?.placeRulerAcrossView() },
                             onPickCustomColour = { colourPickerOpen = true },
-                            onMessage = { scope.launch { snackbar.showSnackbar(it) } }
+                            onMessage = { scope.launch { snackbar.showSnackbar(it) } },
+                            onBeginCrop = {
+                                if (drawingView.value?.beginCrop() != true) {
+                                    scope.launch {
+                                        snackbar.showSnackbar("Select one picture to crop it")
+                                    }
+                                }
+                            },
+                            onApplyCrop = {
+                                drawingView.value?.applyCrop()
+                                dirty = true; undoTick++
+                            },
+                            onResetCrop = { drawingView.value?.resetCrop() },
+                            onCancelCrop = { drawingView.value?.cancelCrop() }
                         )
                     )
                 }
@@ -1432,7 +1449,11 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                     scope.launch { snackbar.showSnackbar("Could not capture that area") }
                                 }
                             }
-                            view.onSelectionChanged = { selectionCount = it }
+                            view.onSelectionChanged = {
+                                selectionCount = it
+                                canCrop = view.croppableSelection()
+                            }
+                            view.onCropModeChanged = { cropping = it }
                             view.onPlacementChanged = { armedItem = it }
                             view.onTextRequested = { x, y, existing ->
                                 textPrompt = TextPromptRequest(x, y, existing)

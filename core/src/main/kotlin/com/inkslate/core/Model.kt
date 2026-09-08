@@ -236,12 +236,48 @@ data class Stroke(
     val cols: Int = 0,
     val cells: List<String> = emptyList(),
     val imageId: String? = null,
+    /**
+     * Which part of the source picture an [Kind.IMAGE] stroke shows, as fractions of the whole:
+     * 0,0,1,1 is the entire picture and is what every image starts as.
+     *
+     * Cropping is stored rather than applied to the stored bytes on purpose. The picture is
+     * shared between devices and referenced by [imageId], so trimming the file would change what
+     * every other copy of it shows; and keeping the original means a crop can be widened again
+     * later, or undone, without the thrown-away edges being gone for good.
+     */
+    val cropLeft: Float = 0f,
+    val cropTop: Float = 0f,
+    val cropRight: Float = 1f,
+    val cropBottom: Float = 1f,
     val pageIndex: Int = 0,
     /** Wall-clock millis of the last edit. Last-writer-wins key when two devices merge. */
     val updatedUtc: Long = 0L
 ) {
     @Serializable
     enum class Kind { FREEHAND, LINE, ARROW, RECT, ELLIPSE, TEXT, TABLE, IMAGE }
+
+    /** True when this image shows less than the whole of its source picture. */
+    val isCropped: Boolean
+        get() = kind == Kind.IMAGE &&
+            (cropLeft > 0.0001f || cropTop > 0.0001f ||
+                cropRight < 0.9999f || cropBottom < 0.9999f)
+
+    /**
+     * The crop as pixel bounds inside a source picture of [width] by [height], clamped so a
+     * malformed or inverted crop can never ask the renderer for a region outside the bitmap.
+     * Returns null when the whole picture is wanted, which is the common case.
+     */
+    fun cropPixels(width: Int, height: Int): IntArray? {
+        if (!isCropped || width <= 0 || height <= 0) return null
+        val l = (cropLeft.coerceIn(0f, 1f) * width).toInt()
+        val t = (cropTop.coerceIn(0f, 1f) * height).toInt()
+        val r = (cropRight.coerceIn(0f, 1f) * width).toInt()
+        val b = (cropBottom.coerceIn(0f, 1f) * height).toInt()
+        // A zero-width or inverted region would render as nothing at all, which looks like the
+        // picture was lost rather than cropped.
+        if (r - l < 1 || b - t < 1) return null
+        return intArrayOf(l, t, r, b)
+    }
 
     val isHighlighter: Boolean get() = kind == Kind.FREEHAND && brush.isHighlighter
     val isFreehand: Boolean get() = kind == Kind.FREEHAND

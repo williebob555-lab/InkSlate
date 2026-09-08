@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.PanoramaFishEye
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.Interests
@@ -129,7 +130,11 @@ class ToolBarActions(
     val onResetRuler: () -> Unit,
     val onPickCustomColour: () -> Unit,
     /** Shows a passing message on the editor's snackbar. */
-    val onMessage: (String) -> Unit
+    val onMessage: (String) -> Unit,
+    val onBeginCrop: () -> Unit,
+    val onApplyCrop: () -> Unit,
+    val onResetCrop: () -> Unit,
+    val onCancelCrop: () -> Unit
 )
 
 /**
@@ -144,6 +149,9 @@ class ToolBarActions(
 fun ToolBar(
     state: ToolState,
     selectionCount: Int,
+    /** True when the selection is a single picture, which is the only thing worth cropping. */
+    canCrop: Boolean,
+    cropping: Boolean,
     actions: ToolBarActions
 ) {
     // A snapshot keyed on the revision counter. Reading the counter as a bare statement was not
@@ -168,8 +176,36 @@ fun ToolBar(
                 .verticalScroll(rememberScrollState())
         ) {
 
+            // ---- cropping, which takes over the toolbar while it is on ----
+            AnimatedVisibility(visible = cropping) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Cropping",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            "Drag the corners, or the box itself. The picture itself is kept, so " +
+                                "you can widen this again later.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                    TextButton(onClick = actions.onResetCrop) { Text("Whole picture") }
+                    TextButton(onClick = actions.onCancelCrop) { Text("Cancel") }
+                    TextButton(onClick = actions.onApplyCrop) { Text("Crop") }
+                }
+            }
+
             // ---- selection actions, shown only while something is selected ----
-            AnimatedVisibility(visible = selectionCount > 0) {
+            AnimatedVisibility(visible = selectionCount > 0 && !cropping) {
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -191,6 +227,11 @@ fun ToolBar(
                     }
                     IconButton(onClick = actions.onCutSelection) {
                         Icon(Icons.Default.ContentCut, "Cut")
+                    }
+                    if (canCrop) {
+                        IconButton(onClick = actions.onBeginCrop) {
+                            Icon(Icons.Default.Crop, "Crop this picture")
+                        }
                     }
                     IconButton(onClick = actions.onDuplicateSelection) {
                         Icon(Icons.Default.Layers, "Duplicate")

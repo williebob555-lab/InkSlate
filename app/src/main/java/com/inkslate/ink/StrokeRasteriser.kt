@@ -202,7 +202,11 @@ object StrokeRasteriser {
         imagePaint.colorFilter = colorFilter
         imagePaint.alpha = (s.opacity * 255).toInt().coerceIn(0, 255)
         if (bmp != null && !bmp.isRecycled) {
-            canvas.drawBitmap(bmp, null, rect, imagePaint)
+            // A null source rect means the whole picture, which is what an uncropped image wants
+            // and avoids allocating a Rect on every frame for the common case.
+            val crop = s.cropPixels(bmp.width, bmp.height)
+            val src = crop?.let { android.graphics.Rect(it[0], it[1], it[2], it[3]) }
+            canvas.drawBitmap(bmp, src, rect, imagePaint)
         } else {
             // A missing asset should look deliberately absent rather than invisible, so it is
             // obvious that something failed to sync rather than that nothing was ever there.
