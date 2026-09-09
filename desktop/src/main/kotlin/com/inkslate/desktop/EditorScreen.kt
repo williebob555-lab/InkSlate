@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -128,6 +129,10 @@ fun EditorScreen(
     var stampsOpen by remember { mutableStateOf(false) }
     var symbolsOpen by remember { mutableStateOf(false) }
     var pagesOpen by remember { mutableStateOf(false) }
+    var versionsOpen by remember { mutableStateOf(false) }
+    var reopenTick by remember { mutableStateOf(0) }
+    // Restored once per open, or every recomposition would drag the view back.
+    var positionRestored by remember(file) { mutableStateOf(false) }
     var armedStampLabel by remember { mutableStateOf<String?>(null) }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -160,7 +165,7 @@ fun EditorScreen(
 
     // ---- opening -------------------------------------------------------------
 
-    LaunchedEffect(file.absolutePath) {
+    LaunchedEffect(file.absolutePath, reopenTick) {
         busy = true
         val loaded = withContext(Dispatchers.IO) {
             val src = DesktopSources.open(file) ?: return@withContext null
@@ -195,6 +200,21 @@ fun EditorScreen(
             if (doc.sourceChanged) append("  ·  the file changed since these were saved")
         }
         busy = false
+
+    }
+
+    // Remember where the document was left, as it is left rather than on every scroll: this is a
+    // file on disk, and writing it on each frame of a drag would be a stream of writes for a
+    // number nobody reads until the document is opened again.
+    DisposableEffect(file.absolutePath, source) {
+        onDispose {
+            if (source != null) {
+                ReadingPosition.save(
+                    file.absolutePath, page, layout,
+                    viewport.scale, viewport.offset.x, viewport.offset.y
+                )
+            }
+        }
     }
 
     // The table of contents is read off the file rather than held in the ink, so it is fetched
@@ -392,6 +412,24 @@ fun EditorScreen(
         page = clamped
     }
 
+    /**
+     * Pick up where this document was left.
+     *
+     * Once per open, and after the pages have been measured - a camera restored before the
+     * viewport knows how big the document is has nothing to be restored against. A document
+     * reopened at the top when you were halfway through a problem set is a document you have to
+     * find your place in again every time.
+     */
+    LaunchedEffect(source, viewport.viewSize) {
+        val src = source ?: return@LaunchedEffect
+        if (positionRestored || viewport.viewSize.width <= 0f) return@LaunchedEffect
+        positionRestored = true
+        val at = ReadingPosition.load(file.absolutePath) ?: return@LaunchedEffect
+        layout = at.layout
+        page = at.page.coerceIn(0, src.pageCount - 1)
+        if (at.hasCamera) viewport.restore(at.scale!!, at.x!!, at.y!!) else goToPage(page)
+    }
+
     fun runSearch() {
         val src = source ?: return
         searching = true
@@ -519,6 +557,10 @@ fun EditorScreen(
                             DropdownMenuItem(
                                 text = { Text("Export flattened copy...") },
                                 onClick = { menuOpen = false; exportFlattened() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Version history...") },
+                                onClick = { menuOpen = false; versionsOpen = true }
                             )
                             DropdownMenuItem(
                                 text = { Text("Rules for this file") },
@@ -860,6 +902,21 @@ fun EditorScreen(
             dismissButton = {
                 TextButton(onClick = { confirmOverwrite = false }) { Text("Cancel") }
             }
+        )
+    }
+
+    if (versionsOpen) {
+        VersionHistoryDialog(
+            file = file,
+            onDismiss = { versionsOpen = false },
+            onRestored = {
+                versionsOpen = false
+                // Reopened rather than patched: the file on disk is a different document now,
+                // and every raster on screen belongs to the old one.
+                positionRestored = true
+                reopenTick++
+            },
+            onMessage = { scope.launch { snackbar.showSnackbar(it) } }
         )
     }
 

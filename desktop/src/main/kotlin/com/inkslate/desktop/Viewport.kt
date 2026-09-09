@@ -127,6 +127,19 @@ class Viewport {
         offset = clamp(Offset(box.left - padding / s, offset.y))
     }
 
+    /**
+     * Put the camera back exactly where it was, for reopening a document where it was left.
+     *
+     * Deliberately not clamped: the content box is not known until the pages have been measured,
+     * and clamping against a default would drag a restored position somewhere it never was.
+     */
+    fun restore(atScale: Float, atX: Float, atY: Float) {
+        if (!atScale.isFinite() || atScale <= 0f) return
+        scale = atScale.coerceIn(MIN_SCALE, MAX_SCALE)
+        offset = Offset(atX, atY)
+        velocity = Offset.Zero
+    }
+
     /** Put a document point at the top-left, used when jumping to a page. */
     fun goTo(x: Float, y: Float, margin: Float = 18f) {
         offset = clamp(Offset(x - margin, y - margin))
