@@ -140,6 +140,25 @@ class ToolState {
     /** True while the ruler is on the page and ink is snapping to it. */
     var rulerVisible by mutableStateOf(false)
 
+    /**
+     * Where the straightedge is lying, in the coordinates of the page it is on.
+     *
+     * Page coordinates rather than screen, so it stays put relative to the work when the view is
+     * scrolled or zoomed - which is the whole point of a ruler resting on the paper.
+     */
+    var ruler by mutableStateOf<com.inkslate.core.Ruler?>(null)
+
+    /** True while shapes drawn freehand are tidied into the shape they were meant to be. */
+    private val recogniseState =
+        mutableStateOf(DesktopPrefs.get(K_RECOGNISE)?.toBoolean() ?: true)
+
+    var recogniseShapes: Boolean
+        get() = recogniseState.value
+        set(value) {
+            recogniseState.value = value
+            DesktopPrefs.put(K_RECOGNISE, value.toString())
+        }
+
     var tableRows by mutableStateOf(3)
     var tableCols by mutableStateOf(3)
 
@@ -302,6 +321,7 @@ class ToolState {
         const val K_BTN1_SEEN = "tool_button1_seen"
         const val K_BTN2_SEEN = "tool_button2_seen"
         const val K_AUTO_SWITCH = "tool_auto_switch"
+        const val K_RECOGNISE = "tool_recognise_shapes"
     }
 }
 

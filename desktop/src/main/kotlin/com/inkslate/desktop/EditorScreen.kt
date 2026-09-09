@@ -408,6 +408,25 @@ fun EditorScreen(
         }
     }
 
+    /**
+     * Put the straightedge on the page in view, or take it off.
+     *
+     * Placed across the middle of the current page rather than remembered from last time: a ruler
+     * left on page four is not where anyone reaching for one on page nine expects it.
+     */
+    fun toggleRuler() {
+        if (tools.rulerVisible) {
+            tools.rulerVisible = false
+            return
+        }
+        val src = source ?: return
+        val dim = src.pageDim(page)
+        tools.ruler = com.inkslate.core.Ruler.across(
+            com.inkslate.core.Box(0f, 0f, dim.width, dim.height), page
+        )
+        tools.rulerVisible = true
+    }
+
     fun toggleBookmark() {
         if (bookmarks.any { it.page == page }) {
             ink = ink.withBookmarkRemoved(page)
@@ -501,6 +520,27 @@ fun EditorScreen(
                             DropdownMenuItem(
                                 text = { Text("Rules for this file") },
                                 onClick = { menuOpen = false; fileRulesOpen = true }
+                            )
+                            if (tools.rulerVisible) {
+                                DropdownMenuItem(
+                                    text = { Text("Snap the ruler to 15°") },
+                                    onClick = {
+                                        menuOpen = false
+                                        tools.ruler = tools.ruler?.snappedToAngle(15f)
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (tools.recogniseShapes) "✓  Tidy rough shapes"
+                                        else "      Tidy rough shapes"
+                                    )
+                                },
+                                onClick = {
+                                    menuOpen = false
+                                    tools.recogniseShapes = !tools.recogniseShapes
+                                }
                             )
                             DropdownMenuItem(
                                 text = { Text("Fit page") },
@@ -604,6 +644,7 @@ fun EditorScreen(
                         canPaste = Clipboard.contents.isNotEmpty(),
                         onPickCustomColour = { pickingColour = true },
                         onInsertStamp = { stampsOpen = true },
+                        onToggleRuler = ::toggleRuler,
                         onMessage = { scope.launch { snackbar.showSnackbar(it) } }
                     )
                 )

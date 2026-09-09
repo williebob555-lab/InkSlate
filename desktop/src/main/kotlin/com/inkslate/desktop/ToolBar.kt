@@ -101,6 +101,7 @@ class ToolBarActions(
     val onPickCustomColour: () -> Unit = {},
     val onInsertSymbol: () -> Unit = {},
     val onInsertStamp: () -> Unit = {},
+    val onToggleRuler: () -> Unit = {},
     val onMessage: (String) -> Unit = {}
 )
 
@@ -369,7 +370,7 @@ fun ToolBar(
                     actions.onInsertStamp()
                 }
                 ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
-                    change { state.rulerVisible = !state.rulerVisible }
+                    actions.onToggleRuler()
                 }
                 if (actions.canPaste) {
                     ToolButton(Icons.Default.ContentPaste, "Paste", false) { actions.onPaste() }

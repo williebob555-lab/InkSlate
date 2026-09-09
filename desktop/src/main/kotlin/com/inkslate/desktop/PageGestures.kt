@@ -15,6 +15,10 @@ import com.inkslate.core.Stroke
 import com.inkslate.core.Tool
 import kotlin.math.abs
 
+/** How close a click has to be to the ruler's ends and to its bar, in screen pixels. */
+private const val RULER_END_TOUCH = 16f
+private const val RULER_BAR_TOUCH = 12f
+
 /**
  * Follow the pointer until it lifts, reporting where it ended.
  *
@@ -90,6 +94,30 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     val start = toPage(down.position)
     val px = start.x
     val py = start.y
+
+    // The straightedge is taken hold of before any tool gets the pointer: it is a physical thing
+    // resting on the page, and reaching for it should not depend on which pen is in hand.
+    val ruler = tools.ruler
+    if (tools.rulerVisible && ruler != null && ruler.page == index) {
+        val grab = ruler.grabAt(
+            px, py,
+            endRadius = RULER_END_TOUCH / scale,
+            barTolerance = RULER_BAR_TOUCH / scale
+        )
+        if (grab != com.inkslate.core.Ruler.Grab.NONE) {
+            var last = start
+            dragUntilRelease(down.position) { change, _ ->
+                val n = toPage(change.position)
+                val current = tools.ruler ?: return@dragUntilRelease
+                tools.ruler = when (grab) {
+                    com.inkslate.core.Ruler.Grab.BAR -> current.movedBy(n.x - last.x, n.y - last.y)
+                    else -> current.withEnd(grab, n.x, n.y)
+                }
+                last = n
+            }
+            return
+        }
+    }
 
     val armed = tools.armedStamp
     when {
@@ -315,6 +343,11 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             var smooth = start
             val alpha = 1f - cfg.smoothing.coerceIn(0f, 0.92f)
 
+            // Once a stroke is being ruled it stays ruled to the end, the same way the pen stays
+            // against the edge rather than wandering off when the hand drifts.
+            val liveRuler = tools.ruler?.takeIf { tools.rulerVisible && it.page == index }
+            var ruled = false
+
             fun sample(screen: Offset, pressure: Float, type: PointerType) {
                 val now = System.nanoTime()
                 // Speed stands in for pressure when the device does not report it. A dead
@@ -334,9 +367,19 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                     smooth.x + (page.x - smooth.x) * alpha,
                     smooth.y + (page.y - smooth.y) * alpha
                 )
-                collected.add(
-                    InkPoint(smooth.x, smooth.y, brush.widthFor(nominal, p, cfg.dynamics))
-                )
+                var x = smooth.x
+                var y = smooth.y
+                if (liveRuler != null) {
+                    val tolerance =
+                        if (ruled) -1f
+                        else com.inkslate.core.Ruler.SNAP_POINTS / scale.coerceAtLeast(0.05f)
+                    liveRuler.project(x, y, tolerance)?.let { (rx, ry) ->
+                        x = rx
+                        y = ry
+                        ruled = true
+                    }
+                }
+                collected.add(InkPoint(x, y, brush.widthFor(nominal, p, cfg.dynamics)))
             }
 
             sample(down.position, down.pressure, down.type)
@@ -348,7 +391,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             onLive(emptyList())
 
             if (collected.size >= 2) {
-                val s = Stroke(
+                val drawn = Stroke(
                     id = newId(),
                     kind = Stroke.Kind.FREEHAND,
                     color = cfg.color,
@@ -360,6 +403,14 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                     pageIndex = index,
                     updatedUtc = System.currentTimeMillis()
                 )
+                // A rough circle becomes a circle. The bar for replacing what someone drew is
+                // deliberately high, and a stroke already ruled is left alone - it is straight
+                // because it was meant to be, and tidying it further could only move it.
+                val s = if (tools.recogniseShapes && !ruled) {
+                    com.inkslate.core.ShapeRecogniser.recognise(drawn) ?: drawn
+                } else {
+                    drawn
+                }
                 strokes.add(s)
                 onCommitted(Op.added(s))
             }

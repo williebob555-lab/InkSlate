@@ -456,36 +456,37 @@ class DrawingView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** Angle of the ruler in degrees, for the protractor readout. */
-    private fun rulerAngle(): Float {
-        val a = rulerA ?: return 0f
-        val b = rulerB ?: return 0f
-        var deg = Math.toDegrees(atan2(b[1] - a[1], b[0] - a[0]).toDouble()).toFloat()
-        if (deg < 0) deg += 360f
-        return deg
+    /**
+     * The straightedge as the shared model sees it.
+     *
+     * The arithmetic that decides where ruled ink actually lands - the angle, the rotation, the
+     * projection - is `core/Ruler`, shared with the Windows build, because a stroke drawn against
+     * the ruler is *stored* projected onto it. A ruler that snapped differently on the two builds
+     * would put visibly different ink in the same document from the same movement. What stays
+     * here is the part that is genuinely this view's: hit-testing in view coordinates, and drawing.
+     */
+    private fun rulerModel(): com.inkslate.core.Ruler? {
+        val a = rulerA ?: return null
+        val b = rulerB ?: return null
+        return com.inkslate.core.Ruler(a[0], a[1], b[0], b[1], rulerPage)
     }
 
-    fun rotateRuler(byDegrees: Float) {
-        val a = rulerA ?: return
-        val b = rulerB ?: return
-        val cx = (a[0] + b[0]) / 2f
-        val cy = (a[1] + b[1]) / 2f
-        val rad = Math.toRadians(byDegrees.toDouble())
-        fun spin(p: FloatArray) {
-            val dx = p[0] - cx
-            val dy = p[1] - cy
-            p[0] = cx + (dx * cos(rad) - dy * sin(rad)).toFloat()
-            p[1] = cy + (dx * sin(rad) + dy * cos(rad)).toFloat()
-        }
-        spin(a); spin(b)
+    private fun setRulerModel(r: com.inkslate.core.Ruler) {
+        rulerA = floatArrayOf(r.ax, r.ay)
+        rulerB = floatArrayOf(r.bx, r.by)
         invalidate()
+    }
+
+    /** Angle of the ruler in degrees, for the protractor readout. */
+    private fun rulerAngle(): Float = rulerModel()?.angleDegrees ?: 0f
+
+    fun rotateRuler(byDegrees: Float) {
+        setRulerModel(rulerModel()?.rotatedBy(byDegrees) ?: return)
     }
 
     /** Snap the ruler to the nearest 15 degrees, for clean angles. */
     fun snapRulerAngle() {
-        val current = rulerAngle()
-        val target = (Math.round(current / 15f) * 15f)
-        rotateRuler(target - current)
+        setRulerModel(rulerModel()?.snappedToAngle(15f) ?: return)
     }
 
     /**
@@ -496,19 +497,11 @@ class DrawingView @JvmOverloads constructor(
      */
     private fun projectOntoRuler(x: Float, y: Float, unbounded: Boolean = false): FloatArray? {
         if (!rulerVisible || livePage != rulerPage) return null
-        val a = rulerA ?: return null
-        val b = rulerB ?: return null
-        val vx = b[0] - a[0]
-        val vy = b[1] - a[1]
-        val len2 = vx * vx + vy * vy
-        if (len2 < 1f) return null
-        val t = (((x - a[0]) * vx + (y - a[1]) * vy) / len2)
-        val px = a[0] + vx * t
-        val py = a[1] + vy * t
-        val distance = hypot(x - px, y - py)
-        if (unbounded) return floatArrayOf(px, py)
-        val tolerance = RULER_SNAP_PT / currentScale().coerceAtLeast(0.05f)
-        return if (distance <= tolerance) floatArrayOf(px, py) else null
+        val ruler = rulerModel() ?: return null
+        val tolerance =
+            if (unbounded) -1f else RULER_SNAP_PT / currentScale().coerceAtLeast(0.05f)
+        val hit = ruler.project(x, y, tolerance) ?: return null
+        return floatArrayOf(hit.first, hit.second)
     }
 
     /**
@@ -3282,7 +3275,7 @@ class DrawingView @JvmOverloads constructor(
             cells = if (isTable) List(newTableRows * newTableCols) { "" } else emptyList(),
             updatedUtc = now()
         )
-        var finished = if (recogniseShapes) ShapeRecogniser.recognise(s) ?: s else s
+        var finished = if (recogniseShapes) com.inkslate.core.ShapeRecogniser.recognise(s) ?: s else s
 
         // A highlighter dragged across a line becomes clean bars over the words it crossed.
         // Falls back to the freehand stroke when there is no text layer, which is what a scanned

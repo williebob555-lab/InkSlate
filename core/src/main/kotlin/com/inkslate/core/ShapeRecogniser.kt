@@ -1,7 +1,6 @@
-package com.inkslate.ink
+package com.inkslate.core
 
 import com.inkslate.core.Stroke.Kind as StrokeKind
-import android.graphics.RectF
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -11,6 +10,11 @@ import kotlin.math.sqrt
 
 /**
  * Turns a rough freehand stroke into the shape it was clearly meant to be.
+ *
+ * Shared, because deciding that a stroke *was* a circle changes what the document contains: the
+ * ink is replaced by an ellipse and saved that way. Two builds disagreeing about which strokes
+ * qualify would mean the same drawn circle became a circle on one machine and stayed a scribble
+ * on the other.
  *
  * The bar for replacing what someone drew is deliberately high. A wrong correction is far more
  * annoying than a missed one, because it destroys work that was already correct - so every test
@@ -39,8 +43,8 @@ object ShapeRecogniser {
         val pts = stroke.points
         if (pts.size < 6) return null
 
-        val bounds = stroke.rawBounds()
-        val size = max(bounds.width(), bounds.height())
+        val bounds = stroke.rawBoundsBox()
+        val size = max(bounds.width, bounds.height)
         if (size < 12f) return null      // too small to have meant anything in particular
 
         val pathLength = pathLength(pts)
@@ -66,8 +70,8 @@ object ShapeRecogniser {
         if (!closed) return null
 
         // ---- circle or ellipse ----
-        val cx = bounds.centerX()
-        val cy = bounds.centerY()
+        val cx = bounds.centerX
+        val cy = bounds.centerY
         val radii = pts.map { hypot(it.x - cx, it.y - cy) }
         val meanR = radii.average().toFloat()
         if (meanR > 1f) {
@@ -144,8 +148,8 @@ object ShapeRecogniser {
      * A triangle and a rectangle have similar corner counts from some angles; this separates them
      * by checking that most of the stroke lies near an edge of the box.
      */
-    private fun fillsBounds(pts: List<InkPoint>, bounds: RectF): Boolean {
-        val tolerance = max(3f, min(bounds.width(), bounds.height()) * 0.16f)
+    private fun fillsBounds(pts: List<InkPoint>, bounds: Box): Boolean {
+        val tolerance = max(3f, min(bounds.width, bounds.height) * 0.16f)
         val nearEdge = pts.count { p ->
             val dx = min(abs(p.x - bounds.left), abs(p.x - bounds.right))
             val dy = min(abs(p.y - bounds.top), abs(p.y - bounds.bottom))

@@ -36,6 +36,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.inkslate.core.Box as InkBox
@@ -297,7 +298,10 @@ fun DocumentCanvas(
                                 tools = tools,
                                 textMeasurer = textMeasurer,
                                 pageFilter = pageFilter,
-                                scale = vp.scale
+                                scale = vp.scale,
+                                ruler = tools.ruler?.takeIf {
+                                    tools.rulerVisible && it.page == slot.index
+                                }
                             )
                         }
                     }
@@ -338,7 +342,8 @@ private fun DrawScope.drawPage(
     tools: ToolState,
     textMeasurer: TextMeasurer,
     pageFilter: PageFilter,
-    scale: Float
+    scale: Float,
+    ruler: com.inkslate.core.Ruler?
 ) {
     drawRect(Color.White, topLeft = Offset.Zero, size = Size(slot.width, slot.height))
     raster?.let {
@@ -393,6 +398,75 @@ private fun DrawScope.drawPage(
 
         page.filter { it.id in selection }.unionBounds()?.let { drawSelection(it, scale) }
     }
+
+    // Outside the clip: a straightedge lies on top of the page and may hang over its edge, the
+    // way a real one does.
+    ruler?.let { drawRuler(it, scale, textMeasurer) }
+}
+
+/**
+ * The straightedge, its grab handles, and what angle it is at.
+ *
+ * The angle is the point of drawing it at all rather than just snapping silently - a protractor
+ * readout is what turns "a straight line" into "a line at 30 degrees", which is most of what a
+ * ruler gets used for in a maths exercise.
+ */
+private fun DrawScope.drawRuler(
+    ruler: com.inkslate.core.Ruler,
+    scale: Float,
+    textMeasurer: TextMeasurer
+) {
+    val body = Color(0x33_3B82F6)
+    val edge = Color(0xBE_3C82F6)
+    val a = Offset(ruler.ax, ruler.ay)
+    val b = Offset(ruler.bx, ruler.by)
+
+    // A band with a solid edge, so it reads as an object resting on the paper rather than as
+    // another line drawn on it.
+    val dx = ruler.bx - ruler.ax
+    val dy = ruler.by - ruler.ay
+    val len = kotlin.math.hypot(dx, dy).coerceAtLeast(1f)
+    val nx = -dy / len
+    val ny = dx / len
+    val half = RULER_BAND / scale
+
+    val band = androidx.compose.ui.graphics.Path().apply {
+        moveTo(ruler.ax + nx * half, ruler.ay + ny * half)
+        lineTo(ruler.bx + nx * half, ruler.by + ny * half)
+        lineTo(ruler.bx - nx * half, ruler.by - ny * half)
+        lineTo(ruler.ax - nx * half, ruler.ay - ny * half)
+        close()
+    }
+    drawPath(band, body)
+    drawLine(edge, a, b, strokeWidth = 2f / scale)
+
+    val handle = RULER_HANDLE / scale
+    for (end in listOf(a, b)) {
+        drawCircle(Color.White, handle, end)
+        drawCircle(edge, handle, end, style = DrawStroke(1.6f / scale))
+    }
+
+    val label = "%.0f\u00B0".format(ruler.angleDegrees)
+    val measured = textMeasurer.measure(
+        label,
+        androidx.compose.ui.text.TextStyle(
+            color = Color.White,
+            fontSize = androidx.compose.ui.unit.TextUnit(
+                13f / scale, androidx.compose.ui.unit.TextUnitType.Sp
+            )
+        )
+    )
+    val cx = ruler.centerX - measured.size.width / 2f
+    val cy = ruler.centerY - half - measured.size.height - 4f / scale
+    drawRect(
+        Color(0xCC_1B1F24),
+        topLeft = Offset(cx - 4f / scale, cy - 2f / scale),
+        size = Size(
+            measured.size.width + 8f / scale,
+            measured.size.height + 4f / scale
+        )
+    )
+    drawText(measured, topLeft = Offset(cx, cy))
 }
 
 /**
@@ -445,6 +519,10 @@ internal const val HANDLE_DRAW = 4.5f
 
 /** How far a click may miss a stroke and still select it, in screen pixels. */
 internal const val TAP_SLOP = 9f
+
+/** Half the width of the ruler's band, and the size of its end handles, in screen pixels. */
+private const val RULER_BAND = 17f
+private const val RULER_HANDLE = 6f
 
 /**
  * The selection frame and its handles.
