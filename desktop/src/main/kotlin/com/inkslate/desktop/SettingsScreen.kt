@@ -19,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -178,13 +179,39 @@ private fun UpdateSection() {
         modifier = Modifier.padding(start = 16.dp, top = 10.dp)
     )
 
+    var testBuilds by remember { mutableStateOf(DesktopUpdates.testChannelEnabled()) }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Test builds", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Offers the build from the newest change as well as the published releases. It " +
+                    "has had less use than a release.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = testBuilds,
+            onCheckedChange = {
+                testBuilds = it
+                DesktopUpdates.setTestChannel(it)
+                // The last answer was for the other channel, so it is no longer an answer.
+                phase = Phase.Idle
+            }
+        )
+    }
+
     when (val current = phase) {
         is Phase.Idle -> TextButton(
             onClick = {
                 phase = Phase.Checking
                 scope.launch {
                     val result = withContext(Dispatchers.IO) {
-                        UpdateCheck.check(installed, UpdateCheck.Platform.WINDOWS)
+                        UpdateCheck.check(installed, UpdateCheck.Platform.WINDOWS, DesktopUpdates.channel())
                     }
                     phase = when (result) {
                         is UpdateCheck.Result.UpToDate -> Phase.UpToDate(result.installed.toString())

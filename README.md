@@ -250,6 +250,26 @@ published version is, downloads the APK, and hands it to Android's installer.
 The version comparison and the download live in `core/UpdateCheck.kt`, deliberately, so the
 Windows build can use exactly the same code and only change which file it picks out of a release.
 
+### Test builds
+
+Cutting a full release for a two-line fix is more ceremony than the fix is worth, and shipping
+every commit to everyone is worse. So every push to `main` publishes a **test build**: the same
+signed APK and MSI, attached to a GitHub *pre-release* on a single moving `test` tag.
+
+The separation is the endpoint, not a filter. The app asks `releases/latest` by default, and that
+endpoint ignores pre-releases outright - so a device on the stable channel cannot be offered a
+test build even by accident. **Settings → Updates → Test builds** switches to the endpoint that
+can see them.
+
+Test builds are versioned as the *next* patch with a run-numbered suffix - `1.1.1-test.7` after
+release `1.1.0`. That puts them above the release they follow and below the release that will
+supersede them, which is where a test build belongs: turning the switch back off and installing
+the newest stable release leaves you on a higher version, so the app stops offering the test one.
+
+They are signed with the release key, deliberately. Android refuses to update an app when the
+signature changes, so a test build signed with anything else could not be installed over a
+release, or replaced by the next one.
+
 ### Cutting a release
 
 Version numbers come from the git tag and nowhere else — the build reads `INKSLATE_VERSION_NAME`

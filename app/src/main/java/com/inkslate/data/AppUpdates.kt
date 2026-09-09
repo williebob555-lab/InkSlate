@@ -34,7 +34,30 @@ object AppUpdates {
 
     /** Blocking. Callers move it off the main thread. */
     fun check(context: Context): UpdateCheck.Result =
-        UpdateCheck.check(installedVersion(context), UpdateCheck.Platform.ANDROID)
+        UpdateCheck.check(installedVersion(context), UpdateCheck.Platform.ANDROID, channel(context))
+
+    /**
+     * Which builds this device is willing to be offered.
+     *
+     * Off by default, and stored here rather than with the save rules because it is about the
+     * app rather than about any document. Switching it on is the only way a pre-release can be
+     * seen at all: the endpoint the stable channel asks does not return them.
+     */
+    fun channel(context: Context): UpdateCheck.Channel =
+        if (prefs(context).getBoolean(K_TEST_CHANNEL, false)) UpdateCheck.Channel.TEST
+        else UpdateCheck.Channel.STABLE
+
+    fun setTestChannel(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(K_TEST_CHANNEL, on).apply()
+    }
+
+    fun testChannelEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(K_TEST_CHANNEL, false)
+
+    private fun prefs(context: Context) =
+        context.getSharedPreferences("updates", Context.MODE_PRIVATE)
+
+    private const val K_TEST_CHANNEL = "test_channel"
 
     /**
      * Downloads [asset] into the cache and returns the file. Blocking, and reports progress as a

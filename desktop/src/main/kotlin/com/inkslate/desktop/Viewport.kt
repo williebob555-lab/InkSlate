@@ -39,6 +39,9 @@ class Viewport {
 
     var viewSize by mutableStateOf(Size.Zero)
 
+    /** The middle of the window, which is what a keyboard zoom is about. */
+    fun centreOfView(): Offset = Offset(viewSize.width / 2f, viewSize.height / 2f)
+
     fun screenToDoc(p: Offset) = Offset(p.x / scale + offset.x, p.y / scale + offset.y)
 
     fun docToScreen(x: Float, y: Float) =

@@ -11,9 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -23,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +33,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
+import com.inkslate.core.PageLayout
 import com.inkslate.core.Palette
 import com.inkslate.core.Stroke
 import com.inkslate.core.Tool
@@ -107,7 +105,6 @@ fun EditorScreen(
     val redo = remember(file) { mutableStateListOf<Op>() }
 
     var selection by remember(file) { mutableStateOf<Set<String>>(emptySet()) }
-    var zoom by remember { mutableStateOf(1.15f) }
     var dirty by remember(file) { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var status by remember(file) { mutableStateOf("Opening ${file.name}...") }
@@ -119,8 +116,10 @@ fun EditorScreen(
     var pickingColour by remember { mutableStateOf(false) }
     var shapesOpen by remember { mutableStateOf(false) }
 
-    val listState = rememberLazyListState()
-    val page by remember { derivedStateOf { listState.firstVisibleItemIndex } }
+    val viewport = remember(file) { Viewport() }
+    var page by remember(file) { mutableStateOf(0) }
+    var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
+    var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
 
     val ids = remember(file) { mutableStateOf(0) }
     val deviceTag = remember { DocumentIO.deviceTag() }
@@ -324,9 +323,9 @@ fun EditorScreen(
         selection = strokes.filter { it.pageIndex == page }.map { it.id }.toSet()
         tools.edit { it.tool = Tool.SELECT }
     }
-    shortcuts.zoomIn = { zoom = (zoom * 1.15f).coerceAtMost(6f) }
-    shortcuts.zoomOut = { zoom = (zoom / 1.15f).coerceAtLeast(0.2f) }
-    shortcuts.resetZoom = { zoom = 1.15f }
+    shortcuts.zoomIn = { viewport.zoomBy(1.2f, viewport.centreOfView()) }
+    shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
+    shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
     navigation.back = { if (selection.isNotEmpty()) selection = emptySet() else leave() }
 
     // ---- layout --------------------------------------------------------------
@@ -383,17 +382,41 @@ fun EditorScreen(
                                 onClick = { menuOpen = false; exportFlattened() }
                             )
                             DropdownMenuItem(
-                                text = { Text("Zoom in") },
-                                onClick = { menuOpen = false; shortcuts.zoomIn?.invoke() }
+                                text = { Text("Fit page") },
+                                onClick = {
+                                    menuOpen = false
+                                    viewport.fit(viewport.content)
+                                }
                             )
                             DropdownMenuItem(
-                                text = { Text("Zoom out") },
-                                onClick = { menuOpen = false; shortcuts.zoomOut?.invoke() }
+                                text = { Text("Fit width") },
+                                onClick = { menuOpen = false; viewport.fitWidth(viewport.content) }
                             )
-                            DropdownMenuItem(
-                                text = { Text("Reset zoom") },
-                                onClick = { menuOpen = false; shortcuts.resetZoom?.invoke() }
-                            )
+                            HorizontalDivider()
+                            PageLayout.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (layout == option) "✓  " + option.label
+                                            else "      " + option.label
+                                        )
+                                    },
+                                    onClick = { menuOpen = false; layout = option }
+                                )
+                            }
+                            HorizontalDivider()
+                            PageFilter.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (pageFilter == option) "✓  " + option.label
+                                            else "      " + option.label
+                                        )
+                                    },
+                                    onClick = { menuOpen = false; pageFilter = option }
+                                )
+                            }
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Clear this page") },
                                 onClick = {
@@ -467,44 +490,35 @@ fun EditorScreen(
                     )
                 }
             } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(MaterialTheme.colorScheme.background),
-                    contentPadding = PaddingValues(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    items((0 until src.pageCount).toList()) { index ->
-                        PageCanvas(
-                            source = src,
-                            index = index,
-                            strokes = strokes,
-                            selection = selection,
-                            onSelection = { selection = it },
-                            zoom = zoom,
-                            tools = tools,
-                            textMeasurer = textMeasurer,
-                            newId = ::nextId,
-                            onCommitted = ::pushOp,
-                            onEditText = { editingText = it },
-                            onPlaceText = { x, y, p ->
-                                newTextAt = Stroke(
-                                    id = nextId(),
-                                    kind = Stroke.Kind.TEXT,
-                                    color = tools.active.color,
-                                    baseWidth = 1f,
-                                    points = listOf(InkPoint(x, y, 1f)),
-                                    text = "",
-                                    textSize = tools.active.textSize,
-                                    pageIndex = p,
-                                    updatedUtc = System.currentTimeMillis()
-                                )
-                            }
+                DocumentCanvas(
+                    source = src,
+                    viewport = viewport,
+                    layout = layout,
+                    currentPage = page,
+                    onPageChanged = { page = it },
+                    strokes = strokes,
+                    selection = selection,
+                    onSelection = { selection = it },
+                    tools = tools,
+                    textMeasurer = textMeasurer,
+                    pageFilter = pageFilter,
+                    newId = ::nextId,
+                    onCommitted = ::pushOp,
+                    onEditText = { editingText = it },
+                    onPlaceText = { x, y, p ->
+                        newTextAt = Stroke(
+                            id = nextId(),
+                            kind = Stroke.Kind.TEXT,
+                            color = tools.active.color,
+                            baseWidth = 1f,
+                            points = listOf(InkPoint(x, y, 1f)),
+                            text = "",
+                            textSize = tools.active.textSize,
+                            pageIndex = p,
+                            updatedUtc = System.currentTimeMillis()
                         )
                     }
-                }
+                )
             }
         }
     }

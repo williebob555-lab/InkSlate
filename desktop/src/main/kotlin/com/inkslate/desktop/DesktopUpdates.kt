@@ -1,5 +1,6 @@
 package com.inkslate.desktop
 
+import com.inkslate.core.UpdateCheck
 import java.awt.Desktop
 import java.io.File
 
@@ -24,6 +25,22 @@ object DesktopUpdates {
     fun installedVersion(): String = System.getProperty("inkslate.version")?.takeIf {
         it.isNotBlank()
     } ?: "0.0.0"
+
+    /**
+     * Which builds this machine is willing to be offered.
+     *
+     * Off by default. Switching it on is the only way a pre-release can be seen at all: the
+     * endpoint the stable channel asks does not return them, so this is a genuine opt-in rather
+     * than a filter applied afterwards.
+     */
+    fun channel(): UpdateCheck.Channel =
+        if (testChannelEnabled()) UpdateCheck.Channel.TEST else UpdateCheck.Channel.STABLE
+
+    fun testChannelEnabled(): Boolean = DesktopPrefs.get(K_TEST_CHANNEL) == "true"
+
+    fun setTestChannel(on: Boolean) = DesktopPrefs.put(K_TEST_CHANNEL, on.toString())
+
+    private const val K_TEST_CHANNEL = "update_test_channel"
 
     /** Downloads land beside the working copies rather than in the user's Downloads folder. */
     fun downloadDir(): File {

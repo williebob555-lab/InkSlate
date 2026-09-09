@@ -13,6 +13,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -80,6 +81,35 @@ fun UpdateSection() {
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(start = 16.dp, top = 10.dp)
     )
+
+    // Off by default, and the only way a pre-release can be seen at all: the endpoint the stable
+    // channel asks does not return them, so this is a genuine opt-in rather than a filter.
+    var testBuilds by remember { mutableStateOf(AppUpdates.testChannelEnabled(context)) }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Test builds", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Offers the build from the newest change as well as the published releases. " +
+                    "Signed with the same key, so it installs over one - and has had less use " +
+                    "than one.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = testBuilds,
+            onCheckedChange = {
+                testBuilds = it
+                AppUpdates.setTestChannel(context, it)
+                // The last answer was for the other channel, so it is no longer an answer.
+                phase = Phase.Idle
+            }
+        )
+    }
 
     when (val current = phase) {
         is Phase.Idle -> TextButton(

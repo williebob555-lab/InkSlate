@@ -98,4 +98,49 @@ class UpdateCheckTest {
         val release = UpdateCheck.parseRelease(payload)
         assertTrue(release != null)
     }
+
+    // ---- the test channel ----------------------------------------------------
+
+    /**
+     * Test builds are numbered by CI run, so they cross 9 to 10 quickly.
+     *
+     * A plain string comparison puts `test.9` after `test.10`, which would offer the tenth build
+     * once and then go quiet as the numbers grew past it - a channel that silently stops working
+     * is worse than one that never did.
+     */
+    @Test
+    fun `test builds are ordered by number, not alphabetically`() {
+        val ninth = Version.parse("1.1.1-test.9")!!
+        val tenth = Version.parse("1.1.1-test.10")!!
+        assertTrue(ninth < tenth)
+    }
+
+    /** A finished release always beats any test build of the same version. */
+    @Test
+    fun `a finished release outranks its own test builds`() {
+        assertTrue(Version.parse("1.1.1-test.40")!! < Version.parse("1.1.1")!!)
+    }
+
+    /**
+     * The point of numbering a test build as the *next* patch.
+     *
+     * Numbering it as the current one would make it sort below the release it comes after, and
+     * anyone on the test channel would be told they were already up to date.
+     */
+    @Test
+    fun `a test build sorts above the release it follows`() {
+        assertTrue(Version.parse("1.1.0")!! < Version.parse("1.1.1-test.1")!!)
+    }
+
+    @Test
+    fun `the newest release is chosen by version rather than by publication order`() {
+        val older = UpdateCheck.Release(
+            Version.parse("1.2.0")!!, "1.2.0", "", "", emptyList()
+        )
+        val patch = UpdateCheck.Release(
+            Version.parse("1.0.4")!!, "1.0.4", "", "", emptyList()
+        )
+        // GitHub lists by date, so a late patch to an old line comes first.
+        assertEquals(older, UpdateCheck.newestOf(listOf(patch, older)))
+    }
 }

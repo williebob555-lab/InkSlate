@@ -1,0 +1,314 @@
+package com.inkslate.desktop
+
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
+import androidx.compose.ui.input.pointer.isShiftPressed
+import androidx.compose.ui.input.pointer.PointerType
+import com.inkslate.core.Box as InkBox
+import com.inkslate.core.DynamicWidth
+import com.inkslate.core.EraserMode
+import com.inkslate.core.InkPoint
+import com.inkslate.core.Stroke
+import com.inkslate.core.Tool
+import kotlin.math.abs
+
+/**
+ * Follow the pointer until it lifts, reporting where it ended.
+ *
+ * An extension on the gesture scope rather than a local function: [awaitEachGesture] runs in a
+ * restricted suspension scope, which by design refuses to suspend anywhere except on its own
+ * receiver, so a helper that awaits pointer events has to be one of its extensions.
+ */
+suspend fun AwaitPointerEventScope.dragUntilRelease(
+    start: Offset,
+    onMove: (PointerInputChange, PointerKeyboardModifiers) -> Unit
+): Offset {
+    var last = start
+    while (true) {
+        val event = awaitPointerEvent()
+        val change = event.changes.firstOrNull() ?: break
+        if (event.type == PointerEventType.Move) {
+            last = change.position
+            // The modifiers come off the event, so pressing shift part-way through a drag starts
+            // snapping immediately - which is how it gets used: draw the line, then straighten it.
+            onMove(change, event.keyboardModifiers)
+        }
+        if (!change.pressed) break
+    }
+    return last
+}
+
+/**
+ * Everything a pointer can do to a page, dispatched by the tool in hand.
+ *
+ * Works in the page's own coordinates - the space strokes are stored in - by taking the viewport
+ * and the slot and converting once at each sample. That is what lets the same code serve every
+ * page arrangement: a page in a grid and a page in a column differ only by where their origin is.
+ */
+suspend fun AwaitPointerEventScope.handlePageGesture(
+    down: PointerInputChange,
+    slot: PageSlot,
+    viewport: Viewport,
+    strokes: MutableList<Stroke>,
+    selection: Set<String>,
+    onSelection: (Set<String>) -> Unit,
+    tools: ToolState,
+    newId: () -> String,
+    onCommitted: (Op) -> Unit,
+    onEditText: (Stroke) -> Unit,
+    onPlaceText: (Float, Float, Int) -> Unit,
+    onLive: (List<InkPoint>) -> Unit,
+    onPending: (Stroke?) -> Unit,
+    onMarquee: (InkBox?) -> Unit
+) {
+    // Read synchronously: the config is deliberately not Compose state so the tool in hand the
+    // instant the pointer lands is the one that acts.
+    val cfg = tools.active
+    val index = slot.index
+    val scale = viewport.scale
+
+    /** Screen pixels to this page's own coordinates. */
+    fun toPage(p: Offset): Offset {
+        val doc = viewport.screenToDoc(p)
+        return Offset(doc.x - slot.originX, doc.y - slot.originY)
+    }
+
+    val start = toPage(down.position)
+    val px = start.x
+    val py = start.y
+
+    when {
+        cfg.tool == Tool.PAN -> {
+            viewport.stop()
+            var last = down.position
+            var lastAt = System.nanoTime()
+            var vx = 0f
+            var vy = 0f
+            dragUntilRelease(down.position) { change, _ ->
+                val now = System.nanoTime()
+                val dt = ((now - lastAt) / 1_000_000_000f).coerceAtLeast(0.001f)
+                val d = change.position - last
+                viewport.panBy(d.x, d.y)
+                vx = d.x / dt
+                vy = d.y / dt
+                last = change.position
+                lastAt = now
+            }
+            viewport.throwBy(vx, vy)
+        }
+
+        cfg.tool == Tool.ERASER -> {
+            // One rub can touch the same stroke repeatedly, and a partial erase replaces it with
+            // pieces the next moment can erase again. So the undo record is built from the two
+            // ends only: the strokes as they were when the gesture began, and whatever is left
+            // when it finishes. Recording each intermediate step instead put pieces into the
+            // "before" list that had never been on the page, and undoing brought them into
+            // existence.
+            val originals = LinkedHashMap<String, Stroke>()
+            val minted = LinkedHashSet<String>()
+
+            fun eraseAt(p: Offset) {
+                val r = cfg.eraserRadius
+                val hits = strokes.filter { it.pageIndex == index && it.hitTest(p.x, p.y, r) }
+                for (hit in hits) {
+                    val replacement =
+                        if (cfg.eraserMode == EraserMode.STROKE) emptyList()
+                        else hit.erasedAt(p.x, p.y, r, newId)
+                    if (replacement.size == 1 && replacement[0] === hit) continue
+                    if (hit.id !in minted) originals.putIfAbsent(hit.id, hit)
+                    replacement.forEach { minted.add(it.id) }
+                    strokes.applyEdit(listOf(hit), replacement)
+                }
+            }
+
+            eraseAt(start)
+            dragUntilRelease(down.position) { change, _ -> eraseAt(toPage(change.position)) }
+            if (originals.isNotEmpty()) {
+                onCommitted(Op(originals.values.toList(), strokes.filter { it.id in minted }))
+            }
+        }
+
+        cfg.tool == Tool.SELECT -> {
+            val chosen = strokes.filter { it.id in selection }
+            val box = chosen.unionBounds()
+            // The frame and the handle being dragged travel together, so having one is having both.
+            val grabbed = box?.let { b ->
+                handleAt(b, px, py, HANDLE_TOUCH / scale)?.let { b to it }
+            }
+            when {
+                grabbed != null -> {
+                    val (frame, handle) = grabbed
+                    var current = chosen
+                    dragUntilRelease(down.position) { change, _ ->
+                        val n = toPage(change.position)
+                        val ax = handle.anchorX(frame)
+                        val ay = handle.anchorY(frame)
+                        val sx = if (handle.scalesX && abs(frame.width) > 0.01f) {
+                            ((n.x - ax) / (handle.x(frame) - ax)).coerceIn(-20f, 20f)
+                        } else 1f
+                        val sy = if (handle.scalesY && abs(frame.height) > 0.01f) {
+                            ((n.y - ay) / (handle.y(frame) - ay)).coerceIn(-20f, 20f)
+                        } else 1f
+                        if (abs(sx) < 0.02f || abs(sy) < 0.02f) return@dragUntilRelease
+                        val now = System.currentTimeMillis()
+                        current = chosen.map { it.scaledAbout(ax, ay, sx, sy, now) }
+                        strokes.applyEdit(chosen, current)
+                    }
+                    if (current !== chosen) onCommitted(Op(chosen, current))
+                }
+
+                box != null && box.expanded(4f / scale).contains(px, py) -> {
+                    var current = chosen
+                    dragUntilRelease(down.position) { change, _ ->
+                        val n = toPage(change.position)
+                        val now = System.currentTimeMillis()
+                        current = chosen.map { it.movedBy(n.x - px, n.y - py, now) }
+                        strokes.applyEdit(chosen, current)
+                    }
+                    if (current !== chosen) onCommitted(Op(chosen, current))
+                }
+
+                else -> {
+                    // A tap picks the topmost thing under it; a drag boxes.
+                    var dragged = false
+                    val end = dragUntilRelease(down.position) { change, _ ->
+                        dragged = dragged || (change.position - down.position).getDistance() > 6f
+                        if (dragged) {
+                            val n = toPage(change.position)
+                            onMarquee(InkBox.of(px, py, n.x, n.y))
+                        }
+                    }
+                    if (dragged) {
+                        val n = toPage(end)
+                        val area = InkBox.of(px, py, n.x, n.y)
+                        onSelection(
+                            strokes.filter { it.pageIndex == index && it.insideBox(area) }
+                                .map { it.id }.toSet()
+                        )
+                    } else {
+                        val hit = strokes.lastOrNull {
+                            it.pageIndex == index && it.hitTest(px, py, TAP_SLOP / scale)
+                        }
+                        onSelection(hit?.let { setOf(it.id) } ?: emptySet())
+                    }
+                    onMarquee(null)
+                }
+            }
+        }
+
+        cfg.tool == Tool.TEXT -> {
+            // Land on an existing text box and you are editing it, not stacking a second one
+            // on top.
+            val existing = strokes.lastOrNull {
+                it.pageIndex == index && it.kind == Stroke.Kind.TEXT &&
+                    it.hitTest(px, py, TAP_SLOP / scale)
+            }
+            dragUntilRelease(down.position) { _, _ -> }
+            if (existing != null) onEditText(existing) else onPlaceText(px, py, index)
+        }
+
+        cfg.tool.isShape || cfg.tool == Tool.TABLE -> {
+            val kind = when (cfg.tool) {
+                Tool.LINE -> Stroke.Kind.LINE
+                Tool.ARROW -> Stroke.Kind.ARROW
+                Tool.RECT -> Stroke.Kind.RECT
+                Tool.ELLIPSE -> Stroke.Kind.ELLIPSE
+                else -> Stroke.Kind.TABLE
+            }
+            fun build(id: String, bx: Float, by: Float) = shapeStroke(
+                id = id, kind = kind, ax = px, ay = py, bx = bx, by = by,
+                color = cfg.color, width = cfg.strokeWidth, dash = cfg.dash,
+                fill = cfg.fillStyle, fillColor = cfg.fillColor, opacity = cfg.opacity,
+                page = index, rows = tools.tableRows, cols = tools.tableCols
+            )
+
+            var endX = px
+            var endY = py
+            dragUntilRelease(down.position) { change, modifiers ->
+                val n = toPage(change.position)
+                // Shift snaps: squares and circles, and lines to fifteen degrees.
+                val (sx, sy) =
+                    if (modifiers.isShiftPressed) Stroke.snapShape(kind, px, py, n.x, n.y)
+                    else n.x to n.y
+                endX = sx
+                endY = sy
+                onPending(build("live", sx, sy))
+            }
+            onPending(null)
+            // A click with no drag is not a shape; it is a misplaced click.
+            if (abs(endX - px) > 2f || abs(endY - py) > 2f) {
+                val s = build(newId(), endX, endY)
+                strokes.add(s)
+                onCommitted(Op.added(s))
+            }
+        }
+
+        else -> {
+            // Freehand.
+            val brush = cfg.brush
+            val nominal = DynamicWidth.resolve(
+                nominal = cfg.strokeWidth,
+                referenceScale = 1f,
+                currentScale = scale,
+                enabled = cfg.dynamicWidth
+            )
+            val collected = ArrayList<InkPoint>()
+            var lastAt = System.nanoTime()
+            var lastPos = down.position
+            var smooth = start
+            val alpha = 1f - cfg.smoothing.coerceIn(0f, 0.92f)
+
+            fun sample(screen: Offset, pressure: Float, type: PointerType) {
+                val now = System.nanoTime()
+                // Speed stands in for pressure when the device does not report it. A dead
+                // constant width reads as a machine drawing; this at least thins on fast strokes
+                // the way a pen does, and it is what the tablet does for finger input.
+                val dt = ((now - lastAt) / 1_000_000f).coerceAtLeast(0.5f)
+                val speed = (screen - lastPos).getDistance() / dt
+                val fromSpeed = (1f - (speed / 3.2f)).coerceIn(0.25f, 1f)
+                // A mouse always reports 1.0, which is not pressure data - it is the absence of
+                // it wearing the same value, so speed has to stand in there too.
+                val reported = if (type == PointerType.Mouse) 1f else pressure
+                val p = if (reported in 0.02f..0.98f) reported else fromSpeed
+                lastAt = now
+                lastPos = screen
+                val page = toPage(screen)
+                smooth = Offset(
+                    smooth.x + (page.x - smooth.x) * alpha,
+                    smooth.y + (page.y - smooth.y) * alpha
+                )
+                collected.add(
+                    InkPoint(smooth.x, smooth.y, brush.widthFor(nominal, p, cfg.dynamics))
+                )
+            }
+
+            sample(down.position, down.pressure, down.type)
+            onLive(ArrayList(collected))
+            dragUntilRelease(down.position) { change, _ ->
+                sample(change.position, change.pressure, change.type)
+                onLive(ArrayList(collected))
+            }
+            onLive(emptyList())
+
+            if (collected.size >= 2) {
+                val s = Stroke(
+                    id = newId(),
+                    kind = Stroke.Kind.FREEHAND,
+                    color = cfg.color,
+                    baseWidth = nominal,
+                    points = collected,
+                    brush = brush,
+                    dash = cfg.dash,
+                    opacity = cfg.opacity,
+                    pageIndex = index,
+                    updatedUtc = System.currentTimeMillis()
+                )
+                strokes.add(s)
+                onCommitted(Op.added(s))
+            }
+        }
+    }
+}

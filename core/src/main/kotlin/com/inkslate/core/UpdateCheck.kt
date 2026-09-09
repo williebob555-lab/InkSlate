@@ -35,6 +35,16 @@ object UpdateCheck {
     private const val LATEST_RELEASE_API =
         "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
 
+    /**
+     * Every release, newest first, including the ones marked as pre-releases.
+     *
+     * The endpoint above deliberately skips pre-releases, which is what keeps a test build from
+     * ever reaching someone who did not ask for one. This is the other half: asked for only when
+     * the test channel is switched on.
+     */
+    private const val ALL_RELEASES_API =
+        "https://api.github.com/repos/$OWNER/$REPO/releases?per_page=20"
+
     /** Long enough for a slow phone on school wifi, short enough not to hang the dialog. */
     private const val CONNECT_TIMEOUT_MS = 15_000
     private const val READ_TIMEOUT_MS = 20_000
@@ -47,6 +57,19 @@ object UpdateCheck {
      * Which downloadable file this build wants out of a release. A single release carries an
      * APK and, later, a Windows installer; each build picks its own and ignores the rest.
      */
+    /**
+     * Which builds a device is willing to be offered.
+     *
+     * Two channels rather than one because cutting a full release for a two-line fix is more
+     * ceremony than the fix is worth, and shipping every commit to everyone is worse. A test
+     * build is published as a GitHub pre-release, which the stable endpoint ignores outright -
+     * so a device on [STABLE] cannot be offered one even by accident.
+     */
+    enum class Channel(val label: String) {
+        STABLE("Stable releases"),
+        TEST("Test builds as well")
+    }
+
     enum class Platform(internal val extensions: List<String>) {
         ANDROID(listOf(".apk")),
         // The desktop module already builds both, so accept either and prefer the .msi.
@@ -92,18 +115,23 @@ object UpdateCheck {
      * Never throws. Anything that goes wrong - no network, GitHub down, a rate limit, a release
      * tagged something unparseable - comes back as [Result.Failed] with a sentence to show.
      */
-    fun check(installedVersion: String, platform: Platform): Result {
+    @JvmOverloads
+    fun check(
+        installedVersion: String,
+        platform: Platform,
+        channel: Channel = Channel.STABLE
+    ): Result {
         val installed = Version.parse(installedVersion)
             ?: return Result.Failed("This build has no version number to compare against.")
 
         val body = try {
-            fetchLatestReleaseJson()
+            fetchJson(if (channel == Channel.TEST) ALL_RELEASES_API else LATEST_RELEASE_API)
         } catch (e: Exception) {
             return Result.Failed(describe(e))
         }
 
         val release = try {
-            parseRelease(body)
+            if (channel == Channel.TEST) newestOf(parseReleases(body)) else parseRelease(body)
         } catch (e: Exception) {
             return Result.Failed("GitHub sent back something unexpected.")
         } ?: return Result.Failed("The latest release has no version number in its tag.")
@@ -130,8 +158,30 @@ object UpdateCheck {
         )
     }
 
-    private fun fetchLatestReleaseJson(): String {
-        val connection = (URL(LATEST_RELEASE_API).openConnection() as HttpURLConnection).apply {
+    /** Visible for tests: every release in a list payload, dropping any without a version. */
+    internal fun parseReleases(body: String): List<Release> =
+        json.decodeFromString<List<ReleaseDto>>(body).mapNotNull { dto ->
+            Version.parse(dto.tagName)?.let { version ->
+                Release(
+                    version = version,
+                    title = dto.name?.takeIf { it.isNotBlank() } ?: dto.tagName,
+                    notes = dto.body.orEmpty().trim(),
+                    pageUrl = dto.htmlUrl ?: RELEASES_URL,
+                    assets = dto.assets.map { Asset(it.name, it.downloadUrl, it.size) }
+                )
+            }
+        }
+
+    /**
+     * The newest of several releases by version, not by the order GitHub listed them.
+     *
+     * GitHub sorts by publication date, and the two disagree the moment an older line gets a
+     * patch: a 1.0.4 published after 1.1.0 is newer in time and older in every way that matters.
+     */
+    internal fun newestOf(releases: List<Release>): Release? = releases.maxByOrNull { it.version }
+
+    private fun fetchJson(url: String): String {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
@@ -264,8 +314,39 @@ data class Version(val parts: List<Int>, val preRelease: String? = null) : Compa
             preRelease == other.preRelease -> 0
             preRelease == null -> 1   // a finished release beats any pre-release of it
             other.preRelease == null -> -1
-            else -> preRelease.compareTo(other.preRelease)
+            else -> comparePreRelease(preRelease, other.preRelease)
         }
+    }
+
+    /**
+     * Compare two pre-release labels the way semver does: dot-separated, and numerically wherever
+     * a part is a number.
+     *
+     * A plain string comparison gets this backwards exactly where the test channel needs it - it
+     * puts `test.9` after `test.10`, so the tenth test build of a version would be offered once
+     * and then never again as the numbers grew past it.
+     */
+    private fun comparePreRelease(a: String, b: String): Int {
+        val left = a.split('.')
+        val right = b.split('.')
+        for (i in 0 until maxOf(left.size, right.size)) {
+            val l = left.getOrNull(i)
+            val r = right.getOrNull(i)
+            // Fewer parts sorts first: 1.0.0-test precedes 1.0.0-test.1.
+            if (l == null) return -1
+            if (r == null) return 1
+            val ln = l.toIntOrNull()
+            val rn = r.toIntOrNull()
+            val diff = when {
+                ln != null && rn != null -> ln.compareTo(rn)
+                // Numeric identifiers always rank below alphanumeric ones.
+                ln != null -> -1
+                rn != null -> 1
+                else -> l.compareTo(r)
+            }
+            if (diff != 0) return diff
+        }
+        return 0
     }
 
     override fun toString(): String =
