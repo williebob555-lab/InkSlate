@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
 import com.inkslate.core.PageLayout
+import com.inkslate.core.SaveMode
 import com.inkslate.core.SearchHit
 import com.inkslate.core.Palette
 import com.inkslate.core.Stroke
@@ -105,6 +106,7 @@ fun EditorScreen(
     val snackbar = remember { SnackbarHostState() }
     val textMeasurer = rememberTextMeasurer()
     val tools = remember { ToolState() }
+    val prefs = remember { SavePrefs() }
 
     var source by remember(file) { mutableStateOf<DesktopSource?>(null) }
     var ink by remember(file) { mutableStateOf(InkDocument.create("", "pdf", 0, 0L, "")) }
@@ -134,6 +136,9 @@ fun EditorScreen(
     var searchHits by remember(file) { mutableStateOf<List<SearchHit>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var searchProgress by remember { mutableStateOf(0) }
+    var askMode by remember { mutableStateOf(false) }
+    var confirmOverwrite by remember { mutableStateOf(false) }
+    var fileRulesOpen by remember { mutableStateOf(false) }
 
     val viewport = remember(file) { Viewport() }
     var page by remember(file) { mutableStateOf(0) }
@@ -214,25 +219,62 @@ fun EditorScreen(
         return next
     }
 
-    fun save(then: (() -> Unit)? = null) {
+    /**
+     * Write the document out under the rules this file saves by.
+     *
+     * The working copy is written first and unconditionally: it is what stands between a failed
+     * write and a lost afternoon, and it has to be ahead of the document rather than behind it.
+     */
+    fun writeWith(mode: SaveMode, then: (() -> Unit)? = null) {
         busy = true
         saving = true
         scope.launch {
             val doc = currentInk()
             ink = doc
-            val ok = withContext(Dispatchers.IO) { DocumentIO.save(file, doc) }
             withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, doc) }
-            if (ok) {
-                dirty = false
-                status = "Saved into ${file.name}  ·  ${doc.totalStrokes} mark(s)"
-            } else {
-                // The working copy still has it, which is the whole reason that copy exists.
-                status = "Could not write into ${file.name}. Your work is kept locally."
-                snackbar.showSnackbar(status)
+            val settings = prefs.effectiveFor(file.absolutePath).copy(mode = mode)
+            val result = withContext(Dispatchers.IO) {
+                DocumentExport.save(file, doc, settings)
+            }
+            when (result) {
+                is SaveResult.Written -> {
+                    dirty = false
+                    status = if (result.wasCopy) {
+                        "Saved a copy: ${result.target.name}"
+                    } else {
+                        "Overwrote ${file.name}" + (result.backup?.let { " (backup kept)" } ?: "")
+                    }
+                    snackbar.showSnackbar(status)
+                }
+                is SaveResult.Failed -> {
+                    // The working copy still has it, which is the whole reason that copy exists.
+                    status = result.error.message ?: "Save failed"
+                    snackbar.showSnackbar(status)
+                }
+                SaveResult.NothingToDo -> {
+                    dirty = false
+                    status = "Nothing drawn yet, so nothing was written"
+                }
             }
             saving = false
             busy = false
-            if (ok) then?.invoke()
+            if (result is SaveResult.Written) then?.invoke()
+        }
+    }
+
+    /**
+     * Save, asking only what the rules say to ask.
+     *
+     * Overwriting is the one action here that can destroy something the app did not create, so
+     * confirming it is a rule of its own rather than something assumed either way.
+     */
+    fun save(then: (() -> Unit)? = null) {
+        val settings = prefs.effectiveFor(file.absolutePath)
+        when {
+            settings.mode == SaveMode.ASK -> askMode = true
+            settings.mode == SaveMode.OVERWRITE && settings.confirmOverwrite ->
+                confirmOverwrite = true
+            else -> writeWith(settings.mode, then)
         }
     }
 
@@ -253,8 +295,9 @@ fun EditorScreen(
     // save, so this is what stands between a crash and a lost afternoon.
     LaunchedEffect(file.absolutePath) {
         while (true) {
-            delay(20_000)
-            if (!dirty) continue
+            val settings = prefs.effectiveFor(file.absolutePath)
+            delay((settings.autosaveSeconds.coerceIn(5, 600)) * 1000L)
+            if (!dirty || !settings.autosave) continue
             val doc = currentInk()
             withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, doc) }
         }
@@ -454,6 +497,10 @@ fun EditorScreen(
                             DropdownMenuItem(
                                 text = { Text("Export flattened copy...") },
                                 onClick = { menuOpen = false; exportFlattened() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Rules for this file") },
+                                onClick = { menuOpen = false; fileRulesOpen = true }
                             )
                             DropdownMenuItem(
                                 text = { Text("Fit page") },
@@ -667,6 +714,67 @@ fun EditorScreen(
                 armedStampLabel = kind.label
                 stampsOpen = false
             }
+        )
+    }
+
+    if (askMode) {
+        AlertDialog(
+            onDismissRequest = { askMode = false },
+            title = { Text("Save ${file.name}") },
+            text = {
+                Text(
+                    "Overwriting writes back over the file you opened, keeping a backup first. " +
+                        "A copy leaves the original exactly as it is."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { askMode = false; writeWith(SaveMode.OVERWRITE) }) {
+                    Text("Overwrite")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { askMode = false }) { Text("Cancel") }
+                    TextButton(onClick = { askMode = false; writeWith(SaveMode.COPY) }) {
+                        Text("Save a copy")
+                    }
+                }
+            }
+        )
+    }
+
+    if (confirmOverwrite) {
+        val settings = prefs.effectiveFor(file.absolutePath)
+        AlertDialog(
+            onDismissRequest = { confirmOverwrite = false },
+            title = { Text("Overwrite ${file.name}?") },
+            text = {
+                Text(
+                    if (settings.backupOnOverwrite) {
+                        "The original is copied into ${DocumentExport.BACKUP_DIR} first, so this " +
+                            "can be undone from Version history."
+                    } else {
+                        "Backups are turned off for this file, so the original will not be kept."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmOverwrite = false; writeWith(SaveMode.OVERWRITE) }) {
+                    Text("Overwrite")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmOverwrite = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (fileRulesOpen) {
+        FileRulesDialog(
+            path = file.absolutePath,
+            name = file.name,
+            prefs = prefs,
+            onDismiss = { fileRulesOpen = false }
         )
     }
 

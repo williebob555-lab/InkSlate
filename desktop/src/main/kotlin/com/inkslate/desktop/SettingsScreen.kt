@@ -1,6 +1,7 @@
 package com.inkslate.desktop
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,14 +12,20 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -34,7 +41,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.inkslate.core.CopyNaming
+import com.inkslate.core.InkFormat
+import com.inkslate.core.SaveMode
+import com.inkslate.core.SaveSettings
 import com.inkslate.core.UpdateCheck
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -44,10 +56,9 @@ import java.io.File
 /**
  * Settings.
  *
- * The Android screen's headings, carrying the sections that mean something on Windows today.
- * Saving rules, the stylus profile and the render diagnostics belong with the parts of the editor
- * they configure, and follow when those arrive - a settings screen full of switches that control
- * nothing is worse than a short one.
+ * The Android screen, heading for heading: the save rules first, because they are what decides
+ * what happens to a document on disk; then autosave, the stylus, this device, any files pinned to
+ * their own rules, and updates.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,12 +78,245 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) {
+            SavingSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
+            StylusSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
             DeviceSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             StorageSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             UpdateSection()
         }
+    }
+}
+
+
+/**
+ * The save rules, and the files that ignore them.
+ *
+ * These are the defaults. Any file can override them from the editor's own menu, and its rules
+ * always win - which is why the overridden ones are listed here rather than being invisible.
+ */
+@Composable
+private fun SavingSection() {
+    val prefs = remember { SavePrefs() }
+    var settings by remember { mutableStateOf(prefs.global()) }
+    var overrides by remember { mutableStateOf(prefs.overriddenPaths()) }
+
+    fun update(block: (SaveSettings) -> SaveSettings) {
+        settings = block(settings).also { prefs.setGlobal(it) }
+    }
+
+    SectionHeader("Saving")
+    Text(
+        "These are the defaults. Any file can override them from the editor, and its own rules " +
+            "always win.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+
+    ChoiceRow("When I save", settings.mode.label, SaveMode.entries.map { it.label to it }) {
+        update { s -> s.copy(mode = it) }
+    }
+    ChoiceRow(
+        "Ink in exported PDFs",
+        settings.inkFormat.label,
+        InkFormat.entries.map { it.label to it },
+        subtitle = settings.inkFormat.detail
+    ) { update { s -> s.copy(inkFormat = it) } }
+
+    if (settings.mode != SaveMode.OVERWRITE) {
+        ChoiceRow(
+            "Name copies by",
+            settings.copyNaming.label,
+            CopyNaming.entries.map { it.label to it }
+        ) { update { s -> s.copy(copyNaming = it) } }
+
+        if (settings.copyNaming == CopyNaming.SUFFIX) {
+            Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+                OutlinedTextField(
+                    value = settings.copySuffix,
+                    onValueChange = { update { s -> s.copy(copySuffix = it) } },
+                    label = { Text("Suffix") },
+                    singleLine = true,
+                    supportingText = {
+                        Text("homework.pdf becomes homework${settings.copySuffix}.pdf")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+
+    if (settings.mode != SaveMode.COPY) {
+        SwitchRow(
+            "Ask before overwriting",
+            "Overwriting is the one action here that can destroy something this app did not " +
+                "create, so it asks unless you say not to.",
+            settings.confirmOverwrite
+        ) { update { s -> s.copy(confirmOverwrite = it) } }
+
+        SwitchRow(
+            "Keep a backup when overwriting",
+            "The original is copied into ${DocumentExport.BACKUP_DIR} beside it first, keeping " +
+                "the last 20. If the backup fails, the overwrite is refused.",
+            settings.backupOnOverwrite
+        ) { update { s -> s.copy(backupOnOverwrite = it) } }
+    }
+
+    SectionHeader("Autosave")
+    SwitchRow(
+        "Autosave annotations",
+        "Keeps a working copy as you draw, in this machine's own storage. Your document is only " +
+            "written when you save or leave it.",
+        settings.autosave
+    ) { update { s -> s.copy(autosave = it) } }
+
+    if (settings.autosave) {
+        Column(Modifier.padding(horizontal = 16.dp)) {
+            Text(
+                "Every ${settings.autosaveSeconds} seconds",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Slider(
+                value = settings.autosaveSeconds.toFloat(),
+                onValueChange = { update { s -> s.copy(autosaveSeconds = it.toInt()) } },
+                valueRange = 5f..120f,
+                steps = 22
+            )
+        }
+    }
+
+    if (overrides.isNotEmpty()) {
+        SectionHeader("Files with their own rules")
+        Text(
+            "${overrides.size} file${if (overrides.size == 1) "" else "s"} ignore the defaults " +
+                "above.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+        overrides.forEach { path ->
+            val o = prefs.overrideFor(path)
+            Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            File(path).name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            o?.describe(settings)?.joinToString(" · ")
+                                ?.ifEmpty { "Same as defaults" } ?: "",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(onClick = {
+                        prefs.clearOverride(path)
+                        overrides = prefs.overriddenPaths()
+                    }) { Icon(Icons.Default.Close, "Reset to defaults") }
+                }
+            }
+        }
+        TextButton(
+            onClick = { prefs.clearAllOverrides(); overrides = prefs.overriddenPaths() },
+            modifier = Modifier.padding(horizontal = 12.dp)
+        ) { Text("Reset all to defaults") }
+    }
+}
+
+/**
+ * The stylus, and where its button is actually configured.
+ *
+ * Deliberately not a dropdown here. A barrel button is a whole pen profile - tool, colour, brush
+ * and width - which is the toolbar's job to edit, and a setting three screens away from the pen
+ * it belongs to is a setting nobody finds.
+ */
+@Composable
+private fun StylusSection() {
+    SectionHeader("Stylus")
+    Text(
+        "If your pen has a barrel button, click the Pen/Finger switch in the toolbar while " +
+            "holding it. That reveals a profile for the button - a second pen, with its own " +
+            "tool, colour and width - and holding the button while drawing uses it.\n\n" +
+            "The switch itself only ever moves between the pen and the finger, so a button " +
+            "profile cannot turn up by accident.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+    Text(
+        "Pressure comes from the pen where the hardware reports it, and from speed where it does " +
+            "not - which is also what a mouse gets, since a mouse reporting a constant full " +
+            "pressure is the absence of the data rather than the data.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+}
+
+// ---- shared rows -------------------------------------------------------------
+
+@Composable
+private fun <T> ChoiceRow(
+    title: String,
+    current: String,
+    options: List<Pair<String, T>>,
+    subtitle: String? = null,
+    onPick: (T) -> Unit
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                subtitle?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            TextButton(onClick = { open = true }) { Text(current) }
+        }
+        DropdownMenu(open, onDismissRequest = { open = false }) {
+            options.forEach { (label, value) ->
+                DropdownMenuItem(text = { Text(label) }, onClick = { onPick(value); open = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
