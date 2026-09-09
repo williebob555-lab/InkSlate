@@ -55,7 +55,14 @@ object BlankDocumentFactory {
         val paperColor: Int = WHITE,
         val lineColor: Int = DEFAULT_RULING,
         /** Spacing of the ruling in points; ignored by PLAIN. */
-        val spacing: Float = 24f
+        val spacing: Float = 24f,
+        /**
+         * Make this a canvas that grows to fit what is drawn on it, rather than a fixed page.
+         *
+         * Only meaningful for a single page - a document that grows in every direction has
+         * nowhere to put a second one.
+         */
+        val autoGrow: Boolean = false
     )
 
     /**

@@ -69,6 +69,8 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onMarquee: (InkBox?) -> Unit,
     onPendingStamp: (List<Stroke>) -> Unit,
     onStampPlaced: () -> Unit,
+    /** Told the bounds of whatever was just drawn, so a canvas can grow to fit it. */
+    onDrew: (InkBox) -> Unit = {},
     /** Which stylus barrel button was down when the pointer landed, or 0 for none. */
     heldButton: Int = 0
 ) {
@@ -325,6 +327,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 val s = build(newId(), endX, endY)
                 strokes.add(s)
                 onCommitted(Op.added(s))
+                onDrew(s.boundsBox())
             }
         }
 
@@ -413,6 +416,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 }
                 strokes.add(s)
                 onCommitted(Op.added(s))
+                onDrew(s.boundsBox())
             }
         }
     }

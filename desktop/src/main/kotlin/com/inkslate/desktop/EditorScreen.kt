@@ -253,9 +253,20 @@ fun EditorScreen(
         busy = true
         saving = true
         scope.launch {
-            val doc = currentInk()
+            var doc = currentInk()
             ink = doc
             withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, doc) }
+            // The page has to be the right size before the handwriting goes onto it, or ink
+            // drawn past the old edge is ink outside the page.
+            doc.canvas?.takeIf { it.paperIsBehind }?.let { canvas ->
+                val matched = withContext(Dispatchers.IO) {
+                    DocumentPages.growCanvas(file, canvas)
+                }
+                matched.getOrNull()?.let {
+                    doc = doc.copy(canvas = it)
+                    ink = doc
+                }
+            }
             val settings = prefs.effectiveFor(file.absolutePath).copy(mode = mode)
             val result = withContext(Dispatchers.IO) {
                 DocumentExport.save(file, doc, settings)
@@ -559,6 +570,32 @@ fun EditorScreen(
                                 text = { Text("Export...") },
                                 onClick = { menuOpen = false; exportOpen = true }
                             )
+                            if ((source?.pageCount ?: 0) == 1 && DesktopSources.isPdf(file)) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (ink.canvas != null) "Back to a fixed page"
+                                            else "Make this a canvas that grows"
+                                        )
+                                    },
+                                    onClick = {
+                                        menuOpen = false
+                                        val src = source
+                                        ink = if (ink.canvas != null) {
+                                            ink.copy(canvas = null)
+                                        } else {
+                                            val dim = src?.pageDim(0)
+                                            ink.copy(
+                                                canvas = com.inkslate.core.InkCanvas.startingAt(
+                                                    dim?.width ?: 612f,
+                                                    dim?.height ?: 792f
+                                                )
+                                            )
+                                        }
+                                        dirty = true
+                                    }
+                                )
+                            }
                             DropdownMenuItem(
                                 text = { Text("Version history...") },
                                 onClick = { menuOpen = false; versionsOpen = true }
@@ -726,7 +763,20 @@ fun EditorScreen(
                     newId = ::nextId,
                     onCommitted = ::pushOp,
                     onEditText = { editingText = it },
+                    canvas = ink.canvas,
                     onStampPlaced = { armedStampLabel = null },
+                    onDrew = { drawn ->
+                        // Growth is free while drawing: the extra room is a rectangle in memory
+                        // and the paper outside the page is painted rather than written. It
+                        // becomes real once, when the document is saved.
+                        ink.canvas?.let { current ->
+                            val grown = current.grownTo(drawn)
+                            if (grown !== current) {
+                                ink = ink.copy(canvas = grown)
+                                dirty = true
+                            }
+                        }
+                    },
                     onPlaceText = { x, y, p ->
                         newTextAt = Stroke(
                             id = nextId(),

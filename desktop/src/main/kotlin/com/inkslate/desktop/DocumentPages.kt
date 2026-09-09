@@ -75,6 +75,32 @@ object DocumentPages {
     }
 
     /**
+     * Write a grown canvas's page out at the size it has grown to.
+     *
+     * Only for canvas documents, and only when they have actually outgrown their page - growth is
+     * free while drawing precisely because it is deferred to here. Returns the canvas with its
+     * paper recorded as caught up.
+     */
+    fun growCanvas(source: File, canvas: com.inkslate.core.InkCanvas): Result<
+        com.inkslate.core.InkCanvas
+        > = runCatching {
+        require(DesktopSources.isPdf(source)) { "Only a PDF can be grown" }
+        if (!canvas.paperIsBehind) return@runCatching canvas.withPaperMatched()
+
+        var grown = canvas
+        Loader.loadPDF(source).use { pdf ->
+            grown = CanvasPaper.grow(pdf, canvas)
+            val tmp = File(source.parentFile, "." + source.name + ".grow")
+            FileOutputStream(tmp).use { out -> pdf.save(out) }
+            if (!tmp.renameTo(source)) {
+                tmp.copyTo(source, overwrite = true)
+                tmp.delete()
+            }
+        }
+        grown
+    }
+
+    /**
      * Rebuild [pdf]'s page tree to match [plan].
      *
      * Inherited attributes are written onto each page first. A PDF is free to put the page size,

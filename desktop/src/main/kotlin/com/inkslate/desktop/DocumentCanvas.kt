@@ -119,6 +119,9 @@ fun DocumentCanvas(
     onEditText: (Stroke) -> Unit,
     onPlaceText: (Float, Float, Int) -> Unit,
     onStampPlaced: () -> Unit = {},
+    onDrew: (InkBox) -> Unit = {},
+    /** Set when this document is a canvas that grows to fit what is written on it. */
+    canvas: com.inkslate.core.InkCanvas? = null,
     modifier: Modifier = Modifier
 ) {
     val extents = remember(source, source.pageCount) {
@@ -127,15 +130,29 @@ fun DocumentCanvas(
             PageExtent(d.width, d.height)
         }
     }
-    val slots = remember(extents, layout, currentPage) {
-        val origins = PageArranger.arrange(extents, layout, currentPage)
-        extents.mapIndexed { i, e ->
+    // A canvas is one page placed at its own origin - which may be negative - and sized to the
+    // room it has grown into rather than to the paper. Everything below then works unchanged,
+    // because a grown canvas is still just a slot in document space.
+    val slots = remember(extents, layout, currentPage, canvas) {
+        val effective = if (canvas != null) {
+            listOf(PageExtent(canvas.width, canvas.height))
+        } else {
+            extents
+        }
+        val origins = PageArranger.arrange(effective, layout, currentPage, canvas?.box)
+        effective.mapIndexed { i, e ->
             val (x, y) = origins[i]
             PageSlot(i, e.width, e.height, x, y)
         }
     }
-    val bounds = remember(slots, layout, currentPage) {
-        PageArranger.bounds(extents, slots.map { it.originX to it.originY }, layout, currentPage)
+    val bounds = remember(slots, layout, currentPage, canvas) {
+        PageArranger.bounds(
+            slots.map { PageExtent(it.width, it.height) },
+            slots.map { it.originX to it.originY },
+            layout,
+            currentPage,
+            canvas?.box
+        )
     }
     viewport.content = bounds
 
@@ -274,6 +291,7 @@ fun DocumentCanvas(
                         onMarquee = { marquee = it },
                         onPendingStamp = { pendingStamp = it },
                         onStampPlaced = onStampPlaced,
+                        onDrew = onDrew,
                         heldButton = heldButton
                     )
                 }
@@ -287,6 +305,7 @@ fun DocumentCanvas(
                         if (!visible(slot, vp)) continue
                         translate(slot.originX, slot.originY) {
                             drawPage(
+                                canvas = canvas,
                                 slot = slot,
                                 raster = rasters[slot.index]?.second,
                                 strokes = strokes,
@@ -331,6 +350,7 @@ private fun visible(slot: PageSlot, vp: Viewport): Boolean {
  * coordinates - which is exactly the space strokes are stored in.
  */
 private fun DrawScope.drawPage(
+    canvas: com.inkslate.core.InkCanvas?,
     slot: PageSlot,
     raster: ImageBitmap?,
     strokes: List<Stroke>,
@@ -345,17 +365,48 @@ private fun DrawScope.drawPage(
     scale: Float,
     ruler: com.inkslate.core.Ruler?
 ) {
-    drawRect(Color.White, topLeft = Offset.Zero, size = Size(slot.width, slot.height))
-    raster?.let {
-        drawImage(
-            it,
-            dstOffset = IntOffset.Zero,
-            dstSize = IntSize(slot.width.roundToInt(), slot.height.roundToInt()),
-            colorFilter = pageFilter.colorFilter
-        )
+    if (canvas != null) {
+        // The canvas is drawn in its own coordinates, which start where it starts - and that may
+        // be negative. Everything on it, including the page's raster, is placed against that.
+        translate(-canvas.left, -canvas.top) {
+            with(CanvasPaper) { drawCanvasPaper(canvas, scale) }
+            raster?.let {
+                drawImage(
+                    it,
+                    dstOffset = IntOffset(
+                        canvas.paperLeft.roundToInt(), canvas.paperTop.roundToInt()
+                    ),
+                    dstSize = IntSize(
+                        canvas.paperWidth.roundToInt(), canvas.paperHeight.roundToInt()
+                    ),
+                    colorFilter = pageFilter.colorFilter
+                )
+            }
+        }
+    } else {
+        drawRect(Color.White, topLeft = Offset.Zero, size = Size(slot.width, slot.height))
+        raster?.let {
+            drawImage(
+                it,
+                dstOffset = IntOffset.Zero,
+                dstSize = IntSize(slot.width.roundToInt(), slot.height.roundToInt()),
+                colorFilter = pageFilter.colorFilter
+            )
+        }
     }
 
-    clipRect(0f, 0f, slot.width, slot.height) {
+    // Ink is stored in page coordinates, which for a canvas are the canvas's own - so the whole
+    // layer shifts by the canvas origin and nothing else changes.
+    translate(
+        if (canvas != null) -canvas.left else 0f,
+        if (canvas != null) -canvas.top else 0f
+    ) {
+    clipRect(
+        if (canvas != null) canvas.left else 0f,
+        if (canvas != null) canvas.top else 0f,
+        if (canvas != null) canvas.right else slot.width,
+        if (canvas != null) canvas.bottom else slot.height
+    ) {
         // Highlighter first, so it sits under the ink it is marking rather than washing over it -
         // the same order the exporter writes.
         val page = strokes.filter { it.pageIndex == slot.index }
@@ -397,6 +448,7 @@ private fun DrawScope.drawPage(
         }
 
         page.filter { it.id in selection }.unionBounds()?.let { drawSelection(it, scale) }
+    }
     }
 
     // Outside the clip: a straightedge lies on top of the page and may hang over its edge, the

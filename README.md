@@ -181,8 +181,7 @@ subtly different renderers is how "it looked different when I exported it" bugs 
 
 ## Not built yet
 
-- **Windows: reading, stamps and the saving rules.** The drawing tools are across; the page
-  layouts, search, bookmarks, reading modes, stamps and per-file save rules are not - see
+- **Windows: pictures, margin cropping and diagnostics.** Everything else is across - see
   [The Windows build](#the-windows-build).
 - **Word documents.** Android has no usable `.docx` renderer, so this needs either a conversion
   step or server-side rendering.
@@ -204,12 +203,15 @@ the tablet opens on the laptop with its handwriting already on it and nothing el
 `./gradlew :desktop:packageMsi` builds an installer. Both need the same `JAVA_HOME` as the APK.
 
 What is there now: the home screen with its folders, recents and starred items; the file browser;
-new blank documents in every ruling the tablet offers; all eight brushes with their pressure
-curves; the eraser in both whole-stroke and partial modes; selection with move, resize, restyle,
-duplicate, cut, copy and paste across documents; lines, arrows, boxes, ovals and tables; text
-boxes with font, size, weight, alignment, wrapping, background and border; saved pen presets; the
-full colour picker; undo and redo; saving into the document; flattened export; and the update
-check.
+new blank documents in every ruling the tablet offers, fixed or as a canvas that grows; all eight
+brushes with their pressure curves; the eraser in both whole-stroke and partial modes; selection
+with move, resize, restyle, duplicate, cut, copy and paste across documents; lines, arrows, boxes,
+ovals and tables; all 33 stamps; the maths symbol palette; text boxes with font, size, weight,
+alignment, wrapping, background and border; the ruler with its protractor readout; shape
+recognition; saved pen presets and the pen, finger and barrel-button profiles; the full colour
+picker; page layouts, the table of contents, bookmarks, full-text search and the reading modes;
+page management; the save rules with per-file overrides, backups and version history; export of a
+page range; and the update check.
 
 Keyboard, because this is a desktop: Ctrl+S saves, Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) undo and
 redo, Ctrl+C/X/V and Delete work on the selection, Ctrl+A selects the page, Ctrl+= / Ctrl+- /
@@ -219,25 +221,28 @@ What is not, and where the two builds visibly differ:
 
 | | |
 |---|---|
-| Reading | One continuous vertical layout. The horizontal, grid, spread and single-page layouts, the table of contents, bookmarks, full-text search, the reading modes and margin cropping are Android-only so far. |
-| Infinite canvas | Not in the desktop editor, so "New" does not offer a canvas that grows. Offering paper that claims to grow and then does not is worse than not offering it. |
-| Stamps and pictures | Axes, number lines, unit circles, region capture and pasted images have not been brought across; the shapes that shared their picker on the tablet have. |
-| Saving rules | Always writes into the document, and exports a copy. The per-file save rules, version history, backups and the overwrite/copy modes are Android-only. |
+| Pictures | Region capture, pasted images, photographs and image cropping are Android-only so far. |
+| Margin cropping | Automatic trimming of a scanned page's margins has not been brought across. |
+| Diagnostics | The activity log, crash reports and the live render statistics are Android-only. |
 | Item actions | Reached by right-click rather than a long press, which is what a mouse expects. Same sheet, same actions. |
-| Input profiles | One, not four. The tablet keeps separate pen, finger and barrel-button pens because those are four things that touch the glass; a mouse is one. |
-| Pressure | A mouse has none and desktop pens report it inconsistently through the JVM, so width falls back to speed - the same fallback the tablet uses for finger input. |
-| Text in exports | Written with the standard-14 PDF fonts, so a character outside WinAnsi (a maths symbol pasted in, say) exports as a placeholder rather than aborting the export. |
+| Pressure | A mouse has none and desktop pens report it inconsistently through the JVM, so width falls back to speed - the same fallback the tablet uses for finger input. A mouse reporting a constant 1.0 is treated as the absence of pressure rather than as full pressure. |
+| Text in exports | Written with the standard-14 PDF fonts, so a character outside WinAnsi (a maths symbol pasted in, say) exports as a placeholder rather than aborting the whole export. |
 
 The palette in `desktop/Theme.kt` is a deliberate copy of the Android one rather than an
 approximation, and it is the one file that has to be kept in step by hand. A colour that is nearly
 right is worse than one that is obviously different: it reads as a rendering fault rather than a
 design.
 
-What must never be written twice is anything that decides what a document *is* or what a mark
-*looks like*. `InkDocument`, `StrokeOutline`, `PaperPattern`, `ToolConfig` and `Palette` all live
-in `:core` for that reason - two implementations of "graph paper" or "a tapered stroke" line up on
-the day they are written and drift apart afterwards, and a width ladder or a palette that differed
-between the two would mean a stroke drawn on one could not be reproduced on the other.
+What must never be written twice is anything that decides what a document *is*, what a mark
+*looks like*, or what happens to either. That is most of `:core` now: `InkDocument` and its merge,
+`StrokeOutline`, `PaperPattern`, `Stamps`, `ShapeRecogniser`, `Ruler`, `TextSearch`, `PagePlan`,
+`SaveRules`, `ReadingMode`, `PageArranger`, `ToolConfig`, `Palette` and `MathSymbols`.
+
+Two implementations of "graph paper" or "a tapered stroke" line up on the day they are written and
+drift apart afterwards. A width ladder that differed would mean a stroke drawn on one machine
+could not be reproduced on the other. A ruler that snapped differently would put visibly different
+ink in the same file from the same movement. And a page plan that differed would put the
+handwriting on the wrong pages, in a document that still opens and still looks right.
 
 ---
 

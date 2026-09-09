@@ -30,9 +30,10 @@ import com.inkslate.desktop.BlankDocumentFactory.PageSize
 /**
  * Builds a new blank document: notebook page, graph paper, or a large whiteboard.
  *
- * The Android dialog, minus the choice between a fixed page and a canvas that grows. The infinite
- * canvas is not in this build's editor yet, and offering paper that claims to grow and then does
- * not is worse than not offering it - the option comes back when the editor can honour it.
+ * The paper controls are shared with inserting a page into an open document: a page added to
+ * something you are already writing in is the same kind of decision as the page you started with,
+ * and when the two screens offered different options the inserted page was the one that came out
+ * wrong.
  */
 @Composable
 fun NewDocumentDialog(
@@ -42,6 +43,7 @@ fun NewDocumentDialog(
     var name by remember { mutableStateOf("Untitled") }
     var size by remember { mutableStateOf(PageSize.LETTER) }
     var pages by remember { mutableStateOf(1) }
+    var canvas by remember { mutableStateOf(false) }
     var paper by remember { mutableStateOf(PaperStyle()) }
 
     AlertDialog(
@@ -75,19 +77,33 @@ fun NewDocumentDialog(
 
                 BlankPaperOptions(style = paper, onChange = { paper = it })
 
-                OptionLabel("Size")
+                OptionLabel(if (canvas) "Starting size" else "Size")
                 OptionWrapRow {
                     PageSize.entries.forEach { p ->
                         OptionChip(p.label, size == p) { size = p }
                     }
                 }
 
-                OptionLabel("Pages: $pages")
-                Slider(
-                    value = pages.toFloat(),
-                    onValueChange = { pages = it.toInt().coerceAtLeast(1) },
-                    valueRange = 1f..50f
-                )
+                OptionLabel("Shape")
+                OptionWrapRow {
+                    OptionChip("Fixed pages", !canvas) { canvas = false }
+                    OptionChip("Canvas, grows as you write", canvas) { canvas = true }
+                }
+                if (canvas) {
+                    Text(
+                        "One page that gets bigger whenever you write near an edge. It is still " +
+                            "an ordinary PDF, so it opens and syncs like everything else.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    OptionLabel("Pages: $pages")
+                    Slider(
+                        value = pages.toFloat(),
+                        onValueChange = { pages = it.toInt().coerceAtLeast(1) },
+                        valueRange = 1f..50f
+                    )
+                }
             }
         },
         confirmButton = {
@@ -99,7 +115,8 @@ fun NewDocumentDialog(
                             name = name,
                             pageSize = size,
                             background = paper.background,
-                            pageCount = pages,
+                            pageCount = if (canvas) 1 else pages,
+                            autoGrow = canvas,
                             paperColor = paper.paperColor,
                             lineColor = paper.lineColor,
                             spacing = paper.spacing

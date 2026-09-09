@@ -101,7 +101,31 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                         File(System.getProperty("user.home"), "Documents"), "InkSlate"
                     )
                     val created = withContext(Dispatchers.IO) {
-                        BlankDocumentFactory.create(target, spec)
+                        BlankDocumentFactory.create(target, spec).onSuccess { f ->
+                            // Written into the document rather than kept in a local setting: it
+                            // has to travel with the file, or the same whiteboard would be a
+                            // fixed page on the tablet.
+                            if (spec.autoGrow) {
+                                val ink = com.inkslate.core.InkDocument.create(
+                                    sourceName = f.name,
+                                    kind = "pdf",
+                                    pageCount = 1,
+                                    sizeBytes = f.length(),
+                                    fingerprint = DesktopSources.fingerprint(f)
+                                ).copy(
+                                    canvas = com.inkslate.core.InkCanvas.startingAt(
+                                        spec.pageSize.width,
+                                        spec.pageSize.height,
+                                        spec.background.name,
+                                        spec.paperColor,
+                                        spec.lineColor,
+                                        spec.spacing
+                                    )
+                                )
+                                DocumentIO.saveWorking(f, ink)
+                                DesktopEmbedder.write(f, ink)
+                            }
+                        }
                     }
                     created.getOrNull()?.let { f ->
                         repo.noteOpened(f)
