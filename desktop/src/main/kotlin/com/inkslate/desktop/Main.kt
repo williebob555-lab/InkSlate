@@ -8,6 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
@@ -41,14 +42,24 @@ fun main() = application {
             if (event.type != KeyEventType.KeyDown) false
             else if (!event.isCtrlPressed) {
                 when (event.key) {
-                    Key.Escape -> navigation.back?.let { it(); true } ?: false
+                    Key.Escape -> shortcuts.fire(navigation.back)
+                    Key.Delete, Key.Backspace -> shortcuts.fire(shortcuts.delete)
                     else -> false
                 }
             } else when (event.key) {
-                Key.S -> { shortcuts.save?.invoke(); true }
-                Key.Z -> { shortcuts.undo?.invoke(); true }
-                Key.Y -> { shortcuts.redo?.invoke(); true }
-                Key.W -> { shortcuts.close?.invoke(); true }
+                Key.S -> shortcuts.fire(shortcuts.save)
+                // Ctrl+Shift+Z is the other half of undo everywhere except Windows' own apps,
+                // and costs nothing to accept alongside Ctrl+Y.
+                Key.Z -> shortcuts.fire(if (event.isShiftPressed) shortcuts.redo else shortcuts.undo)
+                Key.Y -> shortcuts.fire(shortcuts.redo)
+                Key.W -> shortcuts.fire(shortcuts.close)
+                Key.C -> shortcuts.fire(shortcuts.copy)
+                Key.X -> shortcuts.fire(shortcuts.cut)
+                Key.V -> shortcuts.fire(shortcuts.paste)
+                Key.A -> shortcuts.fire(shortcuts.selectAll)
+                Key.Equals, Key.Plus -> shortcuts.fire(shortcuts.zoomIn)
+                Key.Minus -> shortcuts.fire(shortcuts.zoomOut)
+                Key.Zero -> shortcuts.fire(shortcuts.resetZoom)
                 else -> false
             }
         }
@@ -73,11 +84,38 @@ class Shortcuts {
     var undo: (() -> Unit)? = null
     var redo: (() -> Unit)? = null
     var close: (() -> Unit)? = null
+    var copy: (() -> Unit)? = null
+    var cut: (() -> Unit)? = null
+    var paste: (() -> Unit)? = null
+    var delete: (() -> Unit)? = null
+    var selectAll: (() -> Unit)? = null
+    var zoomIn: (() -> Unit)? = null
+    var zoomOut: (() -> Unit)? = null
+    var resetZoom: (() -> Unit)? = null
+
+    /**
+     * Run a binding if the screen on top set one, and report whether the key was consumed.
+     *
+     * Reporting honestly matters: a shortcut claimed but not handled swallows the keystroke, so
+     * Ctrl+C on a screen with nothing to copy would stop copying from working in a text field.
+     */
+    fun fire(action: (() -> Unit)?): Boolean {
+        action?.invoke() ?: return false
+        return true
+    }
 
     fun clear() {
         save = null
         undo = null
         redo = null
         close = null
+        copy = null
+        cut = null
+        paste = null
+        delete = null
+        selectAll = null
+        zoomIn = null
+        zoomOut = null
+        resetZoom = null
     }
 }

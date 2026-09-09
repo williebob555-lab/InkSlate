@@ -153,6 +153,7 @@ create, so:
 **Files**
 - Browses storage directly, thumbnails showing your ink already on them
 - Blank documents: ruled, grid, dot, graph, Cornell, music, isometric, up to whiteboard size
+- Canvas documents that grow as you write past an edge, and stay ordinary PDFs while doing it
 - Export the whole document or a page range; version history with restore
 - Open-with from Gmail, Canvas, Drive
 
@@ -182,8 +183,6 @@ subtly different renderers is how "it looked different when I exported it" bugs 
 
 - **The Windows editor's tools.** Selection, shapes, text, stamps, the ruler and the reading
   modes are Android-only so far - see [The Windows build](#the-windows-build).
-- **Infinite canvas.** Pages are fixed-size; true Whiteboard-style panning needs the page model
-  to become unbounded.
 - **Word documents.** Android has no usable `.docx` renderer, so this needs either a conversion
   step or server-side rendering.
 - OCR for scanned PDFs (which have no text layer, so search and text snapping do nothing there),

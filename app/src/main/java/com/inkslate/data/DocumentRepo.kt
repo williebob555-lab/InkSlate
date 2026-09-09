@@ -817,6 +817,24 @@ class DocumentRepo(private val context: Context) {
         return best.first to best.second
     }
 
+    /**
+     * Whether this document has come back with markedly less handwriting than the store recorded.
+     *
+     * A second, cheaper signal than [inkRecoveryCandidate], which needs a history snapshot to
+     * compare against and only speaks up about a difference of three marks or more. This one asks
+     * the store's own note, so it still answers when the history has rotated or was never
+     * written - and it is the case that matters most, a document that loads with nothing at all.
+     *
+     * Deletions are subtracted before comparing. A document edited on another device and synced
+     * back with strokes deliberately rubbed out is legitimately smaller, and its tombstones are
+     * the record of that; counting them as loss would freeze saving on an ordinary sync.
+     */
+    fun looksTruncated(file: File, live: InkDocument): Boolean {
+        val recorded = journal.recordedStrokeCount(file)
+        if (recorded < 3) return false
+        return live.totalStrokes + live.deleted.size < recorded - 2
+    }
+
     private fun liveInk(file: File): InkDocument? =
         journal.load(file) ?: InkEmbedder.read(file)
             ?: readSidecar(File(InkDocument.sidecarPathFor(file.absolutePath)))

@@ -190,6 +190,20 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     var pressureCurveOpen by remember { mutableStateOf(false) }
     // A snapshot holding markedly more handwriting than the file does, found on open.
     var inkRecovery by remember { mutableStateOf<Pair<java.io.File, Int>?>(null) }
+    /**
+     * Stop writing this document on our own.
+     *
+     * Set the moment a recovery candidate is found, and left set until the recovery is taken -
+     * "Not now" dismisses the dialog, not the danger. Announcing that handwriting appears to be
+     * missing while simultaneously saving that state over the document is the worst thing the app
+     * could do, and it is what it did: the write-through timer, the trip to the background and
+     * the close on the way out all committed the emptier version, so the offer to restore was
+     * racing the thing that made restoring necessary.
+     *
+     * Only automatic writes are frozen. Save, in the toolbar, always works - the user asking for
+     * it is exactly the signal this flag exists to wait for.
+     */
+    var writesFrozen by remember { mutableStateOf(false) }
     // True when handwriting has been autosaved but not yet written into the document itself.
     // `dirty` cannot answer this: autosave clears it, and the document is only written on an
     // explicit save or on the way out.
@@ -362,18 +376,31 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     LaunchedEffect(doc, strokesLoaded) {
         val d = doc ?: return@LaunchedEffect
         if (!strokesLoaded || inkRecovery != null) return@LaunchedEffect
-        val found = withContext(Dispatchers.IO) {
+        val (found, truncated) = withContext(Dispatchers.IO) {
             // The count on screen is passed in rather than re-read from disk: the editor is
             // already holding the document, and reading it back cost a full parse on every open.
-            repo.inkRecoveryCandidate(d.file, d.ink)
+            repo.inkRecoveryCandidate(d.file, d.ink) to repo.looksTruncated(d.file, d.ink)
+        }
+        // Two independent signals, and either one is enough to stop writing. The recovery
+        // candidate needs a history snapshot to point at; this one only needs the store's own
+        // note, so it still speaks up when the history has rotated away or a document loads
+        // with nothing on it at all.
+        if (truncated && found == null) {
+            EventLog.warn(
+                "sidecar",
+                "${d.file.name} opened with ${d.ink.totalStrokes} strokes but the store " +
+                    "recorded more - automatic writes frozen"
+            )
+            writesFrozen = true
         }
         if (found != null) {
             EventLog.warn(
                 "sidecar",
                 "${d.file.name} opened with ${d.ink.totalStrokes} strokes; a snapshot has " +
-                    "${found.second}"
+                    "${found.second} - automatic writes frozen until this is resolved"
             )
             inkRecovery = found
+            writesFrozen = true
         }
     }
 
@@ -620,6 +647,9 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         // Nothing loaded means nothing to write, and writing anyway is how an untouched
         // document emptied itself simply by being opened and closed again.
         if (!strokesLoaded) { onDone(true); return }
+        // The working copy is where the recovery snapshots come from. Replacing it with a state
+        // we have just flagged as incomplete is how the evidence gets rotated out of history.
+        if (writesFrozen) { onDone(false); return }
         syncPage()
         scope.launch {
             val ok = withContext(Dispatchers.IO) { repo.saveWorking(d) }
@@ -643,6 +673,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     suspend fun writeThrough(): Boolean {
         val d = doc ?: return false
         if (!strokesLoaded) return false
+        if (writesFrozen) return false
         val rules = prefs.effectiveFor(d.file.absolutePath).copy(mode = SaveMode.OVERWRITE)
         syncPage()
         if (d.ink === d.savedInk) {
@@ -962,9 +993,18 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         }
     }
 
+    /**
+     * Write the document because the user asked.
+     *
+     * Deliberately not subject to [writesFrozen]. The freeze exists to stop the app committing a
+     * state it has itself flagged as suspect without anyone deciding to; a person pressing Save
+     * is that decision, and refusing them would leave no way to keep what is on the page.
+     */
     fun doExport(mode: SaveMode, onDone: () -> Unit = {}) {
         val d = doc ?: return
         syncPage()
+        // Saving on purpose settles the question the freeze was holding open.
+        writesFrozen = false
         scope.launch {
             val effective = prefs.effectiveFor(d.file.absolutePath).copy(mode = mode)
             // The working copy is a full serialisation of every stroke. Skipped when the document
@@ -1022,6 +1062,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
      */
     fun finishAndClose() {
         val d = doc
+        // Frozen means the document on disk is the better copy of the two. Leaving writes
+        // nothing at all, so closing and reopening is a way out rather than the thing that makes
+        // the loss permanent.
+        if (writesFrozen) { onClose(); return }
         if (d != null) {
             // The background write-through has usually already done this. Ask before waiting:
             // making someone watch a progress dialog for a file that is already finished is the
@@ -1131,6 +1175,20 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                         }
                     },
                     actions = {
+                        // Back by request. It was removed when the document started being
+                        // written as you work, on the reasoning that closing is either a no-op
+                        // or the last few hundred milliseconds of it - which is true right up
+                        // until an automatic write is the thing you need to not happen. A
+                        // control that says "keep this, now" is worth its place in the bar.
+                        IconButton(onClick = { doExport(SaveMode.OVERWRITE) }) {
+                            Icon(
+                                Icons.Default.Save,
+                                "Save into the document",
+                                tint = if (writeState == WriteState.SAVED)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.primary
+                            )
+                        }
                         IconButton(
                             onClick = { drawingView.value?.undo(); dirty = true },
                             enabled = drawingView.value?.canUndo() == true
@@ -1359,7 +1417,33 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             }
         }
     ) { pad ->
-        Box(Modifier.padding(pad).fillMaxSize()) {
+        Column(Modifier.padding(pad).fillMaxSize()) {
+
+        // Said plainly and kept on screen, because the app is now deliberately not doing the
+        // thing it normally does, and silence about that would read as saving being broken.
+        if (writesFrozen) {
+            androidx.compose.material3.Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Some handwriting may be missing, so this document is not being saved " +
+                            "automatically. Restore it from Version history, or press Save to " +
+                            "keep the page as it is.",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { versionsOpen = true }) { Text("Versions") }
+                }
+            }
+        }
+
+        Box(Modifier.fillMaxSize()) {
             when {
                 loadError != null -> LoadFailure(loadError!!, onClose)
                 doc == null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -1534,6 +1618,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                         .padding(10.dp)
                 ) { Icon(Icons.Default.FullscreenExit, "Leave fullscreen") }
             }
+        }
         }
     }
 
@@ -2038,6 +2123,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                     fresh.close()
                                 }
                                 dirty = false
+                                writesFrozen = false
                                 snackbar.showSnackbar("Recovered $n mark(s)")
                             },
                             onFailure = {
@@ -2052,6 +2138,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             }
         )
     }
+
 
     if (versionsOpen) {
         VersionHistoryDialog(

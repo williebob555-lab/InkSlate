@@ -123,6 +123,16 @@ class InkJournal(root: File) {
      */
     fun hasInk(file: File): Boolean = strokeCount(file) > 0
 
+    /**
+     * How much handwriting this store last recorded for [file], or 0 if it knows of none.
+     *
+     * Read off a two-line note rather than out of the document, so it costs nothing and can be
+     * asked on every open. Its use is a sanity check: if the store says a document had forty
+     * marks and it has just been loaded with none, something went wrong on the way in, and the
+     * app should stop writing before it makes that permanent.
+     */
+    fun recordedStrokeCount(file: File): Int = strokeCount(file)
+
     private fun strokeCount(file: File): Int = runCatching {
         val meta = File(dirFor(file), META)
         if (!meta.isFile) return 0

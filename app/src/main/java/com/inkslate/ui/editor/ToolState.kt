@@ -22,38 +22,28 @@ import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.ToolConfig
 import com.inkslate.ink.Stamps
 
-/** A saved pen: everything needed to reproduce one feel in a single tap. */
-data class Preset(
-    val brush: BrushType,
-    val color: Int,
-    val width: Float,
-    val opacity: Float = 1f
-) {
-    fun toJson(): JSONObject = JSONObject().apply {
-        put("brush", brush.name); put("color", color)
-        put("width", width.toDouble()); put("opacity", opacity.toDouble())
-    }
+/**
+ * A saved pen: everything needed to reproduce one feel in a single tap.
+ *
+ * The pen itself lives in `:core`, shared with the Windows build so the starting kit is the same
+ * on both. Only how it is written into this device's preferences is Android's business, and that
+ * is what stays here.
+ */
+typealias Preset = com.inkslate.core.PenPreset
 
-    companion object {
-        fun fromJson(o: JSONObject): Preset? = runCatching {
-            Preset(
-                brush = BrushType.valueOf(o.getString("brush")),
-                color = o.getInt("color"),
-                width = o.getDouble("width").toFloat(),
-                opacity = o.optDouble("opacity", 1.0).toFloat()
-            )
-        }.getOrNull()
-
-        /** Starting kit: black pen, blue, red for corrections, yellow highlighter, pencil. */
-        val defaults = listOf(
-            Preset(BrushType.BALLPOINT, Color.BLACK, 2.0f),
-            Preset(BrushType.GEL, Color.parseColor("#1D4ED8"), 2.6f),
-            Preset(BrushType.BALLPOINT, Color.parseColor("#DC2626"), 2.0f),
-            Preset(BrushType.HIGHLIGHTER, Color.parseColor("#FDE047"), 15f),
-            Preset(BrushType.PENCIL, Color.parseColor("#4B5563"), 2.0f)
-        )
-    }
+fun Preset.toJson(): JSONObject = JSONObject().apply {
+    put("brush", brush.name); put("color", color)
+    put("width", width.toDouble()); put("opacity", opacity.toDouble())
 }
+
+fun presetFromJson(o: JSONObject): Preset? = runCatching {
+    Preset(
+        brush = BrushType.valueOf(o.getString("brush")),
+        color = o.getInt("color"),
+        width = o.getDouble("width").toFloat(),
+        opacity = o.optDouble("opacity", 1.0).toFloat()
+    )
+}.getOrNull()
 
 /**
  * The editor's drawing settings, held as two independent profiles: one for the pen, one for
@@ -520,7 +510,7 @@ class ToolState(private val context: Context) {
         val raw = sp.getString(K_PRESETS, null) ?: return Preset.defaults
         return runCatching {
             val arr = JSONArray(raw)
-            (0 until arr.length()).mapNotNull { Preset.fromJson(arr.getJSONObject(it)) }
+            (0 until arr.length()).mapNotNull { presetFromJson(arr.getJSONObject(it)) }
                 .ifEmpty { Preset.defaults }
         }.getOrDefault(Preset.defaults)
     }
@@ -572,35 +562,19 @@ class ToolState(private val context: Context) {
          * could be picked again. Stops are dense where nibs actually live and coarse where the
          * difference stops mattering.
          */
-        val WIDTHS = floatArrayOf(
-            0.05f, 0.08f, 0.12f, 0.16f, 0.2f, 0.25f, 0.3f, 0.35f, 0.4f, 0.45f, 0.5f,
-            0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.4f, 1.6f, 1.8f, 2.0f, 2.25f,
-            2.5f, 2.75f, 3.0f, 3.5f, 4.0f, 4.5f, 5.0f, 6f, 7f, 8f, 9f, 10f, 12f, 14f,
-            16f, 18f, 20f, 24f, 28f, 32f, 40f, 48f, 56f, 64f
-        )
-
-        /** Eraser radii, same idea. */
-        val ERASER_SIZES = floatArrayOf(
-            1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 8f, 10f, 12f, 15f, 18f, 22f, 28f, 34f, 42f, 52f, 64f
-        )
+        /**
+         * Widths, eraser radii and the palette all come from `:core`, shared with the Windows
+         * build. A ladder that differed between the two would mean a width picked on one could
+         * not be picked again on the other; a palette that differed would mean a document marked
+         * up in the app's own red opened somewhere with no way to match it.
+         */
+        val WIDTHS = com.inkslate.core.Palette.WIDTHS
+        val ERASER_SIZES = com.inkslate.core.Palette.ERASER_SIZES
+        val PALETTE = com.inkslate.core.Palette.COLORS
 
         /** Index of the ladder stop nearest [value]. */
-        fun stopIndex(ladder: FloatArray, value: Float): Int {
-            var best = 0
-            var bestD = Float.MAX_VALUE
-            for (i in ladder.indices) {
-                val d = kotlin.math.abs(ladder[i] - value)
-                if (d < bestD) { bestD = d; best = i }
-            }
-            return best
-        }
-
-        /** Palette tuned for marking up printed worksheets: readable on white, distinct from print. */
-        val PALETTE = listOf(
-            "#000000", "#374151", "#DC2626", "#EA580C", "#CA8A04", "#16A34A",
-            "#0891B2", "#1D4ED8", "#7C3AED", "#DB2777", "#FFFFFF", "#FDE047",
-            "#86EFAC", "#93C5FD", "#F9A8D4", "#FCA5A5"
-        ).map { Color.parseColor(it) }
+        fun stopIndex(ladder: FloatArray, value: Float): Int =
+            com.inkslate.core.Palette.stopIndex(ladder, value)
     }
 }
 

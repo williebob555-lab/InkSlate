@@ -147,11 +147,24 @@ enum class BrushType(
     val isChisel: Boolean get() = nibAngleDeg >= 0f
     val isVariableWidth: Boolean get() = maxFactor - minFactor > 0.15f || isChisel || dirBias > 0f
 
-    fun widthFor(base: Float, pressure: Float): Float {
-        if (maxFactor - minFactor <= 0.001f) return base
+    fun widthFor(base: Float, pressure: Float): Float =
+        widthFor(base, pressure, dynamics = 1f)
+
+    /**
+     * Width at [pressure], with the brush's own range stretched by [dynamics].
+     *
+     * 1 is the brush as designed. Above that the light end gets lighter and the heavy end
+     * heavier around an unchanged nominal width, which is what the expressiveness slider does -
+     * the brushes ship with ranges honest about the tools they imitate, and honest turned out to
+     * look timid.
+     */
+    fun widthFor(base: Float, pressure: Float, dynamics: Float): Float {
+        val lo = minFactorAt(dynamics)
+        val hi = maxFactorAt(dynamics)
+        if (hi - lo <= 0.001f) return base
         val p = pressure.coerceIn(0f, 1f)
         val shaped = Math.pow(p.toDouble(), pressureGamma.toDouble()).toFloat()
-        return base * (minFactor + (maxFactor - minFactor) * shaped)
+        return base * (lo + (hi - lo) * shaped)
     }
 
     /**
