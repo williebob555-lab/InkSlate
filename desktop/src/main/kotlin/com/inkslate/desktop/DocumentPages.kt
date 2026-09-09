@@ -1,53 +1,78 @@
-package com.inkslate.pdf
+package com.inkslate.desktop
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import com.inkslate.core.InkDocument
-import com.inkslate.core.PageTurn
-import com.inkslate.core.Stroke
-import com.inkslate.core.turnedWithPage
-import com.inkslate.ui.toStyle
-import com.tom_roush.pdfbox.cos.COSArray
-import com.tom_roush.pdfbox.cos.COSDictionary
-import com.tom_roush.pdfbox.cos.COSName
-import com.tom_roush.pdfbox.pdmodel.PDDocument
-import com.tom_roush.pdfbox.pdmodel.PDPage
-import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
-import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
-import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
+import com.inkslate.core.PagePlan
+import com.inkslate.core.PaperSpec
+import com.inkslate.core.PlannedPage
+import org.apache.pdfbox.Loader
+import org.apache.pdfbox.cos.COSArray
+import org.apache.pdfbox.cos.COSDictionary
+import org.apache.pdfbox.cos.COSName
+import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.common.PDRectangle
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory
+import org.apache.pdfbox.util.Matrix
+import java.awt.image.BufferedImage
 import java.io.File
+import java.io.FileOutputStream
+import javax.imageio.ImageIO
 import kotlin.math.max
 import kotlin.math.min
 
 /**
- * One page in a planned arrangement.
+ * Adding, removing, duplicating, turning and reordering the pages of a document.
  *
- * A plan is a list of these: the document the user is asking for, described entirely in terms of
- * the document they have. Nothing is applied until they commit, so removing thirty pages and
- * changing their mind costs nothing.
- */
-/**
- * The plan itself lives in `:core`, shared with the Windows build.
+ * The plan and what it does to the handwriting are `core/PagePlan`, shared with the tablet -
+ * rearranging rewrites where every mark lives, and that has to be one description rather than
+ * two. This is the other half: rebuilding the PDF's page tree, which is each platform's own
+ * PDFBox and cannot be shared.
  *
- * Rearranging pages rewrites where every mark lives, so what a plan *means* - which source page
- * becomes which, how the ink is turned with it, which bookmarks follow, and why every stroke is
- * re-issued under a fresh id - has to be one description rather than two. What stays here is the
- * half that cannot be shared: rebuilding a PDF's page tree with this platform's PDFBox.
+ * The two halves land together or not at all. A document whose pages moved and whose ink did not
+ * is worse than either edit alone.
  */
-typealias PlannedPage = com.inkslate.core.PlannedPage
-typealias ImportedPage = com.inkslate.core.ImportedPage
+object DocumentPages {
 
-object PageArrangement {
+    /** Longest side of an imported picture, in pixels. Roughly 300dpi across a letter page. */
+    private const val MAX_IMAGE_PX = 2600
 
-    /** The document exactly as it is: the starting point for any plan. */
-    fun identity(pageCount: Int): List<PlannedPage> =
-        com.inkslate.core.PagePlan.identity(pageCount)
+    /**
+     * Apply [plan] to [source], rewriting the pages and the handwriting in one operation.
+     *
+     * Returns the remapped handwriting, which the caller writes back into the document - so a
+     * failure part-way leaves the file exactly as it was rather than half-rearranged.
+     */
+    fun rearrange(
+        source: File,
+        ink: InkDocument,
+        plan: List<PlannedPage>,
+        newId: () -> String
+    ): Result<InkDocument> = runCatching {
+        require(DesktopSources.isPdf(source)) { "Only PDFs can have their pages rearranged" }
 
-    /** True when applying [plan] would change nothing. */
-    fun isUnchanged(plan: List<PlannedPage>, pageCount: Int): Boolean =
-        com.inkslate.core.PagePlan.isUnchanged(plan, pageCount)
+        val sizes = HashMap<Int, Pair<Float, Float>>()
+        val remapped = Loader.loadPDF(source).use { pdf ->
+            for (i in 0 until pdf.numberOfPages) {
+                val box = pdf.getPage(i).let { it.cropBox ?: it.mediaBox }
+                sizes[i] = box.width to box.height
+            }
+            val ordered = PagePlan.remapInk(ink, plan, newId) { i ->
+                sizes[i] ?: (612f to 792f)
+            }
 
-    // ---- the PDF side --------------------------------------------------------
+            applyToPdf(pdf, plan).use {
+                val tmp = File(source.parentFile, "." + source.name + ".pages")
+                FileOutputStream(tmp).use { out -> pdf.save(out) }
+                if (!tmp.renameTo(source)) {
+                    tmp.copyTo(source, overwrite = true)
+                    tmp.delete()
+                }
+            }
+            ordered
+        }
+        remapped
+    }
 
     /**
      * Rebuild [pdf]'s page tree to match [plan].
@@ -94,20 +119,6 @@ object PageArrangement {
 
     private fun normaliseDegrees(deg: Int) = ((deg % 360) + 360) % 360
 
-    /** Documents opened only to lift pages out of, closed together once the save is done. */
-    class BorrowedDocuments : AutoCloseable {
-        private val open = LinkedHashMap<String, PDDocument>()
-
-        fun get(path: String): PDDocument? = open.getOrPut(path) {
-            runCatching { PDDocument.load(File(path)) }.getOrNull() ?: return null
-        }
-
-        override fun close() {
-            open.values.forEach { runCatching { it.close() } }
-            open.clear()
-        }
-    }
-
     /**
      * A page taken from another file.
      *
@@ -129,20 +140,19 @@ object PageArrangement {
         }
     }
 
-    private fun imagePage(pdf: PDDocument, spec: ImportedPage): PDPage? {
-        val bitmap = decodeForPage(File(spec.path)) ?: return null
+    private fun imagePage(pdf: PDDocument, spec: com.inkslate.core.ImportedPage): PDPage? {
+        val picture = decodeForPage(File(spec.path)) ?: return null
         val page = PDPage(PDRectangle(spec.width, spec.height))
         runCatching {
-            val image = LosslessFactory.createFromImage(pdf, bitmap)
+            val image = LosslessFactory.createFromImage(pdf, picture)
             // Fit inside the page, preserving the picture's own shape, and centre what is left.
-            val scale = min(spec.width / bitmap.width, spec.height / bitmap.height)
-            val w = bitmap.width * scale
-            val h = bitmap.height * scale
+            val scale = min(spec.width / picture.width, spec.height / picture.height)
+            val w = picture.width * scale
+            val h = picture.height * scale
             PDPageContentStream(pdf, page).use { cs ->
                 cs.drawImage(image, (spec.width - w) / 2f, (spec.height - h) / 2f, w, h)
             }
         }
-        bitmap.recycle()
         return page
     }
 
@@ -152,20 +162,24 @@ object PageArrangement {
      * A 50-megapixel phone photo carries no more detail at page size than a fraction of it does,
      * and embedding the original would make a page weigh more than the textbook it was added to.
      */
-    private fun decodeForPage(file: File): Bitmap? = runCatching {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.absolutePath, bounds)
-        val longest = max(bounds.outWidth, bounds.outHeight)
-        var sample = 1
-        while (longest / sample > MAX_IMAGE_PX) sample *= 2
-        BitmapFactory.decodeFile(
-            file.absolutePath,
-            BitmapFactory.Options().apply { inSampleSize = sample }
-        )
+    private fun decodeForPage(file: File): BufferedImage? = runCatching {
+        val full = ImageIO.read(file) ?: return null
+        val longest = max(full.width, full.height)
+        if (longest <= MAX_IMAGE_PX) return full
+        val scale = MAX_IMAGE_PX.toFloat() / longest
+        val w = (full.width * scale).toInt().coerceAtLeast(1)
+        val h = (full.height * scale).toInt().coerceAtLeast(1)
+        val scaled = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+        scaled.createGraphics().apply {
+            setRenderingHint(
+                java.awt.RenderingHints.KEY_INTERPOLATION,
+                java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR
+            )
+            drawImage(full, 0, 0, w, h, null)
+            dispose()
+        }
+        scaled
     }.getOrNull()
-
-    /** Longest side of an imported picture, in pixels. Roughly 300dpi across a letter page. */
-    private const val MAX_IMAGE_PX = 2600
 
     private fun materialiseInherited(page: PDPage) {
         val dict = page.cosObject
@@ -198,37 +212,40 @@ object PageArrangement {
 
     private fun blankPage(pdf: PDDocument, p: PlannedPage): PDPage {
         val page = PDPage(PDRectangle(p.blankWidth, p.blankHeight))
-        // The page does not need to be in the tree yet: the content stream only needs the
-        // document to allocate its object in. It is added in order with the rest.
         runCatching {
             PDPageContentStream(pdf, page).use { cs ->
+                // flip into PDF user space: display y runs down, user space runs up
+                cs.transform(Matrix(1f, 0f, 0f, -1f, 0f, p.blankHeight))
                 BlankDocumentFactory.paintBackground(
-                    cs, p.paper.toStyle().background, p.blankWidth, p.blankHeight,
-                    p.paper.paperColor, p.paper.lineColor, p.paper.spacing
+                    cs,
+                    backgroundOf(p.paper),
+                    p.blankWidth,
+                    p.blankHeight,
+                    p.paper.paperColor,
+                    p.paper.lineColor,
+                    p.paper.spacing
                 )
             }
         }
         return page
     }
 
-    // ---- the ink side --------------------------------------------------------
+    /** The plan names its pattern; a name this build has never heard of is plain paper. */
+    private fun backgroundOf(spec: PaperSpec): BlankDocumentFactory.Background =
+        runCatching { BlankDocumentFactory.Background.valueOf(spec.background) }
+            .getOrDefault(BlankDocumentFactory.Background.PLAIN)
 
-    /**
-     * Move the handwriting to match [plan], re-issuing every stroke under a fresh id.
-     *
-     * [newId] supplies those ids; it must not repeat one this document has ever used, which is
-     * what a device-tagged generator seeded from the existing ids guarantees.
-     */
-    /**
-     * Rewrite the handwriting to match [plan]. Shared with the Windows build - see the note on
-     * `core/PagePlan` about why every stroke is re-issued under a fresh id.
-     */
-    fun remapInk(
-        ink: InkDocument,
-        plan: List<PlannedPage>,
-        newId: () -> String,
-        pageSizeOf: (Int) -> Pair<Float, Float> = { i ->
-            ink.pageSizes.getOrNull(i)?.let { it.w to it.h } ?: (612f to 792f)
+    /** Documents opened only to lift pages out of, closed together once the save is done. */
+    class BorrowedDocuments : AutoCloseable {
+        private val open = LinkedHashMap<String, PDDocument>()
+
+        fun get(path: String): PDDocument? = open.getOrPut(path) {
+            runCatching { Loader.loadPDF(File(path)) }.getOrNull() ?: return null
         }
-    ): InkDocument = com.inkslate.core.PagePlan.remapInk(ink, plan, newId, pageSizeOf)
+
+        override fun close() {
+            open.values.forEach { runCatching { it.close() } }
+            open.clear()
+        }
+    }
 }

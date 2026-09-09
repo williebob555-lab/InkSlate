@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -125,6 +126,8 @@ fun EditorScreen(
     var newTextAt by remember { mutableStateOf<Stroke?>(null) }
     var pickingColour by remember { mutableStateOf(false) }
     var stampsOpen by remember { mutableStateOf(false) }
+    var symbolsOpen by remember { mutableStateOf(false) }
+    var pagesOpen by remember { mutableStateOf(false) }
     var armedStampLabel by remember { mutableStateOf<String?>(null) }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -605,6 +608,7 @@ fun EditorScreen(
                         onPrev = { goToPage(page - 1) },
                         onNext = { goToPage(page + 1) },
                         onOpenNavigation = { navOpen = true },
+                        onOpenPages = { pagesOpen = true },
                         onToggleBookmark = ::toggleBookmark
                     )
                 }
@@ -645,6 +649,7 @@ fun EditorScreen(
                         onPickCustomColour = { pickingColour = true },
                         onInsertStamp = { stampsOpen = true },
                         onToggleRuler = ::toggleRuler,
+                        onInsertSymbol = { symbolsOpen = true },
                         onMessage = { scope.launch { snackbar.showSnackbar(it) } }
                     )
                 )
@@ -741,6 +746,54 @@ fun EditorScreen(
                 tools.rememberColor(picked)
                 tools.activePreset = -1
                 pickingColour = false
+            }
+        )
+    }
+
+    if (symbolsOpen) {
+        SymbolPaletteDialog(
+            onDismiss = { symbolsOpen = false },
+            onInsert = { text ->
+                symbolsOpen = false
+                // Placed at the top-left of what is in view, which is where the eye is: a symbol
+                // dropped at the page origin on a document scrolled halfway down is a symbol you
+                // have to go and find.
+                val doc = viewport.screenToDoc(
+                    androidx.compose.ui.geometry.Offset(
+                        viewport.viewSize.width * 0.35f,
+                        viewport.viewSize.height * 0.35f
+                    )
+                )
+                val src = source
+                val dim = src?.pageDim(page)
+                val extents = if (src == null) emptyList() else (0 until src.pageCount).map {
+                    val d = src.pageDim(it)
+                    com.inkslate.core.PageExtent(d.width, d.height)
+                }
+                val origin = com.inkslate.core.PageArranger
+                    .arrange(extents, layout, page)
+                    .getOrNull(page) ?: (0f to 0f)
+                val placed = Stroke(
+                    id = nextId(),
+                    kind = Stroke.Kind.TEXT,
+                    color = tools.active.color,
+                    baseWidth = 1f,
+                    points = listOf(
+                        InkPoint(
+                            (doc.x - origin.first).coerceIn(0f, (dim?.width ?: 612f) - 20f),
+                            (doc.y - origin.second).coerceIn(0f, (dim?.height ?: 792f) - 20f),
+                            1f
+                        )
+                    ),
+                    text = text,
+                    textSize = tools.active.textSize.coerceAtLeast(16f),
+                    pageIndex = page,
+                    updatedUtc = System.currentTimeMillis()
+                )
+                strokes.add(placed)
+                pushOp(Op.added(placed))
+                selection = setOf(placed.id)
+                tools.edit { it.tool = com.inkslate.core.Tool.SELECT }
             }
         )
     }
@@ -876,6 +929,7 @@ private fun PageBar(
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onOpenNavigation: () -> Unit,
+    onOpenPages: () -> Unit,
     onToggleBookmark: () -> Unit
 ) {
     Surface(tonalElevation = 1.dp) {
@@ -886,6 +940,7 @@ private fun PageBar(
             IconButton(onClick = onPrev, enabled = page > 0) {
                 Icon(Icons.Default.ChevronLeft, "Previous page")
             }
+            IconButton(onClick = onOpenPages) { Icon(Icons.Default.GridView, "Pages") }
             TextButton(onClick = onOpenNavigation, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Default.MenuBook, null, Modifier.size(16.dp))
                 Text("  ${page + 1} / $pageCount", style = MaterialTheme.typography.labelLarge)

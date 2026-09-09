@@ -46,6 +46,27 @@ data class PaperStyle(
 )
 
 /**
+ * The same paper, as the shared page plan describes it.
+ *
+ * The plan travels between the two builds' page-management code, so it names its pattern by
+ * string rather than by either platform's enum - which also means a pattern this build has never
+ * heard of survives a rearrangement instead of quietly becoming plain paper.
+ */
+fun PaperStyle.toSpec() = com.inkslate.core.PaperSpec(
+    background = background.name,
+    paperColor = paperColor,
+    lineColor = lineColor,
+    spacing = spacing
+)
+
+fun com.inkslate.core.PaperSpec.toStyle() = PaperStyle(
+    background = runCatching { Background.valueOf(background) }.getOrDefault(Background.PLAIN),
+    paperColor = paperColor,
+    lineColor = lineColor,
+    spacing = spacing
+)
+
+/**
  * The paper controls, shared by "New document" and "Insert pages".
  *
  * One composable rather than two sets of chips and swatches. A page added to a document you are

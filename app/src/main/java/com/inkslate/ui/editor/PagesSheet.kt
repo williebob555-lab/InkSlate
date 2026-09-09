@@ -75,6 +75,8 @@ import com.inkslate.pdf.PageArrangement
 import com.inkslate.pdf.BlankDocumentFactory
 import com.inkslate.pdf.ImportStaging
 import com.inkslate.pdf.ImportedPage
+import com.inkslate.ui.toSpec
+import com.inkslate.ui.toStyle
 import com.inkslate.ui.PaperPreview
 import com.inkslate.ui.BlankPaperOptions
 import com.inkslate.ui.ColorPickerDialog
@@ -157,7 +159,7 @@ fun PagesSheet(
 
     fun insert(count: Int, w: Float, h: Float, paper: PaperStyle) {
         val at = insertionPoint()?.plus(1) ?: plan.size
-        val fresh = (0 until count).map { PlannedPage(-1, nextUid++, w, h, paper) }
+        val fresh = (0 until count).map { PlannedPage(-1, nextUid++, w, h, paper.toSpec()) }
         mutate { it.addAll(at, fresh) }
         selected = fresh.map { it.uid }.toSet()
         lastPaper = paper
@@ -383,9 +385,10 @@ fun PagesSheet(
                             val key = thumbKey(p)
                             LaunchedEffect(key) {
                                 if (key == null || thumbs.containsKey(key)) return@LaunchedEffect
+                                val imported = p.import
                                 val raw = when {
-                                    p.import != null ->
-                                        importThumbnailFor(p.import.path, p.import.pageIndex)
+                                    imported != null ->
+                                        importThumbnailFor(imported.path, imported.pageIndex)
                                     else -> thumbnailFor(p.source)
                                 }
                                 thumbs[key] = turned(raw, p.quarterTurns)
@@ -621,10 +624,12 @@ fun PagesSheet(
  *
  * Null for a blank page, which has no picture to fetch - it draws its own paper.
  */
-private fun thumbKey(p: PlannedPage): String? = when {
-    p.import != null -> "imp:${p.import.path}:${p.import.pageIndex}:${p.quarterTurns}"
-    p.isNew -> null
-    else -> "doc:${p.source}:${p.quarterTurns}"
+private fun thumbKey(p: PlannedPage): String? = p.import.let { imported ->
+    when {
+        imported != null -> "imp:${imported.path}:${imported.pageIndex}:${p.quarterTurns}"
+        p.isNew -> null
+        else -> "doc:${p.source}:${p.quarterTurns}"
+    }
 }
 
 /**
@@ -696,9 +701,9 @@ private fun PageCell(
                 // chosen and a label cannot show them. An imported one has a thumbnail like any
                 // other page, so it falls through to the branch below.
                 planned.isNew && !planned.isImported -> Box(Modifier.fillMaxSize()) {
-                    PaperPreview(planned.paper, Modifier.fillMaxSize())
+                    PaperPreview(planned.paper.toStyle(), Modifier.fillMaxSize())
                     Text(
-                        planned.paper.background.label,
+                        planned.paper.toStyle().background.label,
                         style = MaterialTheme.typography.labelSmall,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

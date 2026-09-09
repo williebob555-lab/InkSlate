@@ -1,12 +1,12 @@
-package com.inkslate.ui.editor
-
-import com.inkslate.core.MathSymbols
+package com.inkslate.desktop
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -27,24 +27,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-
-/**
- * Quick insertion of characters that are painful to reach on a tablet keyboard.
- *
- * Everything here is a real Unicode character placed as a text object, not an image, so it stays
- * selectable, restyleable and searchable once exported.
- */
-// The symbols themselves live in `core/MathSymbols`, shared with the Windows build.
+import com.inkslate.core.MathSymbols
 
 /**
  * Pick symbols and build a short string, then place it as a text object.
  *
- * Multi-select rather than one-at-a-time because these are usually wanted in combination -
- * "x₁²" is three taps here and a fight with the keyboard otherwise.
+ * Multi-select rather than one at a time, because these are usually wanted in combination -
+ * "x₁²" is three clicks here and a fight with the keyboard otherwise.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SymbolPaletteDialog(
     onDismiss: () -> Unit,
@@ -56,51 +49,55 @@ fun SymbolPaletteDialog(
         onDismissRequest = onDismiss,
         title = { Text("Insert symbol") },
         text = {
-            Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+            Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+
+                // What has been assembled so far, and the only way to take a character back off.
                 Box(
                     Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(12.dp)
+                        .border(
+                            1.dp,
+                            MaterialTheme.colorScheme.outline,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
                 ) {
                     Text(
-                        buffer.ifEmpty { "Tap symbols to build a string" },
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = if (buffer.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurface
+                        buffer.ifEmpty { "Pick some characters" },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (buffer.isEmpty()) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
                     )
-                }
-                if (buffer.isNotEmpty()) {
-                    TextButton(onClick = { buffer = buffer.dropLast(1) }) { Text("Backspace") }
                 }
 
                 MathSymbols.groups.forEach { group ->
                     Text(
                         group.name,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 14.dp, bottom = 6.dp)
                     )
                     FlowRow(
+                        Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        group.symbols.forEach { sym ->
+                        group.symbols.forEach { symbol ->
                             Box(
                                 Modifier
-                                    .size(44.dp)
+                                    .size(42.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(MaterialTheme.colorScheme.surfaceVariant)
-                                    .clickable { buffer += sym },
+                                    .clickable { buffer += symbol },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    sym,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                                    textAlign = TextAlign.Center
-                                )
+                                Text(symbol, style = MaterialTheme.typography.titleMedium)
                             }
                         }
                     }
@@ -109,9 +106,16 @@ fun SymbolPaletteDialog(
         },
         confirmButton = {
             TextButton(enabled = buffer.isNotEmpty(), onClick = { onInsert(buffer) }) {
-                Text("Place")
+                Text("Insert")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = {
+            androidx.compose.foundation.layout.Row {
+                if (buffer.isNotEmpty()) {
+                    TextButton(onClick = { buffer = buffer.dropLast(1) }) { Text("Undo one") }
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        }
     )
 }

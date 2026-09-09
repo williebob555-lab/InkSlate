@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Interests
@@ -369,6 +370,7 @@ fun ToolBar(
                 ToolButton(Icons.Default.Interests, "Shapes", cfg.tool.isShape) {
                     actions.onInsertStamp()
                 }
+                ToolButton(Icons.Default.Functions, "Symbol", false) { actions.onInsertSymbol() }
                 ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
                     actions.onToggleRuler()
                 }
