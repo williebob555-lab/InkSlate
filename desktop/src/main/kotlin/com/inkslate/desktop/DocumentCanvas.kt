@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -242,6 +243,15 @@ fun DocumentCanvas(
                     }
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
 
+                    // A stylus barrel reports as a secondary or tertiary button, exactly as a
+                    // mouse does; what makes it a barrel is that the pointer is a stylus.
+                    val heldButton = when {
+                        down.type != PointerType.Stylus -> 0
+                        currentEvent.buttons.isTertiaryPressed -> 2
+                        currentEvent.buttons.isSecondaryPressed -> 1
+                        else -> 0
+                    }
+
                     val doc = viewport.screenToDoc(down.position)
                     val slot = slotAt(doc.x, doc.y) ?: return@awaitEachGesture
                     livePage = slot.index
@@ -262,7 +272,8 @@ fun DocumentCanvas(
                         onPending = { pending = it },
                         onMarquee = { marquee = it },
                         onPendingStamp = { pendingStamp = it },
-                        onStampPlaced = onStampPlaced
+                        onStampPlaced = onStampPlaced,
+                        heldButton = heldButton
                     )
                 }
             }

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,12 +65,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.BrushType
 import com.inkslate.core.DashStyle
 import com.inkslate.core.EraserMode
 import com.inkslate.core.FillStyle
+import com.inkslate.core.InputMode
 import com.inkslate.core.Palette
 import com.inkslate.core.Tool
 import kotlin.math.roundToInt
@@ -167,6 +176,8 @@ fun ToolBar(
                 Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                InputModeToggle(state.activeMode) { held -> change { state.advanceMode(held) } }
+                Spacer(Modifier.width(6.dp))
                 // Deduplicated: a colour picked from the palette is also remembered as a recent
                 // one, so without this the same swatch appears twice and both draw themselves
                 // as selected.
@@ -462,6 +473,65 @@ fun ToolBar(
                 }
             }
         }
+    }
+}
+
+/**
+ * Which pen is in hand, and the only way to reach a barrel profile.
+ *
+ * A plain click steps between the pen and the finger. Clicking it *with a stylus barrel button
+ * held* selects that button's own profile - which is the only way in, because a barrel profile is
+ * not a third thing in a loop: it is the pen with a button held, and having it turn up while
+ * switching between pen and finger is both surprising and hard to get back out of.
+ *
+ * The button state is read from the raw pointer event rather than from a click, because the whole
+ * gesture is a click *plus* a button and ordinary click handling has no notion of a stylus barrel.
+ */
+@Composable
+private fun InputModeToggle(mode: InputMode, onCycle: (Int) -> Unit) {
+    var heldButton by remember { mutableStateOf(0) }
+
+    val icon = when (mode) {
+        InputMode.PEN -> Icons.Default.Gesture
+        InputMode.TOUCH -> Icons.Default.TouchApp
+        else -> Icons.Default.Adjust
+    }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (event.type == PointerEventType.Press &&
+                            event.changes.any { it.type == PointerType.Stylus }
+                        ) {
+                            heldButton = when {
+                                event.buttons.isTertiaryPressed -> 2
+                                event.buttons.isSecondaryPressed -> 1
+                                else -> 0
+                            }
+                        }
+                        // Never consumed: the ordinary click below still has to happen.
+                    }
+                }
+            }
+            .clickable {
+                val held = heldButton
+                heldButton = 0
+                onCycle(held)
+            }
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(icon, null, Modifier.size(15.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        Text(
+            mode.label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
     }
 }
 

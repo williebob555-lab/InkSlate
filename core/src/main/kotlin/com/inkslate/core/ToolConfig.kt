@@ -87,6 +87,30 @@ enum class InputMode(val label: String) {
     BUTTON_2("Button 2");
 
     val isStylusButton: Boolean get() = this == BUTTON_1 || this == BUTTON_2
+
+    companion object {
+        /**
+         * What a plain tap on the input switch selects next.
+         *
+         * The pen and the finger, and nothing else. A barrel profile is not a third thing in a
+         * loop - it is the pen with a button held, and the only way to reach it is to hold that
+         * button. Putting it in the cycle meant it turned up while switching between pen and
+         * finger, which is both surprising and hard to get back out of; and it meant the profile
+         * could be selected on a device whose pen has no button at all.
+         *
+         * A plain tap while a button profile is showing comes back to the pen rather than
+         * continuing round.
+         */
+        fun nextOnTap(current: InputMode): InputMode = when (current) {
+            PEN -> TOUCH
+            TOUCH -> PEN
+            BUTTON_1, BUTTON_2 -> PEN
+        }
+
+        /** Which profile a held barrel button selects. */
+        fun forHeldButton(heldButton: Int): InputMode =
+            if (heldButton >= 2) BUTTON_2 else BUTTON_1
+    }
 }
 
 /**

@@ -194,7 +194,7 @@ object DocumentIO {
                 ).use { cs ->
                     cs.saveGraphicsState()
                     cs.transform(displayToUser(pdf, index))
-                    strokes.sortedBy { if (it.isHighlighter) 0 else 1 }.forEach { draw(cs, it) }
+                    strokes.sortedBy { if (it.isHighlighter) 0 else 1 }.forEach { drawInto(cs, it) }
                     cs.restoreGraphicsState()
                 }
             }
@@ -224,7 +224,8 @@ object DocumentIO {
         }
     }
 
-    private fun draw(cs: PDPageContentStream, s: Stroke) {
+    /** Emit one object as PDF operators, in display coordinates. */
+    internal fun drawInto(cs: PDPageContentStream, s: Stroke) {
         // PDFBox 3 takes components as 0..1 floats; the 0..255 integer overloads are gone.
         val r = ((s.color shr 16) and 0xFF) / 255f
         val g = ((s.color shr 8) and 0xFF) / 255f

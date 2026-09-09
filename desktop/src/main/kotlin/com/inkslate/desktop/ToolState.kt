@@ -4,18 +4,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inkslate.core.BrushType
+import com.inkslate.core.InputMode
 import com.inkslate.core.Palette
 import com.inkslate.core.PenPreset
 import com.inkslate.core.Tool
 import com.inkslate.core.ToolConfig
 
 /**
- * The editor's drawing settings.
+ * The editor's drawing settings, held as separate profiles for each thing that can touch the page.
  *
- * The Android [com.inkslate.ui.editor.ToolState] with one profile instead of four. The tablet
- * keeps a separate pen, finger and two barrel-button profiles because those are four physical
- * things that touch the glass and want different tools; a mouse is one, and a desktop pen reports
- * through the same events, so splitting them here would be four settings screens for one input.
+ * The Android `ToolState`: a pen, a finger, and one for each stylus barrel button. Whichever
+ * device last touched the glass is the one being edited, so writing with the pen and highlighting
+ * with a finger needs no settings change in between - and a barrel button is a whole second pen,
+ * with its own tool, colour and width, reachable without putting anything down.
+ *
+ * The button profiles stay out of sight until a pen that actually has buttons reports one, so a
+ * machine with only a mouse never shows a control that cannot do anything.
  *
  * [ToolConfig] itself is shared, so what a pen *is* - brush, colour, width, opacity, smoothing,
  * pressure curve - cannot drift between the two builds. [revision] is bumped on every edit for
@@ -24,7 +28,103 @@ import com.inkslate.core.ToolConfig
  */
 class ToolState {
 
-    val active = ToolConfig()
+    val pen = ToolConfig()
+    val touch = ToolConfig(brush = BrushType.HIGHLIGHTER, strokeWidth = 15f, tool = Tool.DRAW)
+    val button1 = ToolConfig(tool = Tool.ERASER)
+    val button2 = ToolConfig(tool = Tool.SELECT)
+
+    var activeMode by mutableStateOf(InputMode.PEN)
+        private set
+
+    /** The profile currently being drawn and edited with. */
+    val active: ToolConfig
+        get() = when (activeMode) {
+            InputMode.PEN -> pen
+            InputMode.TOUCH -> touch
+            InputMode.BUTTON_1 -> button1
+            InputMode.BUTTON_2 -> button2
+        }
+
+    /** Button profiles join the lists the first time the hardware reports that button. */
+    var button1Seen by mutableStateOf(DesktopPrefs.get(K_BTN1_SEEN)?.toBoolean() ?: false)
+        private set
+    var button2Seen by mutableStateOf(DesktopPrefs.get(K_BTN2_SEEN)?.toBoolean() ?: false)
+        private set
+
+    /**
+     * Every profile that exists on this machine, for the screens that list them.
+     *
+     * Not what the toolbar switch steps through - see [advanceMode].
+     */
+    val availableModes: List<InputMode>
+        get() = buildList {
+            add(InputMode.PEN)
+            add(InputMode.TOUCH)
+            if (button1Seen) add(InputMode.BUTTON_1)
+            if (button2Seen) add(InputMode.BUTTON_2)
+        }
+
+    /** Whichever device last touched the page picks its own profile. */
+    var autoSwitchInput by mutableStateOf(
+        DesktopPrefs.get(K_AUTO_SWITCH)?.toBoolean() ?: true
+    )
+
+    fun switchMode(mode: InputMode) {
+        if (activeMode == mode) return
+        activeMode = mode
+        revision++
+    }
+
+    /**
+     * Step the switch on.
+     *
+     * [heldButton] is which stylus barrel button was down when it was clicked, or 0 for a plain
+     * click. Only a held button reaches a button profile - the rule is [InputMode.nextOnTap],
+     * shared with the tablet, because a profile that turns up while switching between pen and
+     * finger is both surprising and hard to get back out of.
+     */
+    fun advanceMode(heldButton: Int = 0) {
+        if (heldButton > 0) {
+            noteStylusButtonSeen(heldButton >= 2)
+            switchMode(InputMode.forHeldButton(heldButton))
+            return
+        }
+        switchMode(InputMode.nextOnTap(activeMode))
+    }
+
+    /**
+     * Told by the canvas that a pen button was pressed.
+     *
+     * This is the only thing that reveals the hidden profiles, so the control appears exactly on
+     * the machines where it means something.
+     */
+    fun noteStylusButtonSeen(secondary: Boolean) {
+        if (secondary) {
+            if (!button2Seen) {
+                button2Seen = true
+                DesktopPrefs.put(K_BTN2_SEEN, "true")
+            }
+        } else if (!button1Seen) {
+            button1Seen = true
+            DesktopPrefs.put(K_BTN1_SEEN, "true")
+        }
+    }
+
+    /**
+     * Pick the profile for whatever has just landed on the page.
+     *
+     * A held barrel button wins, then the pointer's own kind. Called on every press, which is
+     * what makes switching between a pen and a finger need no settings change at all.
+     */
+    fun adoptInput(isStylus: Boolean, isTouch: Boolean, heldButton: Int) {
+        if (!autoSwitchInput) return
+        if (isStylus && heldButton > 0) {
+            noteStylusButtonSeen(heldButton >= 2)
+            switchMode(InputMode.forHeldButton(heldButton))
+            return
+        }
+        switchMode(if (isTouch) InputMode.TOUCH else InputMode.PEN)
+    }
 
     var revision by mutableStateOf(0)
         private set
@@ -147,59 +247,61 @@ class ToolState {
         DesktopPrefs.get(K_COLORS).orEmpty().split(",").mapNotNull { it.trim().toIntOrNull() }
 
     private fun persist() {
-        DesktopPrefs.put(K_TOOL, active.tool.name)
-        DesktopPrefs.put(K_BRUSH, active.brush.name)
-        DesktopPrefs.put(K_COLOR, active.color.toString())
-        DesktopPrefs.put(K_WIDTH, active.strokeWidth.toString())
-        DesktopPrefs.put(K_ERASER, active.eraserRadius.toString())
-        DesktopPrefs.put(K_ERASER_MODE, active.eraserMode.name)
-        DesktopPrefs.put(K_SMOOTHING, active.smoothing.toString())
-        DesktopPrefs.put(K_TEXT_SIZE, active.textSize.toString())
-        DesktopPrefs.put(K_OPACITY, active.opacity.toString())
-        DesktopPrefs.put(K_DASH, active.dash.name)
-        DesktopPrefs.put(K_FILL, active.fillStyle.name)
-        DesktopPrefs.put(K_DYNAMICS, active.dynamics.toString())
+        DesktopPrefs.put(K_AUTO_SWITCH, autoSwitchInput.toString())
+        save(InputMode.PEN, pen)
+        save(InputMode.TOUCH, touch)
+        save(InputMode.BUTTON_1, button1)
+        save(InputMode.BUTTON_2, button2)
+    }
+
+    /** One line per profile, so the four cannot overwrite one another's settings. */
+    private fun save(mode: InputMode, c: ToolConfig) {
+        DesktopPrefs.put(
+            "tool_" + mode.name,
+            listOf(
+                c.tool.name, c.brush.name, c.color.toString(), c.strokeWidth.toString(),
+                c.eraserRadius.toString(), c.eraserMode.name, c.smoothing.toString(),
+                c.textSize.toString(), c.opacity.toString(), c.dash.name,
+                c.fillStyle.name, c.dynamics.toString(), c.dynamicWidth.toString()
+            ).joinToString("|")
+        )
+    }
+
+    private fun load(mode: InputMode, c: ToolConfig) {
+        val parts = DesktopPrefs.get("tool_" + mode.name)?.split("|") ?: return
+        runCatching {
+            c.tool = Tool.valueOf(parts[0])
+            c.brush = BrushType.valueOf(parts[1])
+            c.color = parts[2].toInt()
+            c.strokeWidth = parts[3].toFloat()
+            c.eraserRadius = parts[4].toFloat()
+            c.eraserMode = com.inkslate.core.EraserMode.valueOf(parts[5])
+            c.smoothing = parts[6].toFloat()
+            c.textSize = parts[7].toFloat()
+            c.opacity = parts[8].toFloat()
+            c.dash = com.inkslate.core.DashStyle.valueOf(parts[9])
+            c.fillStyle = com.inkslate.core.FillStyle.valueOf(parts[10])
+            c.dynamics = parts[11].toFloat()
+            c.dynamicWidth = parts.getOrNull(12)?.toBoolean() ?: false
+        }
+        // A tool that cannot be resumed sensibly. Landing in a half-finished capture because that
+        // is how the last session ended is a poor way to open a page.
+        if (c.tool == Tool.REGION) c.tool = Tool.DRAW
     }
 
     init {
-        runCatching {
-            DesktopPrefs.get(K_TOOL)?.let { active.tool = Tool.valueOf(it) }
-            DesktopPrefs.get(K_BRUSH)?.let { active.brush = BrushType.valueOf(it) }
-            DesktopPrefs.get(K_COLOR)?.toIntOrNull()?.let { active.color = it }
-            DesktopPrefs.get(K_WIDTH)?.toFloatOrNull()?.let { active.strokeWidth = it }
-            DesktopPrefs.get(K_ERASER)?.toFloatOrNull()?.let { active.eraserRadius = it }
-            DesktopPrefs.get(K_ERASER_MODE)?.let {
-                active.eraserMode = com.inkslate.core.EraserMode.valueOf(it)
-            }
-            DesktopPrefs.get(K_SMOOTHING)?.toFloatOrNull()?.let { active.smoothing = it }
-            DesktopPrefs.get(K_TEXT_SIZE)?.toFloatOrNull()?.let { active.textSize = it }
-            DesktopPrefs.get(K_OPACITY)?.toFloatOrNull()?.let { active.opacity = it }
-            DesktopPrefs.get(K_DASH)?.let { active.dash = com.inkslate.core.DashStyle.valueOf(it) }
-            DesktopPrefs.get(K_FILL)?.let {
-                active.fillStyle = com.inkslate.core.FillStyle.valueOf(it)
-            }
-            DesktopPrefs.get(K_DYNAMICS)?.toFloatOrNull()?.let { active.dynamics = it }
-        }
-        // A tool that cannot be resumed sensibly. Landing in a half-finished capture or with the
-        // eraser in hand because that is how the last session ended is a poor way to open a page.
-        if (active.tool == Tool.REGION) active.tool = Tool.DRAW
+        load(InputMode.PEN, pen)
+        load(InputMode.TOUCH, touch)
+        load(InputMode.BUTTON_1, button1)
+        load(InputMode.BUTTON_2, button2)
     }
 
     private companion object {
         const val K_PRESETS = "tool_presets"
         const val K_COLORS = "tool_colors"
-        const val K_TOOL = "tool_tool"
-        const val K_BRUSH = "tool_brush"
-        const val K_COLOR = "tool_color"
-        const val K_WIDTH = "tool_width"
-        const val K_ERASER = "tool_eraser"
-        const val K_ERASER_MODE = "tool_eraser_mode"
-        const val K_SMOOTHING = "tool_smoothing"
-        const val K_TEXT_SIZE = "tool_text_size"
-        const val K_OPACITY = "tool_opacity"
-        const val K_DASH = "tool_dash"
-        const val K_FILL = "tool_fill"
-        const val K_DYNAMICS = "tool_dynamics"
+        const val K_BTN1_SEEN = "tool_button1_seen"
+        const val K_BTN2_SEEN = "tool_button2_seen"
+        const val K_AUTO_SWITCH = "tool_auto_switch"
     }
 }
 

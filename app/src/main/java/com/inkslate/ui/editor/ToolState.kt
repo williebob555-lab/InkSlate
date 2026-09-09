@@ -196,9 +196,10 @@ class ToolState(private val context: Context) {
     }
 
     /**
-     * The profiles the toolbar switch will step through, in order.
+     * Every profile that exists on this device, for the screens that list them.
      *
      * Button profiles join the list the first time the hardware reports that button, and stay.
+     * This is *not* what the toolbar switch steps through - see [advanceMode].
      */
     val availableModes: List<InputMode>
         get() = buildList {
@@ -207,6 +208,8 @@ class ToolState(private val context: Context) {
             if (button1Seen) add(InputMode.BUTTON_1)
             if (button2Seen) add(InputMode.BUTTON_2)
         }
+
+
 
     /**
      * Told by the drawing surface that a pen button was pressed.
@@ -261,15 +264,21 @@ class ToolState(private val context: Context) {
      * exactly the two-way pen/finger toggle it has always been, and on a pen with them the extra
      * profiles are one gesture away without ever appearing as clutter.
      */
+    /**
+     * Step the switch on.
+     *
+     * [heldButton] is which stylus barrel button was down when it was tapped, or 0 for a plain
+     * tap with a finger or an unmodified pen. Only a held button reaches a button profile: a
+     * plain tap moves between the pen and the finger, and a plain tap while a button profile
+     * happens to be active comes back to the pen rather than continuing round a loop.
+     */
     fun advanceMode(view: DrawingView?, heldButton: Int = 0) {
         if (heldButton > 0) {
             noteStylusButtonSeen(heldButton == 2)
-            switchMode(if (heldButton == 2) InputMode.BUTTON_2 else InputMode.BUTTON_1, view)
+            switchMode(InputMode.forHeldButton(heldButton), view)
             return
         }
-        val modes = availableModes
-        val at = modes.indexOf(activeMode)
-        switchMode(modes[(at + 1).mod(modes.size)], view)
+        switchMode(InputMode.nextOnTap(activeMode), view)
     }
 
     fun applyTo(view: DrawingView?) {

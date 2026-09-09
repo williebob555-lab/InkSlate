@@ -64,8 +64,17 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onPending: (Stroke?) -> Unit,
     onMarquee: (InkBox?) -> Unit,
     onPendingStamp: (List<Stroke>) -> Unit,
-    onStampPlaced: () -> Unit
+    onStampPlaced: () -> Unit,
+    /** Which stylus barrel button was down when the pointer landed, or 0 for none. */
+    heldButton: Int = 0
 ) {
+    // Whichever device landed picks its own profile first - a pen, a finger, or the pen with a
+    // barrel button held, which is a whole second pen rather than a modifier on this one.
+    tools.adoptInput(
+        isStylus = down.type == PointerType.Stylus,
+        isTouch = down.type == PointerType.Touch,
+        heldButton = heldButton
+    )
     // Read synchronously: the config is deliberately not Compose state so the tool in hand the
     // instant the pointer lands is the one that acts.
     val cfg = tools.active
