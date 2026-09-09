@@ -1,8 +1,8 @@
 # InkSlate
 
-An Android annotation app for homework: open PDFs and images, draw on them with a stylus, and
-save either a copy or over the original. Built to sideload onto your own devices, with a sync
-model that survives editing the same file on a tablet and a laptop.
+An annotation app for homework: open PDFs and images, draw on them with a stylus, and save either
+a copy or over the original. Android and Windows, built to sideload onto your own devices, with a
+sync model that survives editing the same file on a tablet and a laptop.
 
 ---
 
@@ -164,10 +164,13 @@ create, so:
 ## Layout
 
 ```
-ink/          Stroke model, brushes, the drawing surface, shared rasteriser, clipboard
-pdf/          PDF and image rendering, PDF export, blank document generation
-data/         Sidecar format and merge, save preferences, file browsing, device identity
-ui/           Compose screens: browser, editor, settings
+core/         Shared by both builds: document format and merge, stroke outlines, paper geometry
+app/          Android
+  ink/          Stroke model, brushes, the drawing surface, shared rasteriser, clipboard
+  pdf/          PDF and image rendering, PDF export, blank document generation
+  data/         Sidecar format and merge, save preferences, file browsing, device identity
+  ui/           Compose screens: browser, editor, settings
+desktop/      Windows: the same screens in Compose for Desktop, against full Apache PDFBox
 ```
 
 `StrokeRasteriser` is the single renderer used by the editor, thumbnails and image export. Three
@@ -177,13 +180,52 @@ subtly different renderers is how "it looked different when I exported it" bugs 
 
 ## Not built yet
 
-- **Windows version.** The `.inkdoc` format is platform-neutral and ready for it.
+- **The Windows editor's tools.** Selection, shapes, text, stamps, the ruler and the reading
+  modes are Android-only so far - see [The Windows build](#the-windows-build).
 - **Infinite canvas.** Pages are fixed-size; true Whiteboard-style panning needs the page model
   to become unbounded.
 - **Word documents.** Android has no usable `.docx` renderer, so this needs either a conversion
   step or server-side rendering.
 - OCR for scanned PDFs (which have no text layer, so search and text snapping do nothing there),
   and audio notes.
+
+---
+
+## The Windows build
+
+The same application, not a companion to it: the same four screens, the same palette, and `:core`
+shared between them so the two cannot disagree about what a document contains. A file synced from
+the tablet opens on the laptop with its handwriting already on it and nothing else to copy across.
+
+```bash
+./gradlew :desktop:run
+```
+
+`./gradlew :desktop:packageMsi` builds an installer. Both need the same `JAVA_HOME` as the APK.
+
+What is there now: the home screen and its folders, recents and starred items, the file browser,
+new blank documents in every ruling the tablet offers, a pen, a highlighter, an eraser, undo,
+saving into the document, flattened export, and the update check.
+
+What is not, and where the two builds visibly differ:
+
+| | |
+|---|---|
+| Editor tools | Pen, highlighter and eraser only. Selection, shapes, text, tables, stamps, the ruler and the reading modes have not been brought across. |
+| Infinite canvas | Not in the desktop editor, so "New" does not offer a canvas that grows. Offering paper that claims to grow and then does not is worse than not offering it. |
+| Colour picker | The paper and ruling swatches are the tablet's lists, but the "+" that opens a full picker is not there yet. |
+| Item actions | Reached by right-click rather than a long press, which is what a mouse expects. Same sheet, same actions. |
+| Pressure | A mouse has none and desktop pens report it inconsistently through the JVM, so width falls back to speed - the same fallback the tablet uses for finger input. |
+
+The palette in `desktop/Theme.kt` is a deliberate copy of the Android one rather than an
+approximation, and it is the one file that has to be kept in step by hand. A colour that is nearly
+right is worse than one that is obviously different: it reads as a rendering fault rather than a
+design.
+
+What must never be written twice is anything that decides what a document *is* or what a mark
+*looks like*. `InkDocument`, `StrokeOutline` and `PaperPattern` all live in `:core` for that
+reason - two implementations of "graph paper" or "a tapered stroke" line up on the day they are
+written and drift apart afterwards.
 
 ---
 

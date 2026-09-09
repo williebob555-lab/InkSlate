@@ -1,24 +1,44 @@
-package com.inkslate.pdf
+package com.inkslate.core
 
-import com.inkslate.pdf.BlankDocumentFactory.Background
 import kotlin.math.ceil
 import kotlin.math.floor
 
 /**
  * Where the lines on a piece of paper go.
  *
- * There are now two places that have to draw ruled paper and agree exactly: the PDF writer, which
- * puts it into the document, and the drawing surface, which paints the part of a growing canvas
- * the document does not cover yet. Two implementations of "graph paper" would line up on the day
- * they were written and drift apart afterwards, and the drift would show as a visible seam right
- * across the middle of the page.
+ * Three places now have to draw ruled paper and agree exactly: the PDF writer, which puts it into
+ * the document; the drawing surface, which paints the part of a growing canvas the document does
+ * not cover yet; and the Windows build, which does both again. Separate implementations of "graph
+ * paper" would line up on the day they were written and drift apart afterwards, and the drift
+ * would show as a visible seam straight across the middle of a page.
  *
- * So there is one description of each pattern, emitted to whichever [PaperSink] is listening.
+ * So there is one description of each pattern, emitted to whichever [Sink] is listening. It lives
+ * here, with the document model, for the same reason [StrokeOutline] does: the two platforms are
+ * allowed to differ in how they paint, never in what the shape is.
  */
 object PaperPattern {
 
+    /**
+     * The patterns paper can be ruled with.
+     *
+     * Named rather than numbered because that is how [InkCanvas.background] stores it - a
+     * document carries the name of its ruling, so a canvas made on the tablet is ruled the same
+     * way when it opens on the laptop, whatever either build happens to offer in its own menus.
+     */
+    enum class Pattern { PLAIN, RULED, GRID, DOTS, GRAPH, CORNELL, MUSIC, ISOMETRIC }
+
+    /**
+     * The pattern [name] refers to, or [Pattern.PLAIN] when it names nothing known.
+     *
+     * Unknown names are plain paper on purpose. A document ruled by a later build that invented a
+     * pattern this one has never heard of should open as a blank page with all its handwriting on
+     * it, not fail to open at all.
+     */
+    fun patternOf(name: String): Pattern =
+        Pattern.entries.firstOrNull { it.name.equals(name, ignoreCase = true) } ?: Pattern.PLAIN
+
     /** Somewhere to draw. Coordinates are page points, y downwards, as ink is stored. */
-    interface PaperSink {
+    interface Sink {
         /** Fill the paper itself. */
         fun paper(left: Float, top: Float, right: Float, bottom: Float)
         fun lineWidth(width: Float)
@@ -36,7 +56,7 @@ object PaperPattern {
      * lines continuing backwards through it, exactly where they would have been.
      */
     fun emit(
-        background: Background,
+        background: Pattern,
         left: Float,
         top: Float,
         right: Float,
@@ -44,10 +64,10 @@ object PaperPattern {
         spacing: Float,
         anchorX: Float = 0f,
         anchorY: Float = 0f,
-        sink: PaperSink
+        sink: Sink
     ) {
         sink.paper(left, top, right, bottom)
-        if (background == Background.PLAIN) return
+        if (background == Pattern.PLAIN) return
 
         val step = spacing.coerceIn(4f, 200f)
         val h = bottom - top
@@ -67,19 +87,19 @@ object PaperPattern {
         }
 
         when (background) {
-            Background.RULED -> {
+            Pattern.RULED -> {
                 sink.lineWidth(0.5f)
                 for (y in ticks(anchorY, step, top, bottom)) sink.line(left, y, right, y)
             }
 
-            Background.GRID, Background.GRAPH -> {
-                val s = if (background == Background.GRAPH) step / 2f else step
+            Pattern.GRID, Pattern.GRAPH -> {
+                val s = if (background == Pattern.GRAPH) step / 2f else step
                 sink.lineWidth(0.4f)
                 for (x in ticks(anchorX, s, left, right)) sink.line(x, top, x, bottom)
                 for (y in ticks(anchorY, s, top, bottom)) sink.line(left, y, right, y)
             }
 
-            Background.DOTS -> {
+            Pattern.DOTS -> {
                 for (y in ticks(anchorY, step, top, bottom)) {
                     for (x in ticks(anchorX, step, left, right)) sink.dot(x, y, 0.7f)
                 }
@@ -88,7 +108,7 @@ object PaperPattern {
             // Cornell rules and music staves are page furniture: they belong to a sheet of paper
             // and have no meaning repeated across open space. They are drawn once, against the
             // page the anchor describes, and the rest of a grown canvas is left plain.
-            Background.CORNELL -> {
+            Pattern.CORNELL -> {
                 val pageBottom = anchorY + (bottom - anchorY).coerceAtMost(h)
                 sink.lineWidth(0.5f)
                 val ruleTo = pageBottom - step * 3f
@@ -99,7 +119,7 @@ object PaperPattern {
                 sink.line(left, ruleTo, right, ruleTo)
             }
 
-            Background.MUSIC -> {
+            Pattern.MUSIC -> {
                 sink.lineWidth(0.6f)
                 val staffGap = step / 4f
                 val systemGap = step * 2.4f
@@ -116,7 +136,7 @@ object PaperPattern {
                 }
             }
 
-            Background.ISOMETRIC -> {
+            Pattern.ISOMETRIC -> {
                 sink.lineWidth(0.4f)
                 val run = h / 1.732f                  // 60 degrees: tan(60) = sqrt(3)
                 val dx = step * 1.732f
@@ -127,7 +147,7 @@ object PaperPattern {
                 for (y in ticks(anchorY, step, top, bottom)) sink.line(left, y, right, y)
             }
 
-            Background.PLAIN -> Unit
+            Pattern.PLAIN -> Unit
         }
     }
 

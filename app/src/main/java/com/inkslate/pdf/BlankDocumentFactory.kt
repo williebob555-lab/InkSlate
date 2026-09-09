@@ -18,7 +18,13 @@ import java.io.FileOutputStream
  */
 object BlankDocumentFactory {
 
-    /** Page background pattern. Drawn into the PDF, so it survives export and sharing. */
+    /**
+     * Page background pattern. Drawn into the PDF, so it survives export and sharing.
+     *
+     * The names are what a document stores, and the geometry behind each one lives in
+     * `core/PaperPattern` so the Windows build rules identical paper. This enum is the menu; that
+     * is the draughtsman.
+     */
     enum class Background(val label: String) {
         PLAIN("Plain"),
         RULED("Ruled"),
@@ -121,9 +127,9 @@ object BlankDocumentFactory {
     /**
      * Paint one page's paper and ruling.
      *
-     * The geometry comes from [PaperPattern], shared with the drawing surface so that a canvas
-     * which has grown past its page keeps its lines in step with the ones printed on it. This end
-     * only knows how to put a line into a content stream.
+     * The geometry comes from `core/PaperPattern`, shared with the drawing surface and with the
+     * Windows build, so that a canvas which has grown past its page keeps its lines in step with
+     * the ones printed on it. This end only knows how to put a line into a content stream.
      *
      * Coordinates go through unchanged, in the same y-downwards space the ink is stored in. The
      * caller supplies the one transform that flips into PDF user space, so a canvas whose page
@@ -142,7 +148,7 @@ object BlankDocumentFactory {
         anchorX: Float = 0f,
         anchorY: Float = 0f
     ) {
-        val sink = object : PaperPattern.PaperSink {
+        val sink = object : com.inkslate.core.PaperPattern.Sink {
             override fun paper(left: Float, top: Float, right: Float, bottom: Float) {
                 cs.setNonStrokingColor(
                     Color.red(paperColor), Color.green(paperColor), Color.blue(paperColor)
@@ -169,8 +175,9 @@ object BlankDocumentFactory {
                 cs.fill()
             }
         }
-        PaperPattern.emit(
-            background, left, top, left + w, top + h, spacing, anchorX, anchorY, sink
+        com.inkslate.core.PaperPattern.emit(
+            com.inkslate.core.PaperPattern.patternOf(background.name),
+            left, top, left + w, top + h, spacing, anchorX, anchorY, sink
         )
     }
 

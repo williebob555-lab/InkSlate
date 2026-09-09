@@ -139,6 +139,30 @@ object DocumentIO {
 
     fun saveWorking(file: File, doc: InkDocument): Boolean = write(workingFileFor(file), doc)
 
+    /** Whether there is a working copy at all, without parsing it. Asked once per row on Home. */
+    fun hasWorking(file: File): Boolean = workingFileFor(file).isFile
+
+    /**
+     * Follow a document that has been renamed or moved.
+     *
+     * The working copy is keyed by path, so without this a rename would orphan the scratch copy
+     * and hand it to whatever file next took the old name.
+     */
+    fun relocateWorking(from: File, to: File) {
+        val old = workingFileFor(from)
+        if (!old.isFile) return
+        val new = workingFileFor(to)
+        if (!old.renameTo(new)) {
+            runCatching { old.copyTo(new, overwrite = true) }
+            old.delete()
+        }
+    }
+
+    /** Drop the working copy for a deleted document, for the same keyed-by-path reason. */
+    fun forgetWorking(file: File) {
+        workingFileFor(file).delete()
+    }
+
     // ---- export ---------------------------------------------------------------
 
     /**

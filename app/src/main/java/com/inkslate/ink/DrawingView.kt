@@ -1263,16 +1263,14 @@ class DrawingView @JvmOverloads constructor(
     private fun drawCanvasPaper(target: Canvas, canvasRect: RectF, paperRect: RectF) {
         val c = canvas ?: return
 
-        val background = runCatching {
-            com.inkslate.pdf.BlankDocumentFactory.Background.valueOf(c.background)
-        }.getOrDefault(com.inkslate.pdf.BlankDocumentFactory.Background.PLAIN)
+        val background = com.inkslate.core.PaperPattern.patternOf(c.background)
 
         canvasPaperPaint.color = c.paperColor
         canvasPaperPaint.colorFilter = pageFilter.filter
         canvasRulingPaint.color = c.lineColor
         canvasRulingPaint.colorFilter = pageFilter.filter
 
-        val sink = object : com.inkslate.pdf.PaperPattern.PaperSink {
+        val sink = object : com.inkslate.core.PaperPattern.Sink {
             override fun paper(left: Float, top: Float, right: Float, bottom: Float) {
                 target.drawRect(left, top, right, bottom, canvasPaperPaint)
             }
@@ -1297,7 +1295,7 @@ class DrawingView @JvmOverloads constructor(
         target.save()
         target.clipRect(canvasRect)
         target.clipOutRect(paperRect)
-        com.inkslate.pdf.PaperPattern.emit(
+        com.inkslate.core.PaperPattern.emit(
             background,
             canvasRect.left, canvasRect.top, canvasRect.right, canvasRect.bottom,
             c.spacing,
