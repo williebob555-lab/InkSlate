@@ -87,62 +87,26 @@ object PdfText {
         }.onFailure { EventLog.warn("search", "${file.name}: ${it.message}") }
     }
 
+    private fun RectF.toBox() = com.inkslate.core.Box(left, top, right, bottom)
+
+    private fun com.inkslate.core.Box.toRectF() = RectF(left, top, right, bottom)
+
     /**
      * Locate a phrase within one page's words.
      *
-     * The page is rebuilt as a single string with an offset table back to the words, so a phrase
-     * spanning several words - which is most of what anyone searches for - is matched as one
-     * thing rather than word by word.
+     * The matching itself lives in `core/TextSearch`, shared with the Windows build - what counts
+     * as a match, which words a phrase spans and how those become highlight bars is arithmetic,
+     * and searching the same textbook on two machines has to find the same things in the same
+     * places. This end only converts between the platform's rectangle and the shared one.
      */
-    private fun findIn(words: List<TextRun>, needle: String, page: Int): List<SearchHit> {
-        val builder = StringBuilder()
-        val wordStart = IntArray(words.size)
-        words.forEachIndexed { i, w ->
-            wordStart[i] = builder.length
-            builder.append(w.text.lowercase())
-            builder.append(' ')
-        }
-        val haystack = builder.toString()
-
-        val hits = ArrayList<SearchHit>()
-        var from = 0
-        while (true) {
-            val at = haystack.indexOf(needle, from)
-            if (at < 0) break
-            from = at + needle.length
-
-            val firstWord = wordStart.indexOfLast { it <= at }.coerceAtLeast(0)
-            val lastWord = wordStart.indexOfLast { it < at + needle.length }.coerceAtLeast(firstWord)
-
-            val rects = (firstWord..lastWord).mapNotNull { words.getOrNull(it)?.rect }
-            if (rects.isEmpty()) continue
-
-            val snippetFrom = maxOf(0, firstWord - 4)
-            val snippetTo = minOf(words.size - 1, lastWord + 5)
-            val snippet = (snippetFrom..snippetTo)
-                .mapNotNull { words.getOrNull(it)?.text }
-                .joinToString(" ")
-
-            hits.add(SearchHit(page, snippet, mergeByLine(rects)))
-            if (hits.size > 40) break     // one page rarely needs more than this
-        }
-        return hits
-    }
+    private fun findIn(words: List<TextRun>, needle: String, page: Int): List<SearchHit> =
+        com.inkslate.core.TextSearch.findIn(
+            words.map { com.inkslate.core.TextRun(it.text, it.rect.toBox()) }, needle, page
+        ).map { hit -> SearchHit(hit.page, hit.snippet, hit.boxes.map { it.toRectF() }) }
 
     /** Merge word rectangles that sit on the same line into one span. */
-    fun mergeByLine(rects: List<RectF>): List<RectF> {
-        if (rects.size <= 1) return rects
-        val sorted = rects.sortedWith(compareBy({ it.top }, { it.left }))
-        val out = ArrayList<RectF>()
-        var current = RectF(sorted.first())
-        for (r in sorted.drop(1)) {
-            val sameLine = kotlin.math.abs(r.centerY() - current.centerY()) < current.height() * 0.7f
-            val adjacent = r.left - current.right < current.height() * 1.5f
-            if (sameLine && adjacent) current.union(r) else { out.add(current); current = RectF(r) }
-        }
-        out.add(current)
-        return out
-    }
+    fun mergeByLine(rects: List<RectF>): List<RectF> =
+        com.inkslate.core.TextSearch.mergeByLine(rects.map { it.toBox() }).map { it.toRectF() }
 
     /**
      * Words whose rectangles are crossed by a freehand path, for snapping a highlighter to text.
@@ -152,18 +116,11 @@ object PdfText {
         page: Int,
         points: List<Pair<Float, Float>>,
         tolerance: Float
-    ): List<RectF> {
-        if (points.isEmpty()) return emptyList()
-        val words = wordsOn(file, page)
-        if (words.isEmpty()) return emptyList()
-
-        val touched = words.filter { w ->
-            val probe = RectF(w.rect)
-            probe.inset(-tolerance, -tolerance)
-            points.any { (x, y) -> probe.contains(x, y) }
-        }
-        return mergeByLine(touched.map { it.rect })
-    }
+    ): List<RectF> = com.inkslate.core.TextSearch.wordsUnderPath(
+        wordsOn(file, page).map { com.inkslate.core.TextRun(it.text, it.rect.toBox()) },
+        points,
+        tolerance
+    ).map { it.toRectF() }
 
     fun clearCache() = cache.evictAll()
 

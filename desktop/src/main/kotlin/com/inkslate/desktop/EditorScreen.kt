@@ -10,12 +10,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -48,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
 import com.inkslate.core.PageLayout
+import com.inkslate.core.SearchHit
 import com.inkslate.core.Palette
 import com.inkslate.core.Stroke
 import com.inkslate.core.Tool
@@ -115,6 +123,16 @@ fun EditorScreen(
     var newTextAt by remember { mutableStateOf<Stroke?>(null) }
     var pickingColour by remember { mutableStateOf(false) }
     var shapesOpen by remember { mutableStateOf(false) }
+    var navOpen by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var bookmarkPrompt by remember { mutableStateOf<Int?>(null) }
+    // Null while the outline is still being read, so the sheet can tell "none" from "not yet".
+    var outline by remember(file) { mutableStateOf<List<OutlineEntry>?>(null) }
+    var bookmarks by remember(file) { mutableStateOf<List<InkDocument.Bookmark>>(emptyList()) }
+    var searchQuery by remember(file) { mutableStateOf("") }
+    var searchHits by remember(file) { mutableStateOf<List<SearchHit>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
+    var searchProgress by remember { mutableStateOf(0) }
 
     val viewport = remember(file) { Viewport() }
     var page by remember(file) { mutableStateOf(0) }
@@ -169,6 +187,16 @@ fun EditorScreen(
         }
         busy = false
     }
+
+    // The table of contents is read off the file rather than held in the ink, so it is fetched
+    // once the document is open and never again for that file.
+    LaunchedEffect(file.absolutePath) {
+        outline = withContext(Dispatchers.IO) {
+            if (DesktopSources.isPdf(file)) DocumentText.outline(file) else emptyList()
+        }
+    }
+
+    LaunchedEffect(ink) { bookmarks = ink.bookmarks }
 
     // ---- saving --------------------------------------------------------------
 
@@ -304,6 +332,48 @@ fun EditorScreen(
         tools.edit { it.tool = Tool.SELECT }
     }
 
+    /** Put a page at the top of the window, which is what every jump here means. */
+    fun goToPage(target: Int) {
+        val src = source ?: return
+        val clamped = target.coerceIn(0, src.pageCount - 1)
+        val extents = (0 until src.pageCount).map {
+            val d = src.pageDim(it)
+            com.inkslate.core.PageExtent(d.width, d.height)
+        }
+        val origins = com.inkslate.core.PageArranger.arrange(extents, layout, clamped)
+        origins.getOrNull(clamped)?.let { (x, y) -> viewport.goTo(x, y) }
+        page = clamped
+    }
+
+    fun runSearch() {
+        val src = source ?: return
+        searching = true
+        searchHits = emptyList()
+        searchProgress = 0
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                DocumentText.search(
+                    file = file,
+                    query = searchQuery,
+                    pageCount = src.pageCount,
+                    onProgress = { p -> searchProgress = p },
+                    onHit = { hit -> searchHits = searchHits + hit }
+                )
+            }
+            searching = false
+        }
+    }
+
+    fun toggleBookmark() {
+        if (bookmarks.any { it.page == page }) {
+            ink = ink.withBookmarkRemoved(page)
+            bookmarks = ink.bookmarks
+            dirty = true
+        } else {
+            bookmarkPrompt = page
+        }
+    }
+
     /** Leaving with unsaved marks asks first; that is the whole point of tracking [dirty]. */
     fun leave() {
         if (dirty) confirmLeave = true else onClose()
@@ -367,6 +437,9 @@ fun EditorScreen(
                     }
                     IconButton(onClick = ::redoOnce, enabled = redo.isNotEmpty()) {
                         Icon(Icons.AutoMirrored.Filled.Redo, "Redo")
+                    }
+                    IconButton(onClick = { searchOpen = true }) {
+                        Icon(Icons.Default.Search, "Find in document")
                     }
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
@@ -436,6 +509,17 @@ fun EditorScreen(
         },
         bottomBar = {
             Column {
+                source?.let { src ->
+                    PageBar(
+                        page = page,
+                        pageCount = src.pageCount,
+                        bookmarked = bookmarks.any { it.page == page },
+                        onPrev = { goToPage(page - 1) },
+                        onNext = { goToPage(page + 1) },
+                        onOpenNavigation = { navOpen = true },
+                        onToggleBookmark = ::toggleBookmark
+                    )
+                }
                 ToolBar(
                     state = tools,
                     selectionCount = selection.size,
@@ -582,6 +666,52 @@ fun EditorScreen(
         )
     }
 
+    if (navOpen) {
+        NavigationSheet(
+            pageCount = source?.pageCount ?: 1,
+            currentPage = page,
+            outline = outline,
+            bookmarks = bookmarks,
+            onGoToPage = { navOpen = false; goToPage(it) },
+            onRemoveBookmark = { p ->
+                ink = ink.withBookmarkRemoved(p)
+                bookmarks = ink.bookmarks
+                dirty = true
+            },
+            onDismiss = { navOpen = false }
+        )
+    }
+
+    if (searchOpen) {
+        SearchSheet(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            onSearch = ::runSearch,
+            hits = searchHits,
+            searching = searching,
+            progressPage = searchProgress,
+            pageCount = source?.pageCount ?: 1,
+            onGoToHit = { hit ->
+                searchOpen = false
+                goToPage(hit.page)
+            },
+            onDismiss = { searchOpen = false }
+        )
+    }
+
+    bookmarkPrompt?.let { target ->
+        BookmarkDialog(
+            page = target,
+            onDismiss = { bookmarkPrompt = null },
+            onConfirm = { label ->
+                ink = ink.withBookmarkAdded(target, label)
+                bookmarks = ink.bookmarks
+                dirty = true
+                bookmarkPrompt = null
+            }
+        )
+    }
+
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
@@ -655,6 +785,50 @@ private fun StatusBar(status: String, busy: Boolean) {
             )
             Spacer(Modifier.width(12.dp))
             if (busy) Text("working...", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+/**
+ * Page navigation, above the tools.
+ *
+ * The page indicator in the middle opens contents, bookmarks and the page jump: it is already
+ * where you look when you want to know where you are in a long document, so it is the obvious
+ * thing to press when you want to be somewhere else.
+ */
+@Composable
+private fun PageBar(
+    page: Int,
+    pageCount: Int,
+    bookmarked: Boolean,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onOpenNavigation: () -> Unit,
+    onToggleBookmark: () -> Unit
+) {
+    Surface(tonalElevation = 1.dp) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onPrev, enabled = page > 0) {
+                Icon(Icons.Default.ChevronLeft, "Previous page")
+            }
+            TextButton(onClick = onOpenNavigation, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Default.MenuBook, null, Modifier.size(16.dp))
+                Text("  ${page + 1} / $pageCount", style = MaterialTheme.typography.labelLarge)
+            }
+            IconButton(onClick = onToggleBookmark) {
+                Icon(
+                    if (bookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    if (bookmarked) "Remove bookmark" else "Bookmark this page",
+                    tint = if (bookmarked) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = onNext, enabled = page < pageCount - 1) {
+                Icon(Icons.Default.ChevronRight, "Next page")
+            }
         }
     }
 }
