@@ -6,16 +6,14 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.sqrt
 
-/** How pages are arranged on the canvas. */
-enum class PageLayout(val label: String) {
-    SINGLE("One page"),
-    VERTICAL("Vertical scroll"),
-    HORIZONTAL("Horizontal scroll"),
-    GRID("Grid"),
-    SPREAD("Two-page spread");
-
-    val isContinuous: Boolean get() = this != SINGLE
-}
+/**
+ * How pages are arranged on the canvas.
+ *
+ * The enum and the arithmetic behind it live in `:core`, shared with the Windows build - a
+ * document read in two columns on one machine and one column on the other would be the same
+ * document laid out by two different sets of rules, and only one of them can be right.
+ */
+typealias PageLayout = com.inkslate.core.PageLayout
 
 /**
  * One page placed in document space.
@@ -84,105 +82,51 @@ class PageSlot(val index: Int, val width: Float, val height: Float) {
     }
 }
 
-/** Computes page origins for a layout. Pure geometry, so it can be reasoned about on its own. */
+/**
+ * Places the slots, using the shared arithmetic in `core/PageArranger`.
+ *
+ * This end owns only what a slot *is* on Android - it carries a rendered bitmap, which is the one
+ * part that cannot be shared. Where each page goes is decided in `:core`.
+ */
 object PageArranger {
 
     /** Space between pages, in page points. */
-    const val GAP = 26f
+    const val GAP = com.inkslate.core.PageArranger.GAP
+
+    /** Pages parked out of the way in SINGLE mode sit here. */
+    const val FAR_AWAY = com.inkslate.core.PageArranger.FAR_AWAY
+
+    private fun extentsOf(slots: List<PageSlot>) =
+        slots.map { com.inkslate.core.PageExtent(it.visibleWidth, it.visibleHeight) }
+
+    private fun canvasOf(slots: List<PageSlot>): com.inkslate.core.Box? =
+        slots.firstOrNull { it.canvasRect != null }?.canvasRect?.let {
+            com.inkslate.core.Box(it.left, it.top, it.right, it.bottom)
+        }
 
     fun arrange(slots: List<PageSlot>, layout: PageLayout, currentPage: Int) {
         if (slots.isEmpty()) return
-        // A canvas is placed at its own origin, whatever the layout says.
-        //
-        // This has to hold in *every* arrangement, not just the single-page one. A canvas has one
-        // page, so every layout degenerates to placing that page - but the column and grid
-        // arrangements place their first page at zero, and a canvas whose origin has gone
-        // negative is then offset by exactly how far it has grown. Every coordinate on it shifts
-        // by that amount, which on screen is the whole document sliding sideways the instant you
-        // write past the top or left edge. Handling it once, here, is what makes page coordinates
-        // and document coordinates the same thing for a canvas - which is the invariant that lets
-        // it grow in any direction without anything appearing to move.
-        val canvasSlot = slots.firstOrNull { it.canvasRect != null }
-        if (canvasSlot != null) {
-            val c = canvasSlot.canvasRect!!
-            slots.forEach { it.originX = FAR_AWAY; it.originY = FAR_AWAY }
-            canvasSlot.originX = c.left
-            canvasSlot.originY = c.top
-            return
-        }
-
-        when (layout) {
-            PageLayout.SINGLE -> {
-                // Only the current page occupies the canvas; the rest are parked off to one side
-                // so nothing else can be hit-tested or drawn.
-                slots.forEach { it.originX = FAR_AWAY; it.originY = FAR_AWAY }
-                slots.getOrNull(currentPage)?.let { it.originX = 0f; it.originY = 0f }
-            }
-
-            PageLayout.VERTICAL -> {
-                val widest = slots.maxOf { it.visibleWidth }
-                var y = 0f
-                for (s in slots) {
-                    s.originX = (widest - s.visibleWidth) / 2f   // centre narrower pages in the column
-                    s.originY = y
-                    y += s.visibleHeight + GAP
-                }
-            }
-
-            PageLayout.HORIZONTAL -> {
-                val tallest = slots.maxOf { it.visibleHeight }
-                var x = 0f
-                for (s in slots) {
-                    s.originX = x
-                    s.originY = (tallest - s.visibleHeight) / 2f
-                    x += s.visibleWidth + GAP
-                }
-            }
-
-            PageLayout.SPREAD -> {
-                // Facing pages, the way a physical book falls open: page 1 alone on the right,
-                // then pairs. Reading a scanned textbook laid out for print is much easier this
-                // way round than as a single column.
-                val cellW = slots.maxOf { it.visibleWidth }
-                val cellH = slots.maxOf { it.visibleHeight }
-                for ((i, s) in slots.withIndex()) {
-                    val row = (i + 1) / 2
-                    val col = (i + 1) % 2
-                    s.originX = col * (cellW + GAP) + (cellW - s.visibleWidth) / 2f
-                    s.originY = row * (cellH + GAP) + (cellH - s.visibleHeight) / 2f
-                }
-            }
-
-            PageLayout.GRID -> {
-                val cols = max(1, ceil(sqrt(slots.size.toDouble())).toInt())
-                val cellW = slots.maxOf { it.visibleWidth }
-                val cellH = slots.maxOf { it.visibleHeight }
-                for ((i, s) in slots.withIndex()) {
-                    val r = i / cols
-                    val c = i % cols
-                    s.originX = c * (cellW + GAP) + (cellW - s.visibleWidth) / 2f
-                    s.originY = r * (cellH + GAP) + (cellH - s.visibleHeight) / 2f
-                }
-            }
+        val origins = com.inkslate.core.PageArranger.arrange(
+            extentsOf(slots), layout, currentPage, canvasOf(slots)
+        )
+        for ((i, s) in slots.withIndex()) {
+            val (x, y) = origins.getOrNull(i) ?: continue
+            s.originX = x
+            s.originY = y
         }
     }
 
     /** Overall extent of the arranged pages, in document space. */
     fun bounds(slots: List<PageSlot>, layout: PageLayout, currentPage: Int): RectF {
         if (slots.isEmpty()) return RectF(0f, 0f, 612f, 792f)
-        // A canvas sits at its own origin, which may be negative, so its extent is its rectangle
-        // rather than a box starting at zero. Getting this wrong sends the scroll limits and the
-        // culling test looking in the wrong place once it has grown up or left.
-        slots.firstOrNull { it.canvasRect != null }?.let { return RectF(it.rect) }
-        if (layout == PageLayout.SINGLE) {
-            val s = slots.getOrNull(currentPage) ?: slots.first()
-            return RectF(0f, 0f, s.visibleWidth, s.visibleHeight)
-        }
-        val r = RectF(slots.first().rect)
-        slots.drop(1).forEach { r.union(it.rect) }
-        return r
+        val extents = extentsOf(slots)
+        val box = com.inkslate.core.PageArranger.bounds(
+            extents,
+            slots.map { it.originX to it.originY },
+            layout,
+            currentPage,
+            canvasOf(slots)
+        )
+        return RectF(box.left, box.top, box.right, box.bottom)
     }
-
-    /** Pages parked out of the way in SINGLE mode sit here. */
-    const val FAR_AWAY = 1_000_000f
 }

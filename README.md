@@ -181,8 +181,9 @@ subtly different renderers is how "it looked different when I exported it" bugs 
 
 ## Not built yet
 
-- **The Windows editor's tools.** Selection, shapes, text, stamps, the ruler and the reading
-  modes are Android-only so far - see [The Windows build](#the-windows-build).
+- **Windows: reading, stamps and the saving rules.** The drawing tools are across; the page
+  layouts, search, bookmarks, reading modes, stamps and per-file save rules are not - see
+  [The Windows build](#the-windows-build).
 - **Word documents.** Android has no usable `.docx` renderer, so this needs either a conversion
   step or server-side rendering.
 - OCR for scanned PDFs (which have no text layer, so search and text snapping do nothing there),
@@ -202,19 +203,30 @@ the tablet opens on the laptop with its handwriting already on it and nothing el
 
 `./gradlew :desktop:packageMsi` builds an installer. Both need the same `JAVA_HOME` as the APK.
 
-What is there now: the home screen and its folders, recents and starred items, the file browser,
-new blank documents in every ruling the tablet offers, a pen, a highlighter, an eraser, undo,
-saving into the document, flattened export, and the update check.
+What is there now: the home screen with its folders, recents and starred items; the file browser;
+new blank documents in every ruling the tablet offers; all eight brushes with their pressure
+curves; the eraser in both whole-stroke and partial modes; selection with move, resize, restyle,
+duplicate, cut, copy and paste across documents; lines, arrows, boxes, ovals and tables; text
+boxes with font, size, weight, alignment, wrapping, background and border; saved pen presets; the
+full colour picker; undo and redo; saving into the document; flattened export; and the update
+check.
+
+Keyboard, because this is a desktop: Ctrl+S saves, Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) undo and
+redo, Ctrl+C/X/V and Delete work on the selection, Ctrl+A selects the page, Ctrl+= / Ctrl+- /
+Ctrl+0 zoom, Escape steps back, and Ctrl+W closes the document.
 
 What is not, and where the two builds visibly differ:
 
 | | |
 |---|---|
-| Editor tools | Pen, highlighter and eraser only. Selection, shapes, text, tables, stamps, the ruler and the reading modes have not been brought across. |
+| Reading | One continuous vertical layout. The horizontal, grid, spread and single-page layouts, the table of contents, bookmarks, full-text search, the reading modes and margin cropping are Android-only so far. |
 | Infinite canvas | Not in the desktop editor, so "New" does not offer a canvas that grows. Offering paper that claims to grow and then does not is worse than not offering it. |
-| Colour picker | The paper and ruling swatches are the tablet's lists, but the "+" that opens a full picker is not there yet. |
+| Stamps and pictures | Axes, number lines, unit circles, region capture and pasted images have not been brought across; the shapes that shared their picker on the tablet have. |
+| Saving rules | Always writes into the document, and exports a copy. The per-file save rules, version history, backups and the overwrite/copy modes are Android-only. |
 | Item actions | Reached by right-click rather than a long press, which is what a mouse expects. Same sheet, same actions. |
+| Input profiles | One, not four. The tablet keeps separate pen, finger and barrel-button pens because those are four things that touch the glass; a mouse is one. |
 | Pressure | A mouse has none and desktop pens report it inconsistently through the JVM, so width falls back to speed - the same fallback the tablet uses for finger input. |
+| Text in exports | Written with the standard-14 PDF fonts, so a character outside WinAnsi (a maths symbol pasted in, say) exports as a placeholder rather than aborting the export. |
 
 The palette in `desktop/Theme.kt` is a deliberate copy of the Android one rather than an
 approximation, and it is the one file that has to be kept in step by hand. A colour that is nearly
@@ -222,9 +234,10 @@ right is worse than one that is obviously different: it reads as a rendering fau
 design.
 
 What must never be written twice is anything that decides what a document *is* or what a mark
-*looks like*. `InkDocument`, `StrokeOutline` and `PaperPattern` all live in `:core` for that
-reason - two implementations of "graph paper" or "a tapered stroke" line up on the day they are
-written and drift apart afterwards.
+*looks like*. `InkDocument`, `StrokeOutline`, `PaperPattern`, `ToolConfig` and `Palette` all live
+in `:core` for that reason - two implementations of "graph paper" or "a tapered stroke" line up on
+the day they are written and drift apart afterwards, and a width ladder or a palette that differed
+between the two would mean a stroke drawn on one could not be reproduced on the other.
 
 ---
 

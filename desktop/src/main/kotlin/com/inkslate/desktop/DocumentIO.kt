@@ -2,9 +2,12 @@ package com.inkslate.desktop
 
 import com.inkslate.core.InkDocument
 import com.inkslate.core.Stroke
+import com.inkslate.core.TextFont
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.apache.pdfbox.util.Matrix
 import java.io.File
 import java.io.FileOutputStream
@@ -286,7 +289,110 @@ object DocumentIO {
                 cs.closePath()
                 cs.stroke()
             }
-            Stroke.Kind.TEXT -> Unit    // handled by the Android exporter; not yet on desktop
+            Stroke.Kind.TEXT -> drawText(cs, s)
         }
     }
+
+    /**
+     * Write a text box into the page.
+     *
+     * Two things make this less obvious than it looks. The content stream is already under the
+     * transform that maps display space - y downwards, the way ink is stored - into PDF user
+     * space, where y runs up; text drawn under that would come out mirrored, so the text matrix
+     * flips it back. And line breaking uses [Stroke.wrapLines] with the widths of the font
+     * actually being written, which is what keeps an exported paragraph breaking where the screen
+     * broke it.
+     */
+    private fun drawText(cs: PDPageContentStream, s: Stroke) {
+        val p = s.points.firstOrNull() ?: return
+        val body = s.text?.takeIf { it.isNotEmpty() } ?: return
+        val font = fontFor(s)
+        val size = max(1f, s.textSize)
+
+        fun widthOf(line: String): Float =
+            runCatching { font.getStringWidth(encodable(line)) / 1000f * size }.getOrDefault(0f)
+
+        val lines = s.wrapLines(::widthOf)
+        val contentWidth =
+            if (s.boxWidth > 0f) s.boxWidth - s.padding * 2f
+            else max(8f, lines.maxOfOrNull(::widthOf) ?: 0f)
+        val boxW = if (s.boxWidth > 0f) s.boxWidth else contentWidth + s.padding * 2f
+        val boxH =
+            if (s.boxHeight > 0f) s.boxHeight
+            else max(1, lines.size) * size * s.lineSpacing + s.padding * 2f
+
+        if (s.boxFillColor != 0) {
+            val f = s.boxFillColor
+            cs.setNonStrokingColor(
+                ((f shr 16) and 0xFF) / 255f, ((f shr 8) and 0xFF) / 255f, (f and 0xFF) / 255f
+            )
+            cs.addRect(p.x, p.y, boxW, boxH)
+            cs.fill()
+            // The fill just changed the colour; put the text's own back before writing it.
+            val r = ((s.color shr 16) and 0xFF) / 255f
+            val g = ((s.color shr 8) and 0xFF) / 255f
+            val b = (s.color and 0xFF) / 255f
+            cs.setNonStrokingColor(r, g, b)
+        }
+        if (s.boxBorder) {
+            cs.setLineWidth(max(0.3f, s.baseWidth))
+            cs.addRect(p.x, p.y, boxW, boxH)
+            cs.stroke()
+        }
+
+        var y = p.y + s.padding
+        for (line in lines) {
+            if (line.isNotEmpty()) {
+                val x = p.x + s.padding + s.lineOffsetX(widthOf(line), contentWidth)
+                cs.beginText()
+                cs.setFont(font, size)
+                // The counter-flip. Its translation is the baseline, which sits one font size
+                // below the top of the line in the y-downwards space the box is measured in.
+                cs.setTextMatrix(Matrix(1f, 0f, 0f, -1f, x, y + size))
+                cs.showText(encodable(line))
+                cs.endText()
+            }
+            y += size * s.lineSpacing
+        }
+    }
+
+    /** The standard-14 face closest to what the document asked for. */
+    private fun fontFor(s: Stroke): PDType1Font {
+        val name = when (s.font) {
+            TextFont.SERIF -> when {
+                s.bold && s.italic -> Standard14Fonts.FontName.TIMES_BOLD_ITALIC
+                s.bold -> Standard14Fonts.FontName.TIMES_BOLD
+                s.italic -> Standard14Fonts.FontName.TIMES_ITALIC
+                else -> Standard14Fonts.FontName.TIMES_ROMAN
+            }
+            TextFont.MONO -> when {
+                s.bold && s.italic -> Standard14Fonts.FontName.COURIER_BOLD_OBLIQUE
+                s.bold -> Standard14Fonts.FontName.COURIER_BOLD
+                s.italic -> Standard14Fonts.FontName.COURIER_OBLIQUE
+                else -> Standard14Fonts.FontName.COURIER
+            }
+            // No script face exists among the standard 14, so the casual font is written as an
+            // oblique. Embedding one would carry a font file into every exported document for a
+            // difference nobody asked for.
+            TextFont.CASUAL -> if (s.bold) Standard14Fonts.FontName.HELVETICA_BOLD_OBLIQUE
+            else Standard14Fonts.FontName.HELVETICA_OBLIQUE
+            TextFont.SANS -> when {
+                s.bold && s.italic -> Standard14Fonts.FontName.HELVETICA_BOLD_OBLIQUE
+                s.bold -> Standard14Fonts.FontName.HELVETICA_BOLD
+                s.italic -> Standard14Fonts.FontName.HELVETICA_OBLIQUE
+                else -> Standard14Fonts.FontName.HELVETICA
+            }
+        }
+        return PDType1Font(name)
+    }
+
+    /**
+     * The standard-14 fonts encode WinAnsi and throw on anything else.
+     *
+     * A maths symbol dropped into a text box would otherwise abort the whole export with an
+     * encoding error, losing the entire document's worth of annotation over one character. A
+     * visible placeholder is the better failure: the export succeeds and the gap is obvious.
+     */
+    private fun encodable(text: String): String =
+        text.map { if (it.code in 32..255 || it == '’') it else '?' }.joinToString("")
 }
