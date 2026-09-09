@@ -130,6 +130,7 @@ fun EditorScreen(
     var symbolsOpen by remember { mutableStateOf(false) }
     var pagesOpen by remember { mutableStateOf(false) }
     var versionsOpen by remember { mutableStateOf(false) }
+    var exportOpen by remember { mutableStateOf(false) }
     var reopenTick by remember { mutableStateOf(0) }
     // Restored once per open, or every recomposition would drag the view back.
     var positionRestored by remember(file) { mutableStateOf(false) }
@@ -555,8 +556,8 @@ fun EditorScreen(
                                 onClick = { menuOpen = false; save() }
                             )
                             DropdownMenuItem(
-                                text = { Text("Export flattened copy...") },
-                                onClick = { menuOpen = false; exportFlattened() }
+                                text = { Text("Export...") },
+                                onClick = { menuOpen = false; exportOpen = true }
                             )
                             DropdownMenuItem(
                                 text = { Text("Version history...") },
@@ -901,6 +902,35 @@ fun EditorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmOverwrite = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (exportOpen) {
+        ExportDialog(
+            documentName = file.name,
+            pageCount = source?.pageCount ?: 1,
+            currentPage = page,
+            isPdf = DesktopSources.isPdf(file),
+            onDismiss = { exportOpen = false },
+            onExport = { request ->
+                exportOpen = false
+                busy = true
+                scope.launch {
+                    val doc = currentInk()
+                    val target = DocumentExport.freeTarget(
+                        file.parentFile ?: File("."), request.name
+                    )
+                    val result = withContext(Dispatchers.IO) {
+                        DocumentExport.exportTo(file, target, doc, request.pages, request.flatten)
+                    }
+                    status = result.fold(
+                        onSuccess = { "Exported ${it.name}" },
+                        onFailure = { "Export failed: ${it.message}" }
+                    )
+                    snackbar.showSnackbar(status)
+                    busy = false
+                }
             }
         )
     }

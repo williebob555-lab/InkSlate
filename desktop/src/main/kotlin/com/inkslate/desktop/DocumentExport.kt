@@ -144,6 +144,59 @@ object DocumentExport {
         }
     }
 
+    /**
+     * Write a named copy, optionally of only some pages.
+     *
+     * Separate from [save] because it answers a different question: not "what happens to this
+     * document" but "make me a file to hand in". It never touches the original, and a page
+     * subset is built by dropping the rest from a copy rather than by assembling a new document,
+     * so everything a page carries - its size, its rotation, its fonts - comes with it.
+     */
+    fun exportTo(
+        source: File,
+        target: File,
+        doc: InkDocument,
+        pages: List<Int>?,
+        flatten: Boolean
+    ): Result<File> = runCatching {
+        require(DesktopSources.isPdf(source)) { "Only PDFs can be exported this way" }
+        target.parentFile?.mkdirs()
+
+        val format = if (flatten) InkFormat.FLATTENED else InkFormat.ANNOTATIONS
+        write(source, target, doc, format)
+
+        if (pages != null) {
+            val keep = pages.toSortedSet()
+            Loader.loadPDF(target).use { pdf ->
+                for (i in pdf.numberOfPages - 1 downTo 0) {
+                    if (i !in keep) pdf.removePage(i)
+                }
+                val tmp = File(target.parentFile, "." + target.name + ".pages")
+                FileOutputStream(tmp).use { out -> pdf.save(out) }
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+            }
+        }
+
+        // Flattening deliberately omits the editable copy: that mode exists to produce something
+        // that cannot be edited again, and carrying the strokes along would undo the point of it.
+        if (!flatten && DesktopEmbedder.supports(target)) DesktopEmbedder.write(target, doc)
+        target
+    }
+
+    /** A name that is not already taken, so an export never lands on an earlier one. */
+    fun freeTarget(dir: File, stem: String): File {
+        var candidate = File(dir, "$stem.pdf")
+        var n = 2
+        while (candidate.exists()) {
+            candidate = File(dir, "$stem ($n).pdf")
+            n++
+        }
+        return candidate
+    }
+
     // ---- writing -------------------------------------------------------------
 
     private fun write(source: File, target: File, doc: InkDocument, format: InkFormat) {

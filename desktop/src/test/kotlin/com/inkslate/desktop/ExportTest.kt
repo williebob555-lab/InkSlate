@@ -9,6 +9,7 @@ import org.apache.pdfbox.Loader
 import org.apache.pdfbox.text.PDFTextStripper
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -159,6 +160,72 @@ class ExportTest {
         val second = DocumentIO.exportFlattened(source, doc).getOrThrow()
 
         assertTrue(first.isFile && second.isFile)
+        assertTrue(first.absolutePath != second.absolutePath)
+    }
+
+    // ---- exporting a subset --------------------------------------------------
+
+    @Test
+    fun `a page range exports only those pages`() {
+        val dir = temp.newFolder()
+        val source = BlankDocumentFactory.create(
+            dir, BlankDocumentFactory.Spec(name = "Book", pageCount = 6)
+        ).getOrThrow()
+        val doc = InkDocument.create("Book.pdf", "pdf", 6, 0L, "")
+            .withPage(2, listOf(textStroke("Middle page")), "test")
+
+        val target = DocumentExport.freeTarget(dir, "Chapter")
+        DocumentExport.exportTo(source, target, doc, pages = listOf(1, 2, 3), flatten = true)
+            .getOrThrow()
+
+        DesktopSources.open(target)!!.use { assertEquals(3, it.pageCount) }
+        // The mark was on page 3 of the original, which is the middle of the exported run.
+        assertTrue(textOf(target).contains("Middle page"))
+        // And the original is untouched.
+        DesktopSources.open(source)!!.use { assertEquals(6, it.pageCount) }
+    }
+
+    @Test
+    fun `exporting the whole document keeps every page`() {
+        val dir = temp.newFolder()
+        val source = BlankDocumentFactory.create(
+            dir, BlankDocumentFactory.Spec(name = "Book", pageCount = 4)
+        ).getOrThrow()
+        val target = DocumentExport.freeTarget(dir, "Whole")
+        DocumentExport.exportTo(
+            source, target, docWith(textStroke("Hello")), pages = null, flatten = true
+        ).getOrThrow()
+        DesktopSources.open(target)!!.use { assertEquals(4, it.pageCount) }
+    }
+
+    /**
+     * Flattening deliberately drops the editable copy.
+     *
+     * That mode exists to produce something that cannot be edited again; carrying the strokes
+     * along inside it would undo the point of choosing it.
+     */
+    @Test
+    fun `a flattened export does not carry the editable copy`() {
+        val dir = temp.newFolder()
+        val source = BlankDocumentFactory.create(dir, BlankDocumentFactory.Spec(name = "S"))
+            .getOrThrow()
+        val flat = DocumentExport.freeTarget(dir, "Flat")
+        DocumentExport.exportTo(source, flat, docWith(textStroke("Done")), null, flatten = true)
+            .getOrThrow()
+        assertNull(DesktopEmbedder.read(flat))
+
+        val editable = DocumentExport.freeTarget(dir, "Editable")
+        DocumentExport.exportTo(source, editable, docWith(textStroke("Done")), null, flatten = false)
+            .getOrThrow()
+        assertNotNull(DesktopEmbedder.read(editable))
+    }
+
+    @Test
+    fun `an export never lands on an earlier one`() {
+        val dir = temp.newFolder()
+        val first = DocumentExport.freeTarget(dir, "Copy")
+        first.writeText("taken")
+        val second = DocumentExport.freeTarget(dir, "Copy")
         assertTrue(first.absolutePath != second.absolutePath)
     }
 }
