@@ -58,8 +58,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.inkslate.ink.*
+import com.inkslate.core.Stamps
 import com.inkslate.core.Tool
-import com.inkslate.ink.Stamps
+
 import com.inkslate.ink.StrokeRasteriser
 import kotlin.math.roundToInt
 
@@ -475,14 +476,14 @@ private fun StampPreview(
 }
 
 /** The stamp's own proportions, centred in the square the preview draws into. */
-private fun boxFor(kind: Stamps.Kind, opts: Stamps.StampOptions): android.graphics.RectF {
+private fun boxFor(kind: Stamps.Kind, opts: Stamps.StampOptions): com.inkslate.core.Box {
     val aspect = Stamps.aspectFor(kind, opts)
     var w = TILE - 22f
     var h = w / aspect
     if (h > TILE - 22f) { h = TILE - 22f; w = h * aspect }
     val left = (TILE - w) / 2f
     val top = (TILE - h) / 2f
-    return android.graphics.RectF(left, top, left + w, top + h)
+    return com.inkslate.core.Box(left, top, left + w, top + h)
 }
 
 @Composable

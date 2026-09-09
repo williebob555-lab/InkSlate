@@ -116,6 +116,7 @@ fun DocumentCanvas(
     onCommitted: (Op) -> Unit,
     onEditText: (Stroke) -> Unit,
     onPlaceText: (Float, Float, Int) -> Unit,
+    onStampPlaced: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val extents = remember(source, source.pageCount) {
@@ -144,6 +145,7 @@ fun DocumentCanvas(
     var live by remember { mutableStateOf<List<com.inkslate.core.InkPoint>>(emptyList()) }
     var livePage by remember { mutableStateOf(0) }
     var pending by remember { mutableStateOf<Stroke?>(null) }
+    var pendingStamp by remember { mutableStateOf<List<Stroke>>(emptyList()) }
     var marquee by remember { mutableStateOf<InkBox?>(null) }
 
     /** Which page a document point belongs to: the one under it, or the nearest. */
@@ -258,7 +260,9 @@ fun DocumentCanvas(
                         onPlaceText = onPlaceText,
                         onLive = { live = it },
                         onPending = { pending = it },
-                        onMarquee = { marquee = it }
+                        onMarquee = { marquee = it },
+                        onPendingStamp = { pendingStamp = it },
+                        onStampPlaced = onStampPlaced
                     )
                 }
             }
@@ -277,6 +281,7 @@ fun DocumentCanvas(
                                 selection = selection,
                                 live = if (livePage == slot.index) live else emptyList(),
                                 pending = pending?.takeIf { it.pageIndex == slot.index },
+                                pendingStamp = pendingStamp.filter { it.pageIndex == slot.index },
                                 marquee = marquee?.takeIf { livePage == slot.index },
                                 tools = tools,
                                 textMeasurer = textMeasurer,
@@ -317,6 +322,7 @@ private fun DrawScope.drawPage(
     selection: Set<String>,
     live: List<com.inkslate.core.InkPoint>,
     pending: Stroke?,
+    pendingStamp: List<Stroke>,
     marquee: InkBox?,
     tools: ToolState,
     textMeasurer: TextMeasurer,
@@ -358,6 +364,7 @@ private fun DrawScope.drawPage(
             )
         }
         pending?.let { drawStroke(it) }
+        pendingStamp.forEach { if (it.kind != Stroke.Kind.TEXT) drawStroke(it) }
 
         marquee?.let { m ->
             drawRect(

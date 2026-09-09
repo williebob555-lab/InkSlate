@@ -107,7 +107,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.InputMode
-import com.inkslate.ink.Stamps
+
 import com.inkslate.core.Tool
 
 @OptIn(ExperimentalMaterial3Api::class)

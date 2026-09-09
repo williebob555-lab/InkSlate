@@ -1,6 +1,8 @@
 package com.inkslate
 
-import com.inkslate.ink.Stamps
+import com.inkslate.core.Stamps
+
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

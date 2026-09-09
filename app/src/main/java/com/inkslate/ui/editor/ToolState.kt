@@ -15,12 +15,13 @@ import com.inkslate.ink.DrawingView
 import com.inkslate.ink.FillStyle
 import org.json.JSONArray
 import org.json.JSONObject
+import com.inkslate.core.Stamps
 import com.inkslate.core.Tool
 import com.inkslate.core.InputMode
 import com.inkslate.core.EraserMode
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.ToolConfig
-import com.inkslate.ink.Stamps
+
 
 /**
  * A saved pen: everything needed to reproduce one feel in a single tap.

@@ -62,7 +62,9 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onPlaceText: (Float, Float, Int) -> Unit,
     onLive: (List<InkPoint>) -> Unit,
     onPending: (Stroke?) -> Unit,
-    onMarquee: (InkBox?) -> Unit
+    onMarquee: (InkBox?) -> Unit,
+    onPendingStamp: (List<Stroke>) -> Unit,
+    onStampPlaced: () -> Unit
 ) {
     // Read synchronously: the config is deliberately not Compose state so the tool in hand the
     // instant the pointer lands is the one that acts.
@@ -80,7 +82,50 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     val px = start.x
     val py = start.y
 
+    val armed = tools.armedStamp
     when {
+        armed != null -> {
+            // Dragged out like a shape, but keeping the stamp's own proportions: a unit circle
+            // stretched into an ellipse is not a unit circle, and a number line squashed to a
+            // square is unreadable. The drag sets the size; the aspect is the stamp's.
+            val (stampKind, stampOptions) = armed
+            val aspect = com.inkslate.core.Stamps.aspectFor(stampKind, stampOptions)
+            var preview: List<Stroke> = emptyList()
+
+            fun boxTo(n: Offset): InkBox {
+                val w = kotlin.math.abs(n.x - px).coerceAtLeast(8f)
+                val h = (w / aspect).coerceAtLeast(6f)
+                val left = if (n.x >= px) px else px - w
+                val top = if (n.y >= py) py else py - h
+                return InkBox(left, top, left + w, top + h)
+            }
+
+            val end = dragUntilRelease(down.position) { change, _ ->
+                var n = 0
+                preview = com.inkslate.core.Stamps.build(
+                    stampKind, boxTo(toPage(change.position)), index,
+                    cfg.color, cfg.strokeWidth, stampOptions
+                ) { "stamp-preview-${n++}" }
+                onPendingStamp(preview)
+            }
+            onPendingStamp(emptyList())
+
+            val box = boxTo(toPage(end))
+            // A click with no drag gets a stamp at a sensible default size rather than nothing:
+            // having picked one from the sheet, being given no stamp at all reads as a failure.
+            val placed = com.inkslate.core.Stamps.build(
+                stampKind,
+                if (box.width > 12f) box else InkBox(px, py, px + 180f, py + 180f / aspect),
+                index, cfg.color, cfg.strokeWidth, stampOptions, newId
+            )
+            if (placed.isNotEmpty()) {
+                strokes.addAll(placed)
+                onCommitted(Op.added(placed))
+            }
+            tools.armedStamp = null
+            onStampPlaced()
+        }
+
         cfg.tool == Tool.PAN -> {
             viewport.stop()
             var last = down.position

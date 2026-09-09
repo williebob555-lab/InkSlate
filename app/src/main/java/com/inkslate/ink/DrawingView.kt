@@ -1,5 +1,6 @@
 package com.inkslate.ink
 
+import com.inkslate.core.Stamps
 import com.inkslate.core.Stroke.Kind as StrokeKind
 import android.annotation.SuppressLint
 import android.content.Context
@@ -2803,7 +2804,7 @@ class DrawingView @JvmOverloads constructor(
                     if (h > maxH) { h = maxH; w = h * aspect }
                     RectF(start[0] - w / 2f, start[1] - h / 2f, start[0] + w / 2f, start[1] + h / 2f)
                 }
-                Stamps.build(
+                buildStamp(
                     item.kind, bounds, livePage, color, liveWidth, item.options
                 ) { ids.next() }
             }

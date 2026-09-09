@@ -1,7 +1,6 @@
-package com.inkslate.ink
+package com.inkslate.core
 
 import com.inkslate.core.Stroke.Kind as StrokeKind
-import android.graphics.RectF
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -11,6 +10,10 @@ import kotlin.math.sin
 
 /**
  * Ready-made drawings you would otherwise redraw every week.
+ *
+ * Lives in `:core` because a stamp is geometry: it produces ordinary strokes, and a number line
+ * built one way on the tablet and another way on the laptop would be two different drawings
+ * wearing one name. Both builds call this and only the picker around it is written twice.
  *
  * Produced as ordinary strokes rather than images, so a stamp can be moved, resized, recoloured
  * and partly erased like anything else you drew - and so it exports as vectors.
@@ -306,7 +309,7 @@ object Stamps {
      */
     fun build(
         kind: Kind,
-        bounds: RectF,
+        bounds: Box,
         page: Int,
         color: Int,
         width: Float,
@@ -415,10 +418,10 @@ object Stamps {
         val top = bounds.top
         val right = bounds.right
         val bottom = bounds.bottom
-        val w = bounds.width()
-        val h = bounds.height()
-        val cx = bounds.centerX()
-        val cy = bounds.centerY()
+        val w = bounds.width
+        val h = bounds.height
+        val cx = bounds.centerX
+        val cy = bounds.centerY
         val thin = width * 0.6f
         val hair = width * 0.45f
         /** A type size that stays readable without swamping the drawing it annotates. */

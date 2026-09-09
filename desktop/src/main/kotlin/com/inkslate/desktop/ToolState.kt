@@ -43,6 +43,15 @@ class ToolState {
     var tableRows by mutableStateOf(3)
     var tableCols by mutableStateOf(3)
 
+    /**
+     * A stamp chosen but not yet placed.
+     *
+     * Held here rather than as an editor state because the canvas has to read it synchronously
+     * the instant a pointer lands, which is the same reason [active] is not Compose state.
+     */
+    var armedStamp: Pair<com.inkslate.core.Stamps.Kind, com.inkslate.core.Stamps.StampOptions>? =
+        null
+
     fun edit(block: (ToolConfig) -> Unit) {
         block(active)
         revision++

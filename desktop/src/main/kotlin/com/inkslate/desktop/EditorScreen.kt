@@ -122,7 +122,8 @@ fun EditorScreen(
     var editingText by remember { mutableStateOf<Stroke?>(null) }
     var newTextAt by remember { mutableStateOf<Stroke?>(null) }
     var pickingColour by remember { mutableStateOf(false) }
-    var shapesOpen by remember { mutableStateOf(false) }
+    var stampsOpen by remember { mutableStateOf(false) }
+    var armedStampLabel by remember { mutableStateOf<String?>(null) }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var bookmarkPrompt by remember { mutableStateOf<Int?>(null) }
@@ -555,7 +556,7 @@ fun EditorScreen(
                         onPaste = ::paste,
                         canPaste = Clipboard.contents.isNotEmpty(),
                         onPickCustomColour = { pickingColour = true },
-                        onInsertStamp = { shapesOpen = true },
+                        onInsertStamp = { stampsOpen = true },
                         onMessage = { scope.launch { snackbar.showSnackbar(it) } }
                     )
                 )
@@ -589,6 +590,7 @@ fun EditorScreen(
                     newId = ::nextId,
                     onCommitted = ::pushOp,
                     onEditText = { editingText = it },
+                    onStampPlaced = { armedStampLabel = null },
                     onPlaceText = { x, y, p ->
                         newTextAt = Stroke(
                             id = nextId(),
@@ -655,59 +657,15 @@ fun EditorScreen(
         )
     }
 
-    if (shapesOpen) {
-        ShapePicker(
-            current = tools.active.tool,
-            onDismiss = { shapesOpen = false },
-            onPick = { tool ->
-                tools.edit { it.tool = tool }
-                shapesOpen = false
-            }
-        )
-    }
-
-    if (navOpen) {
-        NavigationSheet(
-            pageCount = source?.pageCount ?: 1,
-            currentPage = page,
-            outline = outline,
-            bookmarks = bookmarks,
-            onGoToPage = { navOpen = false; goToPage(it) },
-            onRemoveBookmark = { p ->
-                ink = ink.withBookmarkRemoved(p)
-                bookmarks = ink.bookmarks
-                dirty = true
-            },
-            onDismiss = { navOpen = false }
-        )
-    }
-
-    if (searchOpen) {
-        SearchSheet(
-            query = searchQuery,
-            onQueryChange = { searchQuery = it },
-            onSearch = ::runSearch,
-            hits = searchHits,
-            searching = searching,
-            progressPage = searchProgress,
-            pageCount = source?.pageCount ?: 1,
-            onGoToHit = { hit ->
-                searchOpen = false
-                goToPage(hit.page)
-            },
-            onDismiss = { searchOpen = false }
-        )
-    }
-
-    bookmarkPrompt?.let { target ->
-        BookmarkDialog(
-            page = target,
-            onDismiss = { bookmarkPrompt = null },
-            onConfirm = { label ->
-                ink = ink.withBookmarkAdded(target, label)
-                bookmarks = ink.bookmarks
-                dirty = true
-                bookmarkPrompt = null
+    if (stampsOpen) {
+        StampPicker(
+            colour = tools.active.color,
+            onDismiss = { stampsOpen = false },
+            onPickShape = { tool -> tools.edit { it.tool = tool } },
+            onPick = { kind, options ->
+                tools.armedStamp = kind to options
+                armedStampLabel = kind.label
+                stampsOpen = false
             }
         )
     }
@@ -734,41 +692,6 @@ fun EditorScreen(
             }
         )
     }
-}
-
-/**
- * Line, arrow, box and oval.
- *
- * They live behind one toolbar button rather than four, exactly as they do on the tablet: four
- * permanent slots in front of the tools used constantly was the wrong trade.
- */
-@Composable
-private fun ShapePicker(current: Tool, onDismiss: () -> Unit, onPick: (Tool) -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Shapes") },
-        text = {
-            Column {
-                Text(
-                    "Drag one out on the page. Fill, dashes and colour come from the toolbar.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-                OptionWrapRow {
-                    listOf(
-                        Tool.LINE to "Line",
-                        Tool.ARROW to "Arrow",
-                        Tool.RECT to "Rectangle",
-                        Tool.ELLIPSE to "Ellipse"
-                    ).forEach { (tool, label) ->
-                        OptionChip(label, current == tool) { onPick(tool) }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
-    )
 }
 
 @Composable
