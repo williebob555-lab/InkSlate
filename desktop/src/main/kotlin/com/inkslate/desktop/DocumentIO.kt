@@ -268,7 +268,8 @@ object DocumentIO {
                 cs.setLineWidth(max(0.3f, s.baseWidth))
                 cs.moveTo(a.x, a.y); cs.lineTo(c.x, c.y); cs.stroke()
             }
-            Stroke.Kind.RECT, Stroke.Kind.TABLE, Stroke.Kind.IMAGE -> {
+            Stroke.Kind.IMAGE -> drawEmbeddedImage(cs, s)
+            Stroke.Kind.RECT, Stroke.Kind.TABLE -> {
                 val box = s.rectBox()
                 cs.setLineWidth(max(0.3f, s.baseWidth))
                 cs.addRect(box.left, box.top, box.width, box.height)
@@ -385,6 +386,56 @@ object DocumentIO {
             }
         }
         return PDType1Font(name)
+    }
+
+    /**
+     * Supplies pictures for embedded images, set by the caller before exporting.
+     *
+     * A resolver rather than a store, because the exporter has no business knowing where a
+     * document keeps its assets - and a copy being written somewhere else still wants the
+     * originals from where they actually are.
+     */
+    var imageResolver: ((String) -> java.awt.image.BufferedImage?)? = null
+
+    /**
+     * The document being written, so an image can be attached to it.
+     *
+     * Held for the duration of one export rather than threaded through every draw call, because
+     * only this one object kind needs it and the drawing interface is otherwise about geometry.
+     */
+    internal var exportingInto: PDDocument? = null
+
+    /**
+     * Draw a pasted picture into the page.
+     *
+     * A cropped image is trimmed before it is embedded rather than clipped afterwards, so the
+     * discarded edges are not carried in the exported file at all - which on a photograph cropped
+     * down to one diagram is most of its weight.
+     */
+    private fun drawEmbeddedImage(cs: PDPageContentStream, s: Stroke) {
+        val id = s.imageId ?: return
+        val document = exportingInto ?: return
+        val source = imageResolver?.invoke(id) ?: return
+        val r = s.rectBox()
+        if (r.isEmpty) return
+
+        val crop = s.cropPixels(source.width, source.height)
+        val picture = if (crop == null) source else runCatching {
+            source.getSubimage(crop[0], crop[1], crop[2] - crop[0], crop[3] - crop[1])
+        }.getOrDefault(source)
+
+        runCatching {
+            val image =
+                org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(
+                    document, picture
+                )
+            cs.saveGraphicsState()
+            // The page transform has y running down; an image is drawn from its bottom-left, so
+            // this flips back for the duration of the draw.
+            cs.transform(Matrix(1f, 0f, 0f, -1f, 0f, r.top + r.bottom))
+            cs.drawImage(image, r.left, r.top, r.width, r.height)
+            cs.restoreGraphicsState()
+        }
     }
 
     /**

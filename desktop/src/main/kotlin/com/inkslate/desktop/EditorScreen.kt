@@ -44,6 +44,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +52,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,6 +69,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 /** What the title bar says about the document's relationship to the disk. */
 private enum class WriteState(val label: String) {
@@ -109,6 +112,9 @@ fun EditorScreen(
     val textMeasurer = rememberTextMeasurer()
     val tools = remember { ToolState() }
     val prefs = remember { SavePrefs() }
+    val images = remember(file) { ImageStore(file) }
+    // Loaded lazily and kept, because a page redraws far more often than its pictures change.
+    val loadedImages = remember(file) { mutableStateMapOf<String, ImageBitmap>() }
 
     var source by remember(file) { mutableStateOf<DesktopSource?>(null) }
     var ink by remember(file) { mutableStateOf(InkDocument.create("", "pdf", 0, 0L, "")) }
@@ -131,6 +137,7 @@ fun EditorScreen(
     var pagesOpen by remember { mutableStateOf(false) }
     var versionsOpen by remember { mutableStateOf(false) }
     var exportOpen by remember { mutableStateOf(false) }
+    var cropping by remember { mutableStateOf<Stroke?>(null) }
     var reopenTick by remember { mutableStateOf(0) }
     // Restored once per open, or every recomposition would drag the view back.
     var positionRestored by remember(file) { mutableStateOf(false) }
@@ -461,6 +468,117 @@ fun EditorScreen(
         }
     }
 
+    /** Drop a picture onto a page as a movable, resizable object. */
+    fun placeImage(id: String, pageIndex: Int, box: com.inkslate.core.Box) {
+        val placed = Stroke(
+            id = nextId(),
+            kind = Stroke.Kind.IMAGE,
+            color = 0xFF000000.toInt(),
+            baseWidth = 1f,
+            points = listOf(
+                InkPoint(box.left, box.top, 1f),
+                InkPoint(box.right, box.bottom, 1f)
+            ),
+            imageId = id,
+            pageIndex = pageIndex,
+            updatedUtc = System.currentTimeMillis()
+        )
+        strokes.add(placed)
+        pushOp(Op.added(placed))
+        selection = setOf(placed.id)
+        tools.edit { it.tool = com.inkslate.core.Tool.SELECT }
+    }
+
+    /**
+     * Box a figure on the page and drop it in as a movable object.
+     *
+     * The region is re-rendered from the document rather than grabbed off the screen, so a
+     * diagram captured while zoomed out is still sharp when it is enlarged - which is most of
+     * what capturing one is for.
+     */
+    fun captureRegion(region: com.inkslate.core.Box, pageIndex: Int) {
+        val src = source ?: return
+        busy = true
+        scope.launch {
+            val id = withContext(Dispatchers.IO) {
+                runCatching {
+                    val dim = src.pageDim(pageIndex)
+                    // Rendered so the region comes out at about twice its own size, capped: enough
+                    // detail to enlarge without turning a page into a fifty-megapixel bitmap.
+                    val wanted = (region.width * 2.4f).coerceIn(200f, 2400f)
+                    val pageWidth = (dim.width * (wanted / region.width)).coerceAtMost(6000f)
+                    val rendered = src.render(pageIndex, pageWidth.roundToInt())
+                        ?: return@runCatching null
+                    val sx = rendered.width / dim.width
+                    val sy = rendered.height / dim.height
+                    val l = (region.left * sx).roundToInt().coerceIn(0, rendered.width - 1)
+                    val t = (region.top * sy).roundToInt().coerceIn(0, rendered.height - 1)
+                    val r = (region.right * sx).roundToInt().coerceIn(l + 1, rendered.width)
+                    val b = (region.bottom * sy).roundToInt().coerceIn(t + 1, rendered.height)
+
+                    val cut = ImageBitmap(r - l, b - t)
+                    androidx.compose.ui.graphics.drawscope.CanvasDrawScope().draw(
+                        androidx.compose.ui.unit.Density(1f),
+                        androidx.compose.ui.unit.LayoutDirection.Ltr,
+                        androidx.compose.ui.graphics.Canvas(cut),
+                        androidx.compose.ui.geometry.Size((r - l).toFloat(), (b - t).toFloat())
+                    ) {
+                        drawImage(
+                            rendered,
+                            srcOffset = androidx.compose.ui.unit.IntOffset(l, t),
+                            srcSize = androidx.compose.ui.unit.IntSize(r - l, b - t),
+                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                            dstSize = androidx.compose.ui.unit.IntSize(r - l, b - t)
+                        )
+                    }
+                    images.put(cut)
+                }.getOrNull()
+            }
+            if (id == null) {
+                status = "Could not capture that region"
+                snackbar.showSnackbar(status)
+            } else {
+                // Offset a little from where it came from, so it is obvious it is now a separate
+                // object sitting on the page rather than part of it.
+                placeImage(id, pageIndex, region.offset(18f, 18f))
+            }
+            busy = false
+        }
+    }
+
+    /** Bring a picture in from disk, at a sensible size on the page. */
+    fun importPicture() {
+        val src = source ?: return
+        val dialog = java.awt.FileDialog(
+            null as java.awt.Frame?, "Add a picture", java.awt.FileDialog.LOAD
+        )
+        dialog.setFilenameFilter { _, name -> DesktopSources.isImage(File(name)) }
+        dialog.isVisible = true
+        val dir = dialog.directory ?: return
+        val name = dialog.file ?: return
+        val picked = File(dir, name)
+
+        busy = true
+        scope.launch {
+            val stored = withContext(Dispatchers.IO) { images.putFile(picked) }
+            if (stored == null) {
+                status = "Could not read ${picked.name}"
+                snackbar.showSnackbar(status)
+            } else {
+                val picture = withContext(Dispatchers.IO) { images.load(stored) }
+                val dim = src.pageDim(page)
+                // Half the page's width, keeping the picture's own proportions.
+                val w = dim.width * 0.5f
+                val h = if (picture == null || picture.width == 0) w
+                else w * picture.height / picture.width
+                val left = (dim.width - w) / 2f
+                val top = (dim.height - h) / 2f
+                placeImage(stored, page, com.inkslate.core.Box(left, top, left + w, top + h))
+            }
+            busy = false
+        }
+    }
+
     /**
      * Put the straightedge on the page in view, or take it off.
      *
@@ -730,6 +848,13 @@ fun EditorScreen(
                         onInsertStamp = { stampsOpen = true },
                         onToggleRuler = ::toggleRuler,
                         onInsertSymbol = { symbolsOpen = true },
+                        onInsertPicture = ::importPicture,
+                        onCapture = { tools.edit { it.tool = com.inkslate.core.Tool.REGION } },
+                        onBeginCrop = {
+                            cropping = selected().singleOrNull()
+                                ?.takeIf { it.kind == Stroke.Kind.IMAGE }
+                        },
+                        canCrop = selected().singleOrNull()?.kind == Stroke.Kind.IMAGE,
                         onMessage = { scope.launch { snackbar.showSnackbar(it) } }
                     )
                 )
@@ -764,6 +889,10 @@ fun EditorScreen(
                     onCommitted = ::pushOp,
                     onEditText = { editingText = it },
                     canvas = ink.canvas,
+                    images = { id ->
+                        loadedImages[id] ?: images.load(id)?.also { loadedImages[id] = it }
+                    },
+                    onCaptureRegion = { region, pageIndex -> captureRegion(region, pageIndex) },
                     onStampPlaced = { armedStampLabel = null },
                     onDrew = { drawn ->
                         // Growth is free while drawing: the extra room is a rectangle in memory
@@ -952,6 +1081,21 @@ fun EditorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmOverwrite = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    cropping?.let { target ->
+        CropDialog(
+            stroke = target,
+            picture = target.imageId?.let { id ->
+                loadedImages[id] ?: images.load(id)?.also { loadedImages[id] = it }
+            },
+            onDismiss = { cropping = null },
+            onApply = { updated ->
+                strokes.applyEdit(listOf(target), listOf(updated))
+                pushOp(Op(listOf(target), listOf(updated)))
+                cropping = null
             }
         )
     }

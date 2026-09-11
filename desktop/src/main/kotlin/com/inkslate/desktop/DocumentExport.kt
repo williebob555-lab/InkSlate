@@ -59,6 +59,8 @@ object DocumentExport {
      * proceeding quietly.
      */
     fun save(source: File, doc: InkDocument, settings: SaveSettings): SaveResult {
+        // Pasted pictures live beside the document; the exporter needs a way to find them.
+        DocumentIO.imageResolver = ImageStore(source)::awtImage
         if (!DesktopSources.isPdf(source)) {
             return SaveResult.Failed(
                 UnsupportedOperationException("Only PDFs can be exported this way")
@@ -160,6 +162,7 @@ object DocumentExport {
         flatten: Boolean
     ): Result<File> = runCatching {
         require(DesktopSources.isPdf(source)) { "Only PDFs can be exported this way" }
+        DocumentIO.imageResolver = ImageStore(source)::awtImage
         target.parentFile?.mkdirs()
 
         val format = if (flatten) InkFormat.FLATTENED else InkFormat.ANNOTATIONS
@@ -201,6 +204,8 @@ object DocumentExport {
 
     private fun write(source: File, target: File, doc: InkDocument, format: InkFormat) {
         Loader.loadPDF(source).use { pdf ->
+            DocumentIO.exportingInto = pdf
+            try {
             for (index in 0 until pdf.numberOfPages) {
                 val page = pdf.getPage(index)
                 // Anything this app wrote last time goes, so a second save does not stack a
@@ -239,6 +244,9 @@ object DocumentExport {
             if (!tmp.renameTo(target)) {
                 tmp.copyTo(target, overwrite = true)
                 tmp.delete()
+            }
+            } finally {
+                DocumentIO.exportingInto = null
             }
         }
     }

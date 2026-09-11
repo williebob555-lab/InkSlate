@@ -120,6 +120,9 @@ fun DocumentCanvas(
     onPlaceText: (Float, Float, Int) -> Unit,
     onStampPlaced: () -> Unit = {},
     onDrew: (InkBox) -> Unit = {},
+    onCaptureRegion: (InkBox, Int) -> Unit = { _, _ -> },
+    /** Pictures pasted into this document, looked up by the id a stroke carries. */
+    images: (String) -> ImageBitmap? = { null },
     /** Set when this document is a canvas that grows to fit what is written on it. */
     canvas: com.inkslate.core.InkCanvas? = null,
     modifier: Modifier = Modifier
@@ -292,6 +295,7 @@ fun DocumentCanvas(
                         onPendingStamp = { pendingStamp = it },
                         onStampPlaced = onStampPlaced,
                         onDrew = onDrew,
+                        onCaptureRegion = onCaptureRegion,
                         heldButton = heldButton
                     )
                 }
@@ -320,7 +324,8 @@ fun DocumentCanvas(
                                 scale = vp.scale,
                                 ruler = tools.ruler?.takeIf {
                                     tools.rulerVisible && it.page == slot.index
-                                }
+                                },
+                                images = images
                             )
                         }
                     }
@@ -328,6 +333,43 @@ fun DocumentCanvas(
             }
         }
     }
+}
+
+/**
+ * A pasted picture, drawn into the rectangle its stroke describes.
+ *
+ * The crop is applied here rather than to the stored file, so the picture stays whole on disk: it
+ * is shared between devices and referenced by id, and trimming the bytes would change what every
+ * other copy shows - and would throw the trimmed edges away for good.
+ */
+private fun DrawScope.drawImageStroke(s: Stroke, images: (String) -> ImageBitmap?) {
+    val box = s.rectBox()
+    if (box.isEmpty) return
+    val id = s.imageId
+    val picture = id?.let(images)
+    if (picture == null) {
+        // A placeholder rather than nothing: a picture whose file has not synced yet should look
+        // like a picture that is missing, not like a gap where nothing was ever put.
+        drawRect(
+            Color(0x22FFFFFF),
+            topLeft = Offset(box.left, box.top),
+            size = Size(box.width, box.height)
+        )
+        return
+    }
+
+    val crop = s.cropPixels(picture.width, picture.height)
+    drawImage(
+        image = picture,
+        srcOffset = IntOffset(crop?.get(0) ?: 0, crop?.get(1) ?: 0),
+        srcSize = IntSize(
+            (crop?.let { it[2] - it[0] }) ?: picture.width,
+            (crop?.let { it[3] - it[1] }) ?: picture.height
+        ),
+        dstOffset = IntOffset(box.left.roundToInt(), box.top.roundToInt()),
+        dstSize = IntSize(box.width.roundToInt(), box.height.roundToInt()),
+        alpha = s.opacity.coerceIn(0f, 1f)
+    )
 }
 
 /** Whether a page is near enough the window to be worth drawing or rendering. */
@@ -363,7 +405,8 @@ private fun DrawScope.drawPage(
     textMeasurer: TextMeasurer,
     pageFilter: PageFilter,
     scale: Float,
-    ruler: com.inkslate.core.Ruler?
+    ruler: com.inkslate.core.Ruler?,
+    images: (String) -> ImageBitmap?
 ) {
     if (canvas != null) {
         // The canvas is drawn in its own coordinates, which start where it starts - and that may
@@ -411,7 +454,11 @@ private fun DrawScope.drawPage(
         // the same order the exporter writes.
         val page = strokes.filter { it.pageIndex == slot.index }
         for (s in page.sortedBy { if (it.isHighlighter) 0 else 1 }) {
-            if (s.kind == Stroke.Kind.TEXT) drawTextStroke(s, textMeasurer) else drawStroke(s)
+            when (s.kind) {
+                Stroke.Kind.TEXT -> drawTextStroke(s, textMeasurer)
+                Stroke.Kind.IMAGE -> drawImageStroke(s, images)
+                else -> drawStroke(s)
+            }
         }
 
         if (live.size >= 2) {

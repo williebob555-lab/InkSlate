@@ -71,6 +71,8 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onStampPlaced: () -> Unit,
     /** Told the bounds of whatever was just drawn, so a canvas can grow to fit it. */
     onDrew: (InkBox) -> Unit = {},
+    /** A region of the page has been boxed, to be captured as a movable picture. */
+    onCaptureRegion: (InkBox, Int) -> Unit = { _, _ -> },
     /** Which stylus barrel button was down when the pointer landed, or 0 for none. */
     heldButton: Int = 0
 ) {
@@ -281,6 +283,20 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                     onMarquee(null)
                 }
             }
+        }
+
+        cfg.tool == Tool.REGION -> {
+            // Box a figure on the page and it becomes a movable object. The rectangle is reported
+            // in page coordinates; the editor renders that region and stores the picture, because
+            // rendering needs the document and this does not have it.
+            var boxed = InkBox.of(px, py, px, py)
+            dragUntilRelease(down.position) { change, _ ->
+                val n = toPage(change.position)
+                boxed = InkBox.of(px, py, n.x, n.y)
+                onMarquee(boxed)
+            }
+            onMarquee(null)
+            if (boxed.width > 8f && boxed.height > 8f) onCaptureRegion(boxed, index)
         }
 
         cfg.tool == Tool.TEXT -> {

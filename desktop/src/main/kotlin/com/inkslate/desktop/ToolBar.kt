@@ -35,12 +35,15 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Functions
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.GridOn
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Interests
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.OpenWith
@@ -103,6 +106,10 @@ class ToolBarActions(
     val onInsertSymbol: () -> Unit = {},
     val onInsertStamp: () -> Unit = {},
     val onToggleRuler: () -> Unit = {},
+    val onInsertPicture: () -> Unit = {},
+    val onCapture: () -> Unit = {},
+    val onBeginCrop: () -> Unit = {},
+    val canCrop: Boolean = false,
     val onMessage: (String) -> Unit = {}
 )
 
@@ -160,6 +167,11 @@ fun ToolBar(
                     }
                     IconButton(onClick = actions.onCutSelection) {
                         Icon(Icons.Default.ContentCut, "Cut")
+                    }
+                    if (actions.canCrop) {
+                        IconButton(onClick = actions.onBeginCrop) {
+                            Icon(Icons.Default.Crop, "Crop this picture")
+                        }
                     }
                     IconButton(onClick = actions.onDuplicateSelection) {
                         Icon(Icons.Default.Layers, "Duplicate")
@@ -371,6 +383,10 @@ fun ToolBar(
                     actions.onInsertStamp()
                 }
                 ToolButton(Icons.Default.Functions, "Symbol", false) { actions.onInsertSymbol() }
+                ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
+                    actions.onCapture()
+                }
+                ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
                 ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
                     actions.onToggleRuler()
                 }
