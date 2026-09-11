@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -273,6 +274,9 @@ private fun StampOptionsPanel(
     onPlace: (Stamps.StampOptions) -> Unit
 ) {
     var options by remember(kind) { mutableStateOf(kind.defaults) }
+    // Kept as text so a half-typed "-" or "1." is not thrown away between keystrokes.
+    var fromText by remember(kind) { mutableStateOf(trimNumber(kind.defaults.rangeFrom)) }
+    var toText by remember(kind) { mutableStateOf(trimNumber(kind.defaults.rangeTo)) }
 
     Row(
         Modifier.fillMaxWidth().padding(start = 4.dp, end = 12.dp),
@@ -286,7 +290,7 @@ private fun StampOptionsPanel(
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.weight(1f)
         )
-        TextButton(onClick = { onPlace(options) }) { Text("Place") }
+        TextButton(onClick = { onPlace(options) }) { Text("Use it") }
     }
     HorizontalDivider()
 
@@ -326,17 +330,31 @@ private fun StampOptionsPanel(
         }
 
         if (Stamps.Knob.RANGE in kind.knobs) {
-            OptionLabel("From ${options.rangeFrom.toInt()} to ${options.rangeTo.toInt()}")
-            Slider(
-                value = options.rangeFrom,
-                onValueChange = { options = options.copy(rangeFrom = it.roundToInt().toFloat()) },
-                valueRange = -50f..0f
-            )
-            Slider(
-                value = options.rangeTo,
-                onValueChange = { options = options.copy(rangeTo = it.roundToInt().toFloat()) },
-                valueRange = 0f..50f
-            )
+            // Typed rather than dragged, as on the tablet: a number line from 0 to 1000, or from
+            // -0.5 to 0.5, is an ordinary thing to want and no slider range covers both.
+            OptionLabel("Runs from")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = fromText,
+                    onValueChange = { v ->
+                        fromText = v.filter { it.isDigit() || it == '-' || it == '.' }.take(9)
+                        v.toFloatOrNull()?.let { f -> options = options.copy(rangeFrom = f) }
+                    },
+                    label = { Text("From") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = toText,
+                    onValueChange = { v ->
+                        toText = v.filter { it.isDigit() || it == '-' || it == '.' }.take(9)
+                        v.toFloatOrNull()?.let { f -> options = options.copy(rangeTo = f) }
+                    },
+                    label = { Text("To") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
 
         if (Stamps.Knob.VARIANT in kind.knobs && kind.variants.isNotEmpty()) {
@@ -374,3 +392,7 @@ private fun StampOptionsPanel(
         )
     }
 }
+
+/** "5" rather than "5.0", so a whole number does not read as a measurement. */
+private fun trimNumber(value: Float): String =
+    if (value == value.toInt().toFloat()) value.toInt().toString() else value.toString()

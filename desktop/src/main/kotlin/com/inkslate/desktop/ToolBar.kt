@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -426,72 +427,75 @@ fun ToolBar(
                         }
                     }
 
-                    SliderRow("Smoothing", cfg.smoothing, 0f..1f) { v ->
-                        change { state.edit { it.smoothing = v } }
-                    }
-                    SliderRow("Opacity", cfg.opacity, 0.05f..1f) { v ->
-                        change { state.edit { it.opacity = v }; state.activePreset = -1 }
-                    }
-                    SliderRow("Expression", state.active.dynamics, 0f..3f) { v ->
-                        change { state.edit { it.dynamics = v } }
-                    }
-
-                    Label("Line")
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        DashStyle.entries.forEach { d ->
-                            Chip(d.label, cfg.dash == d) { change { state.edit { it.dash = d } } }
-                        }
-                    }
-
-                    Label("Shape fill")
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FillStyle.entries.forEach { f ->
-                            Chip(f.label, cfg.fillStyle == f) {
-                                change { state.edit { it.fillStyle = f } }
+                    SliderRow(
+                        label = "Smoothing",
+                        value = cfg.smoothing,
+                        range = 0f..1f,
+                        display = {
+                            when {
+                                it < 0.05f -> "Off"
+                                it < 0.35f -> "Light"
+                                it < 0.7f -> "Medium"
+                                else -> "Heavy"
                             }
                         }
+                    ) { v -> change { state.edit { it.smoothing = v } } }
+
+                    SliderRow(
+                        label = "Opacity",
+                        value = cfg.opacity,
+                        range = 0.1f..1f,
+                        display = { "${(it * 100).toInt()}%" }
+                    ) { v ->
+                        change { state.edit { it.opacity = v }; state.activePreset = -1 }
                     }
-                    if (cfg.fillStyle != FillStyle.NONE) {
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(top = 6.dp)
-                        ) {
-                            items(state.swatches()) { c ->
-                                ColorDot(Color(c), state.active.fillColor == c) {
-                                    change { state.edit { it.fillColor = c } }
+
+                    if (cfg.tool == Tool.TEXT) {
+                        SliderRow(
+                            label = "Text size",
+                            value = cfg.textSize,
+                            range = 6f..64f,
+                            display = { "%.0f".format(it) }
+                        ) { v -> change { state.edit { it.textSize = v } } }
+                    }
+
+                    if (cfg.tool.isShape) {
+                        Label("Line style")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            DashStyle.entries.forEach { d ->
+                                Chip(d.label, cfg.dash == d) {
+                                    change { state.edit { it.dash = d } }
                                 }
                             }
                         }
                     }
 
-                    SliderRow("Text size", cfg.textSize, 6f..72f) { v ->
-                        change { state.edit { it.textSize = v } }
+                    if (cfg.tool == Tool.RECT || cfg.tool == Tool.ELLIPSE) {
+                        Label("Fill")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FillStyle.entries.forEach { f ->
+                                Chip(f.label, cfg.fillStyle == f) {
+                                    change { state.edit { it.fillStyle = f } }
+                                }
+                            }
+                        }
+                        if (cfg.fillStyle != FillStyle.NONE) {
+                            Label("Fill colour")
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(state.swatches()) { c ->
+                                    ColorDot(Color(c), state.active.fillColor == c) {
+                                        change { state.edit { it.fillColor = c } }
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    Label("Table: ${state.tableRows} x ${state.tableCols}")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            "Rows",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = state.tableRows.toFloat(),
-                            onValueChange = { state.tableRows = it.roundToInt().coerceIn(1, 20) },
-                            valueRange = 1f..20f,
-                            modifier = Modifier.width(120.dp).height(28.dp)
-                        )
-                        Text(
-                            "Columns",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Slider(
-                            value = state.tableCols.toFloat(),
-                            onValueChange = { state.tableCols = it.roundToInt().coerceIn(1, 20) },
-                            valueRange = 1f..20f,
-                            modifier = Modifier.width(120.dp).height(28.dp)
-                        )
+                    Label("Table size")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Stepper("Rows", state.tableRows) { change { state.tableRows = it } }
+                        Spacer(Modifier.width(12.dp))
+                        Stepper("Cols", state.tableCols) { change { state.tableCols = it } }
                     }
 
                     if (state.rulerVisible) {
@@ -641,6 +645,27 @@ private fun InputModeToggle(mode: InputMode, onCycle: (Int) -> Unit) {
 
 // ---- pieces ------------------------------------------------------------------
 
+/** Plus and minus, for a count small enough that dragging to it would be silly. */
+@Composable
+private fun Stepper(label: String, value: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        TextButton(
+            onClick = { onChange((value - 1).coerceAtLeast(1)) },
+            contentPadding = PaddingValues(horizontal = 8.dp)
+        ) { Text("-") }
+        Text(value.toString(), style = MaterialTheme.typography.labelLarge)
+        TextButton(
+            onClick = { onChange((value + 1).coerceAtMost(20)) },
+            contentPadding = PaddingValues(horizontal = 8.dp)
+        ) { Text("+") }
+    }
+}
+
 /** A slider whose value is described in words, for settings nobody thinks about as a number. */
 @Composable
 private fun SliderRow(
@@ -665,34 +690,6 @@ private fun SliderRow(
     }
 }
 
-@Composable
-private fun SliderRow(
-    label: String,
-    value: Float,
-    range: ClosedFloatingPointRange<Float>,
-    onChange: (Float) -> Unit
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(78.dp)
-        )
-        Slider(
-            value = value.coerceIn(range.start, range.endInclusive),
-            onValueChange = onChange,
-            valueRange = range,
-            modifier = Modifier.weight(1f).height(30.dp)
-        )
-        Text(
-            "%.2f".format(value),
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.width(40.dp),
-            textAlign = TextAlign.End
-        )
-    }
-}
 
 @Composable
 private fun Label(text: String) {

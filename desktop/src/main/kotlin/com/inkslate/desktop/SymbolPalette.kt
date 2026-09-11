@@ -106,13 +106,13 @@ fun SymbolPaletteDialog(
         },
         confirmButton = {
             TextButton(enabled = buffer.isNotEmpty(), onClick = { onInsert(buffer) }) {
-                Text("Insert")
+                Text("Place")
             }
         },
         dismissButton = {
             androidx.compose.foundation.layout.Row {
                 if (buffer.isNotEmpty()) {
-                    TextButton(onClick = { buffer = buffer.dropLast(1) }) { Text("Undo one") }
+                    TextButton(onClick = { buffer = buffer.dropLast(1) }) { Text("Backspace") }
                 }
                 TextButton(onClick = onDismiss) { Text("Cancel") }
             }
