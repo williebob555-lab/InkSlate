@@ -219,6 +219,16 @@ class ToolState {
     private val flingScaleState =
         mutableStateOf(DesktopPrefs.get(K_FLING_SCALE)?.toFloatOrNull() ?: 1.35f)
 
+    /** Hold the display awake while a document is open. See [ScreenAwake]. */
+    var keepScreenOn: Boolean
+        get() = keepAwakeState.value
+        set(value) {
+            keepAwakeState.value = value
+            DesktopPrefs.put(K_KEEP_AWAKE, value.toString())
+        }
+    private val keepAwakeState =
+        mutableStateOf(DesktopPrefs.get(K_KEEP_AWAKE)?.toBoolean() ?: true)
+
     /** Reopen a document where it was left, rather than at the top of page one. */
     var rememberView: Boolean
         get() = rememberViewState.value
@@ -402,8 +412,19 @@ class ToolState {
         const val K_FLING = "tool_fling"
         const val K_FLING_SCALE = "tool_fling_scale"
         const val K_REMEMBER_VIEW = "tool_remember_view"
+        const val K_KEEP_AWAKE = "tool_keep_screen_on"
     }
 }
+
+/**
+ * The tool state for a screen.
+ *
+ * Deliberately one per screen rather than a singleton, exactly as on the tablet: every setting in
+ * here writes itself to the preferences as it changes, so two instances agree without having to
+ * be the same object, and neither holds the other's ruler or half-placed stamp.
+ */
+@androidx.compose.runtime.Composable
+fun rememberToolState(): ToolState = androidx.compose.runtime.remember { ToolState() }
 
 /** The palette the toolbar shows: your own colours first, then the shared set. */
 fun ToolState.swatches(): List<Int> = (customColors + Palette.COLORS).distinct()

@@ -117,7 +117,7 @@ fun EditorScreen(
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val textMeasurer = rememberTextMeasurer()
-    val tools = remember { ToolState() }
+    val tools = rememberToolState()
     val prefs = remember { SavePrefs() }
     val images = remember(file) { ImageStore(file) }
     // Loaded lazily and kept, because a page redraws far more often than its pictures change.
@@ -239,6 +239,16 @@ fun EditorScreen(
                     viewport.scale, viewport.offset.x, viewport.offset.y
                 )
             }
+        }
+    }
+
+    // Hold the display awake while a document is open, if asked to. Started here rather than at
+    // the window so it lasts exactly as long as a document is open, which is what the setting says.
+    LaunchedEffect(file.absolutePath) {
+        ScreenAwake.reset()
+        while (true) {
+            delay(ScreenAwake.INTERVAL_MS)
+            if (tools.keepScreenOn) ScreenAwake.tick() else ScreenAwake.reset()
         }
     }
 

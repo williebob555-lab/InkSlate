@@ -82,6 +82,8 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) {
             SavingSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
+            WhileOpenSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
             StylusSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             DeviceSection()
@@ -89,6 +91,8 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
             StorageSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             DiagnosticsSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
+            CompanionFilesSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             UpdateSection()
         }
@@ -375,6 +379,151 @@ private fun StorageSection() {
     )
     TextButton(onClick = { tick++ }, modifier = Modifier.padding(horizontal = 12.dp)) {
         Text("Refresh")
+    }
+}
+
+// ---- while a document is open --------------------------------------------------
+
+/**
+ * The two things that only matter while you are actually working in a document.
+ *
+ * Both live in the tool state rather than the save rules: they are about how the app behaves at
+ * your desk, not about what happens to the file.
+ */
+@Composable
+private fun WhileOpenSection() {
+    val tools = rememberToolState()
+
+    SectionHeader("While a document is open")
+
+    SwitchRow(
+        title = "Pick up where I left off",
+        subtitle = "Reopen each document at the same place and zoom. Off, and every document " +
+            "opens at the top.",
+        checked = tools.rememberView
+    ) { tools.rememberView = it }
+
+    SwitchRow(
+        title = "Keep the screen awake",
+        subtitle = "The display will not blank or lock while you have a document open. It still " +
+            "sleeps everywhere else.",
+        checked = tools.keepScreenOn
+    ) { tools.keepScreenOn = it }
+}
+
+// ---- companion files -----------------------------------------------------------
+
+/**
+ * The `.inkdoc` files an earlier version left beside documents.
+ *
+ * Same tidy-up as the tablet's, and the same reason for offering it rather than doing it quietly:
+ * it rewrites the user's documents, which is not something to do without being asked.
+ */
+@Composable
+private fun CompanionFilesSection() {
+    var found by remember { mutableStateOf<List<File>?>(null) }
+    var absorbing by remember { mutableStateOf(false) }
+    var absorbed by remember { mutableStateOf(0) }
+    var failed by remember { mutableStateOf(0) }
+    var confirming by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    SectionHeader("Companion files")
+    Text(
+        "Handwriting is stored inside your documents now, so there is nothing to keep beside " +
+            "them. Any .inkdoc files left over from an earlier version can be folded into their " +
+            "documents and removed.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp)
+    )
+
+    val list = found
+    when {
+        absorbing -> Row(
+            Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Text(
+                "  Folding in $absorbed of ${list?.size ?: 0}...",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        list == null -> TextButton(
+            onClick = {
+                scope.launch {
+                    found = withContext(Dispatchers.IO) {
+                        LegacyCompanions.find(FileRepo().libraryFolders())
+                    }
+                }
+            },
+            modifier = Modifier.padding(horizontal = 12.dp)
+        ) { Text("Check for leftover companion files") }
+
+        list.isEmpty() -> Text(
+            if (absorbed > 0) {
+                "Done. $absorbed document(s) now carry their own handwriting" +
+                    (if (failed > 0) ", $failed could not be changed." else ".")
+            } else {
+                "None found. Nothing to tidy up."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(16.dp)
+        )
+
+        else -> Column {
+            Text(
+                "${list.size} document(s) still have one.",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 16.dp, top = 10.dp)
+            )
+            TextButton(
+                onClick = { confirming = true },
+                modifier = Modifier.padding(horizontal = 12.dp)
+            ) { Text("Fold them into the documents") }
+        }
+    }
+
+    if (confirming) {
+        val count = found?.size ?: 0
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text("Fold in $count companion file(s)?") },
+            text = {
+                Text(
+                    "Each document will be rewritten to carry its own handwriting, and its " +
+                        "companion file removed.\n\nThe handwriting is copied into the document " +
+                        "and read back before anything is deleted, so a document that will not " +
+                        "take it keeps its companion file.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = false
+                    val targets = found.orEmpty()
+                    absorbing = true
+                    absorbed = 0
+                    failed = 0
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            for (f in targets) {
+                                if (LegacyCompanions.absorb(f).isSuccess) absorbed++ else failed++
+                            }
+                        }
+                        absorbing = false
+                        found = withContext(Dispatchers.IO) {
+                            LegacyCompanions.find(FileRepo().libraryFolders())
+                        }
+                    }
+                }) { Text("Fold them in") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 

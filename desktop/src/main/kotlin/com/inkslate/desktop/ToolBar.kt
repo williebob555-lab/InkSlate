@@ -512,13 +512,6 @@ fun ToolBar(
                         ) {
                             change { state.cropMargins = !state.cropMargins }
                         }
-                        Chip(
-                            if (state.rememberView) "Reopen where I left: on"
-                            else "Reopen where I left: off",
-                            state.rememberView
-                        ) {
-                            change { state.rememberView = !state.rememberView }
-                        }
                     }
 
                     Label("Scrolling")
