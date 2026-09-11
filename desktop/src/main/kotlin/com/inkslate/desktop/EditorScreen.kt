@@ -216,6 +216,16 @@ fun EditorScreen(
         redo.clear()
         dirty = true
         lastEditAt = System.currentTimeMillis()
+        // Straight out to the other devices, as it happens. Nothing waits for a save: the file is
+        // how a mark reaches a device that is switched off, and this is how it reaches one that is
+        // awake. Both end in the same merge.
+        val now = System.currentTimeMillis()
+        DesktopPeers.sendMarks(
+            docId = ink.docId,
+            added = op.after,
+            removed = op.before.filter { b -> op.after.none { it.id == b.id } }
+                .associate { it.id to now }
+        )
     }
 
     // ---- opening -------------------------------------------------------------
@@ -248,6 +258,7 @@ fun EditorScreen(
         undo.clear(); redo.clear()
         dirty = false
         diskStamp = DocumentIO.stampOf(file)
+        DesktopPeers.documentOpened(file.name, merged)
         status = buildString {
             append("${merged.totalStrokes} mark(s)")
             if (doc.mergedConflicts > 0) {
@@ -292,6 +303,7 @@ fun EditorScreen(
     }
 
     LaunchedEffect(ink) { bookmarks = ink.bookmarks }
+
 
     // ---- saving --------------------------------------------------------------
 
@@ -404,6 +416,7 @@ fun EditorScreen(
         val result = withContext(Dispatchers.IO) { DocumentExport.save(file, doc, rules) }
         if (result is SaveResult.Written) {
             diskStamp = DocumentIO.stampOf(file)
+            DesktopPeers.announceWrote(file)
             // Only settled if nothing arrived while it was being written: the write covered the
             // document as it was when it started, not as it is now.
             if (currentInk() === doc) dirty = false
@@ -495,6 +508,43 @@ fun EditorScreen(
             busy = false
         }
     }
+
+    /**
+     * A mark made on another device, arriving while this one is open.
+     *
+     * Applied to the page in front of you rather than only to the stored document, because the
+     * point of the connection is that you can see it happen. The merge is the shared one, so a
+     * batch that arrives twice, or out of order, or from a device that has been offline all
+     * afternoon, all end at the same page.
+     */
+    DisposableEffect(file.absolutePath) {
+        DesktopPeers.onMarks { docId, marks ->
+            scope.launch {
+                if (docId != ink.docId) return@launch
+                if (!com.inkslate.core.peer.PeerSync.changesAnything(currentInk(), marks)) {
+                    return@launch
+                }
+                val merged = com.inkslate.core.peer.PeerSync.applied(currentInk(), marks)
+                ink = merged
+                val pages = source?.pageCount ?: 0
+                strokes.clear()
+                strokes.addAll((0 until pages).flatMap { p -> merged.strokesOn(p) })
+                // Theirs is not on this machine's disk yet, so the document is behind the page
+                // again - which is exactly what dirty means.
+                dirty = true
+                lastEditAt = System.currentTimeMillis()
+                selection = selection.filter { id -> strokes.any { it.id == id } }.toSet()
+            }
+        }
+        onDispose {
+            DesktopPeers.onMarks(null)
+            DesktopPeers.documentClosed()
+        }
+    }
+
+    // What a peer asking to catch up is answered with. Kept current rather than fetched,
+    // because the answer is wanted on a socket thread that cannot stop and ask the editor.
+    LaunchedEffect(ink, strokes.size) { DesktopPeers.documentChanged(file.name, currentInk()) }
 
     // Autosave to the local working copy. The document itself is only written on an explicit
     // save, so this is what stands between a crash and a lost afternoon.

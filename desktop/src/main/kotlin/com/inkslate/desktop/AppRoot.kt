@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +50,14 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     // Only the editor keeps these; everywhere else they would fire into nothing. Cleared here on
     // every composition so a screen that does not set them cannot inherit the last one's.
     shortcuts.clear()
+
+    // A device saying it has written something is worth a look: the file itself arrives by the
+    // ordinary sync, but this is what makes the shelf show it now rather than on the next visit.
+    DisposableEffect(Unit) {
+        DesktopPeers.start()
+        DesktopPeers.onRemoteWrite { _, _ -> scope.launch { refreshKey++ } }
+        onDispose { DesktopPeers.onRemoteWrite(null) }
+    }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (val s = screen) {

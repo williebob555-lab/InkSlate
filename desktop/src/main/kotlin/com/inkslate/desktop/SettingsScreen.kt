@@ -82,6 +82,8 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) {
             SavingSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
+            YourDevicesSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
             WhileOpenSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             StylusSection()
@@ -382,6 +384,258 @@ private fun StorageSection() {
     )
     TextButton(onClick = { tick++ }, modifier = Modifier.padding(horizontal = 12.dp)) {
         Text("Refresh")
+    }
+}
+
+// ---- your other devices ---------------------------------------------------------
+
+/**
+ * The direct link between your own devices.
+ *
+ * Off until you pair something, and it only ever talks to a device that has proved it knows a code
+ * you read off this screen. What travels is handwriting and the news that a file was written -
+ * never the files themselves, which carry on arriving the way they always have.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun YourDevicesSection() {
+    var tick by remember { mutableStateOf(0) }
+    var enabled by remember { mutableStateOf(DesktopPeers.enabled()) }
+    var discovery by remember { mutableStateOf(DesktopPeers.discoveryEnabled()) }
+    var deviceName by remember { mutableStateOf(DesktopPeers.name()) }
+    var pairingCode by remember { mutableStateOf<String?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    var address by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var working by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    // Connections come and go on their own threads; this is how the list stops being a snapshot
+    // of the moment the screen opened.
+    DisposableEffect(Unit) {
+        DesktopPeers.onPeersChanged { tick++ }
+        onDispose { DesktopPeers.onPeersChanged(null) }
+    }
+
+    val statuses = remember(tick, enabled) { DesktopPeers.statuses() }
+    val nearby = remember(tick, discovery) { DesktopPeers.discovered }
+
+    SectionHeader("Your devices")
+    Text(
+        "When two of your devices are awake and can reach each other, marks made on one appear " +
+            "on the other as they are drawn, and a document written on one is noticed at once by " +
+            "the other. Your files still travel the way they always have; this only carries the " +
+            "handwriting.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+
+    SwitchRow(
+        title = "Talk to my other devices",
+        subtitle = "Listens on port ${DesktopPeers.port()}. Windows will ask once to allow it.",
+        checked = enabled
+    ) {
+        enabled = it
+        DesktopPeers.setEnabled(it)
+        tick++
+    }
+
+    if (enabled) {
+        SwitchRow(
+            title = "Also look on this network",
+            subtitle = "Finds devices sitting on the same wifi, as well as the ones you have " +
+                "given an address. Nothing is shared by being found.",
+            checked = discovery
+        ) {
+            discovery = it
+            DesktopPeers.setDiscoveryEnabled(it)
+            tick++
+        }
+
+        Box(Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
+            OutlinedTextField(
+                value = deviceName,
+                onValueChange = { deviceName = it; DesktopPeers.setName(it) },
+                label = { Text("This device is called") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        if (statuses.isEmpty()) {
+            Text(
+                "No devices paired yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        } else {
+            statuses.forEach { status ->
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)) {
+                    Row(
+                        Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(status.peer.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                (if (status.connected) "Connected  ·  " else "Not reachable  ·  ") +
+                                    "${status.peer.host}:${status.peer.port}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (status.connected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                }
+                            )
+                        }
+                        TextButton(onClick = { DesktopPeers.forget(status.peer.tag); tick++ }) {
+                            Text("Forget")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (nearby.isNotEmpty()) {
+            Text(
+                "On this network",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(start = 16.dp, top = 10.dp)
+            )
+            nearby.forEach { seen ->
+                Card(
+                    onClick = { address = seen.address; code = ""; adding = true },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(seen.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "${seen.address}  ·  tap to pair",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(Modifier.padding(horizontal = 12.dp)) {
+            TextButton(onClick = {
+                val fresh = com.inkslate.core.peer.PeerFrames.newPairingCode()
+                pairingCode = fresh
+                DesktopPeers.offerPairing(fresh)
+            }) { Text("Pair a device to this one") }
+            TextButton(onClick = { address = ""; code = ""; adding = true }) {
+                Text("Add by address")
+            }
+        }
+
+        message?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+    }
+
+    pairingCode?.let { shown ->
+        AlertDialog(
+            onDismissRequest = { pairingCode = null; DesktopPeers.stopOfferingPairing() },
+            title = { Text("Pair a device") },
+            text = {
+                Column {
+                    Text(
+                        "On the other device, open Settings, choose \"Add by address\", and enter " +
+                            "this machine's address along with the code below. The code works for " +
+                            "the next five minutes."
+                    )
+                    Text(
+                        shown,
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.padding(top = 14.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { pairingCode = null }) { Text("Done") }
+            }
+        )
+    }
+
+    if (adding) {
+        AlertDialog(
+            onDismissRequest = { if (!working) adding = false },
+            title = { Text("Add a device") },
+            text = {
+                Column {
+                    Text(
+                        "Its address - a tailnet name works from anywhere - and the code showing " +
+                            "on its screen.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = { address = it },
+                        label = { Text("Address") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                    )
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.filter(Char::isDigit).take(6) },
+                        label = { Text("Code") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                    if (working) {
+                        Row(
+                            Modifier.padding(top = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(
+                                "  Introducing this device...",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !working && address.isNotBlank() && code.length >= 4,
+                    onClick = {
+                        working = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                DesktopPeers.pairWith(
+                                    address.trim(), DesktopPeers.port(), code.trim()
+                                )
+                            }
+                            working = false
+                            message = result.fold(
+                                onSuccess = { "Paired with ${it.name}" },
+                                onFailure = { "Could not pair: ${it.message}" }
+                            )
+                            if (result.isSuccess) {
+                                adding = false
+                                enabled = true
+                            }
+                            tick++
+                        }
+                    }
+                ) { Text("Pair") }
+            },
+            dismissButton = {
+                TextButton(enabled = !working, onClick = { adding = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
