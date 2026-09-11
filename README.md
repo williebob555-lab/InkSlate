@@ -131,6 +131,8 @@ The same four screens and the same tools, with the differences a mouse and a key
 | Item actions | Reached by right-click rather than a long press. Same actions. |
 | Pressure | A mouse has none, and desktop pens report it inconsistently, so width falls back to speed there — the same fallback the tablet uses for a finger. |
 | Sharing | "Share" shows the saved file in Explorer, since Windows has no share sheet for a program like this to raise. |
+| Photographs | The tablet can take one with its camera and drop it straight in. On Windows, add the picture from a file instead. |
+| Cropping a picture | Done in a dialog rather than by dragging handles on the page. Same crop, same "whole picture" reset. |
 | Text in exports | Written with the standard PDF fonts, so a character outside their range — a maths symbol pasted in, say — exports as a placeholder rather than failing the whole export. |
 
 **Keyboard, on Windows:** Ctrl+S saves, Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) undo and redo,
