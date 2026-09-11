@@ -124,6 +124,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
             ChoiceRow(
                 title = "When I save",
+                subtitle = "Your handwriting goes into the document as you work, which is what carries it to your other devices. This is what pressing Save leaves behind.",
                 current = settings.mode.label,
                 options = SaveMode.entries.map { it.label to it }
             ) { update { s -> s.copy(mode = it) } }

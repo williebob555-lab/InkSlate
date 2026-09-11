@@ -125,9 +125,12 @@ private fun SavingSection() {
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
     )
 
-    ChoiceRow("When I save", settings.mode.label, SaveMode.entries.map { it.label to it }) {
-        update { s -> s.copy(mode = it) }
-    }
+    ChoiceRow(
+        "When I save",
+        settings.mode.label,
+        SaveMode.entries.map { it.label to it },
+        subtitle = "Your handwriting goes into the document as you work, which is what carries it to your other devices. This is what pressing Save leaves behind."
+    ) { update { s -> s.copy(mode = it) } }
     ChoiceRow(
         "Ink in exported PDFs",
         settings.inkFormat.label,

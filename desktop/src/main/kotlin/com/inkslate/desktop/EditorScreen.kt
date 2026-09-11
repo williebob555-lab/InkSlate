@@ -81,6 +81,9 @@ import java.io.File
 import kotlin.math.roundToInt
 
 /** What the title bar says about the document's relationship to the disk. */
+/** How long the pointer has to be still before the document is written out behind the scenes. */
+private const val IDLE_BEFORE_WRITE_MS = 1200L
+
 private enum class WriteState(val label: String) {
     SAVED("saved"), UNSAVED("unsaved"), SAVING("saving...")
 }
@@ -201,6 +204,9 @@ fun EditorScreen(
      */
     var diskStamp by remember(file) { mutableStateOf("") }
 
+    /** When the last edit happened, so the document is written into a pause rather than a stroke. */
+    var lastEditAt by remember(file) { mutableStateOf(0L) }
+
     val ids = remember(file) { mutableStateOf(0) }
     val deviceTag = remember { DocumentIO.deviceTag() }
     fun nextId(): String = "$deviceTag-d${++ids.value}"
@@ -209,6 +215,7 @@ fun EditorScreen(
         undo.add(op)
         redo.clear()
         dirty = true
+        lastEditAt = System.currentTimeMillis()
     }
 
     // ---- opening -------------------------------------------------------------
@@ -365,6 +372,53 @@ fun EditorScreen(
             saving = false
             busy = false
             if (result is SaveResult.Written) then?.invoke()
+        }
+    }
+
+    /**
+     * Bring the document on disk up to date, quietly.
+     *
+     * Same path as the Save button, minus the parts that only make sense when a person asked: no
+     * backup - twenty rolling copies of a file written every time the pen pauses is not a version
+     * history, it is a disk leak - and no message, because nothing happened that needs saying.
+     *
+     * This is what makes a laptop edit reach the tablet without anyone pressing anything, and it
+     * is what the tablet has always done. The handwriting lives inside the document, so a document
+     * that is not written is handwriting that has not left this machine.
+     */
+    suspend fun writeThrough() {
+        if (!dirty || saving || source == null) return
+        var doc = currentInk()
+        ink = doc
+        saving = true
+        withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, doc) }
+        val pages = source?.pageCount
+        if (pages != null && DocumentIO.stampOf(file) != diskStamp) {
+            doc = withContext(Dispatchers.IO) { DocumentIO.mergedWithDisk(file, doc) }
+            ink = doc
+            strokes.clear()
+            strokes.addAll((0 until pages).flatMap { p -> doc.strokesOn(p) })
+        }
+        val rules = prefs.effectiveFor(file.absolutePath)
+            .copy(mode = SaveMode.OVERWRITE, backupOnOverwrite = false, confirmOverwrite = false)
+        val result = withContext(Dispatchers.IO) { DocumentExport.save(file, doc, rules) }
+        if (result is SaveResult.Written) {
+            diskStamp = DocumentIO.stampOf(file)
+            // Only settled if nothing arrived while it was being written: the write covered the
+            // document as it was when it started, not as it is now.
+            if (currentInk() === doc) dirty = false
+        }
+        saving = false
+    }
+
+    // The pen has to be still before the document is written, so a write never lands in the middle
+    // of a stroke. Checked often and acted on rarely, which is what keeps it invisible.
+    LaunchedEffect(file.absolutePath, source) {
+        while (true) {
+            delay(1200)
+            if (!dirty || saving || busy) continue
+            if (System.currentTimeMillis() - lastEditAt < IDLE_BEFORE_WRITE_MS) continue
+            writeThrough()
         }
     }
 
@@ -720,7 +774,17 @@ fun EditorScreen(
 
     /** Leaving with unsaved marks asks first; that is the whole point of tracking [dirty]. */
     fun leave() {
-        if (dirty) confirmLeave = true else onClose()
+        // Nothing to ask about any more: the document is written as you work, so closing is
+        // either a no-op or the last few hundred milliseconds of it. A dialog about a decision
+        // the app has already made is worse than making it silently.
+        if (!dirty) {
+            onClose()
+        } else {
+            scope.launch {
+                writeThrough()
+                onClose()
+            }
+        }
     }
 
     // Hand the window's key handler something to call. Re-assigned on each composition so the

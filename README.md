@@ -75,19 +75,21 @@ off and taking the next stable release puts you back on the ordinary channel.
 reads back. That is what makes a file carry its annotations between devices with nothing else to
 copy across, and what lets the same marks still be edited months later.
 
-While a document is open the marks are *also* written to a scratch copy in the app's own storage,
-every twenty seconds. The document itself is only written when you save, so that scratch copy is
-what stands between a crash and a lost afternoon, and it is folded back in when you open the
-document again.
+This happens as you work, not only when you press Save: a second or so after the pen stops, the
+document on disk is brought up to date. That is what lets a mark made on the laptop reach the
+tablet without anyone pressing anything. A scratch copy is kept in the app's own storage as well,
+which is what stands between a crash mid-write and a lost afternoon.
 
-When you save you choose what the marks become:
+So pressing **Save** is not "write it down at last" - it is the deliberate act: overwrite the file
+you opened, keeping a backup first, or lay down the separate copy you hand in. That choice is the
+"When I save" setting, and any single file can override it.
+
+What the marks become in the file is a separate choice:
 
 - **Editable annotations** — each object becomes a real PDF annotation. Still selectable in
   Acrobat, and drawn correctly in Chrome, Canvas and anything else.
 - **Flattened** — drawn into the page itself. Permanent, and the safer option for a submission
   portal that strips annotations out.
-
-That is a setting, and any single file can be given its own rules that override it.
 
 ### Not losing work
 

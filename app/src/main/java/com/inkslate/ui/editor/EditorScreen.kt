@@ -216,6 +216,8 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     var armedSymbol by remember { mutableStateOf<String?>(null) }
     var conflictNotice by remember { mutableStateOf<String?>(null) }
     var exportOpen by remember { mutableStateOf(false) }
+    /** Set when the file's rules say to ask what pressing Save should produce. */
+    var askMode by remember { mutableStateOf(false) }
     // Pages chosen in the page manager, waiting for the export dialog to ask what to do with them.
     var exportPreset by remember { mutableStateOf<List<Int>?>(null) }
     // A finished export waiting for the system picker to say where it goes. Held rather than
@@ -1088,6 +1090,21 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
      * no-op or the last few hundred milliseconds of it. Handing someone a dialog about a decision
      * the app has already made for them is worse than making it silently.
      */
+    /**
+     * What pressing Save produces.
+     *
+     * The document itself is already being kept up to date as you work - that is what carries the
+     * handwriting to the other devices - so this is not "write it down at last". It is the
+     * deliberate act: overwrite, or lay down the copy to hand in, whichever this file's rules say.
+     */
+    fun saveByRule() {
+        when (prefs.effectiveFor(file.absolutePath).mode) {
+            SaveMode.ASK -> askMode = true
+            SaveMode.COPY -> doExport(SaveMode.COPY)
+            SaveMode.OVERWRITE -> doExport(SaveMode.OVERWRITE)
+        }
+    }
+
     fun leave() = finishAndClose()
 
     /**
@@ -1180,7 +1197,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                         // or the last few hundred milliseconds of it - which is true right up
                         // until an automatic write is the thing you need to not happen. A
                         // control that says "keep this, now" is worth its place in the bar.
-                        IconButton(onClick = { doExport(SaveMode.OVERWRITE) }) {
+                        IconButton(onClick = { saveByRule() }) {
                             Icon(
                                 Icons.Default.Save,
                                 "Save into the document",
@@ -2053,6 +2070,33 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                     tools.applyTo(view)
                     // after applyTo, which does not know about armed items
                     view.armText(text)
+                }
+            }
+        )
+    }
+
+    if (askMode) {
+        AlertDialog(
+            onDismissRequest = { askMode = false },
+            title = { Text("Save ${file.name}") },
+            text = {
+                Text(
+                    "Your handwriting is already in the document - it is written there as you " +
+                        "work. This is about what to leave behind now: write over the file you " +
+                        "opened, keeping a backup first, or lay down a separate copy."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { askMode = false; doExport(SaveMode.OVERWRITE) }) {
+                    Text("Overwrite")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = { askMode = false }) { Text("Cancel") }
+                    TextButton(onClick = { askMode = false; doExport(SaveMode.COPY) }) {
+                        Text("Save a copy")
+                    }
                 }
             }
         )
