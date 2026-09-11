@@ -114,8 +114,28 @@ data class InkDocument(
         // exported, so the stroke was on screen and in the file. It was [mergeWith] that dropped
         // it, on the next open, when the tombstone finally got a say. The handwriting was written
         // out correctly and then read back short.
+        //
+        // Clearing our own tombstone is not enough once another device has seen the erase: its
+        // copy still carries one, and a merge with it would take the stroke away again. So a
+        // stroke being restored is stamped as of now - it does exist, as of now - which is what
+        // lets it outrank a tombstone written before it. See [mergeWith].
+        val restored = remaining.filter { it in deleted }.toSet()
+        val restamped = if (restored.isEmpty()) {
+            strokes
+        } else {
+            // At least a millisecond past the tombstone it is overruling. Two operations can land
+            // in the same millisecond, and on equal terms the tombstone wins - which would make an
+            // undo that was quick enough silently fail to travel.
+            strokes.map {
+                if (it.id in restored) {
+                    it.copy(updatedUtc = maxOf(now, (deleted[it.id] ?: 0L) + 1L))
+                } else {
+                    it
+                }
+            }
+        }
         return copy(
-            pages = pages + (page.toString() to strokes),
+            pages = pages + (page.toString() to restamped),
             deleted = deleted.filterKeys { it !in remaining } + newTombs.associateWith { now },
             clocks = clocks + (byDevice to maxOf(clocks[byDevice] ?: 0L, now)),
             modifiedUtc = now,
@@ -149,7 +169,11 @@ data class InkDocument(
      * device runs it or in what order sync delivered the files.
      */
     fun mergeWith(other: InkDocument): InkDocument {
-        val tombs = deleted + other.deleted
+        // The later of the two, per stroke: an erase that happened after another device's erase
+        // is still an erase, and the time of it is what a restore has to beat.
+        val tombs = (deleted.keys + other.deleted.keys).associateWith {
+            maxOf(deleted[it] ?: 0L, other.deleted[it] ?: 0L)
+        }
         val pageKeys = pages.keys + other.pages.keys
         val mergedPages = pageKeys.associateWith { key ->
             val mine = pages[key].orEmpty()
@@ -161,7 +185,10 @@ data class InkDocument(
                 // last writer wins; ties keep the incoming copy so the merge stays deterministic
                 if (existing == null || s.updatedUtc >= existing.updatedUtc) byId[s.id] = s
             }
-            byId.values.filterNot { it.id in tombs }
+            // A tombstone removes a stroke unless the stroke is newer than the tombstone. Erasing
+            // therefore still sticks across every device that has not touched it since - and an
+            // undo, which restamps what it puts back, still reaches a device that saw the erase.
+            byId.values.filterNot { s -> tombs[s.id]?.let { it >= s.updatedUtc } ?: false }
         }.filterValues { it.isNotEmpty() }
 
         val mergedClocks = (clocks.keys + other.clocks.keys).associateWith {

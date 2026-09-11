@@ -19,8 +19,12 @@ object PeerSync {
     fun digestOf(doc: InkDocument): PeerMessage.Digest = PeerMessage.Digest(
         docId = doc.docId,
         marks = doc.pages.values.flatten().associate { it.id to it.updatedUtc },
-        deleted = doc.deleted.keys
+        deleted = doc.deleted
     )
+
+    /** Whether a tombstone written at [tombstoned] still outranks a mark stamped [updated]. */
+    private fun buried(tombstoned: Long?, updated: Long): Boolean =
+        tombstoned != null && tombstoned >= updated
 
     /**
      * The ids worth asking a peer for: what they hold that we do not, or hold a newer copy of.
@@ -32,7 +36,7 @@ object PeerSync {
         val mine = ours.pages.values.flatten().associate { it.id to it.updatedUtc }
         return theirs.marks.asSequence()
             .filter { (id, updated) ->
-                id !in ours.deleted && (mine[id]?.let { updated > it } ?: true)
+                !buried(ours.deleted[id], updated) && (mine[id]?.let { updated > it } ?: true)
             }
             .map { it.key }
             .sorted()
@@ -56,11 +60,12 @@ object PeerSync {
             if (wanted != null) {
                 s.id in wanted
             } else {
-                s.id !in theirs.deleted &&
+                !buried(theirs.deleted[s.id], s.updatedUtc) &&
                     (theirs.marks[s.id]?.let { s.updatedUtc > it } ?: true)
             }
         }
-        val deletions = ours.deleted.filterKeys { it !in theirs.deleted }
+        // Ours that they have not heard about, or heard an older version of.
+        val deletions = ours.deleted.filter { (id, at) -> (theirs.deleted[id] ?: -1L) < at }
         return PeerMessage.Marks(ours.docId, strokes, deletions)
     }
 
@@ -86,8 +91,12 @@ object PeerSync {
     fun changesAnything(ours: InkDocument, marks: PeerMessage.Marks): Boolean {
         val mine = ours.pages.values.flatten().associate { it.id to it.updatedUtc }
         val newMark = marks.strokes.any { s ->
-            s.id !in ours.deleted && (mine[s.id]?.let { s.updatedUtc > it } ?: true)
+            !buried(ours.deleted[s.id], s.updatedUtc) &&
+                (mine[s.id]?.let { s.updatedUtc > it } ?: true)
         }
-        return newMark || marks.deleted.keys.any { it in mine || it !in ours.deleted }
+        val newDeletion = marks.deleted.any { (id, at) ->
+            buried(at, mine[id] ?: Long.MIN_VALUE) || (ours.deleted[id] ?: -1L) < at
+        }
+        return newMark || newDeletion
     }
 }

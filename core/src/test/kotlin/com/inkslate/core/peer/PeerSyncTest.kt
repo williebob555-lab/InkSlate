@@ -129,6 +129,34 @@ class PeerSyncTest {
         assertFalse(PeerSync.changesAnything(once, batch))
     }
 
+    /**
+     * Erase on one device, then change your mind.
+     *
+     * The other device has been told about the erase and holds a tombstone for it. Putting the
+     * mark back has to outrank that tombstone, or an undo is a thing that works until the moment
+     * the devices speak to each other and then quietly unworks itself.
+     */
+    @Test
+    fun `undoing an erase reaches the device that saw the erase`() {
+        val both = doc(mark("a-1"), mark("a-2"))
+        val laptop = both.withPage(0, listOf(mark("a-1")), "laptop")   // erased here
+        val tablet = PeerSync.applied(both, PeerSync.answerFor(laptop, PeerSync.digestOf(both)))
+        assertEquals("the erase should have reached the tablet", 1, tablet.strokesOn(0).size)
+
+        // Undo on the laptop puts it back, stamped as of now.
+        val undone = laptop.withPage(0, listOf(mark("a-1"), mark("a-2")), "laptop")
+        assertTrue("a-2" !in undone.deleted)
+
+        val tabletAfter = PeerSync.applied(
+            tablet, PeerSync.answerFor(undone, PeerSync.digestOf(tablet))
+        )
+
+        assertEquals(
+            setOf("a-1", "a-2"),
+            tabletAfter.strokesOn(0).map { it.id }.toSet()
+        )
+    }
+
     @Test
     fun `an explicit request is answered with exactly what was asked for`() {
         val tablet = doc(mark("tablet-1"), mark("tablet-2", page = 1))

@@ -61,7 +61,13 @@ sealed interface PeerMessage {
     data class Digest(
         @SerialName("docId") val docId: String,
         @SerialName("marks") val marks: Map<String, Long> = emptyMap(),
-        @SerialName("deleted") val deleted: Set<String> = emptySet()
+        /**
+         * Tombstones with the time each was written.
+         *
+         * The time is the point of it: a tombstone only outranks a mark that is older than it, so
+         * a mark put back by an undo still reaches a device that saw the erase.
+         */
+        @SerialName("deleted") val deleted: Map<String, Long> = emptyMap()
     ) : PeerMessage
 
     /** "Send me these." Sent after comparing a [Digest] against what we hold. */
