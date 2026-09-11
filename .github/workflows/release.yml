@@ -92,9 +92,6 @@ jobs:
     name: Windows installer
     needs: version
     runs-on: windows-latest
-    # The desktop app does not yet match the Android UI. Building it here means the installer is
-    # attached the moment it is ready, without a failure blocking the Android release today.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -118,13 +115,16 @@ jobs:
         with:
           name: windows-installer
           path: dist/*.msi
-          if-no-files-found: warn
+          # A release with no installer in it is a release Windows cannot take, and a warning in
+          # a green log is how that ships unnoticed.
+          if-no-files-found: error
 
   publish:
     name: Publish the release
     needs: [version, android, windows]
-    # Runs even if the Windows job failed, so a missing installer never withholds the APK.
-    if: always() && needs.android.result == 'success'
+    # Both halves or neither. Windows is a shipping platform now, and a release that quietly goes
+    # out with only the APK leaves every laptop's update check finding a release with nothing in
+    # it for them. A flaky runner is a re-run of the failed job, not a half-published version.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4

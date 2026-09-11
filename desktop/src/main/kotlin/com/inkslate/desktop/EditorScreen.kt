@@ -193,6 +193,14 @@ fun EditorScreen(
         viewport.flingScale = tools.flingScale
     }
 
+    /**
+     * The file as this machine last left it.
+     *
+     * Compared before every save: if the document on disk is not the one we wrote or opened, a
+     * sync has been through and its marks have to be folded in before ours go on top.
+     */
+    var diskStamp by remember(file) { mutableStateOf("") }
+
     val ids = remember(file) { mutableStateOf(0) }
     val deviceTag = remember { DocumentIO.deviceTag() }
     fun nextId(): String = "$deviceTag-d${++ids.value}"
@@ -232,6 +240,7 @@ fun EditorScreen(
             .maxOrNull() ?: 0
         undo.clear(); redo.clear()
         dirty = false
+        diskStamp = DocumentIO.stampOf(file)
         status = buildString {
             append("${merged.totalStrokes} mark(s)")
             if (doc.mergedConflicts > 0) {
@@ -305,6 +314,17 @@ fun EditorScreen(
             var doc = currentInk()
             ink = doc
             withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, doc) }
+            // A synced folder can have put the tablet's copy here since this document was opened.
+            // Folding it in first is what stops saving from replacing marks made elsewhere with a
+            // payload that never saw them.
+            if (DocumentIO.stampOf(file) != diskStamp) {
+                doc = withContext(Dispatchers.IO) { DocumentIO.mergedWithDisk(file, doc) }
+                ink = doc
+                strokes.clear()
+                strokes.addAll(
+                    (0 until (source?.pageCount ?: 0)).flatMap { p -> doc.strokesOn(p) }
+                )
+            }
             // The page has to be the right size before the handwriting goes onto it, or ink
             // drawn past the old edge is ink outside the page.
             doc.canvas?.takeIf { it.paperIsBehind }?.let { canvas ->
@@ -323,6 +343,7 @@ fun EditorScreen(
             when (result) {
                 is SaveResult.Written -> {
                     dirty = false
+                    diskStamp = DocumentIO.stampOf(file)
                     status = if (result.wasCopy) {
                         "Saved a copy: ${result.target.name}"
                     } else {

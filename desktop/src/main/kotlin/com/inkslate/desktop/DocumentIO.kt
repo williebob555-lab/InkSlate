@@ -125,6 +125,41 @@ object DocumentIO {
             write(sidecarFor(file), doc)
         }
 
+    /**
+     * Fold in anything that reached the document while it was open here.
+     *
+     * A synced folder can put a newer copy of the file under an open document at any moment - the
+     * tablet writing from the other room is the ordinary case, not the exceptional one. Saving
+     * writes this machine's marks into whatever is on disk *now*, so without this the marks that
+     * arrived in between would be replaced by a payload that never saw them.
+     *
+     * The merge is the same one that runs on open: commutative, tombstone-aware, and it drops
+     * nothing. An erase made here still wins over the copy on disk that has not seen it, because
+     * a deletion is recorded rather than merely absent.
+     *
+     * Reading the document back costs a parse, so the caller is expected to ask only when the
+     * file has actually moved under it - see [stampOf].
+     */
+    fun mergedWithDisk(file: File, doc: InkDocument): InkDocument {
+        val onDisk = if (DesktopEmbedder.supports(file)) {
+            DesktopEmbedder.read(file)
+        } else {
+            read(sidecarFor(file))
+        } ?: return doc
+        val merged = doc.mergeWith(onDisk)
+        if (merged.totalStrokes != doc.totalStrokes) {
+            EventLog.info(
+                "sync",
+                "${file.name} changed while it was open: folded in " +
+                    "${merged.totalStrokes - doc.totalStrokes} mark(s) before saving"
+            )
+        }
+        return merged
+    }
+
+    /** What the file looked like last time this machine touched it: size and modification time. */
+    fun stampOf(file: File): String = "${file.length()}:${file.lastModified()}"
+
     // ---- the working copy ----------------------------------------------------
 
     /**
