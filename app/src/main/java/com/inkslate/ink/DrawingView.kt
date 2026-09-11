@@ -756,52 +756,17 @@ class DrawingView @JvmOverloads constructor(
     /**
      * Find the printed area of a page by looking at the rendered raster.
      *
-     * Textbooks give up a quarter of the page to margins, and on a tablet that is a large amount
-     * of screen. Sampling rather than reading every pixel keeps this off the critical path; the
-     * box only has to be approximately right, and it is padded afterwards regardless.
+     * The rule - what counts as content, how much padding, and when a crop is worth making - is
+     * `core/MarginCrop`, shared with the Windows build. Cropping changes the page's visible size,
+     * which is what the arrangement lays out and what ink is hit-tested against, so two builds
+     * trimming the same scan to two different boxes would lay the same document out two
+     * different ways. Only reading the pixels is this platform's.
      */
     private fun detectContentBox(bmp: Bitmap, pageW: Float, pageH: Float): RectF? {
-        val step = maxOf(1, minOf(bmp.width, bmp.height) / 200)
-        val threshold = 26
-        var minX = bmp.width; var minY = bmp.height
-        var maxX = -1; var maxY = -1
-
-        val background = bmp.getPixel(1, 1)
-        val bgR = Color.red(background); val bgG = Color.green(background); val bgB = Color.blue(background)
-
-        var y = 0
-        while (y < bmp.height) {
-            var x = 0
-            while (x < bmp.width) {
-                val px = bmp.getPixel(x, y)
-                val diff = kotlin.math.abs(Color.red(px) - bgR) +
-                    kotlin.math.abs(Color.green(px) - bgG) +
-                    kotlin.math.abs(Color.blue(px) - bgB)
-                if (diff > threshold) {
-                    if (x < minX) minX = x
-                    if (x > maxX) maxX = x
-                    if (y < minY) minY = y
-                    if (y > maxY) maxY = y
-                }
-                x += step
-            }
-            y += step
-        }
-        if (maxX < 0 || maxY < 0) return null
-
-        val sx = pageW / bmp.width
-        val sy = pageH / bmp.height
-        val pad = minOf(pageW, pageH) * 0.015f
-        val box = RectF(
-            (minX * sx - pad).coerceAtLeast(0f),
-            (minY * sy - pad).coerceAtLeast(0f),
-            (maxX * sx + pad).coerceAtMost(pageW),
-            (maxY * sy + pad).coerceAtMost(pageH)
-        )
-        // a crop that saves almost nothing is not worth the visual jump
-        if (box.width() > pageW * 0.94f && box.height() > pageH * 0.94f) return null
-        if (box.width() < pageW * 0.25f || box.height() < pageH * 0.25f) return null
-        return box
+        val box = com.inkslate.core.MarginCrop.detect(
+            bmp.width, bmp.height, pageW, pageH
+        ) { x, y -> bmp.getPixel(x, y) } ?: return null
+        return RectF(box.left, box.top, box.right, box.bottom)
     }
 
     /** Reading treatment for the page and its ink. */

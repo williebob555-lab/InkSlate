@@ -89,10 +89,19 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     val index = slot.index
     val scale = viewport.scale
 
-    /** Screen pixels to this page's own coordinates. */
+    /**
+     * Screen pixels to this page's own coordinates.
+     *
+     * A cropped page is laid out at its content's size but ink is still stored against the whole
+     * page, so the trimmed offset goes back on here. That is what makes turning the crop on and
+     * off unable to move a single existing mark.
+     */
     fun toPage(p: Offset): Offset {
         val doc = viewport.screenToDoc(p)
-        return Offset(doc.x - slot.originX, doc.y - slot.originY)
+        return Offset(
+            doc.x - slot.originX + slot.cropLeft,
+            doc.y - slot.originY + slot.cropTop
+        )
     }
 
     val start = toPage(down.position)

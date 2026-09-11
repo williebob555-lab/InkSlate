@@ -73,6 +73,16 @@ object DocumentIO {
         val changed = doc.source.fingerprint.isNotEmpty() &&
             doc.source.fingerprint != DesktopSources.fingerprint(file)
 
+        EventLog.info(
+            "open",
+            "${file.name}: $pageCount page(s), ${doc.totalStrokes} marks" +
+                (if (conflicts.isNotEmpty()) ", merged ${conflicts.size} sync conflict(s)" else "") +
+                (if (changed) ", the file changed since these were saved" else "")
+        )
+        if (conflicts.isNotEmpty()) {
+            EventLog.warn("sync", "Merged ${conflicts.size} conflict file(s) into ${file.name}")
+        }
+
         return Loaded(doc, conflicts.size, changed)
     }
 

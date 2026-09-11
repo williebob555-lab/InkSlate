@@ -74,21 +74,37 @@ object DocumentExport {
         var backup: File? = null
         if (overwrite && settings.backupOnOverwrite) {
             backup = makeBackup(source).getOrNull()
-                ?: return SaveResult.Failed(
-                    IllegalStateException(
-                        "Could not create a backup, so the original was left untouched"
+                ?: run {
+                    EventLog.error(
+                        "export",
+                        "Backup failed for ${source.name}; overwrite refused"
                     )
-                )
+                    return SaveResult.Failed(
+                        IllegalStateException(
+                            "Could not create a backup, so the original was left untouched"
+                        )
+                    )
+                }
         }
 
+        val started = System.currentTimeMillis()
         return runCatching {
             write(source, target, doc, settings.inkFormat)
             // The written file carries the handwriting inside it as well as on the page, so a
             // copy handed to someone else - or synced to the tablet - is still a document this
             // app can edit rather than a flat picture of one.
             if (DesktopEmbedder.supports(target)) DesktopEmbedder.write(target, doc)
+            EventLog.info(
+                "export",
+                "Wrote ${target.name} (${target.length() / 1024}KB, ${doc.totalStrokes} marks, " +
+                    "${settings.inkFormat.name}) in ${System.currentTimeMillis() - started}ms" +
+                    (backup?.let { ", backup ${it.name}" } ?: "")
+            )
             SaveResult.Written(target, wasCopy = !overwrite, backup = backup)
-        }.getOrElse { SaveResult.Failed(it) }
+        }.getOrElse {
+            EventLog.error("export", "${source.name} failed: ${it::class.simpleName}: ${it.message}")
+            SaveResult.Failed(it)
+        }
     }
 
     /** Where a copy goes, by the naming and location rules. */

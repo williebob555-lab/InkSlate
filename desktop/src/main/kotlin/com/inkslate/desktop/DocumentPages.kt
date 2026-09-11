@@ -71,6 +71,10 @@ object DocumentPages {
             }
             ordered
         }
+        EventLog.info(
+            "pages",
+            "${source.name}: rearranged into ${plan.size} page(s)"
+        )
         remapped
     }
 

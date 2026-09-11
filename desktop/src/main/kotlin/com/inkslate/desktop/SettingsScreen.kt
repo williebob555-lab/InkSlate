@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -85,6 +87,8 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
             DeviceSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             StorageSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
+            DiagnosticsSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             UpdateSection()
         }
@@ -371,6 +375,161 @@ private fun StorageSection() {
     )
     TextButton(onClick = { tick++ }, modifier = Modifier.padding(horizontal = 12.dp)) {
         Text("Refresh")
+    }
+}
+
+// ---- diagnostics -------------------------------------------------------------
+
+/**
+ * What the app has actually been doing, and anything that killed it.
+ *
+ * There is no crash reporting service behind a sideloaded build, so without this a bad afternoon is
+ * just "it went wrong" with nothing to act on. The same three cards as Android, reading from the
+ * same-shaped log, so a report from the tablet and one from the laptop can be compared line for
+ * line.
+ *
+ * Problems are shown by default and the full log is a click away: a hundred routine "opened,
+ * saved" lines are exactly what buries the one line that matters.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DiagnosticsSection() {
+    var tick by remember { mutableStateOf(0) }
+    var showAllEvents by remember { mutableStateOf(false) }
+    var crashes by remember { mutableStateOf(EventLog.crashReports()) }
+    var viewingCrash by remember { mutableStateOf<String?>(null) }
+
+    SectionHeader("Diagnostics")
+
+    // ---- live rendering stats ----
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Rendering", style = MaterialTheme.typography.labelLarge)
+            Text(
+                remember(tick) { RenderStats.summary() },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                "From the last document you had open. Anything consistently over 16ms is a " +
+                    "dropped frame.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            TextButton(onClick = { RenderStats.reset(); tick++ }) { Text("Reset counters") }
+        }
+    }
+
+    // ---- activity log ----
+    val counts = remember(tick) { EventLog.counts() }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "Activity log  (" + counts.third + " errors, " + counts.second +
+                " warnings, " + counts.first + " info)",
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = { showAllEvents = !showAllEvents }) {
+            Text(if (showAllEvents) "Problems only" else "Show all")
+        }
+    }
+
+    val events = remember(tick, showAllEvents) {
+        if (showAllEvents) EventLog.recent(80)
+        else EventLog.recentOfAtLeast(EventLog.Level.WARN, 80)
+    }
+    if (events.isEmpty()) {
+        Text(
+            if (showAllEvents) "Nothing recorded yet." else "No warnings or errors recorded.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+    } else {
+        Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Column(Modifier.padding(10.dp)) {
+                events.forEach { e ->
+                    Text(
+                        e.format(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = when (e.level) {
+                            EventLog.Level.ERROR -> MaterialTheme.colorScheme.error
+                            EventLog.Level.WARN -> MaterialTheme.colorScheme.tertiary
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+            }
+        }
+    }
+    Row(Modifier.padding(horizontal = 12.dp)) {
+        TextButton(onClick = { tick++; crashes = EventLog.crashReports() }) { Text("Refresh") }
+        TextButton(onClick = { EventLog.clear(); tick++ }) { Text("Clear log") }
+    }
+
+    // ---- crash reports ----
+    Text(
+        "Crash reports",
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier.padding(start = 16.dp, top = 12.dp)
+    )
+    if (crashes.isEmpty()) {
+        Text(
+            "No crashes recorded.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+    } else {
+        crashes.forEach { f ->
+            Card(
+                onClick = { viewingCrash = runCatching { f.readText() }.getOrNull() },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(f.name, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        runCatching {
+                            f.readText().lineSequence().firstOrNull {
+                                it.contains("Exception") || it.contains("Error")
+                            }?.trim().orEmpty()
+                        }.getOrDefault(""),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+        TextButton(
+            onClick = { EventLog.clearCrashReports(); crashes = EventLog.crashReports() },
+            modifier = Modifier.padding(horizontal = 12.dp)
+        ) { Text("Clear crash reports") }
+    }
+
+    Text(
+        "Logs are also written to " + EventLog.fileLocation().parent + ".",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+    )
+
+    viewingCrash?.let { text ->
+        AlertDialog(
+            onDismissRequest = { viewingCrash = null },
+            title = { Text("Crash report") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(text, style = MaterialTheme.typography.labelSmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = { viewingCrash = null }) { Text("Close") } }
+        )
     }
 }
 

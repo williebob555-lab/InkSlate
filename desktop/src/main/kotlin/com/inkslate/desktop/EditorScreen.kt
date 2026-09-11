@@ -160,6 +160,7 @@ fun EditorScreen(
     var page by remember(file) { mutableStateOf(0) }
     var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
+    var cropMargins by remember { mutableStateOf(false) }
 
     val ids = remember(file) { mutableStateOf(0) }
     val deviceTag = remember { DocumentIO.deviceTag() }
@@ -744,6 +745,15 @@ fun EditorScreen(
                                 }
                             )
                             DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (cropMargins) "✓  Trim page margins"
+                                        else "      Trim page margins"
+                                    )
+                                },
+                                onClick = { menuOpen = false; cropMargins = !cropMargins }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Fit page") },
                                 onClick = {
                                     menuOpen = false
@@ -885,6 +895,7 @@ fun EditorScreen(
                     tools = tools,
                     textMeasurer = textMeasurer,
                     pageFilter = pageFilter,
+                    cropMargins = cropMargins,
                     newId = ::nextId,
                     onCommitted = ::pushOp,
                     onEditText = { editingText = it },

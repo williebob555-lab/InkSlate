@@ -19,6 +19,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
@@ -57,7 +59,15 @@ class PageSlot(
     val width: Float,
     val height: Float,
     val originX: Float,
-    val originY: Float
+    val originY: Float,
+    /**
+     * Offset from the whole page to the visible area, when its margins are trimmed.
+     *
+     * Stroke coordinates stay relative to the whole page whatever this is, so toggling the crop
+     * cannot move existing ink and export is unaffected either way.
+     */
+    val cropLeft: Float = 0f,
+    val cropTop: Float = 0f
 ) {
     val box: InkBox get() = InkBox(originX, originY, originX + width, originY + height)
 
@@ -123,6 +133,8 @@ fun DocumentCanvas(
     onCaptureRegion: (InkBox, Int) -> Unit = { _, _ -> },
     /** Pictures pasted into this document, looked up by the id a stroke carries. */
     images: (String) -> ImageBitmap? = { null },
+    /** Trim each page to its printed area, hiding the margins a textbook gives up. */
+    cropMargins: Boolean = false,
     /** Set when this document is a canvas that grows to fit what is written on it. */
     canvas: com.inkslate.core.InkCanvas? = null,
     modifier: Modifier = Modifier
@@ -136,16 +148,23 @@ fun DocumentCanvas(
     // A canvas is one page placed at its own origin - which may be negative - and sized to the
     // room it has grown into rather than to the paper. Everything below then works unchanged,
     // because a grown canvas is still just a slot in document space.
-    val slots = remember(extents, layout, currentPage, canvas) {
-        val effective = if (canvas != null) {
-            listOf(PageExtent(canvas.width, canvas.height))
-        } else {
-            extents
+    // The printed area of each page, worked out once from whatever raster arrives first and kept.
+    // Re-measuring at every zoom would move the page under the reader's hand for no gain.
+    val contentBoxes = remember(source) { mutableStateMapOf<Int, InkBox>() }
+
+    val slots = remember(extents, layout, currentPage, canvas, cropMargins, contentBoxes.size) {
+        val effective = when {
+            canvas != null -> listOf(PageExtent(canvas.width, canvas.height))
+            cropMargins -> extents.mapIndexed { i, e ->
+                contentBoxes[i]?.let { PageExtent(it.width, it.height) } ?: e
+            }
+            else -> extents
         }
         val origins = PageArranger.arrange(effective, layout, currentPage, canvas?.box)
         effective.mapIndexed { i, e ->
             val (x, y) = origins[i]
-            PageSlot(i, e.width, e.height, x, y)
+            val box = if (canvas == null && cropMargins) contentBoxes[i] else null
+            PageSlot(i, e.width, e.height, x, y, box?.left ?: 0f, box?.top ?: 0f)
         }
     }
     val bounds = remember(slots, layout, currentPage, canvas) {
@@ -161,6 +180,7 @@ fun DocumentCanvas(
 
     // Rendered page rasters, keyed by page and by the zoom bucket they were made for.
     val rasters = remember(source) { mutableStateMapOf<Int, Pair<Int, ImageBitmap>>() }
+
     var renderTick by remember { mutableStateOf(0) }
 
     // A live gesture, kept out of the committed list so that is not rewritten on every move.
@@ -194,7 +214,15 @@ fun DocumentCanvas(
             val bmp = withContext(Dispatchers.IO) {
                 runCatching { source.render(slot.index, max(160, bucket)) }.getOrNull()
             }
-            if (bmp != null) rasters[slot.index] = bucket to bmp
+            if (bmp != null) {
+                rasters[slot.index] = bucket to bmp
+                if (slot.index !in contentBoxes) {
+                    val pixels = bmp.toPixelMap()
+                    com.inkslate.core.MarginCrop.detect(
+                        bmp.width, bmp.height, slot.width, slot.height
+                    ) { x, y -> pixels[x, y].toArgb() }?.let { contentBoxes[slot.index] = it }
+                }
+            }
         }
     }
 
@@ -303,10 +331,17 @@ fun DocumentCanvas(
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val vp = viewport
+            // Measured around the whole frame rather than sampled, because a stutter is one slow
+            // frame among fast ones and sampling is exactly what misses it.
+            val startedNs = System.nanoTime()
+            var drawnStrokes = 0
+            var pagesVisible = 0
             translate(-vp.offset.x * vp.scale, -vp.offset.y * vp.scale) {
                 scale(vp.scale, vp.scale, pivot = Offset.Zero) {
                     for (slot in slots) {
                         if (!visible(slot, vp)) continue
+                        pagesVisible++
+                        drawnStrokes += strokes.count { it.pageIndex == slot.index }
                         translate(slot.originX, slot.originY) {
                             drawPage(
                                 canvas = canvas,
@@ -321,6 +356,7 @@ fun DocumentCanvas(
                                 tools = tools,
                                 textMeasurer = textMeasurer,
                                 pageFilter = pageFilter,
+                                crop = if (cropMargins) contentBoxes[slot.index] else null,
                                 scale = vp.scale,
                                 ruler = tools.ruler?.takeIf {
                                     tools.rulerVisible && it.page == slot.index
@@ -331,6 +367,12 @@ fun DocumentCanvas(
                     }
                 }
             }
+            RenderStats.totalStrokes = strokes.size
+            RenderStats.livePoints = live.size
+            RenderStats.pageCount = slots.size
+            RenderStats.pagesResident = rasters.size
+            RenderStats.pagesVisible = pagesVisible
+            RenderStats.recordFrame((System.nanoTime() - startedNs) / 1_000_000f, drawnStrokes)
         }
     }
 }
@@ -404,6 +446,7 @@ private fun DrawScope.drawPage(
     tools: ToolState,
     textMeasurer: TextMeasurer,
     pageFilter: PageFilter,
+    crop: InkBox?,
     scale: Float,
     ruler: com.inkslate.core.Ruler?,
     images: (String) -> ImageBitmap?
@@ -429,10 +472,24 @@ private fun DrawScope.drawPage(
     } else {
         drawRect(Color.White, topLeft = Offset.Zero, size = Size(slot.width, slot.height))
         raster?.let {
+            // A cropped page draws the whole raster shifted, so the trimmed margins fall outside
+            // the slot. Stroke coordinates stay relative to the full page, which is what makes
+            // turning the crop on and off unable to move existing ink.
+            val full = if (crop == null) {
+                Size(slot.width, slot.height)
+            } else {
+                Size(
+                    slot.width * it.width / (it.width * crop.width / slot.width).coerceAtLeast(1f),
+                    slot.height * it.height / (it.height * crop.height / slot.height).coerceAtLeast(1f)
+                )
+            }
             drawImage(
                 it,
-                dstOffset = IntOffset.Zero,
-                dstSize = IntSize(slot.width.roundToInt(), slot.height.roundToInt()),
+                dstOffset = IntOffset(
+                    (-(crop?.left ?: 0f)).roundToInt(),
+                    (-(crop?.top ?: 0f)).roundToInt()
+                ),
+                dstSize = IntSize(full.width.roundToInt(), full.height.roundToInt()),
                 colorFilter = pageFilter.colorFilter
             )
         }
@@ -441,8 +498,8 @@ private fun DrawScope.drawPage(
     // Ink is stored in page coordinates, which for a canvas are the canvas's own - so the whole
     // layer shifts by the canvas origin and nothing else changes.
     translate(
-        if (canvas != null) -canvas.left else 0f,
-        if (canvas != null) -canvas.top else 0f
+        if (canvas != null) -canvas.left else -(crop?.left ?: 0f),
+        if (canvas != null) -canvas.top else -(crop?.top ?: 0f)
     ) {
     clipRect(
         if (canvas != null) canvas.left else 0f,

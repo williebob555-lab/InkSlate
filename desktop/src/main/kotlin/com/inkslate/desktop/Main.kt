@@ -29,7 +29,13 @@ import androidx.compose.ui.window.rememberWindowState
  * Android's back button - so the screen on top says what each of them means and this handler
  * calls it.
  */
-fun main() = application {
+fun main() {
+    EventLog.installCrashHandler()
+    EventLog.info("app", "InkSlate ${DesktopUpdates.installedVersion()} started")
+    ui()
+}
+
+private fun ui() = application {
     val state = rememberWindowState(width = 1200.dp, height = 900.dp)
     val shortcuts = remember { Shortcuts() }
     val navigation = remember { NavigationHooks() }
