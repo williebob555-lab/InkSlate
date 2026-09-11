@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -544,7 +545,12 @@ fun ToolBar(
                     }
 
                     Label("Input")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Six chips is wider than a narrowed window, and a clipped setting is a
+                    // setting nobody finds. The tablet has a fixed width and does not need this.
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
                         Chip(
                             if (state.autoSwitchInput) "Auto pen/finger: on"
                             else "Auto pen/finger: off",
@@ -612,9 +618,10 @@ private fun InputModeToggle(mode: InputMode, onCycle: (Int) -> Unit) {
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press &&
-                            event.changes.any { it.type == PointerType.Stylus }
-                        ) {
+                        // Any pointer, not only one Java calls a stylus: on Windows a pen with
+                        // its barrel held is delivered as an ordinary secondary click, so testing
+                        // for a stylus here would hide the barrel profiles on every machine.
+                        if (event.type == PointerEventType.Press) {
                             heldButton = when {
                                 event.buttons.isTertiaryPressed -> 2
                                 event.buttons.isSecondaryPressed -> 1

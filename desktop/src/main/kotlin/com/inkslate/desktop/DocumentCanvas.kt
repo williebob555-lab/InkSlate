@@ -294,11 +294,17 @@ fun DocumentCanvas(
                     }
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
 
-                    // A stylus barrel reports as a secondary or tertiary button, exactly as a
-                    // mouse does; what makes it a barrel is that the pointer is a stylus.
+                    // A held barrel button selects that button's own pen.
+                    //
+                    // Windows hands every pointer to a desktop program as a mouse - AWT has no
+                    // notion of a stylus - so a pen with its barrel held arrives as a secondary
+                    // button and is indistinguishable from a right-click. Requiring
+                    // PointerType.Stylus here therefore made the barrel profiles unreachable on
+                    // the machine this build runs on, which is the opposite of the intent: the
+                    // rule is that a barrel profile appears only when a button is held, not that
+                    // it appears only on hardware Java can identify.
                     val heldButton = when {
-                        down.type != PointerType.Stylus -> 0
-                        currentEvent.buttons.isTertiaryPressed -> 2
+                        down.type == PointerType.Touch -> 0
                         currentEvent.buttons.isSecondaryPressed -> 1
                         else -> 0
                     }

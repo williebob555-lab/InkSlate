@@ -38,9 +38,8 @@ off and taking the next stable release puts you back on the ordinary channel.
 - Stylus pressure with a curve you can tune, and velocity tapering as the fallback for a finger
   or a mouse
 - Adjustable smoothing
-- Palm rejection: once a stylus is on the glass, skin contacts are ignored
-- Separate pen and finger settings, switched automatically by whichever touches the screen, and
-  two more for a stylus barrel button held down
+- Palm rejection on the tablet: once a stylus is on the glass, skin contacts are ignored
+- Separate pen and finger settings, and two more for a stylus barrel button held down
 - Two-finger pan and zoom that never leaves a mark, with momentum scrolling
 - Shape tidying: rough circles, lines and boxes become clean ones
 - A ruler with a protractor readout that ink snaps to
@@ -128,6 +127,7 @@ The same four screens and the same tools, with the differences a mouse and a key
 | | |
 |---|---|
 | The pointer | Drawing with pen, stylus, touch or mouse. Middle-mouse drag pans. The wheel zooms; hold Shift or Ctrl while scrolling to pan sideways or up and down. |
+| Pens and fingers | Windows hands a desktop program every pointer the same way, so it cannot tell a finger from a pen. A held barrel button still picks its own pen, but the finger profile has to be chosen from the toolbar rather than appearing by itself, and palm rejection is tablet-only. |
 | Item actions | Reached by right-click rather than a long press. Same actions. |
 | Pressure | A mouse has none, and desktop pens report it inconsistently, so width falls back to speed there — the same fallback the tablet uses for a finger. |
 | Sharing | "Share" shows the saved file in Explorer, since Windows has no share sheet for a program like this to raise. |

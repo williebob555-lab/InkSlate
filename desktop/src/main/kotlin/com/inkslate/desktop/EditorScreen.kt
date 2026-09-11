@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -53,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -160,6 +162,15 @@ fun EditorScreen(
     var searching by remember { mutableStateOf(false) }
     var searchProgress by remember { mutableStateOf(0) }
     var askMode by remember { mutableStateOf(false) }
+    /**
+     * What to do once the document has actually been written.
+     *
+     * The save rules can put a dialog between asking to save and the write happening, and whatever
+     * was waiting on that save - closing the document, showing it in Explorer, keeping a
+     * checkpoint - has to survive the dialog. Held here rather than carried through it, because a
+     * dialog is a recomposition rather than a call that returns.
+     */
+    var afterSave by remember { mutableStateOf<(() -> Unit)?>(null) }
     var confirmOverwrite by remember { mutableStateOf(false) }
     var fileRulesOpen by remember { mutableStateOf(false) }
 
@@ -175,8 +186,12 @@ fun EditorScreen(
 
     // The viewport is not Compose state on the throw path - it is read by the frame loop - so the
     // two scrolling settings are pushed into it rather than read out of the tool state there.
-    viewport.flingEnabled = tools.flingEnabled
-    viewport.flingScale = tools.flingScale
+    // As an effect rather than in the composition body: composition can run more than once for
+    // the same state, and writing through it is how a recomposition acquires a side effect.
+    SideEffect {
+        viewport.flingEnabled = tools.flingEnabled
+        viewport.flingScale = tools.flingScale
+    }
 
     val ids = remember(file) { mutableStateOf(0) }
     val deviceTag = remember { DocumentIO.deviceTag() }
@@ -340,12 +355,17 @@ fun EditorScreen(
     fun save(then: (() -> Unit)? = null) {
         val settings = prefs.effectiveFor(file.absolutePath)
         when {
-            settings.mode == SaveMode.ASK -> askMode = true
-            settings.mode == SaveMode.OVERWRITE && settings.confirmOverwrite ->
+            settings.mode == SaveMode.ASK -> { afterSave = then; askMode = true }
+            settings.mode == SaveMode.OVERWRITE && settings.confirmOverwrite -> {
+                afterSave = then
                 confirmOverwrite = true
+            }
             else -> writeWith(settings.mode, then)
         }
     }
+
+    /** Take the waiting continuation, so a cancelled dialog cannot leave one armed. */
+    fun takeAfterSave(): (() -> Unit)? = afterSave.also { afterSave = null }
 
     /**
      * Hand the document to something else.
@@ -698,7 +718,16 @@ fun EditorScreen(
     shortcuts.zoomIn = { viewport.zoomBy(1.2f, viewport.centreOfView()) }
     shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
     shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
-    navigation.back = { if (selection.isNotEmpty()) selection = emptySet() else leave() }
+    navigation.back = {
+        // Escape steps back out of one thing at a time, innermost first. Focus mode before the
+        // document especially: hitting Escape to get the toolbars back and having the document
+        // close instead is the kind of surprise that costs an unsaved minute.
+        when {
+            immersive -> immersive = false
+            selection.isNotEmpty() -> selection = emptySet()
+            else -> leave()
+        }
+    }
 
     // ---- layout --------------------------------------------------------------
 
@@ -736,6 +765,20 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    // The same button the tablet has, in the same place: a control that says
+                    // "keep this, now" rather than a menu entry two taps away. Tinted while
+                    // there is something not yet in the document.
+                    IconButton(onClick = { save() }) {
+                        Icon(
+                            Icons.Default.Save,
+                            "Save into the document",
+                            tint = if (writeState == WriteState.SAVED) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        )
+                    }
                     IconButton(onClick = ::undoOnce, enabled = undo.isNotEmpty()) {
                         Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
                     }
@@ -1225,7 +1268,7 @@ fun EditorScreen(
 
     if (askMode) {
         AlertDialog(
-            onDismissRequest = { askMode = false },
+            onDismissRequest = { askMode = false; takeAfterSave() },
             title = { Text("Save ${file.name}") },
             text = {
                 Text(
@@ -1234,16 +1277,18 @@ fun EditorScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { askMode = false; writeWith(SaveMode.OVERWRITE) }) {
-                    Text("Overwrite")
-                }
+                TextButton(onClick = {
+                    askMode = false
+                    writeWith(SaveMode.OVERWRITE, takeAfterSave())
+                }) { Text("Overwrite") }
             },
             dismissButton = {
                 Row {
-                    TextButton(onClick = { askMode = false }) { Text("Cancel") }
-                    TextButton(onClick = { askMode = false; writeWith(SaveMode.COPY) }) {
-                        Text("Save a copy")
-                    }
+                    TextButton(onClick = { askMode = false; takeAfterSave() }) { Text("Cancel") }
+                    TextButton(onClick = {
+                        askMode = false
+                        writeWith(SaveMode.COPY, takeAfterSave())
+                    }) { Text("Save a copy") }
                 }
             }
         )
@@ -1252,7 +1297,7 @@ fun EditorScreen(
     if (confirmOverwrite) {
         val settings = prefs.effectiveFor(file.absolutePath)
         AlertDialog(
-            onDismissRequest = { confirmOverwrite = false },
+            onDismissRequest = { confirmOverwrite = false; takeAfterSave() },
             title = { Text("Overwrite ${file.name}?") },
             text = {
                 Text(
@@ -1265,12 +1310,15 @@ fun EditorScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = { confirmOverwrite = false; writeWith(SaveMode.OVERWRITE) }) {
-                    Text("Overwrite")
-                }
+                TextButton(onClick = {
+                    confirmOverwrite = false
+                    writeWith(SaveMode.OVERWRITE, takeAfterSave())
+                }) { Text("Overwrite") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmOverwrite = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmOverwrite = false; takeAfterSave() }) {
+                    Text("Cancel")
+                }
             }
         )
     }

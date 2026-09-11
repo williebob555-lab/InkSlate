@@ -399,15 +399,19 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 // it wearing the same value, so speed has to stand in there too.
                 val reported =
                     if (type == PointerType.Mouse || !tools.pressureEnabled) 1f else pressure
-                val raw = if (reported in 0.02f..0.98f) reported else fromSpeed
-                // The user's own curve replaces the brush's default response; the brush still
-                // decides how far the width can travel, which is why this shapes the input rather
-                // than the output. Below the floor no press produces a hairline by accident.
-                val p = (
-                    cfg.pressureMin +
-                        (1f - cfg.pressureMin) *
-                        Math.pow(raw.toDouble(), cfg.pressureGamma.toDouble()).toFloat()
-                    ).coerceIn(0f, 1f)
+                val hasPressure = reported in 0.02f..0.98f
+                // The user's own curve applies to real pressure and to nothing else. Shaping the
+                // speed fallback with it as well would make the pressure settings quietly change
+                // how a mouse draws, which is the one device that has no pressure to tune.
+                val p = if (hasPressure) {
+                    (
+                        cfg.pressureMin +
+                            (1f - cfg.pressureMin) *
+                            Math.pow(reported.toDouble(), cfg.pressureGamma.toDouble()).toFloat()
+                        ).coerceIn(0f, 1f)
+                } else {
+                    fromSpeed
+                }
                 lastAt = now
                 lastPos = screen
                 val page = toPage(screen)
@@ -488,7 +492,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                         )
                     }
                     strokes.addAll(replacements)
-                    onCommitted(Op(emptyList(), replacements))
+                    onCommitted(Op.added(replacements))
                     replacements.forEach { onDrew(it.boundsBox()) }
                     return
                 }
