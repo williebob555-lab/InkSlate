@@ -33,20 +33,9 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      # Handy for trying a branch on a tablet without cutting a release. Kept for 14 days.
-      - name: Upload the debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: InkSlate-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 14
-
   desktop:
     name: Desktop (Windows)
     runs-on: windows-latest
-    # The desktop build is still catching up with the Android UI, so a failure here reports a
-    # problem without holding back the Android result.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -58,5 +47,5 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Compile the desktop app
-        run: ./gradlew :core:test :desktop:compileKotlin --stacktrace
+      - name: Unit tests and compile
+        run: ./gradlew :core:test :desktop:test :desktop:compileKotlin --stacktrace
