@@ -317,13 +317,14 @@ fun EditorScreen(
             // A synced folder can have put the tablet's copy here since this document was opened.
             // Folding it in first is what stops saving from replacing marks made elsewhere with a
             // payload that never saw them.
-            if (DocumentIO.stampOf(file) != diskStamp) {
+            val pages = source?.pageCount
+            if (pages != null && DocumentIO.stampOf(file) != diskStamp) {
                 doc = withContext(Dispatchers.IO) { DocumentIO.mergedWithDisk(file, doc) }
                 ink = doc
+                // What is on screen has to become what is about to be written, or the next edit
+                // would be made against a set of marks the save has already moved past.
                 strokes.clear()
-                strokes.addAll(
-                    (0 until (source?.pageCount ?: 0)).flatMap { p -> doc.strokesOn(p) }
-                )
+                strokes.addAll((0 until pages).flatMap { p -> doc.strokesOn(p) })
             }
             // The page has to be the right size before the handwriting goes onto it, or ink
             // drawn past the old edge is ink outside the page.
