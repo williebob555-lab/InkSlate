@@ -73,6 +73,14 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onDrew: (InkBox) -> Unit = {},
     /** A region of the page has been boxed, to be captured as a movable picture. */
     onCaptureRegion: (InkBox, Int) -> Unit = { _, _ -> },
+    /**
+     * The words a highlighter path crossed, when the document has a text layer.
+     *
+     * Passed in rather than looked up here because the gesture has no idea which file it is on -
+     * and because a scanned page has no text at all, which is exactly the case that must fall back
+     * to the freehand mark rather than snapping to nothing.
+     */
+    wordsUnder: ((Int, List<Pair<Float, Float>>) -> List<InkBox>)? = null,
     /** Which stylus barrel button was down when the pointer landed, or 0 for none. */
     heldButton: Int = 0
 ) {
@@ -340,8 +348,11 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 val n = toPage(change.position)
                 // Shift snaps: squares and circles, and lines to fifteen degrees.
                 val (sx, sy) =
-                    if (modifiers.isShiftPressed) Stroke.snapShape(kind, px, py, n.x, n.y)
-                    else n.x to n.y
+                    if (modifiers.isShiftPressed || tools.snapShapes) {
+                        Stroke.snapShape(kind, px, py, n.x, n.y)
+                    } else {
+                        n.x to n.y
+                    }
                 endX = sx
                 endY = sy
                 onPending(build("live", sx, sy))
@@ -386,8 +397,17 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 val fromSpeed = (1f - (speed / 3.2f)).coerceIn(0.25f, 1f)
                 // A mouse always reports 1.0, which is not pressure data - it is the absence of
                 // it wearing the same value, so speed has to stand in there too.
-                val reported = if (type == PointerType.Mouse) 1f else pressure
-                val p = if (reported in 0.02f..0.98f) reported else fromSpeed
+                val reported =
+                    if (type == PointerType.Mouse || !tools.pressureEnabled) 1f else pressure
+                val raw = if (reported in 0.02f..0.98f) reported else fromSpeed
+                // The user's own curve replaces the brush's default response; the brush still
+                // decides how far the width can travel, which is why this shapes the input rather
+                // than the output. Below the floor no press produces a hairline by accident.
+                val p = (
+                    cfg.pressureMin +
+                        (1f - cfg.pressureMin) *
+                        Math.pow(raw.toDouble(), cfg.pressureGamma.toDouble()).toFloat()
+                    ).coerceIn(0f, 1f)
                 lastAt = now
                 lastPos = screen
                 val page = toPage(screen)
@@ -439,6 +459,40 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 } else {
                     drawn
                 }
+
+                // A highlighter dragged across a line becomes clean bars over the words it
+                // crossed. Falls back to the freehand mark when there is no text layer, which is
+                // what a scanned page is - snapping to nothing would silently erase the mark.
+                val bars =
+                    if (tools.snapHighlighterToText && s.isHighlighter && s.points.size > 2) {
+                        wordsUnder?.invoke(index, s.points.map { it.x to it.y }).orEmpty()
+                    } else {
+                        emptyList()
+                    }
+                if (bars.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    val replacements = bars.map { r ->
+                        Stroke(
+                            id = newId(),
+                            kind = Stroke.Kind.FREEHAND,
+                            color = s.color,
+                            baseWidth = r.height.coerceAtLeast(4f),
+                            points = listOf(
+                                InkPoint(r.left, r.centerY, r.height),
+                                InkPoint(r.right, r.centerY, r.height)
+                            ),
+                            brush = com.inkslate.core.BrushType.HIGHLIGHTER,
+                            opacity = s.opacity,
+                            pageIndex = index,
+                            updatedUtc = now
+                        )
+                    }
+                    strokes.addAll(replacements)
+                    onCommitted(Op(emptyList(), replacements))
+                    replacements.forEach { onDrew(it.boundsBox()) }
+                    return
+                }
+
                 strokes.add(s)
                 onCommitted(Op.added(s))
                 onDrew(s.boundsBox())

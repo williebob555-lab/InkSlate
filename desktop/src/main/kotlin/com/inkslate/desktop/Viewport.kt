@@ -76,9 +76,23 @@ class Viewport {
 
     fun setScale(next: Float, aboutPx: Offset) = zoomBy(next / scale, aboutPx)
 
+    /**
+     * Start a throw, scaled by how far the reader asked a flick to carry.
+     *
+     * Turning momentum off stops the throw here rather than at each call site, so a pan simply
+     * ends where the hand left it - which is what someone who turned it off asked for.
+     */
     fun throwBy(vx: Float, vy: Float) {
-        velocity = Offset(vx, vy)
+        if (!flingEnabled) {
+            velocity = Offset.Zero
+            return
+        }
+        velocity = Offset(vx * flingScale, vy * flingScale)
     }
+
+    /** Set from the drawing settings; see [throwBy]. */
+    var flingEnabled = true
+    var flingScale = 1.35f
 
     fun stop() {
         velocity = Offset.Zero

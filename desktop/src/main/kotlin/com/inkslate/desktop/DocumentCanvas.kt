@@ -135,6 +135,8 @@ fun DocumentCanvas(
     images: (String) -> ImageBitmap? = { null },
     /** Trim each page to its printed area, hiding the margins a textbook gives up. */
     cropMargins: Boolean = false,
+    /** The words a highlighter path crossed, when this document has a text layer at all. */
+    wordsUnder: ((Int, List<Pair<Float, Float>>) -> List<InkBox>)? = null,
     /** Set when this document is a canvas that grows to fit what is written on it. */
     canvas: com.inkslate.core.InkCanvas? = null,
     modifier: Modifier = Modifier
@@ -324,6 +326,7 @@ fun DocumentCanvas(
                         onStampPlaced = onStampPlaced,
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
+                        wordsUnder = wordsUnder,
                         heldButton = heldButton
                     )
                 }

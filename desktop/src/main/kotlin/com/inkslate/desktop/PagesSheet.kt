@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,6 +83,7 @@ fun PagesSheet(
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val pageSize = remember(source) { source.pageDim(0) }
     var plan by remember { mutableStateOf(PagePlan.identity(source.pageCount)) }
     var nextUid by remember { mutableStateOf(source.pageCount.toLong() + 1000L) }
     var selected by remember { mutableStateOf(currentPage) }
@@ -94,7 +96,46 @@ fun PagesSheet(
         }
     }
 
+    var importing by remember { mutableStateOf<List<ImportCandidate>?>(null) }
+
     val changed = !PagePlan.isUnchanged(plan, source.pageCount)
+
+    /**
+     * Bring pages in from another file.
+     *
+     * Nothing is read from the picked file here beyond its size and page count: the pages are
+     * carried in the plan by path and only pulled in when the rearrangement is applied, which is
+     * what keeps picking twenty files from costing twenty document loads.
+     */
+    fun pickFilesToImport() {
+        val dialog = java.awt.FileDialog(
+            null as java.awt.Frame?, "Add pages from", java.awt.FileDialog.LOAD
+        )
+        dialog.isMultipleMode = true
+        dialog.setFilenameFilter { _, name ->
+            val f = java.io.File(name)
+            DesktopSources.isPdf(f) || DesktopSources.isImage(f)
+        }
+        dialog.isVisible = true
+        val staged = dialog.files.orEmpty().mapNotNull { inspectForImport(it) }
+        if (staged.isNotEmpty()) importing = staged
+    }
+
+    importing?.let { candidates ->
+        ImportPagesDialog(
+            candidates = candidates,
+            documentWidth = pageSize.width,
+            documentHeight = pageSize.height,
+            insertAfter = selected,
+            onDismiss = { importing = null },
+            onImport = { picked ->
+                importing = null
+                val fresh = importedPages(picked, pageSize.width, pageSize.height)
+                    .map { PlannedPage(source = -1, uid = nextUid++, import = it) }
+                plan = PagePlan.inserted(plan, selected + 1, fresh)
+            }
+        )
+    }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
@@ -165,6 +206,9 @@ fun PagesSheet(
                         )
                     }
                 ) { Icon(Icons.Default.Add, "Add a blank page after this one") }
+                IconButton(onClick = { pickFilesToImport() }) {
+                    Icon(Icons.Default.LibraryAdd, "Add pages from another file")
+                }
                 Box(Modifier.weight(1f))
                 IconButton(
                     onClick = {

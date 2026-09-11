@@ -109,6 +109,10 @@ class ToolBarActions(
     val onInsertPicture: () -> Unit = {},
     val onCapture: () -> Unit = {},
     val onBeginCrop: () -> Unit = {},
+    val onEditPressureCurve: () -> Unit = {},
+    val onSnapRuler: () -> Unit = {},
+    val onRotateRuler: (Float) -> Unit = {},
+    val onResetRuler: () -> Unit = {},
     val canCrop: Boolean = false,
     val onMessage: (String) -> Unit = {}
 )
@@ -489,6 +493,94 @@ fun ToolBar(
                             modifier = Modifier.width(120.dp).height(28.dp)
                         )
                     }
+
+                    if (state.rulerVisible) {
+                        Label("Ruler")
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Chip("Snap to 15\u00B0", false) { actions.onSnapRuler() }
+                            Chip("Rotate 15\u00B0", false) { actions.onRotateRuler(15f) }
+                            Chip("Rotate 90\u00B0", false) { actions.onRotateRuler(90f) }
+                            Chip("Recentre", false) { actions.onResetRuler() }
+                        }
+                    }
+
+                    Label("Reading")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chip(
+                            if (state.cropMargins) "Crop margins: on" else "Crop margins: off",
+                            state.cropMargins
+                        ) {
+                            change { state.cropMargins = !state.cropMargins }
+                        }
+                        Chip(
+                            if (state.rememberView) "Reopen where I left: on"
+                            else "Reopen where I left: off",
+                            state.rememberView
+                        ) {
+                            change { state.rememberView = !state.rememberView }
+                        }
+                    }
+
+                    Label("Scrolling")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chip(
+                            if (state.flingEnabled) "Momentum: on" else "Momentum: off",
+                            state.flingEnabled
+                        ) {
+                            change { state.flingEnabled = !state.flingEnabled }
+                        }
+                    }
+                    if (state.flingEnabled) {
+                        SliderRow(
+                            label = "Flick distance",
+                            value = state.flingScale,
+                            range = 0.5f..3.5f,
+                            display = {
+                                when {
+                                    it < 0.9f -> "Short"
+                                    it < 1.6f -> "Normal"
+                                    it < 2.5f -> "Long"
+                                    else -> "Very long"
+                                }
+                            }
+                        ) { v -> change { state.flingScale = v } }
+                    }
+
+                    Label("Input")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Chip(
+                            if (state.autoSwitchInput) "Auto pen/finger: on"
+                            else "Auto pen/finger: off",
+                            state.autoSwitchInput
+                        ) {
+                            change { state.autoSwitchInput = !state.autoSwitchInput }
+                        }
+                        Chip(
+                            if (state.pressureEnabled) "Pressure: on" else "Pressure: off",
+                            state.pressureEnabled
+                        ) {
+                            change { state.pressureEnabled = !state.pressureEnabled }
+                        }
+                        Chip("Pressure curve...", false) { actions.onEditPressureCurve() }
+                        Chip(
+                            if (state.snapHighlighterToText) "Snap to text: on"
+                            else "Snap to text: off",
+                            state.snapHighlighterToText
+                        ) {
+                            change {
+                                state.snapHighlighterToText = !state.snapHighlighterToText
+                            }
+                        }
+                        Chip(if (state.snapShapes) "Snap: on" else "Snap: off", state.snapShapes) {
+                            change { state.snapShapes = !state.snapShapes }
+                        }
+                        Chip(
+                            if (state.recogniseShapes) "Tidy shapes: on" else "Tidy shapes: off",
+                            state.recogniseShapes
+                        ) {
+                            change { state.recogniseShapes = !state.recogniseShapes }
+                        }
+                    }
                 }
             }
         }
@@ -555,6 +647,30 @@ private fun InputModeToggle(mode: InputMode, onCycle: (Int) -> Unit) {
 }
 
 // ---- pieces ------------------------------------------------------------------
+
+/** A slider whose value is described in words, for settings nobody thinks about as a number. */
+@Composable
+private fun SliderRow(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    display: (Float) -> String,
+    onChange: (Float) -> Unit
+) {
+    Column(Modifier.padding(top = 6.dp)) {
+        Text(
+            label + ": " + display(value),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = range,
+            modifier = Modifier.height(28.dp)
+        )
+    }
+}
 
 @Composable
 private fun SliderRow(

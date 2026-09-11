@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,6 +25,8 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
@@ -29,6 +34,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -160,7 +167,16 @@ fun EditorScreen(
     var page by remember(file) { mutableStateOf(0) }
     var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
-    var cropMargins by remember { mutableStateOf(false) }
+    var pressureCurveOpen by remember { mutableStateOf(false) }
+    var benchRunning by remember { mutableStateOf(false) }
+    var benchReport by remember { mutableStateOf<String?>(null) }
+    /** Focus mode: the page and the tools, nothing else. */
+    var immersive by remember { mutableStateOf(false) }
+
+    // The viewport is not Compose state on the throw path - it is read by the frame loop - so the
+    // two scrolling settings are pushed into it rather than read out of the tool state there.
+    viewport.flingEnabled = tools.flingEnabled
+    viewport.flingScale = tools.flingScale
 
     val ids = remember(file) { mutableStateOf(0) }
     val deviceTag = remember { DocumentIO.deviceTag() }
@@ -217,7 +233,7 @@ fun EditorScreen(
     // number nobody reads until the document is opened again.
     DisposableEffect(file.absolutePath, source) {
         onDispose {
-            if (source != null) {
+            if (source != null && tools.rememberView) {
                 ReadingPosition.save(
                     file.absolutePath, page, layout,
                     viewport.scale, viewport.offset.x, viewport.offset.y
@@ -318,6 +334,46 @@ fun EditorScreen(
             settings.mode == SaveMode.OVERWRITE && settings.confirmOverwrite ->
                 confirmOverwrite = true
             else -> writeWith(settings.mode, then)
+        }
+    }
+
+    /**
+     * Hand the document to something else.
+     *
+     * Windows has no share sheet a plain desktop program can raise, so this does what the share
+     * sheet is for: it writes the marks in and then shows the file itself, selected, in Explorer -
+     * from where it can be dragged into an email, a chat window or a hand-in page. Saving first
+     * matters, because a file shared without it is the file as it was this morning.
+     */
+    fun shareDocument() {
+        scope.launch {
+            save {
+                runCatching {
+                    ProcessBuilder("explorer.exe", "/select,", file.absolutePath).start()
+                }.onFailure {
+                    scope.launch { snackbar.showSnackbar("Could not show ${file.name}") }
+                }
+            }
+        }
+    }
+
+    /**
+     * Mark this version as one worth being able to come back to.
+     *
+     * Version history otherwise fills itself only from the copies taken before an overwrite, which
+     * is a record of the last few saves rather than of the decisions worth undoing. This writes the
+     * document and keeps a copy of it deliberately.
+     */
+    fun checkpoint() {
+        save {
+            scope.launch {
+                val made = withContext(Dispatchers.IO) { DocumentExport.makeBackup(file) }
+                status = made.fold(
+                    onSuccess = { "Checkpointed ${file.name}" },
+                    onFailure = { "Could not checkpoint: ${it.message}" }
+                )
+                EventLog.info("checkpoint", made.fold({ "Kept ${it.name}" }, { "failed: ${it.message}" }))
+            }
         }
     }
 
@@ -444,6 +500,7 @@ fun EditorScreen(
         val src = source ?: return@LaunchedEffect
         if (positionRestored || viewport.viewSize.width <= 0f) return@LaunchedEffect
         positionRestored = true
+        if (!tools.rememberView) return@LaunchedEffect
         val at = ReadingPosition.load(file.absolutePath) ?: return@LaunchedEffect
         layout = at.layout
         page = at.page.coerceIn(0, src.pageCount - 1)
@@ -643,7 +700,9 @@ fun EditorScreen(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = {
+        topBar = topBar@{
+            // In focus mode the app bar goes too, leaving only the page and the drawing tools.
+            if (immersive) return@topBar
             TopAppBar(
                 title = {
                     Column {
@@ -676,6 +735,9 @@ fun EditorScreen(
                     IconButton(onClick = { searchOpen = true }) {
                         Icon(Icons.Default.Search, "Find in document")
                     }
+                    IconButton(onClick = { immersive = true }) {
+                        Icon(Icons.Default.Fullscreen, "Focus mode")
+                    }
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
                             Icon(Icons.Default.MoreVert, "More")
@@ -686,8 +748,16 @@ fun EditorScreen(
                                 onClick = { menuOpen = false; save() }
                             )
                             DropdownMenuItem(
+                                text = { Text("Share...") },
+                                onClick = { menuOpen = false; shareDocument() }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Export...") },
                                 onClick = { menuOpen = false; exportOpen = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Checkpoint this version") },
+                                onClick = { menuOpen = false; checkpoint() }
                             )
                             if ((source?.pageCount ?: 0) == 1 && DesktopSources.isPdf(file)) {
                                 DropdownMenuItem(
@@ -723,6 +793,23 @@ fun EditorScreen(
                                 text = { Text("Rules for this file") },
                                 onClick = { menuOpen = false; fileRulesOpen = true }
                             )
+                            DropdownMenuItem(
+                                text = { Text("Measure save speed") },
+                                onClick = {
+                                    menuOpen = false
+                                    benchRunning = true
+                                    scope.launch {
+                                        val text = withContext(Dispatchers.IO) {
+                                            SaveBenchmark.run(
+                                                file, ink,
+                                                prefs.effectiveFor(file.absolutePath).inkFormat
+                                            )
+                                        }
+                                        benchRunning = false
+                                        benchReport = text
+                                    }
+                                }
+                            )
                             if (tools.rulerVisible) {
                                 DropdownMenuItem(
                                     text = { Text("Snap the ruler to 15°") },
@@ -747,11 +834,11 @@ fun EditorScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        if (cropMargins) "✓  Trim page margins"
+                                        if (tools.cropMargins) "✓  Trim page margins"
                                         else "      Trim page margins"
                                     )
                                 },
-                                onClick = { menuOpen = false; cropMargins = !cropMargins }
+                                onClick = { menuOpen = false; tools.cropMargins = !tools.cropMargins }
                             )
                             DropdownMenuItem(
                                 text = { Text("Fit page") },
@@ -763,6 +850,15 @@ fun EditorScreen(
                             DropdownMenuItem(
                                 text = { Text("Fit width") },
                                 onClick = { menuOpen = false; viewport.fitWidth(viewport.content) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Reset view") },
+                                onClick = {
+                                    menuOpen = false
+                                    viewport.stop()
+                                    viewport.restore(1f, 0f, 0f)
+                                    goToPage(page)
+                                }
                             )
                             HorizontalDivider()
                             PageLayout.entries.forEach { option ->
@@ -860,6 +956,18 @@ fun EditorScreen(
                         onInsertSymbol = { symbolsOpen = true },
                         onInsertPicture = ::importPicture,
                         onCapture = { tools.edit { it.tool = com.inkslate.core.Tool.REGION } },
+                        onEditPressureCurve = { pressureCurveOpen = true },
+                        onSnapRuler = { tools.ruler = tools.ruler?.snappedToAngle(15f) },
+                        onRotateRuler = { deg -> tools.ruler = tools.ruler?.rotatedBy(deg) },
+                        onResetRuler = {
+                            val src = source
+                            if (src != null) {
+                                val dim = src.pageDim(page)
+                                tools.ruler = com.inkslate.core.Ruler.across(
+                                    com.inkslate.core.Box(0f, 0f, dim.width, dim.height), page
+                                )
+                            }
+                        },
                         onBeginCrop = {
                             cropping = selected().singleOrNull()
                                 ?.takeIf { it.kind == Stroke.Kind.IMAGE }
@@ -895,7 +1003,12 @@ fun EditorScreen(
                     tools = tools,
                     textMeasurer = textMeasurer,
                     pageFilter = pageFilter,
-                    cropMargins = cropMargins,
+                    cropMargins = tools.cropMargins,
+                    wordsUnder = if (DesktopSources.isPdf(file)) { pageIndex, path ->
+                        DocumentText.wordsUnderPath(file, pageIndex, path, tolerance = 6f)
+                    } else {
+                        null
+                    },
                     newId = ::nextId,
                     onCommitted = ::pushOp,
                     onEditText = { editingText = it },
@@ -932,10 +1045,66 @@ fun EditorScreen(
                     }
                 )
             }
+
+            // The app bar is gone in focus mode, so this is the only way back out.
+            if (immersive) {
+                FilledTonalIconButton(
+                    onClick = { immersive = false },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
+                ) { Icon(Icons.Default.FullscreenExit, "Leave focus mode") }
+            }
         }
     }
 
     // ---- dialogs -------------------------------------------------------------
+
+    if (pressureCurveOpen) {
+        PressureCurveDialog(
+            initialGamma = tools.active.pressureGamma,
+            initialMin = tools.active.pressureMin,
+            initialDynamics = tools.active.dynamics,
+            onDismiss = { pressureCurveOpen = false },
+            onReset = {
+                tools.edit { it.pressureGamma = 1f; it.pressureMin = 0.35f; it.dynamics = 1f }
+                pressureCurveOpen = false
+            },
+            onApply = { g, m, d ->
+                tools.edit { it.pressureGamma = g; it.pressureMin = m; it.dynamics = d }
+                pressureCurveOpen = false
+            }
+        )
+    }
+
+    if (benchRunning) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Measuring") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Text(
+                        "Timing each phase of a save against this document.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 12.dp)
+                    )
+                }
+            },
+            confirmButton = { }
+        )
+    }
+
+    benchReport?.let { text ->
+        AlertDialog(
+            onDismissRequest = { benchReport = null },
+            title = { Text("Save timings") },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Text(text, style = MaterialTheme.typography.labelSmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = { benchReport = null }) { Text("Done") } }
+        )
+    }
 
     editingText?.let { target ->
         TextDialog(

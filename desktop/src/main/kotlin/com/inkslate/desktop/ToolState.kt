@@ -65,9 +65,14 @@ class ToolState {
         }
 
     /** Whichever device last touched the page picks its own profile. */
-    var autoSwitchInput by mutableStateOf(
-        DesktopPrefs.get(K_AUTO_SWITCH)?.toBoolean() ?: true
-    )
+    var autoSwitchInput: Boolean
+        get() = autoSwitchState.value
+        set(value) {
+            autoSwitchState.value = value
+            DesktopPrefs.put(K_AUTO_SWITCH, value.toString())
+        }
+    private val autoSwitchState =
+        mutableStateOf(DesktopPrefs.get(K_AUTO_SWITCH)?.toBoolean() ?: true)
 
     fun switchMode(mode: InputMode) {
         if (activeMode == mode) return
@@ -158,6 +163,71 @@ class ToolState {
             recogniseState.value = value
             DesktopPrefs.put(K_RECOGNISE, value.toString())
         }
+
+    /** Whether a pen's reported pressure is used at all, or every line comes out one width. */
+    var pressureEnabled: Boolean
+        get() = pressureState.value
+        set(value) {
+            pressureState.value = value
+            DesktopPrefs.put(K_PRESSURE, value.toString())
+        }
+    private val pressureState = mutableStateOf(DesktopPrefs.get(K_PRESSURE)?.toBoolean() ?: true)
+
+    /** Shapes snap to square, circle and fifteen degrees without having to hold shift. */
+    var snapShapes: Boolean
+        get() = snapShapesState.value
+        set(value) {
+            snapShapesState.value = value
+            DesktopPrefs.put(K_SNAP_SHAPES, value.toString())
+        }
+    private val snapShapesState =
+        mutableStateOf(DesktopPrefs.get(K_SNAP_SHAPES)?.toBoolean() ?: false)
+
+    /** A highlighter dragged across a line becomes clean bars over the words it crossed. */
+    var snapHighlighterToText: Boolean
+        get() = snapTextState.value
+        set(value) {
+            snapTextState.value = value
+            DesktopPrefs.put(K_SNAP_TEXT, value.toString())
+        }
+    private val snapTextState = mutableStateOf(DesktopPrefs.get(K_SNAP_TEXT)?.toBoolean() ?: true)
+
+    /** Trim each page to its printed area, hiding the margins a textbook gives up. */
+    var cropMargins: Boolean
+        get() = cropState.value
+        set(value) {
+            cropState.value = value
+            DesktopPrefs.put(K_CROP, value.toString())
+        }
+    private val cropState = mutableStateOf(DesktopPrefs.get(K_CROP)?.toBoolean() ?: false)
+
+    /** Whether a pan carries on after the hand leaves, and how far a flick throws it. */
+    var flingEnabled: Boolean
+        get() = flingState.value
+        set(value) {
+            flingState.value = value
+            DesktopPrefs.put(K_FLING, value.toString())
+        }
+    private val flingState = mutableStateOf(DesktopPrefs.get(K_FLING)?.toBoolean() ?: true)
+
+    var flingScale: Float
+        get() = flingScaleState.value
+        set(value) {
+            flingScaleState.value = value
+            DesktopPrefs.put(K_FLING_SCALE, value.toString())
+        }
+    private val flingScaleState =
+        mutableStateOf(DesktopPrefs.get(K_FLING_SCALE)?.toFloatOrNull() ?: 1.35f)
+
+    /** Reopen a document where it was left, rather than at the top of page one. */
+    var rememberView: Boolean
+        get() = rememberViewState.value
+        set(value) {
+            rememberViewState.value = value
+            DesktopPrefs.put(K_REMEMBER_VIEW, value.toString())
+        }
+    private val rememberViewState =
+        mutableStateOf(DesktopPrefs.get(K_REMEMBER_VIEW)?.toBoolean() ?: true)
 
     var tableRows by mutableStateOf(3)
     var tableCols by mutableStateOf(3)
@@ -281,7 +351,8 @@ class ToolState {
                 c.tool.name, c.brush.name, c.color.toString(), c.strokeWidth.toString(),
                 c.eraserRadius.toString(), c.eraserMode.name, c.smoothing.toString(),
                 c.textSize.toString(), c.opacity.toString(), c.dash.name,
-                c.fillStyle.name, c.dynamics.toString(), c.dynamicWidth.toString()
+                c.fillStyle.name, c.dynamics.toString(), c.dynamicWidth.toString(),
+                c.pressureGamma.toString(), c.pressureMin.toString()
             ).joinToString("|")
         )
     }
@@ -302,6 +373,8 @@ class ToolState {
             c.fillStyle = com.inkslate.core.FillStyle.valueOf(parts[10])
             c.dynamics = parts[11].toFloat()
             c.dynamicWidth = parts.getOrNull(12)?.toBoolean() ?: false
+            parts.getOrNull(13)?.toFloatOrNull()?.let { c.pressureGamma = it }
+            parts.getOrNull(14)?.toFloatOrNull()?.let { c.pressureMin = it }
         }
         // A tool that cannot be resumed sensibly. Landing in a half-finished capture because that
         // is how the last session ended is a poor way to open a page.
@@ -322,6 +395,13 @@ class ToolState {
         const val K_BTN2_SEEN = "tool_button2_seen"
         const val K_AUTO_SWITCH = "tool_auto_switch"
         const val K_RECOGNISE = "tool_recognise_shapes"
+        const val K_PRESSURE = "tool_pressure"
+        const val K_SNAP_SHAPES = "tool_snap_shapes"
+        const val K_SNAP_TEXT = "tool_snap_highlighter"
+        const val K_CROP = "tool_crop_margins"
+        const val K_FLING = "tool_fling"
+        const val K_FLING_SCALE = "tool_fling_scale"
+        const val K_REMEMBER_VIEW = "tool_remember_view"
     }
 }
 
