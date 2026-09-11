@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -97,6 +98,7 @@ fun PagesSheet(
     }
 
     var importing by remember { mutableStateOf<List<ImportCandidate>?>(null) }
+    var confirmApply by remember { mutableStateOf(false) }
 
     val changed = !PagePlan.isUnchanged(plan, source.pageCount)
 
@@ -119,6 +121,43 @@ fun PagesSheet(
         dialog.isVisible = true
         val staged = dialog.files.orEmpty().mapNotNull { inspectForImport(it) }
         if (staged.isNotEmpty()) importing = staged
+    }
+
+    // Applying rewrites the document itself, which is not something to do on one click of a
+    // button sitting next to "Undo all". The summary is the point: it says what is about to
+    // happen to the file in the terms someone is thinking in - pages, turns, and where the
+    // handwriting goes.
+    if (confirmApply) {
+        AlertDialog(
+            onDismissRequest = { confirmApply = false },
+            title = { Text("Rearrange the document?") },
+            text = {
+                val turned = plan.count { it.quarterTurns != 0 }
+                val brought = plan.count { it.isImported }
+                Text(
+                    buildString {
+                        append("This rewrites the file itself: ${plan.size} page")
+                        append(if (plan.size == 1) "" else "s")
+                        append(", from ${source.pageCount}.")
+                        if (turned > 0) append(" $turned turned.")
+                        if (brought > 0) append(" $brought brought in from other files.")
+                        append(
+                            "\n\nYour handwriting moves and turns with its pages, and marks on " +
+                                "removed pages go with them.\n\n" +
+                                "The previous version is kept in version history. Your other " +
+                                "devices will pick up the new order when they next sync."
+                        )
+                    },
+                    style = MaterialTheme.typography.bodySmall
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmApply = false; onApply(plan) }) { Text("Rearrange") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmApply = false }) { Text("Cancel") }
+            }
+        )
     }
 
     importing?.let { candidates ->
@@ -163,7 +202,7 @@ fun PagesSheet(
                         Text("Undo all")
                     }
                 }
-                TextButton(enabled = changed, onClick = { onApply(plan) }) { Text("Apply") }
+                TextButton(enabled = changed, onClick = { confirmApply = true }) { Text("Apply") }
             }
 
             // ---- what can be done to the page in hand ----
