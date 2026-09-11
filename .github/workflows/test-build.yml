@@ -176,6 +176,20 @@ jobs:
             echo NOTES
           } >> "$GITHUB_OUTPUT"
 
+      # The tag moves, and the release under it keeps whatever was uploaded to it before - so
+      # without this the page fills with the installers of every past test build, and the updater
+      # is free to hand someone one of them instead of this one.
+      - name: Clear the previous test build's files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/test" --jq '.assets[].id' \
+            2>/dev/null || true)
+          for id in $ids; do
+            echo "Removing asset $id"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
+          done
+
       # One moving tag rather than one per push, so the releases page stays about real releases
       # and there is only ever one test build to reason about.
       - name: Publish

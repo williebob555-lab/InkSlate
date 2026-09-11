@@ -143,4 +143,57 @@ class UpdateCheckTest {
         // GitHub lists by date, so a late patch to an old line comes first.
         assertEquals(older, UpdateCheck.newestOf(listOf(patch, older)))
     }
+
+    // ---- which file comes down ------------------------------------------------
+
+    private fun asset(name: String) = UpdateCheck.Asset(name, "https://example/$name", 1)
+
+    private fun release(version: String, vararg names: String) = UpdateCheck.Release(
+        Version.parse(version)!!, version, "", "", names.map(::asset)
+    )
+
+    /**
+     * The test channel publishes onto one moving tag, so its release accumulates the files of
+     * earlier builds. Taking the first match would install the *oldest* of them - which is the
+     * opposite of what asking for test builds is for.
+     */
+    @Test
+    fun `the file matching the version wins over the ones left behind by earlier builds`() {
+        val r = release(
+            "1.1.1-test.11",
+            "InkSlate-1.1.1-test.1.apk",
+            "InkSlate-1.1.1-test.10.apk",
+            "InkSlate-1.1.1-test.11.apk"
+        )
+        assertEquals(
+            "InkSlate-1.1.1-test.11.apk",
+            UpdateCheck.pickAsset(r, UpdateCheck.Platform.ANDROID)?.name
+        )
+    }
+
+    /** A release whose files are not named after it still hands over something sensible. */
+    @Test
+    fun `an unnamed file still downloads`() {
+        val r = release("1.2.0", "app-release.apk")
+        assertEquals(
+            "app-release.apk",
+            UpdateCheck.pickAsset(r, UpdateCheck.Platform.ANDROID)?.name
+        )
+    }
+
+    /** Windows accepts either, and an installer is a better thing to hand someone than an exe. */
+    @Test
+    fun `the installer is preferred over a bare executable`() {
+        val r = release("1.2.0", "InkSlate-1.2.0.exe", "InkSlate-1.2.0.msi")
+        assertEquals(
+            "InkSlate-1.2.0.msi",
+            UpdateCheck.pickAsset(r, UpdateCheck.Platform.WINDOWS)?.name
+        )
+    }
+
+    @Test
+    fun `a release with nothing for this platform offers no download`() {
+        val r = release("1.2.0", "InkSlate-1.2.0.msi")
+        assertNull(UpdateCheck.pickAsset(r, UpdateCheck.Platform.ANDROID))
+    }
 }

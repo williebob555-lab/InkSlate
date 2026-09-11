@@ -138,11 +138,32 @@ object UpdateCheck {
 
         if (release.version <= installed) return Result.UpToDate(installed)
 
-        val download = release.assets.firstOrNull { asset ->
-            platform.extensions.any { asset.name.endsWith(it, ignoreCase = true) }
-        } ?: return Result.AvailableWithoutDownload(release)
+        val download = pickAsset(release, platform)
+            ?: return Result.AvailableWithoutDownload(release)
 
         return Result.Available(release, download)
+    }
+
+    /**
+     * The file to download out of a release that may hold several.
+     *
+     * The test channel publishes onto one moving tag, so a release there can carry files from
+     * earlier builds as well as this one. Taking the first match would then install whichever the
+     * API happened to list first - which is the *oldest* build, not the newest. Matching the
+     * version in the name first is what makes the newest build the one that arrives.
+     *
+     * Where a platform lists several extensions they are in order of preference, so a release
+     * carrying both an installer and a bare executable hands over the installer.
+     */
+    internal fun pickAsset(release: Release, platform: Platform): Asset? {
+        for (extension in platform.extensions) {
+            val matching = release.assets.filter { it.name.endsWith(extension, ignoreCase = true) }
+            if (matching.isEmpty()) continue
+            val wanted = release.version.toString()
+            val named = matching.firstOrNull { it.name.contains(wanted, ignoreCase = true) }
+            return named ?: matching.maxByOrNull { it.name }
+        }
+        return null
     }
 
     /** Visible for tests: turns a GitHub release payload into a [Release]. */
