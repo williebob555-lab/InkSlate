@@ -3,6 +3,9 @@ package com.inkslate.desktop
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
 import androidx.compose.ui.input.pointer.isShiftPressed
@@ -26,6 +29,28 @@ private const val RULER_BAR_TOUCH = 12f
  * restricted suspension scope, which by design refuses to suspend anywhere except on its own
  * receiver, so a helper that awaits pointer events has to be one of its extensions.
  */
+/**
+ * Wait for a press from a button that draws.
+ *
+ * Not [androidx.compose.foundation.gestures.awaitFirstDown], which returns for the primary button
+ * and nothing else: Compose marks a pointer pressed for that one alone, so a right-click never
+ * began a gesture here at all. The right mouse button is a pen in its own right, with its own
+ * colour and width, and none of it could be reached because the gesture never started.
+ *
+ * The middle button is passed over rather than handled - it pans, on a handler of its own, and it
+ * consumes what it uses.
+ */
+suspend fun AwaitPointerEventScope.awaitDrawingDown(): PointerInputChange {
+    while (true) {
+        val event = awaitPointerEvent()
+        if (event.type != PointerEventType.Press) continue
+        if (event.buttons.isTertiaryPressed) continue
+        // Taken whether or not it has been consumed, as the call this replaces did explicitly:
+        // something upstream having looked at the press is not a reason to refuse to draw.
+        return event.changes.firstOrNull() ?: continue
+    }
+}
+
 suspend fun AwaitPointerEventScope.dragUntilRelease(
     start: Offset,
     onMove: (PointerInputChange, PointerKeyboardModifiers) -> Unit
@@ -40,7 +65,13 @@ suspend fun AwaitPointerEventScope.dragUntilRelease(
             // snapping immediately - which is how it gets used: draw the line, then straighten it.
             onMove(change, event.keyboardModifiers)
         }
-        if (!change.pressed) break
+        // A pointer is "pressed" only for the primary button, so a right-button drag would have
+        // ended on its first event - one point, and no stroke. What holds a drag open is any
+        // drawing button still being down, or a finger or pen still on the glass.
+        val held = change.pressed ||
+            event.buttons.isPrimaryPressed ||
+            event.buttons.isSecondaryPressed
+        if (!held) break
     }
     return last
 }

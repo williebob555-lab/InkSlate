@@ -3,7 +3,6 @@ package com.inkslate.desktop
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -300,7 +299,7 @@ fun DocumentCanvas(
             .pointerInput(Unit) { middleDragPan(viewport) }
             .pointerInput(slots, tools.revision, selection, viewport.scale) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitDrawingDown()
 
                     // A finger while a stylus is on the glass is a palm. The tablet ignores it
                     // and so does this, which matters just as much on a laptop resting on a wrist.
