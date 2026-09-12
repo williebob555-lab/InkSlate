@@ -138,7 +138,10 @@ fun ToolBar(
     // A snapshot keyed on the revision counter. Reading the counter as a bare statement is not
     // enough to register a Compose state read, which is what made brush changes on the tablet
     // appear only after some other event forced a recomposition.
-    val cfg = remember(state.revision) { state.snapshot() }
+    // Keyed on the mode as well as the revision: switching to the pen's profile shows a different
+    // colour and width without any of them being edited, and that switch no longer counts as a
+    // revision - see ToolState.switchMode.
+    val cfg = remember(state.revision, state.activeMode) { state.snapshot() }
     var expanded by remember { mutableStateOf(false) }
 
     fun change(block: () -> Unit) {

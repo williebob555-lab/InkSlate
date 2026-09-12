@@ -92,10 +92,21 @@ class ToolState {
     private val autoSwitchState =
         mutableStateOf(DesktopPrefs.get(K_AUTO_SWITCH)?.toBoolean() ?: true)
 
+    /**
+     * Move to the profile belonging to whatever is drawing.
+     *
+     * Deliberately without bumping [revision]. This is called as a gesture begins - the pen lands,
+     * its profile is picked, and the stroke is drawn with it - and the canvas restarts its gesture
+     * detector whenever the revision changes. Bumping it here cancelled the gesture that had just
+     * begun, so the first mark after picking up the pen, or after putting it down for a finger,
+     * was thrown away and had to be drawn a second time.
+     *
+     * [activeMode] is state of its own, so everything that shows the profile still follows it.
+     * The revision counter is for edits to a profile, which cannot happen mid-stroke.
+     */
     fun switchMode(mode: InputMode) {
         if (activeMode == mode) return
         activeMode = mode
-        revision++
     }
 
     /**
