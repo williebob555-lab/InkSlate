@@ -226,6 +226,9 @@ object WindowsPointer {
     }
 
     private fun forgetContacts() {
+        owedX = 0f
+        owedY = 0f
+        owedZoom = 1f
         fingers.clear()
         contacts = 0
         gesturing = false
@@ -359,8 +362,47 @@ object WindowsPointer {
         val zoom = (spread / previousSpread).coerceIn(0.5f, 2f)
         note("${held.size} fingers  moved %.0f,%.0f  zoom %.3f".format(dx, dy, zoom))
 
-        val listener = onGesture ?: return
-        SwingUtilities.invokeLater { runCatching { listener(cx, cy, dx, dy, zoom) } }
+        post(cx, cy, dx, dy, zoom)
+    }
+
+    // ---- handing a gesture to the screen -------------------------------------
+
+    private val waiting = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    @Volatile private var owedX = 0f
+    @Volatile private var owedY = 0f
+    @Volatile private var owedZoom = 1f
+    @Volatile private var owedCentreX = 0f
+    @Volatile private var owedCentreY = 0f
+
+    /**
+     * Collect the movement and hand it over once, rather than once per contact message.
+     *
+     * Ten fingers' worth of contacts arrive together and a touchscreen reports far faster than a
+     * screen redraws, so forwarding each one separately asked the page to move a hundred times
+     * between two frames - every one of them a repaint that nobody ever saw. The movement adds up
+     * and the zoom multiplies, so collecting them loses nothing: what arrives is the same gesture
+     * with the same result, delivered once for each frame that can show it.
+     */
+    private fun post(cx: Float, cy: Float, dx: Float, dy: Float, zoom: Float) {
+        owedX += dx
+        owedY += dy
+        owedZoom *= zoom
+        owedCentreX = cx
+        owedCentreY = cy
+        if (onGesture == null) return
+        if (waiting.getAndSet(true)) return
+
+        SwingUtilities.invokeLater {
+            waiting.set(false)
+            val x = owedX
+            val y = owedY
+            val z = owedZoom
+            owedX = 0f
+            owedY = 0f
+            owedZoom = 1f
+            runCatching { onGesture?.invoke(owedCentreX, owedCentreY, x, y, z) }
+        }
     }
 
     private fun note(what: String) {

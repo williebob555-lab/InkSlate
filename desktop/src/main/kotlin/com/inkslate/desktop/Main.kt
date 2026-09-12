@@ -11,13 +11,17 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.platform.InterceptPlatformTextInput
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import kotlinx.coroutines.delay
-import androidx.compose.ui.window.rememberWindowState
+import kotlinx.coroutines.flow.debounce
 
 /**
  * The Windows build.
@@ -38,8 +42,43 @@ fun main() {
     ui()
 }
 
+@OptIn(ExperimentalComposeUiApi::class, kotlinx.coroutines.FlowPreview::class)
 private fun ui() = application {
-    val state = rememberWindowState(width = 1200.dp, height = 900.dp)
+    // Where it was left, rather than the middle of the screen at a fixed size every time.
+    val state = remember { WindowMemory.restore() }
+
+    // The screen can change shape under the window - the machine folds into a tablet and the
+    // display turns - and the toolkit has no event for it, so it is looked at rather than waited
+    // for. A window already fitting is left exactly where it is.
+    LaunchedEffect(state) {
+        var lastScreen = WindowMemory.screenSize()
+        var lastPosture = TouchKeyboard.inTabletPosture()
+        while (true) {
+            delay(1_000)
+
+            val screen = WindowMemory.screenSize()
+            if (screen != lastScreen) {
+                lastScreen = screen
+                WindowMemory.refit(state)
+            }
+
+            // Folded into a tablet, the program should fill the screen the way it does on one.
+            // Only the change is acted on, so a window maximised or restored by hand in either
+            // posture stays how it was put.
+            val posture = TouchKeyboard.inTabletPosture()
+            if (posture != lastPosture) {
+                lastPosture = posture
+                WindowMemory.postureChanged(state, tablet = posture)
+            }
+        }
+    }
+
+    // Saved as it settles rather than on every pixel of a drag.
+    LaunchedEffect(state) {
+        snapshotFlow { Triple(state.size, state.position, state.placement) }
+            .debounce(400)
+            .collect { WindowMemory.remember(state) }
+    }
     val shortcuts = remember { Shortcuts() }
     val navigation = remember { NavigationHooks() }
 
@@ -85,9 +124,29 @@ private fun ui() = application {
         }
         DisposableEffect(window) { onDispose { WindowsPointer.uninstall() } }
 
-        InkSlateTheme {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                AppRoot(shortcuts, navigation)
+        // Windows cannot see the text boxes in a drawing surface, so it never offers the
+        // on-screen keyboard for them. Every text field in the program starts its input through
+        // here, which makes this the one place to ask for it - and the one place to put it away.
+        val keyboard = remember {
+            PlatformTextInputInterceptor { request, next ->
+                val wanted = TouchKeyboard.hasDigitiser() && (
+                    TouchKeyboard.inTabletPosture() ||
+                        WindowsPointer.device != WindowsPointer.Device.MOUSE
+                    )
+                if (wanted) TouchKeyboard.show()
+                try {
+                    next.startInputMethod(request)
+                } finally {
+                    if (wanted) TouchKeyboard.hide()
+                }
+            }
+        }
+
+        InterceptPlatformTextInput(keyboard) {
+            InkSlateTheme {
+                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    AppRoot(shortcuts, navigation)
+                }
             }
         }
     }
