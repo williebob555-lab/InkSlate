@@ -119,6 +119,11 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     val px = start.x
     val py = start.y
 
+    // Where the app thinks the pointer is, against where the machine says it is. Rate-limited to
+    // one line every few seconds; it exists because ink landing away from the pen can only be a
+    // disagreement about coordinates, and the numbers say which one.
+    PointerDiagnostics.note(down.type, down.position, viewport, start)
+
     // The straightedge is taken hold of before any tool gets the pointer: it is a physical thing
     // resting on the page, and reaching for it should not depend on which pen is in hand.
     val ruler = tools.ruler

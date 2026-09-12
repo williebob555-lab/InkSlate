@@ -828,6 +828,26 @@ private fun DiagnosticsSection() {
         }
     }
 
+    // ---- where the pointer lands ----
+    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Pointer", style = MaterialTheme.typography.labelLarge)
+            Text(
+                remember(tick) { PointerDiagnostics.latest },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                "From the last mark you drew. If ink lands away from the pen, this says why: " +
+                    "the position in the window against where the machine says the cursor is.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+    }
+
     // ---- activity log ----
     val counts = remember(tick) { EventLog.counts() }
     Row(
