@@ -228,6 +228,20 @@ fun UpdateSection() {
             }
         }
     }
+
+    // Always here, not only when something has gone wrong. It is where every build comes from,
+    // where the older ones stay, and the one thing to reach for when the app itself cannot.
+    TextButton(
+        onClick = { AppUpdates.openInBrowser(context, UpdateCheck.PROJECT_URL) },
+        modifier = Modifier.padding(horizontal = 12.dp)
+    ) { Text("InkSlate on GitHub") }
+
+    Text(
+        UpdateCheck.PROJECT_URL,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+    )
 }
 
 @Composable

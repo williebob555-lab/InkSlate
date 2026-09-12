@@ -1165,12 +1165,31 @@ private fun UpdateSection() {
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(start = 16.dp, top = 8.dp)
             )
-            TextButton(
-                onClick = { phase = Phase.Idle },
-                modifier = Modifier.padding(horizontal = 12.dp)
-            ) { Text("Try again") }
+            Row {
+                TextButton(
+                    onClick = { phase = Phase.Idle },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                ) { Text("Try again") }
+                TextButton(onClick = { DesktopUpdates.openInBrowser(UpdateCheck.RELEASES_URL) }) {
+                    Text("Open releases page")
+                }
+            }
         }
     }
+
+    // Always here, not only when something has gone wrong. It is where every build comes from,
+    // where the older ones stay, and the one thing to reach for when the app itself cannot.
+    TextButton(
+        onClick = { DesktopUpdates.openInBrowser(UpdateCheck.PROJECT_URL) },
+        modifier = Modifier.padding(horizontal = 12.dp)
+    ) { Text("InkSlate on GitHub") }
+
+    Text(
+        UpdateCheck.PROJECT_URL,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+    )
 }
 
 @Composable

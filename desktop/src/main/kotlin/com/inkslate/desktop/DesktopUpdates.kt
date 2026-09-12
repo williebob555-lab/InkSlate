@@ -42,6 +42,27 @@ object DesktopUpdates {
 
     private const val K_TEST_CHANNEL = "update_test_channel"
 
+    /**
+     * Open a page in whatever the machine uses for the web.
+     *
+     * Falls back to handing the address to Explorer, which knows what to do with one, because
+     * `Desktop.browse` is unsupported on some window managers and throwing there would turn a link
+     * into a button that does nothing.
+     */
+    fun openInBrowser(url: String) {
+        val opened = runCatching {
+            if (Desktop.isDesktopSupported() &&
+                Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)
+            ) {
+                Desktop.getDesktop().browse(java.net.URI(url))
+                true
+            } else {
+                false
+            }
+        }.getOrDefault(false)
+        if (!opened) runCatching { ProcessBuilder("explorer.exe", url).start() }
+    }
+
     /** Downloads land beside the working copies rather than in the user's Downloads folder. */
     fun downloadDir(): File {
         val base = System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home")
