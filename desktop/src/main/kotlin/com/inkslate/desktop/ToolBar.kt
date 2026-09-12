@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Icon
@@ -608,6 +609,7 @@ private fun InputModeToggle(mode: InputMode, onCycle: (Int) -> Unit) {
     val icon = when (mode) {
         InputMode.PEN -> Icons.Default.Gesture
         InputMode.TOUCH -> Icons.Default.TouchApp
+        InputMode.MOUSE, InputMode.MOUSE_RIGHT -> Icons.Default.Mouse
         else -> Icons.Default.Adjust
     }
     Row(

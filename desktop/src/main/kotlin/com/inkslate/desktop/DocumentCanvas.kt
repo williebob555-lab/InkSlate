@@ -34,6 +34,8 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -257,35 +259,10 @@ fun DocumentCanvas(
             .background(Color(0xFF14171B))
             .onSizeChanged { viewport.viewSize = Size(it.width.toFloat(), it.height.toFloat()) }
             .pointerInput(Unit) { wheel(viewport) }
+            .pointerInput(Unit) { middleDragPan(viewport) }
             .pointerInput(slots, tools.revision, selection, viewport.scale) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-
-                    // Middle button pans from anywhere, whatever tool is in hand.
-                    if (currentEvent.buttons.isTertiaryPressed) {
-                        viewport.stop()
-                        var last = down.position
-                        var lastAt = System.nanoTime()
-                        var vx = 0f
-                        var vy = 0f
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: break
-                            if (event.type == PointerEventType.Move) {
-                                val now = System.nanoTime()
-                                val dt = ((now - lastAt) / 1_000_000_000f).coerceAtLeast(0.001f)
-                                val d = change.position - last
-                                viewport.panBy(d.x, d.y)
-                                vx = d.x / dt
-                                vy = d.y / dt
-                                last = change.position
-                                lastAt = now
-                            }
-                            if (!change.pressed) break
-                        }
-                        viewport.throwBy(vx, vy)
-                        return@awaitEachGesture
-                    }
 
                     // A finger while a stylus is on the glass is a palm. The tablet ignores it
                     // and so does this, which matters just as much on a laptop resting on a wrist.
@@ -294,20 +271,15 @@ fun DocumentCanvas(
                     }
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
 
-                    // A held barrel button selects that button's own pen.
+                    // Which pen this stroke belongs to.
                     //
-                    // Windows hands every pointer to a desktop program as a mouse - AWT has no
-                    // notion of a stylus - so a pen with its barrel held arrives as a secondary
-                    // button and is indistinguishable from a right-click. Requiring
-                    // PointerType.Stylus here therefore made the barrel profiles unreachable on
-                    // the machine this build runs on, which is the opposite of the intent: the
-                    // rule is that a barrel profile appears only when a button is held, not that
-                    // it appears only on hardware Java can identify.
-                    val heldButton = when {
-                        down.type == PointerType.Touch -> 0
-                        currentEvent.buttons.isSecondaryPressed -> 1
-                        else -> 0
-                    }
+                    // Windows hands a desktop program a pen, a finger and a mouse identically -
+                    // AWT has no notion of the first two - so what can be told apart here is the
+                    // button, and that is what picks the profile: the left one draws with the
+                    // left-mouse pen and the right one with its own. A stylus barrel arrives as
+                    // a secondary press too, which is the same answer by a different route.
+                    val secondary = currentEvent.buttons.isSecondaryPressed
+                    val heldButton = if (down.type == PointerType.Stylus && secondary) 1 else 0
 
                     val doc = viewport.screenToDoc(down.position)
                     val slot = slotAt(doc.x, doc.y) ?: return@awaitEachGesture
@@ -333,7 +305,8 @@ fun DocumentCanvas(
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
                         wordsUnder = wordsUnder,
-                        heldButton = heldButton
+                        heldButton = heldButton,
+                        secondaryButton = secondary
                     )
                 }
             }
@@ -632,6 +605,56 @@ private fun DrawScope.drawRuler(
         )
     )
     drawText(measured, topLeft = Offset(cx, cy))
+}
+
+/**
+ * Middle-button drag: pan, whatever tool is in hand.
+ *
+ * On its own handler rather than inside the drawing gesture, because the drawing gesture begins
+ * with [awaitFirstDown] and a middle button is not a "down" - only the primary button makes a
+ * pointer pressed. Waiting for one meant this code never ran at all, and the middle button did
+ * nothing.
+ *
+ * Watched on the initial pass and consumed while it is panning, so the pen underneath never sees
+ * the drag and no mark is left behind by moving the page.
+ */
+private suspend fun PointerInputScope.middleDragPan(viewport: Viewport) {
+    awaitPointerEventScope {
+        var last: Offset? = null
+        var lastAt = 0L
+        var vx = 0f
+        var vy = 0f
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull()
+            val held = event.buttons.isTertiaryPressed
+            when {
+                held && change != null -> {
+                    val now = System.nanoTime()
+                    val previous = last
+                    if (previous == null) {
+                        viewport.stop()
+                    } else {
+                        val dt = ((now - lastAt) / 1_000_000_000f).coerceAtLeast(0.001f)
+                        val d = change.position - previous
+                        viewport.panBy(d.x, d.y)
+                        vx = d.x / dt
+                        vy = d.y / dt
+                    }
+                    last = change.position
+                    lastAt = now
+                    event.changes.forEach { it.consume() }
+                }
+
+                last != null -> {
+                    viewport.throwBy(vx, vy)
+                    last = null
+                    vx = 0f
+                    vy = 0f
+                }
+            }
+        }
+    }
 }
 
 /**

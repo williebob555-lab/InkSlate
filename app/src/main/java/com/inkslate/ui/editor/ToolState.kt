@@ -77,6 +77,10 @@ class ToolState(private val context: Context) {
      * They default to an eraser and to a red correcting pen, which is what the two buttons on a
      * pen that has two are nearly always used for.
      */
+    /** A mouse, when one is attached: its own two pens rather than borrowing the stylus's. */
+    val mouse = ToolConfig()
+    val mouseRight = ToolConfig(tool = Tool.ERASER, eraserRadius = 8f)
+
     val button1 = ToolConfig(tool = Tool.ERASER, eraserRadius = 8f)
     val button2 = ToolConfig(
         color = Color.parseColor("#DC2626"),
@@ -172,6 +176,10 @@ class ToolState(private val context: Context) {
     fun configFor(mode: InputMode): ToolConfig = when (mode) {
         InputMode.PEN -> pen
         InputMode.TOUCH -> touch
+        // A mouse on a tablet is rare but real - a keyboard case, a desk setup - and when one is
+        // there it should draw with its own pens rather than borrow the stylus's.
+        InputMode.MOUSE -> mouse
+        InputMode.MOUSE_RIGHT -> mouseRight
         InputMode.BUTTON_1 -> button1
         InputMode.BUTTON_2 -> button2
     }
@@ -205,9 +213,25 @@ class ToolState(private val context: Context) {
         get() = buildList {
             add(InputMode.PEN)
             add(InputMode.TOUCH)
+            // The mouse profiles appear once a mouse has actually drawn something, the same rule
+            // the barrel profiles follow: a control for hardware you do not have is clutter.
+            if (mouseSeen) {
+                add(InputMode.MOUSE)
+                add(InputMode.MOUSE_RIGHT)
+            }
             if (button1Seen) add(InputMode.BUTTON_1)
             if (button2Seen) add(InputMode.BUTTON_2)
         }
+
+    /** Set the first time a mouse draws on this device. */
+    var mouseSeen by mutableStateOf(false)
+        private set
+
+    fun noteMouseSeen() {
+        if (mouseSeen) return
+        mouseSeen = true
+        persist()
+    }
 
 
 
@@ -242,6 +266,9 @@ class ToolState(private val context: Context) {
 
     /** Called when the drawing surface reports that the input device changed. */
     fun onModeChanged(mode: InputMode) {
+        // A mouse revealing itself is the same rule the barrel buttons follow: the profile joins
+        // the list the first time the hardware actually turns up.
+        if (mode.isMouse) noteMouseSeen()
         if (activeMode == mode) return
         activeMode = mode
         activePreset = -1
@@ -465,9 +492,12 @@ class ToolState(private val context: Context) {
         sp.edit()
             .putString(K_PEN, configJson(pen).toString())
             .putString(K_TOUCH, configJson(touch).toString())
+            .putString(K_MOUSE, configJson(mouse).toString())
+            .putString(K_MOUSE_RIGHT, configJson(mouseRight).toString())
             .putString(K_BTN1, configJson(button1).toString())
             .putString(K_BTN2, configJson(button2).toString())
             .putString(K_STYLUS_BUTTON_2, stylusButton2.name)
+            .putBoolean(K_MOUSE_SEEN, mouseSeen)
             .putBoolean(K_BTN1_SEEN, button1Seen)
             .putBoolean(K_BTN2_SEEN, button2Seen)
             .putBoolean(K_AUTO, autoSwitchInput)
@@ -489,8 +519,13 @@ class ToolState(private val context: Context) {
     private fun restore() {
         runCatching { sp.getString(K_PEN, null)?.let { readConfig(JSONObject(it), pen) } }
         runCatching { sp.getString(K_TOUCH, null)?.let { readConfig(JSONObject(it), touch) } }
+        runCatching { sp.getString(K_MOUSE, null)?.let { readConfig(JSONObject(it), mouse) } }
+        runCatching {
+            sp.getString(K_MOUSE_RIGHT, null)?.let { readConfig(JSONObject(it), mouseRight) }
+        }
         runCatching { sp.getString(K_BTN1, null)?.let { readConfig(JSONObject(it), button1) } }
         runCatching { sp.getString(K_BTN2, null)?.let { readConfig(JSONObject(it), button2) } }
+        mouseSeen = sp.getBoolean(K_MOUSE_SEEN, false)
         button1Seen = sp.getBoolean(K_BTN1_SEEN, false)
         button2Seen = sp.getBoolean(K_BTN2_SEEN, false)
         hardwareButtons = sp.getInt(K_BTN_HARDWARE, 0)
@@ -549,6 +584,9 @@ class ToolState(private val context: Context) {
         private const val K_KEEP_AWAKE = "keep_awake"
         private const val K_STYLUS_BUTTON = "stylus_button"
         private const val K_STYLUS_BUTTON_2 = "stylus_button_2"
+        private const val K_MOUSE_SEEN = "mouse_seen"
+        private const val K_MOUSE = "cfg_mouse"
+        private const val K_MOUSE_RIGHT = "cfg_mouse_right"
         private const val K_BTN1 = "cfg_button1"
         private const val K_BTN2 = "cfg_button2"
         private const val K_BTN1_SEEN = "button1_seen"

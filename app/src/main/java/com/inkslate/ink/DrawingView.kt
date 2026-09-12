@@ -237,6 +237,10 @@ class DrawingView @JvmOverloads constructor(
      * so it gets a config of its own, and the width, colour and brush in it are what the stroke
      * comes out as for exactly as long as the button is down.
      */
+    /** A mouse, when one is attached: its own two pens rather than borrowing the stylus's. */
+    val mouseConfig = ToolConfig()
+    val mouseRightConfig = ToolConfig(tool = Tool.ERASER, eraserRadius = 8f)
+
     val button1Config = ToolConfig(tool = Tool.ERASER, eraserRadius = 8f)
     val button2Config = ToolConfig(color = Color.parseColor("#DC2626"), strokeWidth = 2f)
 
@@ -784,6 +788,8 @@ class DrawingView @JvmOverloads constructor(
     fun configFor(mode: InputMode): ToolConfig = when (mode) {
         InputMode.PEN -> penConfig
         InputMode.TOUCH -> touchConfig
+        InputMode.MOUSE -> mouseConfig
+        InputMode.MOUSE_RIGHT -> mouseRightConfig
         InputMode.BUTTON_1 -> button1Config
         InputMode.BUTTON_2 -> button2Config
     }
@@ -2485,6 +2491,17 @@ class DrawingView @JvmOverloads constructor(
         // at which the touch is known to be a stroke rather than the start of a gesture.
         if (autoSwitchInput && action == MotionEvent.ACTION_DOWN && isStylus) {
             switchInputMode(InputMode.PEN)
+        }
+
+        // A mouse, when one is attached - a keyboard case, a desk setup - draws with its own two
+        // pens rather than borrowing the stylus's, and its right button is a pen of its own
+        // rather than a modifier on the left one. Same rule as the laptop, where it is the only
+        // rule there is.
+        if (autoSwitchInput && action == MotionEvent.ACTION_DOWN &&
+            toolType == MotionEvent.TOOL_TYPE_MOUSE
+        ) {
+            val secondary = (event.buttonState and MotionEvent.BUTTON_SECONDARY) != 0
+            switchInputMode(if (secondary) InputMode.MOUSE_RIGHT else InputMode.MOUSE)
         }
 
         // The eraser tip always erases - that is what the far end of a pencil is. A pen button

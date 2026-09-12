@@ -230,7 +230,19 @@ class PeerService(private val host: Host) {
      * Returns the peer on success. Runs on the calling thread and is expected to be called off the
      * user interface: it opens a socket and derives a key, which is slow on purpose.
      */
-    fun pairWith(address: String, port: Int = DEFAULT_PORT, code: String): Result<Peer> =
+    fun pairWith(address: String, port: Int = DEFAULT_PORT, code: String): Result<Peer> {
+        // One retry, and only for a connection that broke rather than a code that was wrong. The
+        // first reach for a device that is also reaching back can land on a socket being torn
+        // down, and reporting "could not pair" for that would send someone hunting for a problem
+        // that was over before they read it. A wrong code fails the same way twice, quickly.
+        val first = pairOnce(address, port, code)
+        val failure = first.exceptionOrNull() ?: return first
+        if (failure !is java.io.IOException) return first
+        Thread.sleep(400)
+        return pairOnce(address, port, code)
+    }
+
+    private fun pairOnce(address: String, port: Int, code: String): Result<Peer> =
         runCatching {
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(address, port), CONNECT_MS)

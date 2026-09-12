@@ -83,33 +83,60 @@ enum class StylusButtonAction(val label: String, val detail: String) {
 enum class InputMode(val label: String) {
     PEN("Pen"),
     TOUCH("Finger"),
-    BUTTON_1("Button"),
-    BUTTON_2("Button 2");
+    MOUSE("Left mouse"),
+    MOUSE_RIGHT("Right mouse"),
+    BUTTON_1("Pen button"),
+    BUTTON_2("Pen button 2");
 
     val isStylusButton: Boolean get() = this == BUTTON_1 || this == BUTTON_2
+
+    /** Whether this profile is chosen by a mouse button rather than by touching the screen. */
+    val isMouse: Boolean get() = this == MOUSE || this == MOUSE_RIGHT
 
     companion object {
         /**
          * What a plain tap on the input switch selects next.
          *
-         * The pen and the finger, and nothing else. A barrel profile is not a third thing in a
-         * loop - it is the pen with a button held, and the only way to reach it is to hold that
-         * button. Putting it in the cycle meant it turned up while switching between pen and
-         * finger, which is both surprising and hard to get back out of; and it meant the profile
-         * could be selected on a device whose pen has no button at all.
+         * The two that a plain touch can select, and nothing else. A barrel profile is not a
+         * third thing in a loop - it is the pen with a button held, and the only way to reach it
+         * is to hold that button. Putting it in the cycle meant it turned up while switching
+         * between pen and finger, which is both surprising and hard to get back out of.
          *
-         * A plain tap while a button profile is showing comes back to the pen rather than
-         * continuing round.
+         * The mouse profiles are not in the cycle either, for the same reason from the other end:
+         * which one applies is decided by which button you draw with, not by a switch.
          */
         fun nextOnTap(current: InputMode): InputMode = when (current) {
             PEN -> TOUCH
             TOUCH -> PEN
+            MOUSE -> MOUSE_RIGHT
+            MOUSE_RIGHT -> MOUSE
             BUTTON_1, BUTTON_2 -> PEN
         }
 
         /** Which profile a held barrel button selects. */
         fun forHeldButton(heldButton: Int): InputMode =
             if (heldButton >= 2) BUTTON_2 else BUTTON_1
+
+        /**
+         * Which profile a pointer that has just landed belongs to.
+         *
+         * [isStylus] and [isTouch] are what the platform can tell us, and on Windows it can tell
+         * us neither: a desktop program is handed a pen, a finger and a mouse as the same thing,
+         * so a pen drawing there picks the left-mouse profile and a barrel press the right-mouse
+         * one. The tablet knows the difference and uses all four.
+         */
+        fun forPointer(
+            isStylus: Boolean,
+            isTouch: Boolean,
+            secondaryButton: Boolean,
+            heldStylusButton: Int = 0
+        ): InputMode = when {
+            isStylus && heldStylusButton > 0 -> forHeldButton(heldStylusButton)
+            isStylus -> PEN
+            isTouch -> TOUCH
+            secondaryButton -> MOUSE_RIGHT
+            else -> MOUSE
+        }
     }
 }
 

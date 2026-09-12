@@ -30,20 +30,36 @@ class ToolState {
 
     val pen = ToolConfig()
     val touch = ToolConfig(brush = BrushType.HIGHLIGHTER, strokeWidth = 15f, tool = Tool.DRAW)
+
+    /**
+     * The two a mouse can choose between, and on Windows the two that get used.
+     *
+     * A desktop program is handed a pen, a finger and a mouse identically - AWT has no notion of
+     * either of the first two - so what a pen draws with here is the left-mouse profile, and what
+     * its barrel button draws with is the right-mouse one. They are separate pens with separate
+     * colours, widths and tools, which is the point: a right-click eraser is one gesture away.
+     */
+    val mouse = ToolConfig()
+    val mouseRight = ToolConfig(tool = Tool.ERASER)
+
     val button1 = ToolConfig(tool = Tool.ERASER)
     val button2 = ToolConfig(tool = Tool.SELECT)
 
-    var activeMode by mutableStateOf(InputMode.PEN)
+    var activeMode by mutableStateOf(InputMode.MOUSE)
         private set
 
     /** The profile currently being drawn and edited with. */
     val active: ToolConfig
-        get() = when (activeMode) {
-            InputMode.PEN -> pen
-            InputMode.TOUCH -> touch
-            InputMode.BUTTON_1 -> button1
-            InputMode.BUTTON_2 -> button2
-        }
+        get() = configFor(activeMode)
+
+    fun configFor(mode: InputMode): ToolConfig = when (mode) {
+        InputMode.PEN -> pen
+        InputMode.TOUCH -> touch
+        InputMode.MOUSE -> mouse
+        InputMode.MOUSE_RIGHT -> mouseRight
+        InputMode.BUTTON_1 -> button1
+        InputMode.BUTTON_2 -> button2
+    }
 
     /** Button profiles join the lists the first time the hardware reports that button. */
     var button1Seen by mutableStateOf(DesktopPrefs.get(K_BTN1_SEEN)?.toBoolean() ?: false)
@@ -58,6 +74,8 @@ class ToolState {
      */
     val availableModes: List<InputMode>
         get() = buildList {
+            add(InputMode.MOUSE)
+            add(InputMode.MOUSE_RIGHT)
             add(InputMode.PEN)
             add(InputMode.TOUCH)
             if (button1Seen) add(InputMode.BUTTON_1)
@@ -121,14 +139,22 @@ class ToolState {
      * A held barrel button wins, then the pointer's own kind. Called on every press, which is
      * what makes switching between a pen and a finger need no settings change at all.
      */
-    fun adoptInput(isStylus: Boolean, isTouch: Boolean, heldButton: Int) {
+    fun adoptInput(
+        isStylus: Boolean,
+        isTouch: Boolean,
+        heldButton: Int,
+        secondaryButton: Boolean = false
+    ) {
         if (!autoSwitchInput) return
-        if (isStylus && heldButton > 0) {
-            noteStylusButtonSeen(heldButton >= 2)
-            switchMode(InputMode.forHeldButton(heldButton))
-            return
-        }
-        switchMode(if (isTouch) InputMode.TOUCH else InputMode.PEN)
+        if (isStylus && heldButton > 0) noteStylusButtonSeen(heldButton >= 2)
+        switchMode(
+            InputMode.forPointer(
+                isStylus = isStylus,
+                isTouch = isTouch,
+                secondaryButton = secondaryButton,
+                heldStylusButton = heldButton
+            )
+        )
     }
 
     var revision by mutableStateOf(0)
@@ -347,10 +373,7 @@ class ToolState {
 
     private fun persist() {
         DesktopPrefs.put(K_AUTO_SWITCH, autoSwitchInput.toString())
-        save(InputMode.PEN, pen)
-        save(InputMode.TOUCH, touch)
-        save(InputMode.BUTTON_1, button1)
-        save(InputMode.BUTTON_2, button2)
+        InputMode.entries.forEach { save(it, configFor(it)) }
     }
 
     /** One line per profile, so the four cannot overwrite one another's settings. */
@@ -392,10 +415,7 @@ class ToolState {
     }
 
     init {
-        load(InputMode.PEN, pen)
-        load(InputMode.TOUCH, touch)
-        load(InputMode.BUTTON_1, button1)
-        load(InputMode.BUTTON_2, button2)
+        InputMode.entries.forEach { load(it, configFor(it)) }
     }
 
     private companion object {

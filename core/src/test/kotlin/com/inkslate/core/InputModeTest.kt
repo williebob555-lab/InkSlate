@@ -55,4 +55,64 @@ class InputModeTest {
         assertFalse(InputMode.PEN.isStylusButton)
         assertFalse(InputMode.TOUCH.isStylusButton)
     }
+
+    // ---- four kinds of pointer, four pens ---------------------------------------
+
+    /**
+     * Which pen a pointer belongs to.
+     *
+     * The tablet can tell a stylus from a finger and says so; a desktop program cannot - Windows
+     * hands it a pen, a finger and a mouse identically - so what it can tell apart is the button,
+     * and that is what picks the pen there.
+     */
+    @Test
+    fun `a stylus and a finger each get their own pen`() {
+        assertEquals(
+            InputMode.PEN,
+            InputMode.forPointer(isStylus = true, isTouch = false, secondaryButton = false)
+        )
+        assertEquals(
+            InputMode.TOUCH,
+            InputMode.forPointer(isStylus = false, isTouch = true, secondaryButton = false)
+        )
+    }
+
+    @Test
+    fun `the mouse buttons are two pens rather than one pen and a modifier`() {
+        assertEquals(
+            InputMode.MOUSE,
+            InputMode.forPointer(isStylus = false, isTouch = false, secondaryButton = false)
+        )
+        assertEquals(
+            InputMode.MOUSE_RIGHT,
+            InputMode.forPointer(isStylus = false, isTouch = false, secondaryButton = true)
+        )
+    }
+
+    /** A barrel button still outranks everything, and only for a pointer known to be a stylus. */
+    @Test
+    fun `a held barrel button wins, and only for a stylus`() {
+        assertEquals(
+            InputMode.BUTTON_1,
+            InputMode.forPointer(true, isTouch = false, secondaryButton = true, heldStylusButton = 1)
+        )
+        assertEquals(
+            InputMode.BUTTON_2,
+            InputMode.forPointer(true, isTouch = false, secondaryButton = false, heldStylusButton = 2)
+        )
+        // The same secondary press from something that is not a stylus is the right-mouse pen.
+        assertEquals(
+            InputMode.MOUSE_RIGHT,
+            InputMode.forPointer(false, isTouch = false, secondaryButton = true, heldStylusButton = 1)
+        )
+    }
+
+    /** The switch steps between the two of a kind, and never wanders into another kind. */
+    @Test
+    fun `the switch stays within a kind of pointer`() {
+        assertEquals(InputMode.MOUSE_RIGHT, InputMode.nextOnTap(InputMode.MOUSE))
+        assertEquals(InputMode.MOUSE, InputMode.nextOnTap(InputMode.MOUSE_RIGHT))
+        assertEquals(InputMode.TOUCH, InputMode.nextOnTap(InputMode.PEN))
+        assertEquals(InputMode.PEN, InputMode.nextOnTap(InputMode.TOUCH))
+    }
 }
