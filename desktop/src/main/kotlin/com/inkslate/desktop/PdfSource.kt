@@ -7,7 +7,9 @@ import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.rendering.PDFRenderer
 import java.awt.image.BufferedImage
 import java.io.Closeable
+import com.inkslate.core.Box
 import java.io.File
+import kotlin.math.roundToInt
 import javax.imageio.ImageIO
 
 data class PageDim(val width: Float, val height: Float)
@@ -23,6 +25,18 @@ interface DesktopSource : Closeable {
     val kind: String
     fun pageDim(index: Int): PageDim
     fun render(index: Int, targetWidthPx: Int): ImageBitmap?
+
+    /**
+     * Render only [region] of a page, in page points, [targetWidthPx] pixels across.
+     *
+     * The whole page at the size it is being shown at is a bitmap of some seventy megabytes once
+     * the view is magnified, which is far too big for a graphics card to keep hold of - so it was
+     * being sent across again for every frame, at around forty milliseconds a page. What is on
+     * screen is never bigger than the window, however far in the view goes.
+     *
+     * Null from a source that cannot do it, and the caller falls back to the whole page.
+     */
+    fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? = null
 }
 
 class PdfSource(private val file: File) : DesktopSource {
@@ -43,6 +57,30 @@ class PdfSource(private val file: File) : DesktopSource {
         // report the page the way it is displayed, matching how ink coordinates were captured
         return if (rotated) PageDim(box.height, box.width) else PageDim(box.width, box.height)
     }
+
+    override fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? =
+        synchronized(lock) {
+            if (index !in 0 until doc.numberOfPages) return null
+            if (region.width <= 0f || region.height <= 0f) return null
+            return runCatching {
+                val scale = (targetWidthPx / region.width).coerceIn(0.05f, 12f)
+                val w = (region.width * scale).roundToInt().coerceIn(1, 8_000)
+                val h = (region.height * scale).roundToInt().coerceIn(1, 8_000)
+                val image = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
+                val g = image.createGraphics()
+                g.color = java.awt.Color.WHITE
+                g.fillRect(0, 0, w, h)
+                // Slide the page under the window this bitmap is, then let the renderer draw it
+                // at the size it would have been. Everything outside falls off the edges.
+                g.translate(
+                    (-region.left * scale).toDouble(),
+                    (-region.top * scale).toDouble()
+                )
+                renderer.renderPageToGraphics(index, g, scale)
+                g.dispose()
+                image.toComposeImageBitmap()
+            }.getOrNull()
+        }
 
     override fun render(index: Int, targetWidthPx: Int): ImageBitmap? = synchronized(lock) {
         if (index !in 0 until doc.numberOfPages) return null

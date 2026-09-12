@@ -224,8 +224,16 @@ fun DocumentCanvas(
     }
     viewport.content = bounds
 
-    // Rendered page rasters, keyed by page and by the zoom bucket they were made for.
-    val rasters = remember(source) { mutableStateMapOf<Int, Pair<Int, ImageBitmap>>() }
+    // The piece of each page that has been rendered, and how big a picture it was rendered into.
+    val rasters = remember(source) { mutableStateMapOf<Int, PageTile>() }
+
+    // A small picture of each whole page, made once and kept.
+    //
+    // The sharp piece above covers the window and a margin, and a pan that outruns the margin
+    // would otherwise show bare paper at the leading edge until a new piece had been rendered.
+    // This sits underneath and is never missing, so an outrun pan goes momentarily soft instead
+    // of blank. A few megabytes a page, which a graphics card keeps without complaint.
+    val overviews = remember(source) { mutableStateMapOf<Int, PageTile>() }
 
     var renderTick by remember { mutableStateOf(0) }
 
@@ -244,8 +252,13 @@ fun DocumentCanvas(
 
     // Rounded to a bucket so a pinch or a wheel spin does not queue a full-page render for every
     // intermediate scale, and debounced so it happens once the view has settled.
+    // Both, and from inside: a pan moves the window off the piece that was rendered for it just
+    // as surely as a zoom outgrows its sharpness. Debounced, so a throw across a document asks
+    // for one page rather than for every page it passes over.
     LaunchedEffect(source) {
-        snapshotFlow { viewport.scale }.debounce(90).collect { renderTick++ }
+        snapshotFlow { viewport.scale to viewport.offset }
+            .debounce(90)
+            .collect { renderTick++ }
     }
     LaunchedEffect(source, renderTick, viewport.viewSize) {
         val scale = viewport.scale
@@ -254,27 +267,86 @@ fun DocumentCanvas(
             // Only what is on screen, plus a screen of margin so scrolling is not a slide show.
             val onScreen = visible(slot, viewport)
             if (!onScreen) continue
-            // The page's own width, not the slot's. On a canvas the slot is the whole canvas -
-            // which may be twenty times the page and grows as it is drawn on - so asking for a
-            // raster that size rendered the page at the largest size allowed and held tens of
-            // megabytes for a page being shown a few hundred pixels wide.
-            val shownWidth = canvas?.paperWidth ?: slot.width
-            val wanted = (shownWidth * scale).roundToInt()
-            val have = rasters[slot.index]?.first
-            if (!RasterLadder.shouldRemake(have, wanted)) continue
-            val width = RasterLadder.rungFor(wanted)
-            val bmp = withContext(Dispatchers.IO) {
-                runCatching { source.render(slot.index, width) }.getOrNull()
-            }
-            if (bmp != null) {
-                rasters[slot.index] = width to bmp
-                if (slot.index !in contentBoxes) {
-                    val pixels = bmp.toPixelMap()
-                    com.inkslate.core.MarginCrop.detect(
-                        bmp.width, bmp.height, slot.width, slot.height
-                    ) { x, y -> pixels[x, y].toArgb() }?.let { contentBoxes[slot.index] = it }
+            // The page itself, in the coordinates ink is stored in. On a canvas the page is a
+            // rectangle somewhere inside it; everywhere else the page is the whole of it.
+            val printed = extents.getOrNull(slot.index)
+            val originX = canvas?.paperLeft ?: 0f
+            val originY = canvas?.paperTop ?: 0f
+            val pageWidth = canvas?.paperWidth ?: printed?.width ?: slot.width
+            val pageHeight = canvas?.paperHeight ?: printed?.height ?: slot.height
+            if (pageWidth <= 0f || pageHeight <= 0f) continue
+
+            val wholePage = InkBox(0f, 0f, pageWidth, pageHeight)
+            if (slot.index !in overviews) {
+                val small = withContext(Dispatchers.IO) {
+                    runCatching { source.render(slot.index, OVERVIEW_PX) }.getOrNull()
+                }
+                if (small != null) {
+                    overviews[slot.index] = PageTile(wholePage, small)
+                    if (slot.index !in contentBoxes) {
+                        val pixels = small.toPixelMap()
+                        com.inkslate.core.MarginCrop.detect(
+                            small.width, small.height, pageWidth, pageHeight
+                        ) { x, y -> pixels[x, y].toArgb() }?.let { contentBoxes[slot.index] = it }
+                    }
                 }
             }
+
+            // What of the page is inside the window, in the page's own points.
+            val corner = slot.toInk(viewport.offset.x, viewport.offset.y)
+            val far = slot.toInk(
+                viewport.offset.x + viewport.viewSize.width / scale,
+                viewport.offset.y + viewport.viewSize.height / scale
+            )
+            val seen = InkBox(
+                (corner.x - originX).coerceIn(0f, pageWidth),
+                (corner.y - originY).coerceIn(0f, pageHeight),
+                (far.x - originX).coerceIn(0f, pageWidth),
+                (far.y - originY).coerceIn(0f, pageHeight)
+            )
+            if (seen.width <= 0f || seen.height <= 0f) continue
+
+            // Rendered with a margin around it, so that moving the page a little does not mean
+            // rendering it again - and so a throw has somewhere to land before it catches up.
+            val marginX = seen.width * TILE_MARGIN
+            val marginY = seen.height * TILE_MARGIN
+            val want = InkBox(
+                (seen.left - marginX).coerceAtLeast(0f),
+                (seen.top - marginY).coerceAtLeast(0f),
+                (seen.right + marginX).coerceAtMost(pageWidth),
+                (seen.bottom + marginY).coerceAtMost(pageHeight)
+            )
+
+            // Sharp enough for the window and no sharper. A picture bigger than the graphics card
+            // will keep is sent across again on every frame, which is what this is all about.
+            val needed = (seen.width * scale).roundToInt()
+            val held = rasters[slot.index]
+            val enough = held != null &&
+                held.covers(seen) &&
+                !RasterLadder.shouldRemake(held.acrossPx(seen.width), needed)
+            if (enough) continue
+
+            val across = RasterLadder.rungFor((want.width * scale).roundToInt())
+                .coerceAtMost(MAX_TILE_PX)
+            val bmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    source.renderRegion(slot.index, want, across)
+                        ?: source.render(slot.index, across)
+                }.getOrNull()
+            }
+            if (bmp != null) rasters[slot.index] = PageTile(want, bmp)
+        }
+
+        // Pictures of pages nowhere near the window are memory and nothing else. A document read
+        // end to end would otherwise hold a picture of every page it had passed through.
+        val near = slots.filter { visible(it, viewport) }.map { it.index }
+        if (near.isNotEmpty()) {
+            val first = near.min()
+            val last = near.max()
+            rasters.keys.filter { it < first - 1 || it > last + 1 }
+                .forEach { rasters.remove(it) }
+            overviews.keys.filter { it < first - 4 || it > last + 4 }
+                .forEach { overviews.remove(it) }
         }
     }
 
@@ -422,7 +494,8 @@ fun DocumentCanvas(
                                 canvas = canvas,
                                 slot = slot,
                                 visibleInPage = onScreen,
-                                raster = rasters[slot.index]?.second,
+                                tile = rasters[slot.index],
+                                overview = overviews[slot.index],
                                 strokes = byPage[slot.index].orEmpty(),
                                 selection = selection,
                                 live = if (livePage == slot.index) live else emptyList(),
@@ -491,6 +564,59 @@ private fun DrawScope.drawImageStroke(s: Stroke, images: (String) -> ImageBitmap
     )
 }
 
+/**
+ * A rendered piece of a page: which part of it, and the picture of that part.
+ *
+ * Kept as a piece rather than the whole page because the whole page, at the size it is shown when
+ * the view is magnified, is a bitmap of tens of megabytes - far more than a graphics card will
+ * hold on to between frames, so it was being sent across again for every frame at around forty
+ * milliseconds a page. What is on screen is never bigger than the window.
+ */
+class PageTile(val region: InkBox, val bitmap: ImageBitmap) {
+
+    /** Whether this piece covers everything now being looked at. */
+    fun covers(seen: InkBox): Boolean =
+        region.left <= seen.left + 0.5f && region.top <= seen.top + 0.5f &&
+            region.right >= seen.right - 0.5f && region.bottom >= seen.bottom - 0.5f
+
+    /** How many pixels this holds across [pageSpan] page points, for comparing sharpness. */
+    fun acrossPx(pageSpan: Float): Int =
+        if (region.width <= 0f) 0 else (bitmap.width * pageSpan / region.width).roundToInt()
+}
+
+/** Put a rendered piece of page where it belongs, in the page's own coordinates. */
+private fun DrawScope.drawTile(
+    tile: PageTile,
+    offsetX: Float,
+    offsetY: Float,
+    pageFilter: PageFilter
+) {
+    if (tile.bitmap.width <= 0 || tile.bitmap.height <= 0) return
+    translate(offsetX + tile.region.left, offsetY + tile.region.top) {
+        scale(
+            tile.region.width / tile.bitmap.width,
+            tile.region.height / tile.bitmap.height,
+            pivot = Offset.Zero
+        ) {
+            drawImage(tile.bitmap, colorFilter = pageFilter.colorFilter)
+        }
+    }
+}
+
+/**
+ * How much beyond the window is rendered, as a fraction of it.
+ *
+ * Enough that an ordinary nudge of the page does not mean rendering it again; little enough that
+ * the picture stays small. Rendering exactly the window would re-render on every frame of a pan.
+ */
+private const val TILE_MARGIN = 0.15f
+
+/** The widest a rendered piece may be: comfortably inside what a graphics card will keep. */
+private const val MAX_TILE_PX = 3_000
+
+/** How wide the small picture of a whole page is. Soft, but never missing. */
+private const val OVERVIEW_PX = 1_100
+
 /** Whether a page is near enough the window to be worth drawing or rendering. */
 private fun visible(slot: PageSlot, vp: Viewport): Boolean {
     if (slot.originX >= PageArranger.FAR_AWAY) return false
@@ -516,7 +642,9 @@ private fun DrawScope.drawPage(
     slot: PageSlot,
     /** The part of this page inside the window, in the coordinates marks are stored in. */
     visibleInPage: InkBox?,
-    raster: ImageBitmap?,
+    tile: PageTile?,
+    /** The whole page, small, drawn under [tile] so there is never bare paper. */
+    overview: PageTile?,
     /** This page's marks, already ordered - see the caller. */
     strokes: List<Stroke>,
     selection: Set<String>,
@@ -541,45 +669,18 @@ private fun DrawScope.drawPage(
             with(CanvasPaper) { drawCanvasPaper(canvas, scale, visibleInPage) }
             RenderStats.addPaper(System.nanoTime() - paperAt)
             val pageAt = System.nanoTime()
-            raster?.let {
-                drawImage(
-                    it,
-                    dstOffset = IntOffset(
-                        canvas.paperLeft.roundToInt(), canvas.paperTop.roundToInt()
-                    ),
-                    dstSize = IntSize(
-                        canvas.paperWidth.roundToInt(), canvas.paperHeight.roundToInt()
-                    ),
-                    colorFilter = pageFilter.colorFilter
-                )
-            }
+            overview?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter) }
+            tile?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter) }
             RenderStats.addRaster(System.nanoTime() - pageAt)
         }
     } else {
         val pageAt = System.nanoTime()
         drawRect(Color.White, topLeft = Offset.Zero, size = Size(slot.width, slot.height))
-        raster?.let {
-            // A cropped page draws the whole raster shifted, so the trimmed margins fall outside
-            // the slot. Stroke coordinates stay relative to the full page, which is what makes
-            // turning the crop on and off unable to move existing ink.
-            val full = if (crop == null) {
-                Size(slot.width, slot.height)
-            } else {
-                Size(
-                    slot.width * it.width / (it.width * crop.width / slot.width).coerceAtLeast(1f),
-                    slot.height * it.height / (it.height * crop.height / slot.height).coerceAtLeast(1f)
-                )
-            }
-            drawImage(
-                it,
-                dstOffset = IntOffset(
-                    (-(crop?.left ?: 0f)).roundToInt(),
-                    (-(crop?.top ?: 0f)).roundToInt()
-                ),
-                dstSize = IntSize(full.width.roundToInt(), full.height.roundToInt()),
-                colorFilter = pageFilter.colorFilter
-            )
-        }
+        // A cropped page is laid out at its content's size while the picture is still of the whole
+        // page, so it is drawn shifted by the trimmed margin. Stroke coordinates stay relative to
+        // the whole page, which is what makes turning the crop on and off unable to move ink.
+        overview?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter) }
+        tile?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter) }
         RenderStats.addRaster(System.nanoTime() - pageAt)
     }
 
