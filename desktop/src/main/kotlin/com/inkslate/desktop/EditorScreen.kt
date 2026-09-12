@@ -84,6 +84,12 @@ import kotlin.math.roundToInt
 /** How long the pointer has to be still before the document is written out behind the scenes. */
 private const val IDLE_BEFORE_WRITE_MS = 1200L
 
+/** The furthest outside the canvas a mark may be and still count as asking it to grow. */
+private const val MAX_GROWTH_STEP = 2_000f
+
+/** The most the canvas may span either way, the same figure the tablet keeps. */
+private const val MAX_CANVAS_SPAN = 48_000f
+
 private enum class WriteState(val label: String) {
     SAVED("saved"), UNSAVED("unsaved"), SAVING("saving...")
 }
@@ -1227,7 +1233,28 @@ fun EditorScreen(
                         // and the paper outside the page is painted rather than written. It
                         // becomes real once, when the document is saved.
                         ink.canvas?.let { current ->
-                            val grown = current.grownTo(drawn)
+                            // The same two limits the tablet keeps, and for the same reason: a
+                            // mark far outside the canvas is a bug in whatever placed it rather
+                            // than a request to grow that far, and "infinite" is how the canvas
+                            // should feel rather than a promise about the arithmetic. Without
+                            // them a coordinate that is merely wrong grows the page until it is
+                            // a way to lose the work inside a scroll bar.
+                            val tooFar = drawn.left < current.left - MAX_GROWTH_STEP ||
+                                drawn.top < current.top - MAX_GROWTH_STEP ||
+                                drawn.right > current.right + MAX_GROWTH_STEP ||
+                                drawn.bottom > current.bottom + MAX_GROWTH_STEP
+                            if (tooFar) {
+                                EventLog.warn(
+                                    "canvas",
+                                    "Ignored a growth request " +
+                                        "${drawn.left.toInt()},${drawn.top.toInt()} far outside " +
+                                        "the canvas ${current.left.toInt()}," +
+                                        "${current.top.toInt()}-${current.right.toInt()}," +
+                                        "${current.bottom.toInt()}"
+                                )
+                                return@let
+                            }
+                            val grown = current.grownTo(drawn, maxSpan = MAX_CANVAS_SPAN)
                             if (grown !== current) {
                                 ink = ink.copy(canvas = grown)
                                 dirty = true

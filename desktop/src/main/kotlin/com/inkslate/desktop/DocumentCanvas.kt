@@ -65,15 +65,30 @@ class PageSlot(
     val originX: Float,
     val originY: Float,
     /**
-     * Offset from the whole page to the visible area, when its margins are trimmed.
+     * Where this slot's top-left sits in the coordinates ink is stored in.
      *
-     * Stroke coordinates stay relative to the whole page whatever this is, so toggling the crop
-     * cannot move existing ink and export is unaffected either way.
+     * Two things move that origin and they must agree, which is why it is one number rather than
+     * two ideas. A page with its margins trimmed is laid out at the size of its content while ink
+     * stays relative to the whole page, so the trimmed margin is the gap. A canvas is laid out
+     * from its own top-left, which moves further negative every time the canvas grows, while ink
+     * stays at the coordinates it was written at - so the canvas origin is the gap.
+     *
+     * Adding this when a point is read and subtracting it when a mark is drawn is what keeps ink
+     * where it was put. Getting that pair out of step moves every mark on the page, and by a
+     * distance that grows as the canvas does.
      */
-    val cropLeft: Float = 0f,
-    val cropTop: Float = 0f
+    val inkLeft: Float = 0f,
+    val inkTop: Float = 0f
 ) {
     val box: InkBox get() = InkBox(originX, originY, originX + width, originY + height)
+
+    /** A point in document space, in the coordinates ink on this page is stored in. */
+    fun toInk(docX: Float, docY: Float) =
+        Offset(docX - originX + inkLeft, docY - originY + inkTop)
+
+    /** And back again - what the drawing side does, which has to undo exactly the above. */
+    fun fromInk(inkX: Float, inkY: Float) =
+        Offset(inkX + originX - inkLeft, inkY + originY - inkTop)
 
     fun contains(x: Float, y: Float) =
         x >= originX && x <= originX + width && y >= originY && y <= originY + height
@@ -170,7 +185,11 @@ fun DocumentCanvas(
         effective.mapIndexed { i, e ->
             val (x, y) = origins[i]
             val box = if (canvas == null && cropMargins) contentBoxes[i] else null
-            PageSlot(i, e.width, e.height, x, y, box?.left ?: 0f, box?.top ?: 0f)
+            PageSlot(
+                i, e.width, e.height, x, y,
+                inkLeft = canvas?.left ?: box?.left ?: 0f,
+                inkTop = canvas?.top ?: box?.top ?: 0f
+            )
         }
     }
     val bounds = remember(slots, layout, currentPage, canvas) {
@@ -500,11 +519,10 @@ private fun DrawScope.drawPage(
     }
 
     // Ink is stored in page coordinates, which for a canvas are the canvas's own - so the whole
-    // layer shifts by the canvas origin and nothing else changes.
-    translate(
-        if (canvas != null) -canvas.left else -(crop?.left ?: 0f),
-        if (canvas != null) -canvas.top else -(crop?.top ?: 0f)
-    ) {
+    // layer shifts by the canvas origin and nothing else changes. Taken from the slot rather than
+    // worked out again here, because the reading side works it out from the slot and the two
+    // being the same number is the whole point.
+    translate(-slot.inkLeft, -slot.inkTop) {
     clipRect(
         if (canvas != null) canvas.left else 0f,
         if (canvas != null) canvas.top else 0f,

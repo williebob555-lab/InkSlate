@@ -106,18 +106,17 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     val scale = viewport.scale
 
     /**
-     * Screen pixels to this page's own coordinates.
+     * Screen pixels to the coordinates ink is stored in.
      *
-     * A cropped page is laid out at its content's size but ink is still stored against the whole
-     * page, so the trimmed offset goes back on here. That is what makes turning the crop on and
-     * off unable to move a single existing mark.
+     * The slot's own origin comes off, and the gap between the slot and those coordinates goes
+     * back on - see PageSlot.inkLeft. On a canvas that gap is the canvas origin, which is
+     * negative and moves further negative every time the canvas grows to meet a mark near its
+     * edge. Leaving it out put every mark on a canvas that far from the pen, and further with
+     * each growth, while the drawing side subtracted it faithfully.
      */
     fun toPage(p: Offset): Offset {
         val doc = viewport.screenToDoc(p)
-        return Offset(
-            doc.x - slot.originX + slot.cropLeft,
-            doc.y - slot.originY + slot.cropTop
-        )
+        return slot.toInk(doc.x, doc.y)
     }
 
     val start = toPage(down.position)

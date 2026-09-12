@@ -179,9 +179,15 @@ class ToolState {
      */
     var ruler by mutableStateOf<com.inkslate.core.Ruler?>(null)
 
-    /** True while shapes drawn freehand are tidied into the shape they were meant to be. */
+    /**
+     * True while shapes drawn freehand are tidied into the shape they were meant to be.
+     *
+     * Off until asked for, as on the tablet. It was on here and nowhere else, so handwriting
+     * straightened itself into lines on one of the two builds - and a thing that rewrites what
+     * you drew is not something to have on by default in either.
+     */
     private val recogniseState =
-        mutableStateOf(DesktopPrefs.get(K_RECOGNISE)?.toBoolean() ?: true)
+        mutableStateOf(DesktopPrefs.get(K_RECOGNISE)?.toBoolean() ?: false)
 
     var recogniseShapes: Boolean
         get() = recogniseState.value
