@@ -247,20 +247,17 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
         inHand == Tool.PAN -> {
             viewport.stop()
             var last = down.position
-            var lastAt = System.nanoTime()
-            var vx = 0f
-            var vy = 0f
+            val throwing = PanThrow()
+            throwing.begin()
             dragUntilRelease(down.position) { change, _ ->
-                val now = System.nanoTime()
-                val dt = ((now - lastAt) / 1_000_000_000f).coerceAtLeast(0.001f)
-                val d = change.position - last
-                viewport.panBy(d.x, d.y)
-                vx = d.x / dt
-                vy = d.y / dt
+                val moved = change.position - last
+                viewport.panBy(moved.x, moved.y)
+                throwing.sample(moved.x, moved.y)
                 last = change.position
-                lastAt = now
             }
-            viewport.throwBy(vx, vy)
+            // Nothing at all if the hand had stopped before it let go. See PanThrow.
+            val thrown = throwing.release()
+            viewport.throwBy(thrown.x, thrown.y)
         }
 
         inHand == Tool.ERASER -> {

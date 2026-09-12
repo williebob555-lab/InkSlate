@@ -958,36 +958,31 @@ private suspend fun PointerInputScope.middleDragPan(viewport: Viewport, tools: T
     if (!pans) return
     awaitPointerEventScope {
         var last: Offset? = null
-        var lastAt = 0L
-        var vx = 0f
-        var vy = 0f
+        val throwing = PanThrow()
         while (true) {
             val event = awaitPointerEvent(PointerEventPass.Initial)
             val change = event.changes.firstOrNull()
             val held = event.buttons.isTertiaryPressed
             when {
                 held && change != null -> {
-                    val now = System.nanoTime()
                     val previous = last
                     if (previous == null) {
                         viewport.stop()
+                        throwing.begin()
                     } else {
-                        val dt = ((now - lastAt) / 1_000_000_000f).coerceAtLeast(0.001f)
-                        val d = change.position - previous
-                        viewport.panBy(d.x, d.y)
-                        vx = d.x / dt
-                        vy = d.y / dt
+                        val moved = change.position - previous
+                        viewport.panBy(moved.x, moved.y)
+                        throwing.sample(moved.x, moved.y)
                     }
                     last = change.position
-                    lastAt = now
                     event.changes.forEach { it.consume() }
                 }
 
                 last != null -> {
-                    viewport.throwBy(vx, vy)
+                    // Nothing at all if the hand had stopped before it let go. See PanThrow.
+                    val thrown = throwing.release()
+                    viewport.throwBy(thrown.x, thrown.y)
                     last = null
-                    vx = 0f
-                    vy = 0f
                 }
             }
         }
