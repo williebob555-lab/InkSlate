@@ -1133,6 +1133,9 @@ class DocumentRepo(private val context: Context) {
         return result.fold(
             onSuccess = {
                 val now = System.currentTimeMillis()
+                // The other devices refresh at once rather than on their next look around. The
+                // file still travels the way it always has; this is only the news that it moved.
+                AppPeers.announceWrote(target)
                 EventLog.info(
                     "export",
                     "Wrote ${target.name} (${target.length() / 1024}KB) in ${now - started}ms " +

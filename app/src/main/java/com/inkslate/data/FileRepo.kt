@@ -152,6 +152,7 @@ class FileRepo(private val context: Context) {
         dir.listFiles()?.count { it.isDirectory || PageSources.isSupported(it) } ?: 0
 
     fun createFolder(parent: File, name: String): Result<File> = runCatching {
+        AppPeers.announceLibraryChanged()
         val safe = name.trim().replace(Regex("""[\\/:*?"<>|]"""), "_")
         require(safe.isNotEmpty()) { "Folder name cannot be empty" }
         val f = File(parent, safe)
@@ -169,6 +170,7 @@ class FileRepo(private val context: Context) {
      * is dragged along too, for as long as any remain.
      */
     fun rename(entry: File, newName: String, savePrefs: SavePrefs): Result<File> = runCatching {
+        AppPeers.announceLibraryChanged()
         val safe = sanitise(newName)
         val target = File(entry.parentFile, safe)
         require(!target.exists()) { "\"$safe\" already exists" }
@@ -236,6 +238,7 @@ class FileRepo(private val context: Context) {
      * handwriting that was in it.
      */
     fun delete(file: File, savePrefs: SavePrefs): Result<Unit> = runCatching {
+        AppPeers.announceLibraryChanged()
         if (file.isDirectory) {
             require(file.deleteRecursively()) { "Could not delete the folder" }
         } else {

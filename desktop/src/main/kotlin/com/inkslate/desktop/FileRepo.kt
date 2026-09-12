@@ -150,6 +150,7 @@ class FileRepo {
         }.getOrDefault(0)
 
     fun createFolder(parent: File, name: String): Result<File> = runCatching {
+        DesktopPeers.announceLibraryChanged()
         val safe = sanitise(name)
         val f = File(parent, safe)
         require(!f.exists()) { "\"$safe\" already exists" }
@@ -165,6 +166,7 @@ class FileRepo {
      * a leftover companion file, and this machine's own lists.
      */
     fun rename(entry: File, newName: String): Result<File> = runCatching {
+        DesktopPeers.announceLibraryChanged()
         val safe = sanitise(newName)
         val target = File(entry.parentFile, safe)
         require(!target.exists()) { "\"$safe\" already exists" }
@@ -233,6 +235,7 @@ class FileRepo {
      * the bug the Android side had to fix.
      */
     fun delete(file: File): Result<Unit> = runCatching {
+        DesktopPeers.announceLibraryChanged()
         if (file.isDirectory) {
             require(file.deleteRecursively()) { "Could not delete the folder" }
         } else {

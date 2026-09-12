@@ -120,6 +120,22 @@ When a sync tool cannot reconcile a file it usually renames one copy to somethin
 `homework.sync-conflict-20260911.pdf`. Those are found and merged in when the document is opened,
 because left alone they are lost work that nothing tells you about.
 
+### Straight between your devices
+
+File sync is what makes a document arrive on a device that was switched off. When two of your
+devices are both awake, they can also talk to each other directly, and then a mark made on one
+appears on the other as it is drawn.
+
+**Settings -> Your devices** on each. On one, press **Pair a device to this one** and it shows a
+six-digit code; on the other, press **Add by address**, enter the first device's address and the
+code. An address that works from anywhere - a tailnet name, say - is the reliable one; devices on
+the same wifi also announce themselves, and appear in the list to be tapped instead.
+
+What crosses is handwriting, and the news that a file was written or that something in a folder
+changed - never the files themselves, which carry on arriving the way they always have. The link
+is off until you pair something, it only ever accepts a device that proves it knows the code, and
+on the tablet it runs only while the app is open.
+
 ---
 
 ## Windows and Android

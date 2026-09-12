@@ -58,6 +58,13 @@ fun AppRoot(
     var refreshKey by remember { mutableStateOf(0) }
     var newDocOpen by remember { mutableStateOf(false) }
 
+    // A device saying it has written something is worth a look: the file itself arrives by the
+    // ordinary sync, but this is what makes the shelf show it now rather than on the next visit.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        com.inkslate.data.AppPeers.onRemoteWrite { _, _ -> scope.launch { refreshKey++ } }
+        onDispose { com.inkslate.data.AppPeers.onRemoteWrite(null) }
+    }
+
     // an Open-with from another app jumps straight into the editor
     LaunchedEffect(openRequest) {
         openRequest?.let {
