@@ -47,9 +47,37 @@ object RenderStats {
     @Volatile var geometryHits: Long = 0L
     @Volatile var geometryMisses: Long = 0L
 
+    /**
+     * Where the last frame's time went, in milliseconds.
+     *
+     * A frame is three things - the paper under everything, the page's own picture, and the marks
+     * on top - and the total says which of them is slow only by elimination. Timed separately
+     * because eliminating has been wrong four times here and each wrong answer cost a build.
+     */
+    @Volatile var paperMs: Float = 0f
+    @Volatile var rasterMs: Float = 0f
+    @Volatile var inkMs: Float = 0f
+
+    private var paperNs = 0L
+    private var rasterNs = 0L
+    private var inkNs = 0L
+
+    fun startFrame() {
+        paperNs = 0L
+        rasterNs = 0L
+        inkNs = 0L
+    }
+
+    fun addPaper(ns: Long) { paperNs += ns }
+    fun addRaster(ns: Long) { rasterNs += ns }
+    fun addInk(ns: Long) { inkNs += ns }
+
     private var frames = 0L
 
     fun recordFrame(ms: Float, drawn: Int) {
+        paperMs = paperNs / 1_000_000f
+        rasterMs = rasterNs / 1_000_000f
+        inkMs = inkNs / 1_000_000f
         lastFrameMs = ms
         drawnStrokes = drawn
         if (ms > worstFrameMs) worstFrameMs = ms
@@ -82,10 +110,10 @@ object RenderStats {
         val looked = geometryHits + geometryMisses
         EventLog.warn(
             "render",
-            ("Slow frame %.1fms (avg %.1f) at zoom %.2f: marks %d/%d, pages %d/%d, " +
-                "shapes reused %d%%, live %d").format(
-                lastFrameMs, averageFrameMs, scale, drawnStrokes, totalStrokes,
-                pagesVisible, pageCount,
+            ("Slow frame %.1fms (avg %.1f) at zoom %.2f: paper %.1f, page %.1f, ink %.1f; " +
+                "marks %d/%d, pages %d/%d, shapes reused %d%%, live %d").format(
+                lastFrameMs, averageFrameMs, scale, paperMs, rasterMs, inkMs,
+                drawnStrokes, totalStrokes, pagesVisible, pageCount,
                 if (looked == 0L) 0L else geometryHits * 100 / looked,
                 livePoints
             )
@@ -112,6 +140,10 @@ object RenderStats {
         append("  visible ").append(pagesVisible)
         append('\n')
         val looked = geometryHits + geometryMisses
+        append("paper ").append(String.format("%.1f", paperMs))
+        append("  page ").append(String.format("%.1f", rasterMs))
+        append("  ink ").append(String.format("%.1f", inkMs))
+        append('\n')
         append("shapes reused ")
         append(if (looked == 0L) 0 else (geometryHits * 100 / looked))
         append("%  held ").append(InkGeometry.held())

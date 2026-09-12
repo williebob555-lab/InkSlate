@@ -399,6 +399,7 @@ fun DocumentCanvas(
             // Measured around the whole frame rather than sampled, because a stutter is one slow
             // frame among fast ones and sampling is exactly what misses it.
             val startedNs = System.nanoTime()
+            RenderStats.startFrame()
             var drawnStrokes = 0
             var pagesVisible = 0
             translate(-vp.offset.x * vp.scale, -vp.offset.y * vp.scale) {
@@ -536,7 +537,10 @@ private fun DrawScope.drawPage(
         // The canvas is drawn in its own coordinates, which start where it starts - and that may
         // be negative. Everything on it, including the page's raster, is placed against that.
         translate(-canvas.left, -canvas.top) {
+            val paperAt = System.nanoTime()
             with(CanvasPaper) { drawCanvasPaper(canvas, scale, visibleInPage) }
+            RenderStats.addPaper(System.nanoTime() - paperAt)
+            val pageAt = System.nanoTime()
             raster?.let {
                 drawImage(
                     it,
@@ -549,8 +553,10 @@ private fun DrawScope.drawPage(
                     colorFilter = pageFilter.colorFilter
                 )
             }
+            RenderStats.addRaster(System.nanoTime() - pageAt)
         }
     } else {
+        val pageAt = System.nanoTime()
         drawRect(Color.White, topLeft = Offset.Zero, size = Size(slot.width, slot.height))
         raster?.let {
             // A cropped page draws the whole raster shifted, so the trimmed margins fall outside
@@ -574,6 +580,7 @@ private fun DrawScope.drawPage(
                 colorFilter = pageFilter.colorFilter
             )
         }
+        RenderStats.addRaster(System.nanoTime() - pageAt)
     }
 
     // Ink is stored in page coordinates, which for a canvas are the canvas's own - so the whole
@@ -590,6 +597,7 @@ private fun DrawScope.drawPage(
         // Already grouped per page and ordered highlighter-first by the caller. Doing it here
         // meant filtering and sorting every mark in the document on every frame, and a frame
         // happens for every point of the mark being drawn.
+        val inkAt = System.nanoTime()
         for (s in strokes) {
             // Marks outside the window are skipped rather than handed to a clip that would have
             // to walk their geometry to discover the same thing. This is what stops the cost of a
@@ -648,6 +656,7 @@ private fun DrawScope.drawPage(
         }
 
         strokes.filter { it.id in selection }.unionBounds()?.let { drawSelection(it, scale) }
+        RenderStats.addInk(System.nanoTime() - inkAt)
     }
     }
 
