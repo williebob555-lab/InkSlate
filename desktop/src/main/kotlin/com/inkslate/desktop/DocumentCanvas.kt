@@ -13,6 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -35,6 +36,7 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -252,14 +254,20 @@ fun DocumentCanvas(
             // Only what is on screen, plus a screen of margin so scrolling is not a slide show.
             val onScreen = visible(slot, viewport)
             if (!onScreen) continue
-            val wanted = (slot.width * scale).roundToInt().coerceIn(80, 4000)
-            val bucket = (wanted / 160) * 160
-            if (rasters[slot.index]?.first == bucket) continue
+            // The page's own width, not the slot's. On a canvas the slot is the whole canvas -
+            // which may be twenty times the page and grows as it is drawn on - so asking for a
+            // raster that size rendered the page at the largest size allowed and held tens of
+            // megabytes for a page being shown a few hundred pixels wide.
+            val shownWidth = canvas?.paperWidth ?: slot.width
+            val wanted = (shownWidth * scale).roundToInt()
+            val have = rasters[slot.index]?.first
+            if (!RasterLadder.shouldRemake(have, wanted)) continue
+            val width = RasterLadder.rungFor(wanted)
             val bmp = withContext(Dispatchers.IO) {
-                runCatching { source.render(slot.index, max(160, bucket)) }.getOrNull()
+                runCatching { source.render(slot.index, width) }.getOrNull()
             }
             if (bmp != null) {
-                rasters[slot.index] = bucket to bmp
+                rasters[slot.index] = width to bmp
                 if (slot.index !in contentBoxes) {
                     val pixels = bmp.toPixelMap()
                     com.inkslate.core.MarginCrop.detect(
@@ -271,11 +279,23 @@ fun DocumentCanvas(
     }
 
     // The page in view is the one the toolbar and the page counter mean.
-    LaunchedEffect(viewport.offset, viewport.scale, slots) {
-        val centre = viewport.screenToDoc(
-            Offset(viewport.viewSize.width / 2f, viewport.viewSize.height / 3f)
-        )
-        slotAt(centre.x, centre.y)?.let { if (it.index != currentPage) onPageChanged(it.index) }
+    //
+    // Watched from inside the effect rather than keyed on. The camera's position and zoom are
+    // state, and reading them out here read them while composing - so every frame of a pan or a
+    // zoom invalidated this whole composable and rebuilt it, which is what made moving the camera
+    // stutter while drawing on it stayed smooth. Drawing only ever changes what the frame reads.
+    val page = rememberUpdatedState(currentPage)
+    LaunchedEffect(slots) {
+        snapshotFlow { viewport.offset to viewport.scale }
+            .debounce(120)
+            .collect {
+                val centre = viewport.screenToDoc(
+                    Offset(viewport.viewSize.width / 2f, viewport.viewSize.height / 3f)
+                )
+                slotAt(centre.x, centre.y)?.let {
+                    if (it.index != page.value) onPageChanged(it.index)
+                }
+            }
     }
 
     // Two fingers on the glass pan and zoom, which Windows reports to nobody but the window's own
@@ -317,7 +337,10 @@ fun DocumentCanvas(
             .onGloballyPositioned { PointerDiagnostics.canvasAt(it.positionInWindow()) }
             .pointerInput(Unit) { wheel(viewport) }
             .pointerInput(Unit) { middleDragPan(viewport) }
-            .pointerInput(slots, tools.revision, selection, viewport.scale) {
+            // Deliberately not keyed on the zoom. Changing a key tears the gesture detector down
+            // and builds it again, which at one key per frame of a zoom is most of the work of
+            // zooming; the gesture reads the camera as it runs rather than being rebuilt for it.
+            .pointerInput(slots, selection) {
                 awaitEachGesture {
                     val down = awaitDrawingDown()
 
@@ -756,36 +779,88 @@ private suspend fun PointerInputScope.middleDragPan(viewport: Viewport) {
  * turns each notch into either a zoom ratio or a velocity.
  */
 private suspend fun AwaitPointerEventScope.wheelLoop(viewport: Viewport) {
+    // A trackpad that has just spoken is still a trackpad a moment later, even on an event that
+    // happens to look like a wheel's. Without this a two-finger drag zooms every so often, which
+    // is worse than it never working.
+    var glassSeenAt = 0L
+
     while (true) {
         val event = awaitPointerEvent()
         if (event.type != PointerEventType.Scroll) continue
         val change = event.changes.firstOrNull() ?: continue
+        val sideways = change.scrollDelta.x
         val notches = change.scrollDelta.y
-        if (notches == 0f && change.scrollDelta.x == 0f) continue
+        if (notches == 0f && sideways == 0f) continue
+
+        val now = System.currentTimeMillis()
+        if (twoFingered(event, sideways)) glassSeenAt = now
+        val trackpad = now - glassSeenAt < GLASS_MEMORY_MS
 
         val shift = event.keyboardModifiers.isShiftPressed
         val ctrl = event.keyboardModifiers.isCtrlPressed
         when {
-            // Sideways, with the throw carrying on after the wheel stops.
-            shift -> viewport.throwBy(
-                -notches * Viewport.PAN_VELOCITY_PER_NOTCH + viewport.velocity.x * 0.4f,
-                viewport.velocity.y * 0.4f
-            )
+            // A pinch on a trackpad reaches a program as the wheel with control held, which is
+            // also how every other program is asked to zoom.
+            trackpad && ctrl -> {
+                viewport.stop()
+                viewport.zoomBy(zoomFor(notches), change.position)
+            }
+
+            // Two fingers on a trackpad move the page the way two fingers on the glass do: both
+            // directions at once, following the fingers, with no throw of their own - the fingers
+            // are still there to keep moving it.
+            trackpad -> {
+                viewport.stop()
+                viewport.panBy(
+                    -sideways * Viewport.PAN_PER_NOTCH,
+                    -notches * Viewport.PAN_PER_NOTCH
+                )
+            }
+
+            // Sideways, with the throw carrying on after the wheel stops. Whichever axis the
+            // hardware used to say so: a trackpad reports sideways movement on its own axis and
+            // nothing on the wheel's, so reading only the wheel's meant shift did nothing there.
+            shift -> {
+                val amount = if (notches != 0f) notches else sideways
+                viewport.throwBy(
+                    -amount * Viewport.PAN_VELOCITY_PER_NOTCH + viewport.velocity.x * 0.4f,
+                    viewport.velocity.y * 0.4f
+                )
+            }
+
             // Down the page, the direction a wheel usually means when it is not zooming.
             ctrl -> viewport.throwBy(
                 viewport.velocity.x * 0.4f,
                 -notches * Viewport.PAN_VELOCITY_PER_NOTCH + viewport.velocity.y * 0.4f
             )
+
             else -> {
                 viewport.stop()
-                val factor = Math.pow(
-                    Viewport.ZOOM_PER_NOTCH.toDouble(), -notches.toDouble()
-                ).toFloat()
-                viewport.zoomBy(factor, change.position)
+                viewport.zoomBy(zoomFor(notches), change.position)
             }
         }
         change.consume()
     }
+}
+
+private fun zoomFor(notches: Float): Float =
+    Math.pow(Viewport.ZOOM_PER_NOTCH.toDouble(), -notches.toDouble()).toFloat()
+
+/** How long a trackpad is still assumed to be the thing scrolling. */
+private const val GLASS_MEMORY_MS = 600L
+
+/**
+ * Whether this scroll came from two fingers rather than a wheel.
+ *
+ * Two tells, and either is enough. A wheel has no sideways axis at all, so anything arriving on it
+ * came from a surface. And a wheel turns in whole notches while a trackpad reports the fraction of
+ * one the fingers have moved - so a rotation that is not a whole number was not a wheel.
+ */
+private fun twoFingered(event: PointerEvent, sideways: Float): Boolean {
+    if (sideways != 0f) return true
+    val awt = event.nativeEvent as? java.awt.event.MouseWheelEvent ?: return false
+    val turned = awt.preciseWheelRotation
+    return kotlin.math.abs(turned - Math.round(turned)) > 0.01
 }
 
 private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.wheel(viewport: Viewport) {

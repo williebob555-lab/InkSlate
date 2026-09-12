@@ -200,5 +200,14 @@ class Viewport {
 
         /** How far one wheel notch throws the page when it is panning instead. */
         const val PAN_VELOCITY_PER_NOTCH = 900f
+
+        /**
+         * How far one notch moves the page directly, for two fingers on a trackpad.
+         *
+         * Not a velocity: fingers on a surface are still there to keep moving the page, so the
+         * page goes where they put it and stops when they stop - the same as two fingers on the
+         * screen. A trackpad reports fractions of a notch, so small movements stay small.
+         */
+        const val PAN_PER_NOTCH = 64f
     }
 }
