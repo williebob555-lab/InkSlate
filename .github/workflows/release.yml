@@ -170,17 +170,35 @@ jobs:
     # it for them. A flaky runner is a re-run of the failed job, not a half-published version.
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag's own message becomes the release notes, so its history has to be here.
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      # What the release page and the in-app updater show under "what changed". Written on the
+      # tag, because a list of commit subjects is a list of how the work was done rather than of
+      # what changed for anybody using it - and the tag is the one place the two cannot drift.
+      # A tag with no message of its own falls back to the generated list.
+      - name: Take the notes from the tag
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<NOTES'
+            git tag -l --format='%(contents)' "v${{ needs.version.outputs.name }}"
+            echo NOTES
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.version.outputs.name }}
           name: InkSlate ${{ needs.version.outputs.name }}
-          # The body is what the in-app updater shows under "what changed", so it is worth
-          # editing on the releases page afterwards if the generated list is thin.
+          body: ${{ steps.notes.outputs.body }}
           generate_release_notes: true
           files: artifacts/*
