@@ -13,6 +13,8 @@ exifinterface = "1.4.2"
 serialization = "1.11.0"
 composeMultiplatform = "1.9.3"
 pdfboxJvm = "3.0.8"
+# Windows hands a desktop program only mouse events; this is how the pen and the glass are read.
+jna = "5.14.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -33,6 +35,8 @@ coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coi
 pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref = "pdfbox" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 pdfbox-jvm = { group = "org.apache.pdfbox", name = "pdfbox", version.ref = "pdfboxJvm" }
+jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+jna-platform = { group = "net.java.dev.jna", name = "jna-platform", version.ref = "jna" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

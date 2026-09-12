@@ -12,8 +12,11 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import kotlinx.coroutines.delay
 import androidx.compose.ui.window.rememberWindowState
 
 /**
@@ -70,6 +73,18 @@ private fun ui() = application {
             }
         }
     ) {
+        // Windows tells the toolkit nothing about pens or fingers, so the window's own message
+        // loop is read directly. Retried for a moment because the drawing surface is created a
+        // little after the window is, and it is one of the windows that has to be hooked.
+        LaunchedEffect(window) {
+            repeat(12) {
+                if (WindowsPointer.active) return@LaunchedEffect
+                WindowsPointer.install(window)
+                delay(250)
+            }
+        }
+        DisposableEffect(window) { onDispose { WindowsPointer.uninstall() } }
+
         InkSlateTheme {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 AppRoot(shortcuts, navigation)

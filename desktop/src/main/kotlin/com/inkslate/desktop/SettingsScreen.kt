@@ -838,6 +838,18 @@ private fun DiagnosticsSection() {
                 modifier = Modifier.padding(top = 4.dp)
             )
             Text(
+                remember(tick) {
+                    if (WindowsPointer.active) {
+                        "Pen and touch are being read from Windows directly - " +
+                            WindowsPointer.latest
+                    } else {
+                        "Pen and touch are not being read, so every device counts as a mouse."
+                    }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
                 remember(tick) { PointerDiagnostics.latest },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

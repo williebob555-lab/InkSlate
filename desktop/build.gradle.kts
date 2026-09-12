@@ -24,6 +24,10 @@ dependencies {
     implementation(compose.materialIconsExtended)
     // Full Apache PDFBox on the desktop: unlike the Android port it can render pages itself.
     implementation(libs.pdfbox.jvm)
+    // Reading the pen and the glass directly, because the runtime reports neither. See
+    // WindowsPointer.kt - this is the whole reason the desktop build can tell a pen from a mouse.
+    implementation(libs.jna)
+    implementation(libs.jna.platform)
 
     testImplementation("junit:junit:4.13.2")
 }

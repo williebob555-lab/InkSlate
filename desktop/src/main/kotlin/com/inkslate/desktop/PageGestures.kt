@@ -88,10 +88,15 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
 ) {
     // Whichever device landed picks its own profile first - a pen, a finger, or the pen with a
     // barrel button held, which is a whole second pen rather than a modifier on this one.
+    // On Windows none of this arrives in the pointer event - every device is reported as a mouse -
+    // so what Windows itself said about the contact is used where it is available. See
+    // WindowsPointer. Elsewhere, and if the hook is not in place, the pointer type is the answer.
+    val native = WindowsPointer.takeIf { it.active }
+    val barrel = if (native?.barrelHeld == true) maxOf(heldButton, 1) else heldButton
     tools.adoptInput(
-        isStylus = down.type == PointerType.Stylus,
-        isTouch = down.type == PointerType.Touch,
-        heldButton = heldButton,
+        isStylus = down.type == PointerType.Stylus || native?.device == WindowsPointer.Device.PEN,
+        isTouch = down.type == PointerType.Touch || native?.device == WindowsPointer.Device.FINGER,
+        heldButton = barrel,
         secondaryButton = secondaryButton
     )
     // Read synchronously: the config is deliberately not Compose state so the tool in hand the
@@ -404,9 +409,17 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 val speed = (screen - lastPos).getDistance() / dt
                 val fromSpeed = (1f - (speed / 3.2f)).coerceIn(0.25f, 1f)
                 // A mouse always reports 1.0, which is not pressure data - it is the absence of
-                // it wearing the same value, so speed has to stand in there too.
-                val reported =
-                    if (type == PointerType.Mouse || !tools.pressureEnabled) 1f else pressure
+                // it wearing the same value, so speed has to stand in there too. On Windows the
+                // pen reports 1.0 as well for the same reason, and the real figure is the one read
+                // off the contact message rather than anything in the event.
+                val fromPen = WindowsPointer.pressure
+                    ?.takeIf { WindowsPointer.active && WindowsPointer.device == WindowsPointer.Device.PEN }
+                val reported = when {
+                    !tools.pressureEnabled -> 1f
+                    fromPen != null -> fromPen
+                    type == PointerType.Mouse -> 1f
+                    else -> pressure
+                }
                 val hasPressure = reported in 0.02f..0.98f
                 // The user's own curve applies to real pressure and to nothing else. Shaping the
                 // speed fallback with it as well would make the pressure settings quietly change
@@ -444,13 +457,23 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
 
             sample(down.position, down.pressure, down.type)
             onLive(ArrayList(collected))
+            // A second finger turns what was a stroke into a pinch. The line drawn up to that
+            // point has to be dropped rather than committed, or every two-finger zoom leaves a
+            // mark across the page from wherever the first finger landed.
+            var abandoned = false
             dragUntilRelease(down.position) { change, _ ->
-                sample(change.position, change.pressure, change.type)
-                onLive(ArrayList(collected))
+                if (WindowsPointer.gesturing) {
+                    abandoned = true
+                    collected.clear()
+                    onLive(emptyList())
+                } else if (!abandoned) {
+                    sample(change.position, change.pressure, change.type)
+                    onLive(ArrayList(collected))
+                }
             }
             onLive(emptyList())
 
-            if (collected.size >= 2) {
+            if (!abandoned && collected.size >= 2) {
                 val drawn = Stroke(
                     id = newId(),
                     kind = Stroke.Kind.FREEHAND,

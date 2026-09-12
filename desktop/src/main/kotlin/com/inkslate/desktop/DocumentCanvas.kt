@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -239,6 +240,22 @@ fun DocumentCanvas(
         slotAt(centre.x, centre.y)?.let { if (it.index != currentPage) onPageChanged(it.index) }
     }
 
+    // Two fingers on the glass pan and zoom, which Windows reports to nobody but the window's own
+    // message loop - so it arrives here rather than as a gesture. Positions come in screen pixels
+    // and the canvas works in its own, which is the one conversion needed.
+    DisposableEffect(viewport) {
+        WindowsPointer.onGesture = { centreX, centreY, dx, dy, zoom ->
+            val origin = PointerDiagnostics.canvasOriginOnScreen()
+            if (origin != null) {
+                val about = Offset(centreX - origin.x, centreY - origin.y)
+                viewport.stop()
+                viewport.panBy(dx, dy)
+                viewport.zoomBy(zoom, about)
+            }
+        }
+        onDispose { WindowsPointer.onGesture = null }
+    }
+
     // A throw keeps moving after the fingers or the wheel have stopped.
     LaunchedEffect(viewport) {
         var last = 0L
@@ -282,6 +299,9 @@ fun DocumentCanvas(
                     // a secondary press too, which is the same answer by a different route.
                     val secondary = currentEvent.buttons.isSecondaryPressed
                     val heldButton = if (down.type == PointerType.Stylus && secondary) 1 else 0
+
+                    // Two fingers are a pinch, not a stroke, so nothing starts under them.
+                    if (WindowsPointer.gesturing) return@awaitEachGesture
 
                     val doc = viewport.screenToDoc(down.position)
                     val slot = slotAt(doc.x, doc.y) ?: return@awaitEachGesture

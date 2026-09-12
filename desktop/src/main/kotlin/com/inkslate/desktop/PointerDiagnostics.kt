@@ -32,8 +32,14 @@ object PointerDiagnostics {
     /** Enough to draw one mark with each device and still see both. */
     private const val KEEP = 5
 
-    /** Below this the two ends are measuring the window frame differently, not disagreeing. */
-    private const val FRAME_SLACK = 24.0
+    /**
+     * Below this the two ends are not disagreeing about anything.
+     *
+     * The pointer's position is the one the event carried and the cursor's is read a moment later,
+     * so a pointer that was moving when it landed shows tens of pixels of difference from nothing
+     * worse than the gap between the two readings. The fault this is here to catch is hundreds.
+     */
+    private const val FRAME_SLACK = 80.0
 
     @Volatile private var lastAt = 0L
 
@@ -54,13 +60,14 @@ object PointerDiagnostics {
         }
 
     fun note(type: PointerType, atComponent: Offset, viewport: Viewport, onPage: Offset) {
-        val scale = runCatching {
-            GraphicsEnvironment.getLocalGraphicsEnvironment()
-                .defaultScreenDevice.defaultConfiguration.defaultTransform.scaleX
-        }.getOrDefault(1.0)
+        val scale = displayScale()
 
         val reading = buildString {
-            append(type.toString()).append("  in window ")
+            val what =
+                if (WindowsPointer.active) WindowsPointer.device.name.lowercase().replaceFirstChar {
+                    it.uppercase()
+                } else type.toString()
+            append(what).append("  in window ")
             append("%.0f,%.0f".format(atComponent.x, atComponent.y))
 
             val off = offBy(atComponent, scale)
@@ -98,18 +105,36 @@ object PointerDiagnostics {
      */
     private fun offBy(atComponent: Offset, scale: Double): Offset? = runCatching {
         val cursor = MouseInfo.getPointerInfo()?.location ?: return null
+        val canvas = canvasOriginOnScreen() ?: return null
+        Offset(
+            (canvas.x + atComponent.x - cursor.x * scale).toFloat(),
+            (canvas.y + atComponent.y - cursor.y * scale).toFloat()
+        )
+    }.getOrNull()
+
+    /**
+     * Where the drawing surface's top-left sits on the screen, in real pixels.
+     *
+     * The window reports its frame in the scaled units the toolkit works in, so both that and the
+     * inset are multiplied up to the units the canvas, the pointer events and Windows' own contact
+     * messages are already in. Shared with the touch handling, which has to put a finger reported
+     * against the screen onto the page.
+     */
+    fun canvasOriginOnScreen(): Offset? = runCatching {
+        val scale = displayScale()
         val frame = Frame.getFrames().firstOrNull { it.isShowing } ?: return null
         val origin = frame.locationOnScreen
         val insets = frame.insets
-
-        val canvasX = (origin.x + insets.left) * scale + canvasInWindow.x
-        val canvasY = (origin.y + insets.top) * scale + canvasInWindow.y
-
         Offset(
-            (canvasX + atComponent.x - cursor.x * scale).toFloat(),
-            (canvasY + atComponent.y - cursor.y * scale).toFloat()
+            ((origin.x + insets.left) * scale + canvasInWindow.x).toFloat(),
+            ((origin.y + insets.top) * scale + canvasInWindow.y).toFloat()
         )
     }.getOrNull()
+
+    fun displayScale(): Double = runCatching {
+        GraphicsEnvironment.getLocalGraphicsEnvironment()
+            .defaultScreenDevice.defaultConfiguration.defaultTransform.scaleX
+    }.getOrDefault(1.0)
 
     /** Whether any kept reading disagrees, for the panel to lead with the answer. */
     val verdict: String
