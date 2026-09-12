@@ -70,6 +70,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.inkslate.data.CrashLog
 import com.inkslate.data.DeviceId
 import com.inkslate.data.DocumentRepo
+import com.inkslate.data.AppPeers
 import com.inkslate.data.EventLog
 import com.inkslate.data.FileOverride
 import com.inkslate.data.FileRepo
@@ -1151,6 +1152,57 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             writeThrough()
             withContext(Dispatchers.IO) { repo.checkpoint(d) }
             snackbar.showSnackbar("Checkpointed ${d.file.name}")
+        }
+    }
+
+    /**
+     * The link to your other devices, while this document is open.
+     *
+     * Two halves. What this device owes is worked out by comparing the page against what was last
+     * sent - not fired from each place a mark is made, because a mark is made in a dozen places and
+     * the one that forgot would be a mark that never left the tablet. What arrives is merged and
+     * put on the page you are looking at, so you can watch it happen.
+     */
+    val outbox = remember(file.absolutePath) { com.inkslate.core.peer.PeerOutbox() }
+
+    DisposableEffect(doc, strokesLoaded) {
+        val d = doc
+        if (d != null && strokesLoaded) {
+            outbox.reset()
+            AppPeers.documentOpened(d.file.name, d.ink)
+            AppPeers.onMarks { docId, marks ->
+                val current = doc ?: return@onMarks
+                if (docId != current.ink.docId) return@onMarks
+                if (!com.inkslate.core.peer.PeerSync.changesAnything(current.ink, marks)) return@onMarks
+                scope.launch {
+                    syncPage()
+                    val merged = com.inkslate.core.peer.PeerSync.applied(current.ink, marks)
+                    current.ink = merged
+                    drawingView.value?.setStrokes(current.allStrokes())
+                    // Theirs is not in this device's copy of the file yet.
+                    dirty = true
+                    pendingWrite = true
+                    writeState = WriteState.UNSAVED
+                    lastEditAt = System.currentTimeMillis()
+                }
+            }
+        }
+        onDispose {
+            AppPeers.onMarks(null)
+            AppPeers.documentClosed()
+        }
+    }
+
+    LaunchedEffect(doc, strokesLoaded) {
+        if (doc == null || !strokesLoaded) return@LaunchedEffect
+        while (true) {
+            delay(400)
+            val d = doc ?: continue
+            syncPage()
+            AppPeers.documentChanged(d.file.name, d.ink)
+            val owed = outbox.pending(d.ink) ?: continue
+            AppPeers.sendMarks(d.ink.docId, owed.strokes, owed.deleted)
+            outbox.sent(d.ink)
         }
     }
 

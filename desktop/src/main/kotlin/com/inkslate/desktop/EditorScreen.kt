@@ -216,16 +216,6 @@ fun EditorScreen(
         redo.clear()
         dirty = true
         lastEditAt = System.currentTimeMillis()
-        // Straight out to the other devices, as it happens. Nothing waits for a save: the file is
-        // how a mark reaches a device that is switched off, and this is how it reaches one that is
-        // awake. Both end in the same merge.
-        val now = System.currentTimeMillis()
-        DesktopPeers.sendMarks(
-            docId = ink.docId,
-            added = op.after,
-            removed = op.before.filter { b -> op.after.none { it.id == b.id } }
-                .associate { it.id to now }
-        )
     }
 
     // ---- opening -------------------------------------------------------------
@@ -545,6 +535,31 @@ fun EditorScreen(
     // What a peer asking to catch up is answered with. Kept current rather than fetched,
     // because the answer is wanted on a socket thread that cannot stop and ask the editor.
     LaunchedEffect(ink, strokes.size) { DesktopPeers.documentChanged(file.name, currentInk()) }
+
+    /**
+     * What this device still owes the others.
+     *
+     * Compared against the page rather than fired from each place a mark is made: drawing, erasing,
+     * undoing, moving a selection and tidying a shape are all changes, and the one that forgot to
+     * announce itself would be a mark that never left this machine.
+     */
+    val outbox = remember(file.absolutePath) { com.inkslate.core.peer.PeerOutbox() }
+
+    LaunchedEffect(file.absolutePath, source) {
+        outbox.reset()
+        while (true) {
+            delay(400)
+            val src = source ?: continue
+            val doc = currentInk()
+            val owed = outbox.pending(doc) ?: continue
+            DesktopPeers.sendMarks(doc.docId, owed.strokes, owed.deleted)
+            outbox.sent(doc)
+            // Quietly: this is a connection between your own devices, not an event.
+            if (src.pageCount > 0 && owed.strokes.size > 20) {
+                EventLog.info("peer", "Sent ${owed.strokes.size} marks to your other devices")
+            }
+        }
+    }
 
     // Autosave to the local working copy. The document itself is only written on an explicit
     // save, so this is what stands between a crash and a lost afternoon.

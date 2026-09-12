@@ -1,5 +1,7 @@
 package com.inkslate.ui.settings
 
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.data.CopyLocation
 import com.inkslate.data.CopyNaming
+import com.inkslate.data.AppPeers
 import com.inkslate.data.CrashLog
 import com.inkslate.data.EventLog
 import com.inkslate.data.FileRepo
@@ -204,6 +208,9 @@ fun SettingsScreen(onBack: () -> Unit) {
                     )
                 }
             }
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            YourDevicesSection()
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("While a document is open")
@@ -585,6 +592,234 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             },
             confirmButton = { TextButton(onClick = { viewingCrash = null }) { Text("Close") } }
+        )
+    }
+}
+
+/**
+ * The direct link between your own devices.
+ *
+ * Off until you pair something, and it only ever talks to a device that has proved it knows a code
+ * read off one of these screens. What travels is handwriting and the news that a file was written -
+ * never the files themselves, which carry on arriving the way they always have.
+ */
+@Composable
+private fun YourDevicesSection() {
+    val context = LocalContext.current
+    var tick by remember { mutableStateOf(0) }
+    var enabled by remember { mutableStateOf(AppPeers.enabled()) }
+    var discovery by remember { mutableStateOf(AppPeers.discoveryEnabled()) }
+    var pairingCode by remember { mutableStateOf<String?>(null) }
+    var adding by remember { mutableStateOf(false) }
+    var address by remember { mutableStateOf("") }
+    var code by remember { mutableStateOf("") }
+    var working by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    DisposableEffect(Unit) {
+        AppPeers.onPeersChanged { tick++ }
+        onDispose { AppPeers.onPeersChanged(null) }
+    }
+
+    val statuses = remember(tick, enabled) { AppPeers.statuses() }
+    val nearby = remember(tick, discovery) { AppPeers.discovered }
+
+    SectionHeader("Your devices")
+    Text(
+        "When two of your devices are awake and can reach each other, marks made on one appear " +
+            "on the other as they are drawn, and a document written on one is noticed at once by " +
+            "the other. Your files still travel the way they always have; this only carries the " +
+            "handwriting.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+
+    SwitchRow(
+        "Talk to my other devices",
+        "Only while this app is open, and only to devices you have paired with.",
+        enabled
+    ) {
+        enabled = it
+        AppPeers.setEnabled(it)
+        tick++
+    }
+
+    if (enabled) {
+        SwitchRow(
+            "Also look on this network",
+            "Finds devices on the same wifi, as well as the ones you have given an address. " +
+                "Nothing is shared by being found.",
+            discovery
+        ) {
+            discovery = it
+            AppPeers.setDiscoveryEnabled(it)
+            tick++
+        }
+
+        if (statuses.isEmpty()) {
+            Text(
+                "No devices paired yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        } else {
+            statuses.forEach { status ->
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(status.peer.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                (if (status.connected) "Connected  ·  " else "Not reachable  ·  ") +
+                                    "${status.peer.host}:${status.peer.port}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (status.connected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = { AppPeers.forget(status.peer.tag); tick++ }) {
+                            Text("Forget")
+                        }
+                    }
+                }
+            }
+        }
+
+        if (nearby.isNotEmpty()) {
+            Text(
+                "On this network",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(start = 16.dp, top = 10.dp)
+            )
+            nearby.forEach { seen ->
+                Card(
+                    onClick = { address = seen.address; code = ""; adding = true },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(seen.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "${seen.address}  ·  tap to pair",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        Row(Modifier.padding(horizontal = 12.dp)) {
+            TextButton(onClick = {
+                val fresh = com.inkslate.core.peer.PeerFrames.newPairingCode()
+                pairingCode = fresh
+                AppPeers.offerPairing(fresh)
+            }) { Text("Pair a device to this one") }
+            TextButton(onClick = { address = ""; code = ""; adding = true }) {
+                Text("Add by address")
+            }
+        }
+
+        message?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+    }
+
+    pairingCode?.let { shown ->
+        AlertDialog(
+            onDismissRequest = { pairingCode = null; AppPeers.stopOfferingPairing() },
+            title = { Text("Pair a device") },
+            text = {
+                Column {
+                    Text(
+                        "On the other device, open Settings, choose \u201CAdd by address\u201D, and " +
+                            "enter this tablet's address along with the code below. The code works " +
+                            "for the next five minutes."
+                    )
+                    Text(
+                        shown,
+                        style = MaterialTheme.typography.headlineMedium,
+                        modifier = Modifier.padding(top = 14.dp)
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { pairingCode = null }) { Text("Done") } }
+        )
+    }
+
+    if (adding) {
+        AlertDialog(
+            onDismissRequest = { if (!working) adding = false },
+            title = { Text("Add a device") },
+            text = {
+                Column {
+                    Text(
+                        "Its address - a tailnet name works from anywhere - and the code showing " +
+                            "on its screen.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = address,
+                        onValueChange = { address = it },
+                        label = { Text("Address") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 10.dp)
+                    )
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.filter(Char::isDigit).take(6) },
+                        label = { Text("Code") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                    )
+                    if (working) {
+                        Row(
+                            Modifier.padding(top = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text(
+                                "  Introducing this device...",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !working && address.isNotBlank() && code.length >= 4,
+                    onClick = {
+                        working = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                AppPeers.pairWith(address.trim(), AppPeers.port(), code.trim())
+                            }
+                            working = false
+                            message = result.fold(
+                                onSuccess = { "Paired with ${it.name}" },
+                                onFailure = { "Could not pair: ${it.message}" }
+                            )
+                            if (result.isSuccess) {
+                                adding = false
+                                enabled = true
+                            }
+                            tick++
+                        }
+                    }
+                ) { Text("Pair") }
+            },
+            dismissButton = {
+                TextButton(enabled = !working, onClick = { adding = false }) { Text("Cancel") }
+            }
         )
     }
 }
