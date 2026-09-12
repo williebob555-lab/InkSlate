@@ -502,7 +502,7 @@ private fun DrawScope.drawPage(
         // The canvas is drawn in its own coordinates, which start where it starts - and that may
         // be negative. Everything on it, including the page's raster, is placed against that.
         translate(-canvas.left, -canvas.top) {
-            with(CanvasPaper) { drawCanvasPaper(canvas, scale) }
+            with(CanvasPaper) { drawCanvasPaper(canvas, scale, visibleInPage) }
             raster?.let {
                 drawImage(
                     it,

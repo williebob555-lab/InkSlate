@@ -88,7 +88,12 @@ object CanvasPaper {
      * between printed paper and painted paper is invisible - which is the whole illusion. The
      * page's raster covers the middle, so only what lies outside it is painted here.
      */
-    fun DrawScope.drawCanvasPaper(canvas: InkCanvas, scale: Float) {
+    fun DrawScope.drawCanvasPaper(
+        canvas: InkCanvas,
+        scale: Float,
+        /** What of the canvas is on screen, in canvas coordinates. Null rules all of it. */
+        visible: com.inkslate.core.Box? = null
+    ) {
         val paper = canvas.paperColor.toComposeColor()
         val ruling = canvas.lineColor.toComposeColor()
 
@@ -115,17 +120,29 @@ object CanvasPaper {
             }
         }
 
-        PaperPattern.emit(
-            background = PaperPattern.patternOf(canvas.background),
-            left = canvas.left,
-            top = canvas.top,
-            right = canvas.right,
-            bottom = canvas.bottom,
-            spacing = canvas.spacing,
-            anchorX = canvas.paperLeft,
-            anchorY = canvas.paperTop,
-            sink = sink
-        )
+        // Only the part on screen is ruled. Ruling the whole canvas meant thousands of lines -
+        // or, on a dotted pattern, their product in circles - submitted on every frame whatever
+        // was being looked at, and each one grows in real pixels as the view zooms in, so the
+        // further in you went the more each invisible line cost to throw away. The ticks are laid
+        // out from the page's own corner rather than from the region, so ruling a part of the
+        // canvas puts the lines exactly where ruling all of it would have.
+        val left = maxOf(canvas.left, visible?.left ?: canvas.left)
+        val top = maxOf(canvas.top, visible?.top ?: canvas.top)
+        val right = minOf(canvas.right, visible?.right ?: canvas.right)
+        val bottom = minOf(canvas.bottom, visible?.bottom ?: canvas.bottom)
+        if (right > left && bottom > top) {
+            PaperPattern.emit(
+                background = PaperPattern.patternOf(canvas.background),
+                left = left,
+                top = top,
+                right = right,
+                bottom = bottom,
+                spacing = canvas.spacing,
+                anchorX = canvas.paperLeft,
+                anchorY = canvas.paperTop,
+                sink = sink
+            )
+        }
 
         // A hairline where the document's own page sits, so it is obvious which part of the
         // canvas will still be there for someone opening the file in anything else.
