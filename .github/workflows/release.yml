@@ -131,18 +131,27 @@ jobs:
             "INSERT INTO Property (Property, Value) VALUES ('MSIFASTINSTALL', '7')"
           )) { $v = $db.OpenView($sql); $v.Execute(); $v.Close() }
           $db.Commit()
-          $db = $null; $installer = $null
-          [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-          # Read it back from a fresh handle, because a commit that silently did nothing would
-          # look exactly like a commit that worked.
-          $check = New-Object -ComObject WindowsInstaller.Installer
-          $rdb = $check.OpenDatabase($msi, 0)
+
+      # In its own step, which is its own process: the handle that wrote the file still holds it
+      # inside the step above, and opening it a second time there fails on the lock rather than
+      # on anything to do with what was written.
+      - name: Check the installer took it
+        shell: powershell
+        run: |
+          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.OpenDatabase($msi, 0)
+          $found = $false
           foreach ($name in @('MSIFASTINSTALL', 'ProductVersion', 'ProductCode', 'UpgradeCode')) {
-            $v = $rdb.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            $v = $db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
             $v.Execute(); $r = $v.Fetch()
-            if ($r) { Write-Host "$name = $($r.StringData(1))" } else { Write-Host "$name absent" }
+            if ($r) {
+              Write-Host "$name = $($r.StringData(1))"
+              if ($name -eq 'MSIFASTINSTALL') { $found = $true }
+            } else { Write-Host "$name absent" }
             $v.Close()
           }
+          if (-not $found) { throw 'The installer did not keep MSIFASTINSTALL.' }
 
       - uses: actions/upload-artifact@v4
         with:

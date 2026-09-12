@@ -169,30 +169,44 @@ jobs:
             "INSERT INTO Property (Property, Value) VALUES ('MSIFASTINSTALL', '7')"
           )) { $v = $db.OpenView($sql); $v.Execute(); $v.Close() }
           $db.Commit()
-          $db = $null; $installer = $null
-          [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-          # Read it back from a fresh handle, because a commit that silently did nothing would
-          # look exactly like a commit that worked.
-          $check = New-Object -ComObject WindowsInstaller.Installer
-          $rdb = $check.OpenDatabase($msi, 0)
+
+      # In its own step, which is its own process: the handle that wrote the file still holds it
+      # inside the step above, and opening it a second time there fails on the lock rather than
+      # on anything to do with what was written.
+      - name: Check the installer took it
+        shell: powershell
+        run: |
+          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.OpenDatabase($msi, 0)
+          $found = $false
           foreach ($name in @('MSIFASTINSTALL', 'ProductVersion', 'ProductCode', 'UpgradeCode')) {
-            $v = $rdb.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            $v = $db.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
             $v.Execute(); $r = $v.Fetch()
-            if ($r) { Write-Host "$name = $($r.StringData(1))" } else { Write-Host "$name absent" }
+            if ($r) {
+              Write-Host "$name = $($r.StringData(1))"
+              if ($name -eq 'MSIFASTINSTALL') { $found = $true }
+            } else { Write-Host "$name absent" }
             $v.Close()
           }
+          if (-not $found) { throw 'The installer did not keep MSIFASTINSTALL.' }
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
           path: dist/*.msi
           retention-days: 1
-          if-no-files-found: warn
+          # An installer that never got built should stop the build, not warn inside a green log.
+          if-no-files-found: error
 
   publish:
     name: Publish the test build
     needs: [version, android, windows]
-    if: always() && needs.android.result == 'success'
+    # Both, or neither. The publish below clears what the release already holds before
+    # it uploads, so publishing without the installer replaces a working one with
+    # nothing, and the Windows updater is then offered a release with no installer in
+    # it. A build that lost a platform should show as a failure, not as a green run.
+    if: always() && needs.android.result == 'success' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
