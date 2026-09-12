@@ -51,15 +51,14 @@ object DesktopUpdates {
      */
     fun openInBrowser(url: String) {
         val opened = runCatching {
-            if (Desktop.isDesktopSupported() &&
-                Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)
-            ) {
-                Desktop.getDesktop().browse(java.net.URI(url))
-                true
-            } else {
-                false
-            }
+            check(Desktop.isDesktopSupported())
+            check(Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
+            Desktop.getDesktop().browse(java.net.URI(url))
+            true
         }.getOrDefault(false)
+        // Not only when BROWSE is unsupported, but whenever it fails: the runtime's shell
+        // integration throws on this machine for files it has no trouble with, and a link that
+        // silently does nothing is worse than one that takes the long way round.
         if (!opened) runCatching { ProcessBuilder("explorer.exe", url).start() }
     }
 
@@ -85,17 +84,45 @@ object DesktopUpdates {
         runCatching { File(file.absolutePath + ":Zone.Identifier").delete() }
     }
 
-    /** Hand the installer to Windows. It asks for its own confirmation before it does anything. */
+    /**
+     * Hand the installer to Windows. It asks for its own confirmation before it does anything.
+     *
+     * Three ways of saying the same thing, tried in turn, because the first one has been seen to
+     * fail on a perfectly good file: `Desktop.open` reported "Unsupported URI content" for a 103MB
+     * installer that Explorer opened without complaint. It is the runtime's own shell integration
+     * and there is nothing to fix at this end, so this stops depending on it.
+     *
+     * Windows Installer first, since an `.msi` is its file and it needs no association to be
+     * registered; then the shell, which is what a double-click does; then the runtime, for a
+     * platform where neither of the first two exists. The error reported is the last one, because
+     * by then it is the only one left to report.
+     */
     fun open(installer: File) {
         require(installer.isFile) { "The downloaded installer is no longer there." }
         unblock(installer)
-        if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
-            Desktop.getDesktop().open(installer)
-        } else {
-            // Some JDK/desktop-environment combinations report no support for OPEN even where it
-            // works. Explorer will run an .msi as readily as a double-click does.
-            ProcessBuilder("explorer.exe", installer.absolutePath).start()
+
+        val ways = buildList<() -> Unit> {
+            if (installer.extension.equals("msi", ignoreCase = true)) {
+                add { ProcessBuilder("msiexec", "/i", installer.absolutePath).start() }
+            }
+            add { ProcessBuilder("explorer.exe", installer.absolutePath).start() }
+            add {
+                check(Desktop.isDesktopSupported()) { "This system has no desktop integration." }
+                Desktop.getDesktop().open(installer)
+            }
         }
+
+        var last: Throwable? = null
+        for (way in ways) {
+            val result = runCatching { way() }
+            if (result.isSuccess) {
+                EventLog.info("update", "Handed ${installer.name} to Windows")
+                return
+            }
+            last = result.exceptionOrNull()
+            EventLog.warn("update", "Could not open ${installer.name}: ${last?.message}")
+        }
+        throw last ?: IllegalStateException("Windows would not open ${installer.name}")
     }
 
     /** Show the file in Explorer, for when opening it is not what the person wants yet. */
