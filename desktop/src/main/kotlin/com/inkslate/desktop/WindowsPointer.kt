@@ -49,9 +49,16 @@ object WindowsPointer {
     var pressure: Float? = null
         private set
 
-    /** True while the pen's barrel button is held, which the tablet treats as its own pen. */
+    /**
+     * Which of the pen's buttons is held: 0 none, 1 the barrel, 2 the second one.
+     *
+     * Windows describes a pen's buttons as two separate things rather than a number - the barrel
+     * switch, and the eraser end, which is what a second button on the shaft usually reports
+     * itself as. They are kept apart here because the tablet gives each its own pen, with its own
+     * colour, width and tool, and one button standing in for both would collapse the two.
+     */
     @Volatile
-    var barrelHeld: Boolean = false
+    var penButton: Int = 0
         private set
 
     /** Fingers on the glass right now. */
@@ -208,7 +215,7 @@ object WindowsPointer {
         }
         if (device != Device.PEN) {
             pressure = null
-            barrelHeld = false
+            penButton = 0
             penDown = false
         }
         // A mouse moving is proof that no gesture is under way. Contacts are released by a message
@@ -239,7 +246,11 @@ object WindowsPointer {
                 val info = POINTER_PEN_INFO()
                 if (user32.GetPointerPenInfo(id, info)) {
                     info.read()
-                    barrelHeld = (info.penFlags and PEN_FLAG_BARREL) != 0
+                    penButton = when {
+                        (info.penFlags and (PEN_FLAG_ERASER or PEN_FLAG_INVERTED)) != 0 -> 2
+                        (info.penFlags and PEN_FLAG_BARREL) != 0 -> 1
+                        else -> 0
+                    }
                     pressure = if (info.penMask and PEN_MASK_PRESSURE != 0 && info.pressure > 0) {
                         (info.pressure / PEN_PRESSURE_MAX).coerceIn(0f, 1f)
                     } else {
@@ -248,10 +259,16 @@ object WindowsPointer {
                 }
                 if (msg == WM_POINTERUP) {
                     pressure = null
-                    barrelHeld = false
+                    penButton = 0
                 }
-                note("Pen  pressure ${pressure?.let { "%.2f".format(it) } ?: "none"}" +
-                    if (barrelHeld) "  barrel held" else "")
+                note(
+                    "Pen  pressure ${pressure?.let { "%.2f".format(it) } ?: "none"}" +
+                        when (penButton) {
+                            1 -> "  barrel held"
+                            2 -> "  second button held"
+                            else -> ""
+                        }
+                )
             }
 
             PT_TOUCH -> {
@@ -363,6 +380,8 @@ object WindowsPointer {
     private const val PT_MOUSE = 4
 
     private const val PEN_FLAG_BARREL = 0x00000001
+    private const val PEN_FLAG_INVERTED = 0x00000002
+    private const val PEN_FLAG_ERASER = 0x00000004
     private const val PEN_MASK_PRESSURE = 0x00000001
 
     /** What Windows calls full pressure. */

@@ -123,7 +123,10 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     // so what Windows itself said about the contact is used where it is available. See
     // WindowsPointer. Elsewhere, and if the hook is not in place, the pointer type is the answer.
     val native = WindowsPointer.takeIf { it.active }
-    val barrel = if (native?.barrelHeld == true) maxOf(heldButton, 1) else heldButton
+    // Which pen button Windows says is held, if it is telling us anything at all. The pointer
+    // event cannot carry this: a barrel press arrives there as a right click and the second button
+    // as nothing, which is why both were one pen before.
+    val barrel = native?.penButton?.takeIf { it > 0 } ?: heldButton
     tools.adoptInput(
         isStylus = down.type == PointerType.Stylus || native?.device == WindowsPointer.Device.PEN,
         isTouch = down.type == PointerType.Touch || native?.device == WindowsPointer.Device.FINGER,

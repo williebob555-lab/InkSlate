@@ -133,14 +133,20 @@ fun Stroke.toComposeOutline(): Path {
  * Text is handled by the caller, which has access to the text measurer; everything else is pure
  * geometry and lives here.
  */
-fun DrawScope.drawStroke(s: Stroke) {
+fun DrawScope.drawStroke(s: Stroke, cached: Boolean = true) {
+    // A mark being drawn changes with every sample and keeps one id while it does, so its shape
+    // is built fresh. Everything already committed is immutable until it is restamped, which is
+    // exactly what the cache keys on.
+    fun body() = if (cached) InkGeometry.path(s) else s.toComposePath()
+    fun edge() = if (cached) InkGeometry.outline(s) else s.toComposeOutline()
+
     val colour = s.color.toComposeColor()
     val alpha = s.effectiveAlpha.coerceIn(0f, 1f)
     val blend = if (s.usesMultiply) BlendMode.Multiply else BlendMode.SrcOver
 
     if (s.isClosedShape && s.fill != FillStyle.NONE) {
         drawPath(
-            s.toComposePath(),
+            body(),
             s.fillColor.toComposeColor(),
             alpha = if (s.fill == FillStyle.TINTED) 0.25f else alpha,
             blendMode = blend
@@ -148,13 +154,13 @@ fun DrawScope.drawStroke(s: Stroke) {
     }
 
     if (s.usesOutlineRender) {
-        drawPath(s.toComposeOutline(), colour, alpha = alpha, blendMode = blend)
+        drawPath(edge(), colour, alpha = alpha, blendMode = blend)
         return
     }
 
     val effect = s.dash.pattern?.let { PathEffect.dashPathEffect(it, 0f) }
     drawPath(
-        s.toComposePath(),
+        body(),
         colour,
         alpha = alpha,
         style = DrawStroke(

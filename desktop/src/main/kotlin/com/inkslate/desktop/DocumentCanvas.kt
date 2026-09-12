@@ -172,6 +172,16 @@ fun DocumentCanvas(
     // Re-measuring at every zoom would move the page under the reader's hand for no gain.
     val contentBoxes = remember(source) { mutableStateMapOf<Int, InkBox>() }
 
+    // Grouped by page and ordered highlighter-first once per edit rather than once per frame.
+    // Highlighter under the ink it marks is the order the exporter writes, so the two agree.
+    val byPage = remember(strokes) {
+        strokes.groupBy { it.pageIndex }
+            .mapValues { (_, marks) -> marks.sortedBy { if (it.isHighlighter) 0 else 1 } }
+    }
+
+    // The shapes belong to this document and nothing else; holding them past it is just memory.
+    DisposableEffect(source) { onDispose { InkGeometry.clear() } }
+
     val slots = remember(extents, layout, currentPage, canvas, cropMargins, contentBoxes.size) {
         val effective = when {
             canvas != null -> listOf(PageExtent(canvas.width, canvas.height))
@@ -363,13 +373,23 @@ fun DocumentCanvas(
                     for (slot in slots) {
                         if (!visible(slot, vp)) continue
                         pagesVisible++
-                        drawnStrokes += strokes.count { it.pageIndex == slot.index }
+                        // What of this page is on screen, in the coordinates its marks are
+                        // stored in - so a mark can be skipped by comparing two rectangles
+                        // rather than by drawing it and letting the clip decide.
+                        val topLeft = slot.toInk(vp.offset.x, vp.offset.y)
+                        val bottomRight = slot.toInk(
+                            vp.offset.x + vp.viewSize.width / vp.scale,
+                            vp.offset.y + vp.viewSize.height / vp.scale
+                        )
+                        val onScreen =
+                            InkBox(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y)
                         translate(slot.originX, slot.originY) {
-                            drawPage(
+                            drawnStrokes += drawPage(
                                 canvas = canvas,
                                 slot = slot,
+                                visibleInPage = onScreen,
                                 raster = rasters[slot.index]?.second,
-                                strokes = strokes,
+                                strokes = byPage[slot.index].orEmpty(),
                                 selection = selection,
                                 live = if (livePage == slot.index) live else emptyList(),
                                 pending = pending?.takeIf { it.pageIndex == slot.index },
@@ -455,10 +475,14 @@ private fun visible(slot: PageSlot, vp: Viewport): Boolean {
  * Called inside a translate to the page's own origin, so everything below is in page
  * coordinates - which is exactly the space strokes are stored in.
  */
+/** Draws one page and returns how many marks it actually put on the screen. */
 private fun DrawScope.drawPage(
     canvas: com.inkslate.core.InkCanvas?,
     slot: PageSlot,
+    /** The part of this page inside the window, in the coordinates marks are stored in. */
+    visibleInPage: InkBox?,
     raster: ImageBitmap?,
+    /** This page's marks, already ordered - see the caller. */
     strokes: List<Stroke>,
     selection: Set<String>,
     live: List<com.inkslate.core.InkPoint>,
@@ -472,7 +496,8 @@ private fun DrawScope.drawPage(
     scale: Float,
     ruler: com.inkslate.core.Ruler?,
     images: (String) -> ImageBitmap?
-) {
+): Int {
+    var drawn = 0
     if (canvas != null) {
         // The canvas is drawn in its own coordinates, which start where it starts - and that may
         // be negative. Everything on it, including the page's raster, is placed against that.
@@ -528,15 +553,28 @@ private fun DrawScope.drawPage(
         if (canvas != null) canvas.right else slot.width,
         if (canvas != null) canvas.bottom else slot.height
     ) {
-        // Highlighter first, so it sits under the ink it is marking rather than washing over it -
-        // the same order the exporter writes.
-        val page = strokes.filter { it.pageIndex == slot.index }
-        for (s in page.sortedBy { if (it.isHighlighter) 0 else 1 }) {
+        // Already grouped per page and ordered highlighter-first by the caller. Doing it here
+        // meant filtering and sorting every mark in the document on every frame, and a frame
+        // happens for every point of the mark being drawn.
+        for (s in strokes) {
+            // Marks outside the window are skipped rather than handed to a clip that would have
+            // to walk their geometry to discover the same thing. This is what stops the cost of a
+            // frame growing with the size of the document rather than with what is on screen.
+            if (s.kind != Stroke.Kind.TEXT && visibleInPage != null) {
+                val b = InkGeometry.bounds(s)
+                val pad = s.baseWidth + 2f
+                val off = b.right + pad < visibleInPage.left ||
+                    b.left - pad > visibleInPage.right ||
+                    b.bottom + pad < visibleInPage.top ||
+                    b.top - pad > visibleInPage.bottom
+                if (off) continue
+            }
             when (s.kind) {
                 Stroke.Kind.TEXT -> drawTextStroke(s, textMeasurer)
                 Stroke.Kind.IMAGE -> drawImageStroke(s, images)
                 else -> drawStroke(s)
             }
+            drawn++
         }
 
         if (live.size >= 2) {
@@ -552,11 +590,14 @@ private fun DrawScope.drawPage(
                     dash = cfg.dash,
                     opacity = cfg.opacity,
                     pageIndex = slot.index
-                )
+                ),
+                cached = false
             )
         }
-        pending?.let { drawStroke(it) }
-        pendingStamp.forEach { if (it.kind != Stroke.Kind.TEXT) drawStroke(it) }
+        pending?.let { drawStroke(it, cached = false) }
+        pendingStamp.forEach {
+            if (it.kind != Stroke.Kind.TEXT) drawStroke(it, cached = false)
+        }
 
         marquee?.let { m ->
             drawRect(
@@ -572,13 +613,14 @@ private fun DrawScope.drawPage(
             )
         }
 
-        page.filter { it.id in selection }.unionBounds()?.let { drawSelection(it, scale) }
+        strokes.filter { it.id in selection }.unionBounds()?.let { drawSelection(it, scale) }
     }
     }
 
     // Outside the clip: a straightedge lies on top of the page and may hang over its edge, the
     // way a real one does.
     ruler?.let { drawRuler(it, scale, textMeasurer) }
+    return drawn
 }
 
 /**

@@ -8,8 +8,8 @@ package com.inkslate.desktop
  * are actually being drawn, and how long a frame takes.
  *
  * The Android build carries the same object, so a report from either machine reads the same way.
- * Two of its fields are missing here rather than faked: this build repaints the whole surface every
- * frame and has no geometry cache to hit or miss, so there is nothing truthful to put in them.
+ * The whole surface is still repainted every frame, but the shape of each mark is kept between
+ * frames now - see InkGeometry - so the cache figures below are real on both.
  *
  * Everything is plain fields written on the UI thread; there is no synchronisation and no
  * allocation on the drawing path, because instrumentation that costs measurable time makes the
@@ -43,6 +43,10 @@ object RenderStats {
     /** Points in the mark currently being drawn. */
     @Volatile var livePoints: Int = 0
 
+    /** Marks whose shape was reused rather than rebuilt, and marks whose shape had to be built. */
+    @Volatile var geometryHits: Long = 0L
+    @Volatile var geometryMisses: Long = 0L
+
     private var frames = 0L
 
     fun recordFrame(ms: Float, drawn: Int) {
@@ -71,6 +75,11 @@ object RenderStats {
         append('\n')
         append("pages ").append(pagesResident).append('/').append(pageCount)
         append("  visible ").append(pagesVisible)
+        append('\n')
+        val looked = geometryHits + geometryMisses
+        append("shapes reused ")
+        append(if (looked == 0L) 0 else (geometryHits * 100 / looked))
+        append("%  held ").append(InkGeometry.held())
         append('\n')
         val rt = Runtime.getRuntime()
         append("heap ").append((rt.totalMemory() - rt.freeMemory()) / 1048576).append("MB / ")
