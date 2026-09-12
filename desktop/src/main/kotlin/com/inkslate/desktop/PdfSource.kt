@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.rendering.PDFRenderer
 import java.awt.image.BufferedImage
 import java.io.Closeable
@@ -58,27 +59,50 @@ class PdfSource(private val file: File) : DesktopSource {
         return if (rotated) PageDim(box.height, box.width) else PageDim(box.width, box.height)
     }
 
+    /**
+     * Render part of a page by asking for a smaller page, rather than by moving the paper.
+     *
+     * The obvious way - draw the page into a bitmap the size of the part, shifted so the rest
+     * falls off the edges - produces a black rectangle for some documents. Measured, not guessed:
+     * with no shift at all, no clip, and either kind of bitmap, the graphics-surface renderer
+     * returns black for a page whose content it renders perfectly well the ordinary way. Whatever
+     * it does with that page's transparency does not survive being drawn anywhere but its own
+     * image.
+     *
+     * So the page is narrowed instead. A PDF page already carries the rectangle of itself that is
+     * meant to be shown; setting that to the part wanted and rendering normally uses the path that
+     * works, and returns exactly the piece asked for. The rectangle is put back afterwards -
+     * nothing is written, but this document is open for the life of the editor and every other
+     * reader of it expects the page it opened with.
+     *
+     * A rotated page is refused rather than guessed at: the caller renders the whole page, which
+     * is what it did before, and the only cost is a picture bigger than it needs to be.
+     */
     override fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? =
         synchronized(lock) {
             if (index !in 0 until doc.numberOfPages) return null
             if (region.width <= 0f || region.height <= 0f) return null
+            val page = doc.getPage(index)
+            if (((page.rotation % 360) + 360) % 360 != 0) return null
+            val whole = page.cropBox ?: page.mediaBox ?: return null
+            val kept = PDRectangle(
+                whole.lowerLeftX, whole.lowerLeftY, whole.width, whole.height
+            )
             return runCatching {
                 val scale = (targetWidthPx / region.width).coerceIn(0.05f, 12f)
-                val w = (region.width * scale).roundToInt().coerceIn(1, 8_000)
-                val h = (region.height * scale).roundToInt().coerceIn(1, 8_000)
-                val image = BufferedImage(w, h, BufferedImage.TYPE_INT_RGB)
-                val g = image.createGraphics()
-                g.color = java.awt.Color.WHITE
-                g.fillRect(0, 0, w, h)
-                // Slide the page under the window this bitmap is, then let the renderer draw it
-                // at the size it would have been. Everything outside falls off the edges.
-                g.translate(
-                    (-region.left * scale).toDouble(),
-                    (-region.top * scale).toDouble()
+                // The page's own coordinates count upwards from the bottom; ink and the screen
+                // count downwards from the top, which is the whole of the conversion.
+                page.setCropBox(
+                    PDRectangle(
+                        kept.lowerLeftX + region.left,
+                        kept.upperRightY - region.bottom,
+                        region.width,
+                        region.height
+                    )
                 )
-                renderer.renderPageToGraphics(index, g, scale)
-                g.dispose()
-                image.toComposeImageBitmap()
+                PDFRenderer(doc).renderImage(index, scale).toComposeImageBitmap()
+            }.also {
+                page.setCropBox(kept)
             }.getOrNull()
         }
 

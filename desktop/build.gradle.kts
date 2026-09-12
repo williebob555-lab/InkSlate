@@ -16,6 +16,18 @@ kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
 }
 
+// Point the real-document render test at a folder of actual PDFs:
+//     ./gradlew :desktop:test -Dinkslate.pdfs="C:/Users/me/Documents"
+// Gradle keeps a -D to itself, so it has to be handed on to the tests deliberately.
+tasks.withType<Test>().configureEach {
+    System.getProperty("inkslate.pdfs")?.let {
+        systemProperty("inkslate.pdfs", it)
+        // The documents behind it can change without anything here changing, and a sweep that
+        // silently does not run is worse than no sweep - it reads as a pass.
+        outputs.upToDateWhen { false }
+    }
+}
+
 dependencies {
     // The document model, byte-for-byte the same classes the Android app uses.
     implementation(project(":core"))

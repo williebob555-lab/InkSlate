@@ -334,7 +334,23 @@ fun DocumentCanvas(
                         ?: source.render(slot.index, across)
                 }.getOrNull()
             }
-            if (bmp != null) rasters[slot.index] = PageTile(want, bmp)
+            // A piece has to look like the page it came from.
+            //
+            // Rendering part of a page is one call into a library, and the way it failed was to
+            // return a perfectly valid black rectangle - which is not an error, so nothing threw
+            // and nothing fell back, and every page went black. Checked against the small picture
+            // of the whole page, which is rendered a different way: if the two disagree about how
+            // light that part of the page is, the piece is wrong and the whole page is used.
+            val trustworthy = bmp != null &&
+                looksLike(bmp, overviews[slot.index], want, pageWidth, pageHeight)
+            if (bmp != null && !trustworthy) {
+                EventLog.warn(
+                    "render",
+                    "A rendered piece of page ${slot.index + 1} did not match the page; " +
+                        "falling back to the whole page"
+                )
+            }
+            if (trustworthy) rasters[slot.index] = PageTile(want, bmp!!)
         }
 
         // Pictures of pages nowhere near the window are memory and nothing else. A document read
@@ -616,6 +632,69 @@ private const val MAX_TILE_PX = 3_000
 
 /** How wide the small picture of a whole page is. Soft, but never missing. */
 private const val OVERVIEW_PX = 1_100
+
+/**
+ * Whether a rendered piece of a page resembles the same part of the whole page.
+ *
+ * Only how light it is, sampled from a handful of patches. That is enough to catch the failure
+ * this exists for - a piece that came back blank or black - without being so fussy that a piece
+ * rendered sharper than the picture it is compared against counts as wrong.
+ */
+private fun looksLike(
+    piece: ImageBitmap,
+    overview: PageTile?,
+    region: InkBox,
+    pageWidth: Float,
+    pageHeight: Float
+): Boolean {
+    val whole = overview ?: return true
+    if (pageWidth <= 0f || pageHeight <= 0f) return true
+    return runCatching {
+        val mine = brightnessOf(piece, 0f, 0f, 1f, 1f)
+        val theirs = brightnessOf(
+            whole.bitmap,
+            region.left / pageWidth,
+            region.top / pageHeight,
+            region.width / pageWidth,
+            region.height / pageHeight
+        )
+        if (mine < 0f || theirs < 0f) true else kotlin.math.abs(mine - theirs) < 0.35f
+    }.getOrDefault(true)
+}
+
+/** Mean brightness of a fraction of a picture, from sampled patches. -1 when it cannot be read. */
+private fun brightnessOf(
+    image: ImageBitmap,
+    fromX: Float,
+    fromY: Float,
+    spanX: Float,
+    spanY: Float
+): Float {
+    val left = (image.width * fromX).roundToInt().coerceIn(0, image.width - 1)
+    val top = (image.height * fromY).roundToInt().coerceIn(0, image.height - 1)
+    val width = (image.width * spanX).roundToInt().coerceIn(1, image.width - left)
+    val height = (image.height * spanY).roundToInt().coerceIn(1, image.height - top)
+    var total = 0f
+    var seen = 0
+    for (row in 0 until 4) {
+        for (column in 0 until 4) {
+            val x = (left + width * column / 4).coerceIn(left, left + width - 1)
+            val y = (top + height * row / 4).coerceIn(top, top + height - 1)
+            val patchW = minOf(6, left + width - x)
+            val patchH = minOf(6, top + height - y)
+            if (patchW <= 0 || patchH <= 0) continue
+            val pixels = image.toPixelMap(x, y, patchW, patchH)
+            for (py in 0 until patchH) {
+                for (px in 0 until patchW) {
+                    val colour = pixels[px, py]
+                    total += (colour.red + colour.green + colour.blue) / 3f
+                    seen++
+                }
+            }
+        }
+    }
+    return if (seen == 0) -1f else total / seen
+}
 
 /** Whether a page is near enough the window to be worth drawing or rendering. */
 private fun visible(slot: PageSlot, vp: Viewport): Boolean {

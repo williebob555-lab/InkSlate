@@ -79,6 +79,36 @@ class PageTileTest {
             }
 
             assertTrue("nothing was compared", compared > 1_000)
+            // Blank or black is the way this fails in practice, and comparing pixel by pixel is
+            // not enough on a page that is mostly white: say outright that the piece carries the
+            // same amount of light as the page it came from.
+            var pieceLight = 0.0
+            var wholeLight = 0.0
+            var lightSamples = 0
+            var ly = 4
+            while (ly < piecePixels.height - 4) {
+                var lx = 4
+                while (lx < piecePixels.width - 4) {
+                    val a = piecePixels[lx, ly]
+                    val wx = ((region.left * perPoint) + lx).roundToInt()
+                    val wy = ((region.top * perPoint) + ly).roundToInt()
+                    if (wx in 0 until wholePixels.width && wy in 0 until wholePixels.height) {
+                        val b = wholePixels[wx, wy]
+                        pieceLight += (a.red + a.green + a.blue) / 3.0
+                        wholeLight += (b.red + b.green + b.blue) / 3.0
+                        lightSamples++
+                    }
+                    lx += 5
+                }
+                ly += 5
+            }
+            val pieceMean = pieceLight / lightSamples
+            val wholeMean = wholeLight / lightSamples
+            assertTrue(
+                "the piece is a different colour from the page: %.3f against %.3f"
+                    .format(pieceMean, wholeMean),
+                abs(pieceMean - wholeMean) < 0.1
+            )
             // Not pixel-exact: the two are rasterised separately and a ruled line lands either
             // side of a pixel boundary differently. A displacement would not be a few per cent.
             val wrong = differing * 100.0 / compared
