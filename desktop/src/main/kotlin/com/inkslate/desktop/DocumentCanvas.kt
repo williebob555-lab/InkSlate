@@ -37,8 +37,9 @@ import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.unit.IntOffset
@@ -251,13 +252,14 @@ fun DocumentCanvas(
         }
     }
 
-    val density = LocalDensity.current.density
-
     Box(
         modifier
             .fillMaxSize()
             .background(Color(0xFF14171B))
             .onSizeChanged { viewport.viewSize = Size(it.width.toFloat(), it.height.toFloat()) }
+            // Where the drawing surface sits in the window, which is what lets a pointer reading
+            // be carried out to the screen and compared with the cursor. See PointerDiagnostics.
+            .onGloballyPositioned { PointerDiagnostics.canvasAt(it.positionInWindow()) }
             .pointerInput(Unit) { wheel(viewport) }
             .pointerInput(Unit) { middleDragPan(viewport) }
             .pointerInput(slots, tools.revision, selection, viewport.scale) {

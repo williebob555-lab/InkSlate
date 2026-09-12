@@ -833,18 +833,26 @@ private fun DiagnosticsSection() {
         Column(Modifier.padding(12.dp)) {
             Text("Pointer", style = MaterialTheme.typography.labelLarge)
             Text(
-                remember(tick) { PointerDiagnostics.latest },
+                remember(tick) { PointerDiagnostics.verdict },
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
             Text(
-                "From the last mark you drew. If ink lands away from the pen, this says why: " +
-                    "the position in the window against where the machine says the cursor is.",
+                remember(tick) { PointerDiagnostics.latest },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp)
             )
+            Text(
+                "The last few marks you drew, newest first. Windows tells a desktop program " +
+                    "nothing about which device drew a mark, so draw one with the mouse and one " +
+                    "with the pen: \"off by\" is how far the ink landed from the cursor, and " +
+                    "comparing the two lines is what tells the pen apart from the mouse.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+            TextButton(onClick = { tick++ }) { Text("Refresh") }
         }
     }
 
