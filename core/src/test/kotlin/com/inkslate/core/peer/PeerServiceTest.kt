@@ -223,64 +223,6 @@ class PeerServiceTest {
         )
     }
 
-    /**
-     * Three devices in a chain: the phone knows the tablet, the tablet knows the laptop, and the
-     * phone and the laptop have never met.
-     *
-     * Nothing forwards anything on purpose. What makes this work is that the tablet takes the
-     * phone's mark into the document it is holding, and then owes that mark to everyone it has
-     * not sent it to - which is the laptop. The same mechanism that gets a mark out of a pen gets
-     * it across a device that is merely in the middle.
-     *
-     * It stops of its own accord, too: a device only ever sends what it has not already sent, so
-     * a mark goes round a ring once rather than forever.
-     */
-    @Test
-    fun `a mark crosses a device that is only in the middle`() {
-        val tabletPort = freePort()
-        val phone = Device("phone-$run", "Phone", document(mark("phone-1")))
-        val tablet = Device("tablet-$run", "Tablet", document())
-        val laptop = Device("laptop-$run", "Laptop", document())
-        start(phone, freePort())
-        start(tablet, tabletPort)
-        start(laptop, freePort())
-
-        // Phone to tablet, and laptop to tablet. The phone and the laptop never pair.
-        tablet.service.offerPairing("606060")
-        phone.service.pairWith("127.0.0.1", tabletPort, "606060").getOrThrow()
-        tablet.service.offerPairing("707070")
-        laptop.service.pairWith("127.0.0.1", tabletPort, "707070").getOrThrow()
-
-        val deadline = System.currentTimeMillis() + 25_000
-        while (System.currentTimeMillis() < deadline &&
-            !(tablet.service.isConnected("phone-$run") && tablet.service.isConnected("laptop-$run"))
-        ) {
-            Thread.sleep(50)
-        }
-        assertTrue("the tablet should be holding both", tablet.service.isConnected("phone-$run"))
-        assertTrue("the tablet should be holding both", tablet.service.isConnected("laptop-$run"))
-
-        // The phone's mark reaches the tablet by the ordinary catch-up...
-        assertTrue(
-            "the tablet should have the phone's mark",
-            tablet.marksArrived.await(25, TimeUnit.SECONDS)
-        )
-        // ...and the tablet, now holding it, owes it onwards.
-        val passedOn = System.currentTimeMillis() + 25_000
-        while (System.currentTimeMillis() < passedOn &&
-            laptop.open.get().strokesOn(0).none { it.id == "phone-1" }
-        ) {
-            tablet.flush()
-            Thread.sleep(100)
-        }
-
-        assertEquals(
-            "the phone's mark should have crossed the tablet",
-            listOf("phone-1"),
-            laptop.open.get().strokesOn(0).map { it.id }
-        )
-    }
-
     @Test
     fun `a device that writes a file says so, without sending the file`() {
         val tabletPort = freePort()

@@ -119,4 +119,51 @@ class PeerOutboxTest {
 
         assertEquals(listOf("b-1"), outbox.pending(other)?.strokes?.map { it.id })
     }
+
+    // ---- webs of devices, not just pairs -----------------------------------------
+
+    /**
+     * A mark crossing a device that is only in the middle.
+     *
+     * Three devices, and the two ends have never met: the phone knows the tablet, the tablet knows
+     * the laptop. Nothing forwards anything on purpose. What carries the mark is that the tablet
+     * takes it into the document it is holding and then owes it to everyone it has not sent it to.
+     *
+     * Done here rather than over sockets because that is where the property actually lives. The
+     * same thing written with three real services spent its time waiting on connections and failed
+     * on a slow machine about half the time, which is a test that reports the weather.
+     */
+    @Test
+    fun `a mark crosses a device that is only in the middle`() {
+        val phone = base.withPage(0, listOf(mark("phone-1")), "phone")
+        var tablet = base
+        var laptop = base
+
+        val tabletOutbox = PeerOutbox()
+        val laptopOutbox = PeerOutbox()
+
+        // Phone to tablet: the tablet had nothing and now holds the phone's mark.
+        val fromPhone = PeerSync.answerFor(phone, PeerSync.digestOf(tablet))
+        tablet = PeerSync.applied(tablet, fromPhone)
+        assertEquals(listOf("phone-1"), tablet.strokesOn(0).map { it.id })
+
+        // Tablet onwards: it owes the laptop everything it has not sent, which is that mark.
+        val owed = tabletOutbox.pending(tablet)
+        assertNotNull("the middle device should owe the mark onwards", owed)
+        laptop = PeerSync.applied(laptop, owed!!)
+        tabletOutbox.sent(tablet)
+
+        assertEquals(
+            "the phone's mark should have crossed the tablet",
+            listOf("phone-1"),
+            laptop.strokesOn(0).map { it.id }
+        )
+
+        // And it stops there: nobody owes anything once everyone holds the same thing, so a ring
+        // of devices passes a mark round once rather than forever.
+        assertNull(tabletOutbox.pending(tablet))
+        laptopOutbox.sent(laptop)
+        assertNull(laptopOutbox.pending(laptop))
+    }
+
 }
