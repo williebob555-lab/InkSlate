@@ -128,7 +128,10 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                                         spec.background.name,
                                         spec.paperColor,
                                         spec.lineColor,
-                                        spec.spacing
+                                        spec.spacing,
+                                        // This program ruled the page, so it can rule the rest of
+                                        // the canvas to match and show no seam between them.
+                                        ownPaper = true
                                     )
                                 )
                                 DocumentIO.saveWorking(f, ink)

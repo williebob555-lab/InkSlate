@@ -537,7 +537,10 @@ class DocumentRepo(private val context: Context) {
             fingerprint = PageSources.fingerprint(file)
         ).copy(
             canvas = com.inkslate.core.InkCanvas.startingAt(
-                width, height, background, paperColor, lineColor, spacing
+                width, height, background, paperColor, lineColor, spacing,
+                // This program ruled the page, so it can rule the rest of the canvas to match
+                // and show no seam between the two.
+                ownPaper = true
             )
         )
         journal.setWorking(file, ink)

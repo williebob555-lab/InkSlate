@@ -1259,7 +1259,11 @@ class DrawingView @JvmOverloads constructor(
         // ruling behind an opaque bitmap on every frame.
         target.save()
         target.clipRect(canvasRect)
-        target.clipOutRect(paperRect)
+        // Paper this program ruled is ruled all the way across, page included. Keeping the page
+        // out of it and letting its picture cover the middle draws the same lines twice - once as
+        // lines and once as a photograph of lines - and they agree everywhere except in sharpness,
+        // which is what made the old page edge show up as the view came in.
+        if (!c.ownPaper) target.clipOutRect(paperRect)
         com.inkslate.core.PaperPattern.emit(
             background,
             canvasRect.left, canvasRect.top, canvasRect.right, canvasRect.bottom,
@@ -2157,13 +2161,18 @@ class DrawingView @JvmOverloads constructor(
 
             if (canvasRect != null) drawCanvasPaper(canvas, canvasRect, pageRect)
 
-            fillPaint.color = Color.WHITE
-            fillPaint.alpha = 255
-            fillPaint.colorFilter = pageFilter.filter
-            canvas.drawRect(pageRect, fillPaint)
-            fillPaint.colorFilter = null
-            slot.bitmap?.takeIf { !it.isRecycled }
-                ?.let { canvas.drawBitmap(it, null, pageRect, bitmapPaint) }
+            // A page whose paper this program ruled is already drawn, seamlessly, by the paint
+            // above; its picture is the same ruling again and only differs by being a picture.
+            val ownPaper = this.canvas?.ownPaper == true && canvasRect != null
+            if (!ownPaper) {
+                fillPaint.color = Color.WHITE
+                fillPaint.alpha = 255
+                fillPaint.colorFilter = pageFilter.filter
+                canvas.drawRect(pageRect, fillPaint)
+                fillPaint.colorFilter = null
+                slot.bitmap?.takeIf { !it.isRecycled }
+                    ?.let { canvas.drawBitmap(it, null, pageRect, bitmapPaint) }
+            }
             // The edge belongs to the whole surface, so on a canvas it goes round the canvas.
             canvas.drawRect(canvasRect ?: pageRect, pageEdge)
 

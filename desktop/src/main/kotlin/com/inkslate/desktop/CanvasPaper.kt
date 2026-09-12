@@ -144,45 +144,12 @@ object CanvasPaper {
             )
         }
 
-        // A hairline where the document's own page sits, so it is obvious which part of the
-        // canvas will still be there for someone opening the file in anything else.
+        // No line where the page ends.
         //
-        // Drawn edge by edge, and only the part of each edge on screen. The dashes are sized in
-        // screen pixels so that they look the same however far in the view is, which means the
-        // number of them along an edge grows with the zoom: the outline of one page is sixteen
-        // hundred separate dashes at eight times and six thousand at thirty, every one of them
-        // generated and rasterised on every frame. Clipping the line first bounds that by the
-        // width of the window instead. It is also the outline of the page, which is where the
-        // annotations are - so this was at its worst exactly where there was most to look at.
-        val edge = Color(0x33FFFFFF)
-        val hair = 1f / scale
-        val dashes = PathEffect.dashPathEffect(floatArrayOf(8f / scale, 6f / scale), 0f)
-        val seenLeft = visible?.left ?: canvas.left
-        val seenTop = visible?.top ?: canvas.top
-        val seenRight = visible?.right ?: canvas.right
-        val seenBottom = visible?.bottom ?: canvas.bottom
-
-        fun across(y: Float, fromX: Float, toX: Float) {
-            if (y < seenTop || y > seenBottom) return
-            val a = maxOf(fromX, seenLeft)
-            val b = minOf(toX, seenRight)
-            if (b <= a) return
-            drawLine(edge, Offset(a, y), Offset(b, y), strokeWidth = hair, pathEffect = dashes)
-        }
-
-        fun down(x: Float, fromY: Float, toY: Float) {
-            if (x < seenLeft || x > seenRight) return
-            val a = maxOf(fromY, seenTop)
-            val b = minOf(toY, seenBottom)
-            if (b <= a) return
-            drawLine(edge, Offset(x, a), Offset(x, b), strokeWidth = hair, pathEffect = dashes)
-        }
-
-        val paperRight = canvas.paperLeft + canvas.paperWidth
-        val paperBottom = canvas.paperTop + canvas.paperHeight
-        across(canvas.paperTop, canvas.paperLeft, paperRight)
-        across(paperBottom, canvas.paperLeft, paperRight)
-        down(canvas.paperLeft, canvas.paperTop, paperBottom)
-        down(paperRight, canvas.paperTop, paperBottom)
+        // There used to be a dashed hairline here, marking which part of the canvas is the page
+        // and so survives for anything else that opens the file. It is the right thing to know
+        // and the wrong way to be told: what it actually does is draw a border through the middle
+        // of a whiteboard, most visible on ruled paper, which is the one place the seam between
+        // page and canvas is supposed to be invisible.
     }
 }

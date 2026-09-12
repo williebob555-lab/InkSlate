@@ -48,7 +48,25 @@ data class InkCanvas(
     @SerialName("background") val background: String = "PLAIN",
     @SerialName("paperColor") val paperColor: Int = WHITE,
     @SerialName("lineColor") val lineColor: Int = DEFAULT_RULING,
-    @SerialName("spacing") val spacing: Float = 24f
+    @SerialName("spacing") val spacing: Float = 24f,
+    /**
+     * Whether the paper inside the page was ruled by this program rather than by a document.
+     *
+     * A whiteboard started from nothing has its ruling written into the page, so that the file
+     * still looks ruled in any other reader - and the same ruling painted across the rest of the
+     * canvas, which is not part of the page at all. Two drawings of the same lines, meeting at the
+     * page's edge: one a picture of ruling, the other the ruling itself, and at close zoom you can
+     * see exactly where the page used to end.
+     *
+     * Where this is set, the whole canvas is ruled directly and the picture of the page is not
+     * drawn over the middle of it. The ruling is then one drawing, sharp at any magnification,
+     * with no edge anywhere - and the page in the file is untouched, so it still opens ruled
+     * everywhere else.
+     *
+     * False for a canvas made out of a document somebody brought with them, whose page has content
+     * that has to be shown.
+     */
+    @SerialName("ownPaper") val ownPaper: Boolean = false
 ) {
     val width: Float get() = right - left
     val height: Float get() = bottom - top
@@ -171,12 +189,14 @@ data class InkCanvas(
             background: String = "PLAIN",
             paperColor: Int = WHITE,
             lineColor: Int = DEFAULT_RULING,
-            spacing: Float = 24f
+            spacing: Float = 24f,
+            /** True only when this program ruled the page itself; see [InkCanvas.ownPaper]. */
+            ownPaper: Boolean = false
         ) = InkCanvas(
             left = 0f, top = 0f, right = width, bottom = height,
             paperLeft = 0f, paperTop = 0f, paperRight = width, paperBottom = height,
             background = background, paperColor = paperColor,
-            lineColor = lineColor, spacing = spacing
+            lineColor = lineColor, spacing = spacing, ownPaper = ownPaper
         )
 
         /** Snap a value down to a multiple of [step]; used when laying patterns out. */

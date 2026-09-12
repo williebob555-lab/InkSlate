@@ -802,70 +802,24 @@ private fun CompanionFilesSection() {
  * saved" lines are exactly what buries the one line that matters.
  */
 /**
- * What each device and button does.
+ * Where the bindings live now.
  *
- * Every device that turned up here used to be another branch in one chain of conditions, and each
- * new one broke a neighbour: letting the right mouse button draw quietly enrolled the thumb
- * buttons as well. The combinations do not stop arriving and cannot all be anticipated, so what
- * they do is a table rather than a chain - and the table is editable, because the person holding
- * the pen knows about their own pen.
+ * They were a list of rows here, which is a screen nobody can reach while they are working - so a
+ * binding could only be looked at by putting the document down. They are drawn on the devices they
+ * belong to instead, inside the editor.
  */
 @Composable
 private fun BindingsSection() {
-    var bindings by remember { mutableStateOf(InputBindingStore.bindings) }
-
     SectionHeader("What each button does")
     Text(
-        "One row for every way of touching the page. Anything not listed - a pen with a third " +
-            "button, a tablet that reports itself as something else - draws with the pen " +
-            "belonging to whatever is holding it, rather than doing nothing.",
+        "Every way of touching a page - each pen button, each mouse button, a finger - can be " +
+            "set to draw with a particular pen, to move the page, to erase, or to undo. It is in " +
+            "the document itself, under the mouse icon at the top, because what a button does is " +
+            "something to check while using it rather than from another screen.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
     )
-
-    InputBindings.rows().forEach { (device, button) ->
-        val action = bindings.actionFor(device, button)
-        var open by remember(device, button) { mutableStateOf(false) }
-        Row(
-            Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("${device.label} - ${button.label}", style = MaterialTheme.typography.bodyMedium)
-                if (bindings.isChanged(device, button)) {
-                    Text(
-                        "changed",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            Box {
-                TextButton(onClick = { open = true }) { Text(action.label) }
-                DropdownMenu(open, onDismissRequest = { open = false }) {
-                    InputAction.entries.forEach { choice ->
-                        DropdownMenuItem(
-                            text = { Text(choice.label) },
-                            onClick = {
-                                open = false
-                                bindings = bindings.with(device, button, choice)
-                                InputBindingStore.bindings = bindings
-                            }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    TextButton(
-        onClick = {
-            bindings = InputBindings()
-            InputBindingStore.bindings = bindings
-        },
-        modifier = Modifier.padding(start = 8.dp)
-    ) { Text("Put them all back") }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

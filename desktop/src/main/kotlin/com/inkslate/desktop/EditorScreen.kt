@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
@@ -162,6 +163,7 @@ fun EditorScreen(
     var armedStampLabel by remember { mutableStateOf<String?>(null) }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
+    var controlsOpen by remember { mutableStateOf(false) }
     var bookmarkPrompt by remember { mutableStateOf<Int?>(null) }
     // Null while the outline is still being read, so the sheet can tell "none" from "not yet".
     var outline by remember(file) { mutableStateOf<List<OutlineEntry>?>(null) }
@@ -945,6 +947,11 @@ fun EditorScreen(
                     IconButton(onClick = { searchOpen = true }) {
                         Icon(Icons.Default.Search, "Find in document")
                     }
+                    // In the document, not behind the settings: what a button does is something
+                    // you want to check or change in the middle of using it.
+                    IconButton(onClick = { controlsOpen = true }) {
+                        Icon(Icons.Default.Mouse, "Controls")
+                    }
                     IconButton(onClick = { immersive = true }) {
                         Icon(Icons.Default.Fullscreen, "Focus mode")
                     }
@@ -1547,6 +1554,8 @@ fun EditorScreen(
             }
         )
     }
+
+    if (controlsOpen) ControlsSheet(onDismiss = { controlsOpen = false })
 
     if (versionsOpen) {
         VersionHistoryDialog(

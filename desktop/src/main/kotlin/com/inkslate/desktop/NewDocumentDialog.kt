@@ -75,6 +75,16 @@ fun NewDocumentDialog(
                     )
                 }
 
+                // Before the paper, not after it. Choosing a background adds rows - a ruling
+                // colour, a spacing - which pushed this below the bottom of the dialog, so the
+                // one choice that changes what the document fundamentally is could not be seen
+                // at the moment somebody had just decided they wanted ruled paper.
+                OptionLabel("Shape")
+                OptionWrapRow {
+                    OptionChip("Fixed pages", !canvas) { canvas = false }
+                    OptionChip("Canvas, grows as you write", canvas) { canvas = true }
+                }
+
                 BlankPaperOptions(style = paper, onChange = { paper = it })
 
                 OptionLabel(if (canvas) "Starting size" else "Size")
@@ -84,11 +94,6 @@ fun NewDocumentDialog(
                     }
                 }
 
-                OptionLabel("Shape")
-                OptionWrapRow {
-                    OptionChip("Fixed pages", !canvas) { canvas = false }
-                    OptionChip("Canvas, grows as you write", canvas) { canvas = true }
-                }
                 if (canvas) {
                     Text(
                         "One page that gets bigger whenever you write near an edge. It is still " +
