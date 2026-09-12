@@ -166,10 +166,22 @@ object UpdateCheck {
         return null
     }
 
+    /**
+     * The version a release is of.
+     *
+     * The tag first, which is where it is for an ordinary release. Then the release's name, for
+     * the one case where the tag cannot carry it: test builds are published onto a single moving
+     * `test` tag, so the tag says "test" and the name says which build it is. Reading only the tag
+     * dropped every test build on the floor, and a device on the test channel was told it was up
+     * to date because the only releases it could see were the stable ones it had already passed.
+     */
+    private fun versionOf(dto: ReleaseDto): Version? =
+        Version.parse(dto.tagName) ?: dto.name?.let { Version.findIn(it) }
+
     /** Visible for tests: turns a GitHub release payload into a [Release]. */
     internal fun parseRelease(body: String): Release? {
         val dto = json.decodeFromString<ReleaseDto>(body)
-        val version = Version.parse(dto.tagName) ?: return null
+        val version = versionOf(dto) ?: return null
         return Release(
             version = version,
             title = dto.name?.takeIf { it.isNotBlank() } ?: dto.tagName,
@@ -182,7 +194,7 @@ object UpdateCheck {
     /** Visible for tests: every release in a list payload, dropping any without a version. */
     internal fun parseReleases(body: String): List<Release> =
         json.decodeFromString<List<ReleaseDto>>(body).mapNotNull { dto ->
-            Version.parse(dto.tagName)?.let { version ->
+            versionOf(dto)?.let { version ->
                 Release(
                     version = version,
                     title = dto.name?.takeIf { it.isNotBlank() } ?: dto.tagName,
@@ -378,6 +390,21 @@ data class Version(val parts: List<Int>, val preRelease: String? = null) : Compa
          * Reads "1.2.3", "v1.2.3", "1.2.3-beta.1" and the like. Returns null when there is no
          * number to be found, rather than guessing.
          */
+        /**
+         * The first version-looking word in a piece of text.
+         *
+         * For "Test build 1.1.1-test.22", where the number is in the title rather than the tag.
+         * Deliberately strict about what counts: a word has to contain a dot between digits, so a
+         * release called "Spring 2026 edition" does not become version 2026.
+         */
+        fun findIn(text: String): Version? = text.split(' ', '\t', '\n', ',', '(', ')')
+            .asSequence()
+            .filter { it.contains('.') }
+            .mapNotNull { word ->
+                parse(word)?.takeIf { it.parts.size >= 2 }
+            }
+            .firstOrNull()
+
         fun parse(raw: String): Version? {
             var text = raw.trim()
             if (text.startsWith("v") || text.startsWith("V")) text = text.substring(1)

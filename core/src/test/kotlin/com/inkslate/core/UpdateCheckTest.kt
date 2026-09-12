@@ -144,6 +144,64 @@ class UpdateCheckTest {
         assertEquals(older, UpdateCheck.newestOf(listOf(patch, older)))
     }
 
+    // ---- reading a release ------------------------------------------------------
+
+    private fun releaseJson(tag: String, name: String, assets: List<String> = emptyList()) = """
+        {
+          "tag_name": "$tag",
+          "name": "$name",
+          "body": "notes",
+          "html_url": "https://example/releases",
+          "assets": [${assets.joinToString(",") {
+              """{"name":"$it","browser_download_url":"https://example/$it","size":1}"""
+          }}]
+        }
+    """.trimIndent()
+
+    /**
+     * The failure this test exists for.
+     *
+     * Test builds are published onto one moving `test` tag, so the tag has no version in it and
+     * the name has. Reading only the tag dropped every test build, and a device on the test
+     * channel was told it was up to date because the only releases left were stable ones it had
+     * already passed.
+     */
+    @Test
+    fun `a test build is recognised from its name when the tag has no version`() {
+        val releases = UpdateCheck.parseReleases(
+            "[" + releaseJson("test", "Test build 1.1.1-test.22") + "]"
+        )
+
+        assertEquals(1, releases.size)
+        assertEquals(Version.parse("1.1.1-test.22"), releases.single().version)
+    }
+
+    @Test
+    fun `the newest test build wins over the release it follows`() {
+        val releases = UpdateCheck.parseReleases(
+            "[" + releaseJson("test", "Test build 1.1.1-test.22") + "," +
+                releaseJson("v1.1.0", "InkSlate 1.1.0") + "]"
+        )
+
+        assertEquals(Version.parse("1.1.1-test.22"), UpdateCheck.newestOf(releases)?.version)
+    }
+
+    @Test
+    fun `a release with no version anywhere is left out rather than guessed at`() {
+        val releases = UpdateCheck.parseReleases(
+            "[" + releaseJson("nightly", "Spring edition") + "]"
+        )
+
+        assertTrue(releases.isEmpty())
+    }
+
+    /** A year is not a version, however much it looks like a number. */
+    @Test
+    fun `a name with a bare number in it is not mistaken for a version`() {
+        assertNull(Version.findIn("Spring 2026 edition"))
+        assertEquals(Version.parse("2.3"), Version.findIn("InkSlate 2.3 (beta)"))
+    }
+
     // ---- which file comes down ------------------------------------------------
 
     private fun asset(name: String) = UpdateCheck.Asset(name, "https://example/$name", 1)
