@@ -229,6 +229,16 @@ class DocumentRepo(private val context: Context) {
         return InkEmbedder.inkDigest(file) == ours
     }
 
+    /**
+     * The handwriting inside a file, without opening the document around it.
+     *
+     * For deciding whether a file that changed under an open editor is carrying anything new.
+     * Null when it cannot be read, which is treated as "something arrived" rather than "nothing
+     * did": being cautious about a file we cannot understand is the safer way round.
+     */
+    fun inkInFile(file: File): InkDocument? =
+        if (InkEmbedder.supports(file)) InkEmbedder.read(file) else readSidecar(File(InkDocument.sidecarPathFor(file.absolutePath)))
+
     // ---- opening -------------------------------------------------------------
 
     fun open(file: File): OpenDocument? {

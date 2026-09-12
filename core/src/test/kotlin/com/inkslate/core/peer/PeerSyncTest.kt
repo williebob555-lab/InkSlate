@@ -157,6 +157,44 @@ class PeerSyncTest {
         )
     }
 
+    // ---- a file that changed under an open document -----------------------------
+
+    /**
+     * The noise this removes.
+     *
+     * Two connected devices write each other's marks to disk constantly. Every one of those
+     * writes used to raise "this file changed elsewhere" - a dialog about handwriting that was
+     * already on the page, while you were drawing.
+     */
+    @Test
+    fun `a copy carrying only what we already have is not worth mentioning`() {
+        val ours = doc(mark("a-1"), mark("a-2"))
+        val theirCopy = doc(mark("a-1"))
+
+        assertFalse(PeerSync.carriesSomethingNew(ours, theirCopy))
+        assertFalse(PeerSync.carriesSomethingNew(ours, ours))
+    }
+
+    @Test
+    fun `a copy with a mark we have never seen is worth acting on`() {
+        val ours = doc(mark("a-1"))
+        val theirs = doc(mark("a-1"), mark("b-1", at = 8_000L))
+
+        assertTrue(PeerSync.carriesSomethingNew(ours, theirs))
+    }
+
+    /** An erase made elsewhere is a change too, even though it arrives as an absence. */
+    @Test
+    fun `a copy carrying an erase we have not heard about is worth acting on`() {
+        val both = doc(mark("a-1"), mark("a-2"))
+        val erasedThere = both.withPage(0, listOf(mark("a-1")), "tablet")
+
+        assertTrue(PeerSync.carriesSomethingNew(both, erasedThere))
+        // ...and once we have taken it in, the same copy says nothing new.
+        val after = PeerSync.applied(both, PeerSync.answerFor(erasedThere, PeerSync.digestOf(both)))
+        assertFalse(PeerSync.carriesSomethingNew(after, erasedThere))
+    }
+
     @Test
     fun `an explicit request is answered with exactly what was asked for`() {
         val tablet = doc(mark("tablet-1"), mark("tablet-2", page = 1))

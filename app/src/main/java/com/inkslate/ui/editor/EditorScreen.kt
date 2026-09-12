@@ -767,6 +767,43 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             ourStamp = now
             return@LaunchedEffect
         }
+        // What actually arrived. Two of your own devices connected to each other write each
+        // other's marks to disk constantly, and every one of those writes used to raise this -
+        // a dialog about handwriting that was already on the page, in the middle of drawing.
+        val arrived = withContext(Dispatchers.IO) { repo.inkInFile(file) }
+        val mine = doc?.ink
+        if (arrived != null && mine != null) {
+            if (!com.inkslate.core.peer.PeerSync.carriesSomethingNew(mine, arrived)) {
+                // Already here - over the link, or because we wrote it. Re-baseline and say
+                // nothing: this is the ordinary case when two devices are both awake.
+                ourStamp = now
+                return@LaunchedEffect
+            }
+            // Something new, and the pages are the same pages: fold it in where you can see it,
+            // rather than asking. The merge is the one every other path uses, and it cannot lose
+            // either side's work.
+            val sameShape = arrived.source.pageCount == mine.source.pageCount &&
+                arrived.pageSizes.size == mine.pageSizes.size
+            if (sameShape) {
+                syncPage()
+                val d = doc
+                if (d != null) {
+                    d.ink = d.ink.mergeWith(arrived)
+                    drawingView.value?.setStrokes(d.allStrokes())
+                    dirty = true
+                    pendingWrite = true
+                    writeState = WriteState.UNSAVED
+                    ourStamp = now
+                    EventLog.info(
+                        "sync",
+                        "${file.name}: folded in changes that arrived while it was open"
+                    )
+                    snackbar.showSnackbar("Folded in handwriting from another device")
+                }
+                return@LaunchedEffect
+            }
+        }
+
         EventLog.warn("sync", "${file.name} changed on disk while it was open")
         // Get this device's marks into the working store first. Whatever the user decides next,
         // the reload merges the two sides, and it can only do that if ours are written down.

@@ -87,6 +87,20 @@ object PeerSync {
         return ours.mergeWith(incoming)
     }
 
+    /**
+     * Whether a copy of the document that turned up carries anything we do not already hold.
+     *
+     * For the file that changes under an open editor. Two devices connected to each other write
+     * each other's marks to disk constantly, and every one of those writes used to raise "this
+     * file changed elsewhere" - a dialog about handwriting that was already on the page, in the
+     * middle of drawing. The question worth asking is not whether the file moved but whether
+     * anything in it is new.
+     */
+    fun carriesSomethingNew(ours: InkDocument, arrived: InkDocument): Boolean {
+        if (wantedFrom(ours, digestOf(arrived)).isNotEmpty()) return true
+        return arrived.deleted.any { (id, at) -> (ours.deleted[id] ?: -1L) < at }
+    }
+
     /** Whether an arriving batch would change anything, for deciding whether to repaint or save. */
     fun changesAnything(ours: InkDocument, marks: PeerMessage.Marks): Boolean {
         val mine = ours.pages.values.flatten().associate { it.id to it.updatedUtc }
