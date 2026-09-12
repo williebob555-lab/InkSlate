@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -174,9 +175,18 @@ fun DocumentCanvas(
 
     // Grouped by page and ordered highlighter-first once per edit rather than once per frame.
     // Highlighter under the ink it marks is the order the exporter writes, so the two agree.
-    val byPage = remember(strokes) {
-        strokes.groupBy { it.pageIndex }
-            .mapValues { (_, marks) -> marks.sortedBy { if (it.isHighlighter) 0 else 1 } }
+    //
+    // Derived rather than remembered against the list. The list is the same object for the life of
+    // the document and changes by being mutated, so remembering against it computes the grouping
+    // when the document opens and never again: every mark drawn afterwards stayed out of it and
+    // went invisible the moment it stopped being the live one, while sitting in the list the whole
+    // time and reappearing on reopening. A derived value watches the contents instead, which is
+    // the same thing the frame was watching when the work was done inside it.
+    val byPage by remember(strokes) {
+        derivedStateOf {
+            strokes.groupBy { it.pageIndex }
+                .mapValues { (_, marks) -> marks.sortedBy { if (it.isHighlighter) 0 else 1 } }
+        }
     }
 
     // The shapes belong to this document and nothing else; holding them past it is just memory.
