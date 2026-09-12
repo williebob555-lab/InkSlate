@@ -89,7 +89,15 @@ class PdfSource(private val file: File) : DesktopSource {
                 whole.lowerLeftX, whole.lowerLeftY, whole.width, whole.height
             )
             return runCatching {
-                val scale = (targetWidthPx / region.width).coerceIn(0.05f, 12f)
+                // No upper limit on how magnified the piece may be, only on how many pixels
+                // it comes to - which the caller has already decided by asking for a width. The
+                // limit here is left over from rendering whole pages, where the magnification
+                // was what decided the size of the bitmap; a piece of a page has a size of its
+                // own, and capping the magnification instead just renders it too small and then
+                // stretches it. That is a picture of the page going soft as the view comes in -
+                // and on a whiteboard, where the picture covers ruling that is drawn underneath
+                // it perfectly sharply, it reads as the background fading away entirely.
+                val scale = (targetWidthPx / region.width).coerceAtLeast(0.05f)
                 // The page's own coordinates count upwards from the bottom; ink and the screen
                 // count downwards from the top, which is the whole of the conversion.
                 page.setCropBox(
