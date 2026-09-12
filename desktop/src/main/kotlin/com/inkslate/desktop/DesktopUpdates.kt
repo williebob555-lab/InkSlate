@@ -125,6 +125,26 @@ object DesktopUpdates {
         throw last ?: IllegalStateException("Windows would not open ${installer.name}")
     }
 
+    /**
+     * Keep only the installer just fetched.
+     *
+     * One is a hundred megabytes and nothing ever comes back for the last one, so an app that
+     * updates often otherwise fills a disk with installers it has already run. Done after the
+     * download rather than before it, so a failed download leaves the previous one to fall back on.
+     */
+    fun keepOnly(installer: File) {
+        val dir = installer.parentFile ?: return
+        runCatching {
+            dir.listFiles().orEmpty().forEach { other ->
+                val stale = other.isFile && other != installer &&
+                    other.extension.equals("msi", ignoreCase = true)
+                if (stale && other.delete()) {
+                    EventLog.info("update", "Removed the old installer ${other.name}")
+                }
+            }
+        }
+    }
+
     /** Show the file in Explorer, for when opening it is not what the person wants yet. */
     fun reveal(installer: File) {
         ProcessBuilder("explorer.exe", "/select,", installer.absolutePath).start()

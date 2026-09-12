@@ -1105,6 +1105,7 @@ private fun UpdateSection() {
                                 }
                             }.fold(
                                 onSuccess = {
+                                    DesktopUpdates.keepOnly(it)
                                     phase = Phase.Downloaded(
                                         it, found.release.version.toString()
                                     )
