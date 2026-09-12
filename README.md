@@ -1,5 +1,7 @@
 # InkSlate
 
+<img src="brand/inkslate-512.png" alt="" width="96" align="right">
+
 An annotation app for homework. Open a PDF or a picture, write on it with a stylus, and save
 either a copy or over the original. There is an Android build and a Windows build, and they are
 the same application: a worksheet annotated on the tablet opens on the laptop with the handwriting
@@ -17,7 +19,10 @@ asks for **All files access** — that one is a Settings screen rather than a no
 prompt, and it is what lets the app open documents wherever you keep them instead of copying them
 into its own folder.
 
-**Windows** — download the `.msi` and run it.
+**Windows** — download the `.msi` and run it. Windows scans an unsigned installer of this size
+before showing anything, which can take a few minutes the first time and looks like nothing is
+happening; right-click the file, choose Properties, and tick **Unblock** first to skip that. The
+in-app updater downloads without that mark, so later updates do not have the wait.
 
 ### Updating
 

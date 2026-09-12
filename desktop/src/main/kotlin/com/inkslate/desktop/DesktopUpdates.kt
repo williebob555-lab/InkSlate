@@ -69,9 +69,26 @@ object DesktopUpdates {
         return File(base, "InkSlate/updates").apply { mkdirs() }
     }
 
+    /**
+     * Take the "downloaded from the internet" mark off a file.
+     *
+     * Windows attaches that mark to anything a browser saves, and then scans the whole file before
+     * the installer's first window appears - which for a hundred-megabyte installer is minutes of
+     * apparently nothing happening. A file written by this app has no mark to begin with, so this
+     * is belt and braces: it costs a deleted stream and removes a class of "it is broken" that is
+     * really "it is thinking".
+     *
+     * The mark is an NTFS alternate data stream, so removing it is deleting a file whose name has
+     * the stream appended. Anywhere else that is simply a file that does not exist.
+     */
+    fun unblock(file: File) {
+        runCatching { File(file.absolutePath + ":Zone.Identifier").delete() }
+    }
+
     /** Hand the installer to Windows. It asks for its own confirmation before it does anything. */
     fun open(installer: File) {
         require(installer.isFile) { "The downloaded installer is no longer there." }
+        unblock(installer)
         if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
             Desktop.getDesktop().open(installer)
         } else {
