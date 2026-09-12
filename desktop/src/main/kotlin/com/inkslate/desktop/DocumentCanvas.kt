@@ -448,6 +448,7 @@ fun DocumentCanvas(
             RenderStats.pagesResident = rasters.size
             RenderStats.pagesVisible = pagesVisible
             RenderStats.recordFrame((System.nanoTime() - startedNs) / 1_000_000f, drawnStrokes)
+            RenderStats.noteIfSlow(vp.scale)
         }
     }
 }

@@ -58,7 +58,42 @@ object RenderStats {
         averageFrameMs = if (frames <= 1) ms else averageFrameMs * 0.92f + ms * 0.08f
     }
 
+    /** Slower than this and a frame was visibly dropped rather than merely unremarkable. */
+    private const val SLOW_MS = 24f
+
+    /** One line every few seconds at most: a log that scrolls is a log nobody can read. */
+    private const val QUIET_MS = 3_000L
+
+    @Volatile private var lastNoteAt = 0L
+
+    /**
+     * Write down a slow frame, with everything needed to say why it was slow.
+     *
+     * "It stutters" has had five different causes in this build, and each was found by measuring
+     * after guessing. The numbers that separate them - how many marks were actually drawn against
+     * how many exist, how far in the view was, whether the shapes were being rebuilt - are all
+     * here at the moment it happens, so the next one is read rather than reasoned about.
+     */
+    fun noteIfSlow(scale: Float) {
+        if (lastFrameMs < SLOW_MS) return
+        val now = System.currentTimeMillis()
+        if (now - lastNoteAt < QUIET_MS) return
+        lastNoteAt = now
+        val looked = geometryHits + geometryMisses
+        EventLog.warn(
+            "render",
+            ("Slow frame %.1fms (avg %.1f) at zoom %.2f: marks %d/%d, pages %d/%d, " +
+                "shapes reused %d%%, live %d").format(
+                lastFrameMs, averageFrameMs, scale, drawnStrokes, totalStrokes,
+                pagesVisible, pageCount,
+                if (looked == 0L) 0L else geometryHits * 100 / looked,
+                livePoints
+            )
+        )
+    }
+
     fun reset() {
+        lastNoteAt = 0L
         worstFrameMs = 0f
         averageFrameMs = 0f
         frames = 0
