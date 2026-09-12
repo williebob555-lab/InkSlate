@@ -136,9 +136,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # MSI insists on a plain three-part version, so the pre-release suffix is trimmed for the
-      # installer's own metadata. The app still reports the full version, which is what the
-      # updater compares.
+      # MSI insists on a plain three-part version, so the test build's number is folded into the
+      # third one (see msiVersion in desktop/build.gradle.kts) - without it every test build is
+      # 1.1.1 to Windows, which is not an upgrade over the last one but a reinstall of the same
+      # thing. The app still reports the full version, which is what the updater compares.
       - name: Build the MSI
         shell: bash
         run: |
@@ -151,6 +152,35 @@ jobs:
           mkdir -p dist
           find desktop/build/compose -name '*.msi' \
             -exec cp {} "dist/InkSlate-${{ needs.version.outputs.name }}.msi" \;
+
+      # Windows creates a system restore point and prices up every file before it shows the
+      # installer's first window, which is a minute or two of an empty window on a package that
+      # carries a whole runtime. This asks it not to: 7 is no restore point, costing done once,
+      # and fewer progress messages. It is a property the package carries, and jpackage has no
+      # way to set it, so it is written into the built installer here.
+      - name: Ask Windows not to dawdle before the installer appears
+        shell: powershell
+        run: |
+          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          $installer = New-Object -ComObject WindowsInstaller.Installer
+          $db = $installer.OpenDatabase($msi, 1)
+          foreach ($sql in @(
+            "DELETE FROM Property WHERE Property = 'MSIFASTINSTALL'",
+            "INSERT INTO Property (Property, Value) VALUES ('MSIFASTINSTALL', '7')"
+          )) { $v = $db.OpenView($sql); $v.Execute(); $v.Close() }
+          $db.Commit()
+          $db = $null; $installer = $null
+          [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+          # Read it back from a fresh handle, because a commit that silently did nothing would
+          # look exactly like a commit that worked.
+          $check = New-Object -ComObject WindowsInstaller.Installer
+          $rdb = $check.OpenDatabase($msi, 0)
+          foreach ($name in @('MSIFASTINSTALL', 'ProductVersion', 'ProductCode', 'UpgradeCode')) {
+            $v = $rdb.OpenView("SELECT Value FROM Property WHERE Property = '$name'")
+            $v.Execute(); $r = $v.Fetch()
+            if ($r) { Write-Host "$name = $($r.StringData(1))" } else { Write-Host "$name absent" }
+            $v.Close()
+          }
 
       - uses: actions/upload-artifact@v4
         with:
