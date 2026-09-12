@@ -51,6 +51,9 @@ import com.inkslate.core.Box as InkBox
 import com.inkslate.core.PageArranger
 import com.inkslate.core.PageExtent
 import com.inkslate.core.PageLayout
+import com.inkslate.core.InputAction
+import com.inkslate.core.InputButton
+import com.inkslate.core.InputDevice
 import com.inkslate.core.Stroke
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.debounce
@@ -151,6 +154,9 @@ fun DocumentCanvas(
     onPlaceText: (Float, Float, Int) -> Unit,
     onStampPlaced: () -> Unit = {},
     onDrew: (InkBox) -> Unit = {},
+    /** For inputs bound to undo and redo - a thumb button, by default. See InputBindings. */
+    onUndo: () -> Unit = {},
+    onRedo: () -> Unit = {},
     onCaptureRegion: (InkBox, Int) -> Unit = { _, _ -> },
     /** Pictures pasted into this document, looked up by the id a stroke carries. */
     images: (String) -> ImageBitmap? = { null },
@@ -424,7 +430,7 @@ fun DocumentCanvas(
             // be carried out to the screen and compared with the cursor. See PointerDiagnostics.
             .onGloballyPositioned { PointerDiagnostics.canvasAt(it.positionInWindow()) }
             .pointerInput(Unit) { wheel(viewport) }
-            .pointerInput(Unit) { middleDragPan(viewport) }
+            .pointerInput(tools.bindings) { middleDragPan(viewport, tools) }
             // Deliberately not keyed on the zoom. Changing a key tears the gesture detector down
             // and builds it again, which at one key per frame of a zoom is most of the work of
             // zooming; the gesture reads the camera as it runs rather than being rebuilt for it.
@@ -439,18 +445,31 @@ fun DocumentCanvas(
                     }
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
 
-                    // Which pen this stroke belongs to.
-                    //
-                    // Windows hands a desktop program a pen, a finger and a mouse identically -
-                    // AWT has no notion of the first two - so what can be told apart here is the
-                    // button, and that is what picks the profile: the left one draws with the
-                    // left-mouse pen and the right one with its own. A stylus barrel arrives as
-                    // a secondary press too, which is the same answer by a different route.
-                    val secondary = currentEvent.buttons.isSecondaryPressed
-                    val heldButton = if (down.type == PointerType.Stylus && secondary) 1 else 0
+                    // Name what touched the screen, then ask the table what that does. Naming
+                    // and deciding are separate on purpose: everything uncertain about a device
+                    // is in the naming, and what follows from it is a row anybody can change.
+                    val device = InputSignal.deviceOf(down)
+                    val button = InputSignal.buttonOf(device, currentEvent.buttons)
+                    val action = tools.bindings.actionFor(device, button)
 
                     // Two fingers are a pinch, not a stroke, so nothing starts under them.
                     if (WindowsPointer.gesturing) return@awaitEachGesture
+
+                    // The three that are not gestures at all: they happen once, on the press.
+                    when (action) {
+                        InputAction.NOTHING -> return@awaitEachGesture
+                        InputAction.UNDO -> {
+                            onUndo()
+                            return@awaitEachGesture
+                        }
+
+                        InputAction.REDO -> {
+                            onRedo()
+                            return@awaitEachGesture
+                        }
+
+                        else -> Unit
+                    }
 
                     val doc = viewport.screenToDoc(down.position)
                     val slot = slotAt(doc.x, doc.y) ?: return@awaitEachGesture
@@ -476,8 +495,7 @@ fun DocumentCanvas(
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
                         wordsUnder = wordsUnder,
-                        heldButton = heldButton,
-                        secondaryButton = secondary
+                        action = action
                     )
                 }
             }
@@ -922,7 +940,12 @@ private fun DrawScope.drawRuler(
  * Watched on the initial pass and consumed while it is panning, so the pen underneath never sees
  * the drag and no mark is left behind by moving the page.
  */
-private suspend fun PointerInputScope.middleDragPan(viewport: Viewport) {
+private suspend fun PointerInputScope.middleDragPan(viewport: Viewport, tools: ToolState) {
+    // Only while the middle button is still the one that moves the page. Bound to something else
+    // it falls through to the ordinary gesture like any other button, which is the point of a
+    // table rather than a handler per button.
+    val pans = tools.bindings.actionFor(InputDevice.MOUSE, InputButton.MIDDLE) == InputAction.PAN
+    if (!pans) return
     awaitPointerEventScope {
         var last: Offset? = null
         var lastAt = 0L

@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inkslate.core.BrushType
+import com.inkslate.core.InputBindings
 import com.inkslate.core.InputMode
 import com.inkslate.core.Palette
 import com.inkslate.core.PenPreset
@@ -150,6 +151,19 @@ class ToolState {
      * A held barrel button wins, then the pointer's own kind. Called on every press, which is
      * what makes switching between a pen and a finger need no settings change at all.
      */
+    /**
+     * Move to the pen an input is bound to, and remember that its button exists.
+     *
+     * What [adoptInput] did once the guessing is taken out of it: the table has already decided
+     * which pen this is, so all that is left is to switch to it and to note that a pen button has
+     * been seen, which is what puts its profile into the switch on the toolbar.
+     */
+    fun adoptMode(mode: InputMode) {
+        if (mode == InputMode.BUTTON_1) noteStylusButtonSeen(false)
+        if (mode == InputMode.BUTTON_2) noteStylusButtonSeen(true)
+        switchMode(mode)
+    }
+
     fun adoptInput(
         isStylus: Boolean,
         isTouch: Boolean,
@@ -167,6 +181,18 @@ class ToolState {
             )
         )
     }
+
+    /**
+     * What each device and button does. See InputBindings.
+     *
+     * Written down as soon as it changes: a binding somebody set up is not a thing to lose on the
+     * way out of the program.
+     */
+    var bindings: InputBindings
+        get() = InputBindingStore.bindings
+        set(value) {
+            InputBindingStore.bindings = value
+        }
 
     var revision by mutableStateOf(0)
         private set

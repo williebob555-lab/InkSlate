@@ -5,6 +5,8 @@ import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.isBackPressed
+import androidx.compose.ui.input.pointer.isForwardPressed
 import androidx.compose.ui.input.pointer.isPrimaryPressed
 import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
@@ -14,6 +16,7 @@ import com.inkslate.core.Box as InkBox
 import com.inkslate.core.DynamicWidth
 import com.inkslate.core.EraserMode
 import com.inkslate.core.InkPoint
+import com.inkslate.core.InputAction
 import com.inkslate.core.Stroke
 import com.inkslate.core.Tool
 import kotlin.math.abs
@@ -44,7 +47,17 @@ suspend fun AwaitPointerEventScope.awaitDrawingDown(): PointerInputChange {
     while (true) {
         val event = awaitPointerEvent()
         if (event.type != PointerEventType.Press) continue
-        if (event.buttons.isTertiaryPressed) continue
+
+        // Only the two buttons that draw. A pen or a finger presses nothing at all - there are no
+        // buttons on the event - so anything without buttons is a contact and draws; anything with
+        // only the others is the middle button, which pans, or a thumb button, which was drawing
+        // with the left pen from the moment the right one was allowed to draw at all.
+        val buttons = event.buttons
+        val draws = buttons.isPrimaryPressed || buttons.isSecondaryPressed
+        val elsewhere = buttons.isTertiaryPressed ||
+            buttons.isBackPressed ||
+            buttons.isForwardPressed
+        if (elsewhere && !draws) continue
         // Taken whether or not it has been consumed, as the call this replaces did explicitly:
         // something upstream having looked at the press is not a reason to refuse to draw.
         return event.changes.firstOrNull() ?: continue
@@ -112,30 +125,31 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
      * to the freehand mark rather than snapping to nothing.
      */
     wordsUnder: ((Int, List<Pair<Float, Float>>) -> List<InkBox>)? = null,
-    /** Which stylus barrel button was down when the pointer landed, or 0 for none. */
-    heldButton: Int = 0,
-    /** Whether the secondary button was down, which is its own pen rather than a modifier. */
-    secondaryButton: Boolean = false
+    /**
+     * What this input does, looked up in the table rather than worked out from the device.
+     *
+     * See InputBindings. This no longer asks what pressed it; it is told what that means. Every
+     * device that turned up used to be another branch here, written against the one before it,
+     * and each new branch broke a neighbour.
+     */
+    action: InputAction = InputAction.DRAW_MOUSE
 ) {
-    // Whichever device landed picks its own profile first - a pen, a finger, or the pen with a
-    // barrel button held, which is a whole second pen rather than a modifier on this one.
-    // On Windows none of this arrives in the pointer event - every device is reported as a mouse -
-    // so what Windows itself said about the contact is used where it is available. See
-    // WindowsPointer. Elsewhere, and if the hook is not in place, the pointer type is the answer.
-    val native = WindowsPointer.takeIf { it.active }
-    // Which pen button Windows says is held, if it is telling us anything at all. The pointer
-    // event cannot carry this: a barrel press arrives there as a right click and the second button
-    // as nothing, which is why both were one pen before.
-    val barrel = native?.penButton?.takeIf { it > 0 } ?: heldButton
-    tools.adoptInput(
-        isStylus = down.type == PointerType.Stylus || native?.device == WindowsPointer.Device.PEN,
-        isTouch = down.type == PointerType.Touch || native?.device == WindowsPointer.Device.FINGER,
-        heldButton = barrel,
-        secondaryButton = secondaryButton
-    )
+    // The pen the action names, if it names one. Moving the page or erasing keeps whatever pen is
+    // in hand, so an erase is the width of the pen doing it.
+    if (tools.autoSwitchInput) action.mode?.let { tools.adoptMode(it) }
+
+    // Panning and erasing are tools this build already has, so an input bound to either runs as
+    // that tool for the length of one gesture without disturbing what the pen is set to.
+    val forced = when (action) {
+        InputAction.PAN -> Tool.PAN
+        InputAction.ERASE -> Tool.ERASER
+        else -> null
+    }
+
     // Read synchronously: the config is deliberately not Compose state so the tool in hand the
     // instant the pointer lands is the one that acts.
     val cfg = tools.active
+    val inHand = forced ?: cfg.tool
     val index = slot.index
     val scale = viewport.scale
 
@@ -230,7 +244,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             onStampPlaced()
         }
 
-        cfg.tool == Tool.PAN -> {
+        inHand == Tool.PAN -> {
             viewport.stop()
             var last = down.position
             var lastAt = System.nanoTime()
@@ -249,7 +263,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             viewport.throwBy(vx, vy)
         }
 
-        cfg.tool == Tool.ERASER -> {
+        inHand == Tool.ERASER -> {
             // One rub can touch the same stroke repeatedly, and a partial erase replaces it with
             // pieces the next moment can erase again. So the undo record is built from the two
             // ends only: the strokes as they were when the gesture began, and whatever is left
@@ -280,7 +294,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             }
         }
 
-        cfg.tool == Tool.SELECT -> {
+        inHand == Tool.SELECT -> {
             val chosen = strokes.filter { it.id in selection }
             val box = chosen.unionBounds()
             // The frame and the handle being dragged travel together, so having one is having both.
@@ -348,7 +362,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             }
         }
 
-        cfg.tool == Tool.REGION -> {
+        inHand == Tool.REGION -> {
             // Box a figure on the page and it becomes a movable object. The rectangle is reported
             // in page coordinates; the editor renders that region and stores the picture, because
             // rendering needs the document and this does not have it.
@@ -362,7 +376,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             if (boxed.width > 8f && boxed.height > 8f) onCaptureRegion(boxed, index)
         }
 
-        cfg.tool == Tool.TEXT -> {
+        inHand == Tool.TEXT -> {
             // Land on an existing text box and you are editing it, not stacking a second one
             // on top.
             val existing = strokes.lastOrNull {
@@ -373,8 +387,8 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             if (existing != null) onEditText(existing) else onPlaceText(px, py, index)
         }
 
-        cfg.tool.isShape || cfg.tool == Tool.TABLE -> {
-            val kind = when (cfg.tool) {
+        inHand.isShape || inHand == Tool.TABLE -> {
+            val kind = when (inHand) {
                 Tool.LINE -> Stroke.Kind.LINE
                 Tool.ARROW -> Stroke.Kind.ARROW
                 Tool.RECT -> Stroke.Kind.RECT

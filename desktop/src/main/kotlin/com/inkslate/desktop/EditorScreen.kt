@@ -1227,6 +1227,9 @@ fun EditorScreen(
                         loadedImages[id] ?: images.load(id)?.also { loadedImages[id] = it }
                     },
                     onCaptureRegion = { region, pageIndex -> captureRegion(region, pageIndex) },
+                    // A thumb button, by default; whatever the table says otherwise.
+                    onUndo = ::undoOnce,
+                    onRedo = ::redoOnce,
                     onStampPlaced = { armedStampLabel = null },
                     onDrew = { drawn ->
                         // Growth is free while drawing: the extra room is a rectangle in memory
