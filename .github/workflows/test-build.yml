@@ -1,6 +1,11 @@
 name: Test build
 
-# Every push to main publishes a test build, so a small fix does not need a release cut for it.
+# A test build goes out when a commit asks for one, by carrying `[build]` in its message - and not
+# otherwise. A set of changes is usually several commits, and publishing one of these per commit
+# means five installers for one afternoon's work, none of which anybody wanted separately. The
+# marker goes on the last commit of the set, which is the one that is worth installing.
+#
+# It can also be started by hand from the Actions tab, for a build of whatever main holds now.
 #
 # It goes out as a GitHub *pre-release* on a single moving tag. That is the whole mechanism: the
 # `releases/latest` endpoint the app asks by default ignores pre-releases outright, so a device on
@@ -24,6 +29,10 @@ permissions:
 jobs:
   version:
     name: Work out the version
+    # Everything else needs this job, so this one condition gates the whole workflow.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[build]')
     runs-on: ubuntu-latest
     outputs:
       name: ${{ steps.derive.outputs.name }}
