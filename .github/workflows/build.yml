@@ -33,6 +33,18 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
+      # Only when something broke, and only for a fortnight: a failure that cannot be read is a
+      # failure somebody has to reproduce by guesswork.
+      - name: Keep the test report if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            core/build/reports/tests
+            app/build/reports/tests
+          retention-days: 14
+
   desktop:
     name: Desktop (Windows)
     runs-on: windows-latest
@@ -49,3 +61,13 @@ jobs:
 
       - name: Unit tests and compile
         run: ./gradlew :core:test :desktop:test :desktop:compileKotlin --stacktrace
+
+      - name: Keep the test report if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-test-reports
+          path: |
+            core/build/reports/tests
+            desktop/build/reports/tests
+          retention-days: 14

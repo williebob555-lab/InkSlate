@@ -23,7 +23,22 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class PeerServiceTest {
 
+    private companion object {
+        val counter = java.util.concurrent.atomic.AtomicInteger()
+    }
+
     private val started = mutableListOf<PeerService>()
+
+    /**
+     * A different identity for every test in the class.
+     *
+     * The services run on real sockets and their retry loops outlive the test that made them by a
+     * moment. Reusing "tablet" and "laptop" meant a leftover loop from one test could connect to
+     * the next test's listener - the operating system hands out the same loopback ports again -
+     * and pair with it, which is a failure that only appears on a machine fast enough to get
+     * there first.
+     */
+    private val run = counter.incrementAndGet()
 
     @After
     fun tearDown() {
@@ -102,8 +117,8 @@ class PeerServiceTest {
     @Test
     fun `two devices pair with a code and then agree about the document`() {
         val tabletPort = freePort()
-        val tablet = Device("tablet", "Tablet", document(mark("tablet-1")))
-        val laptop = Device("laptop", "Laptop", document(mark("laptop-1")))
+        val tablet = Device("tablet-$run", "Tablet", document(mark("tablet-1")))
+        val laptop = Device("laptop-$run", "Laptop", document(mark("laptop-1")))
 
         start(tablet, tabletPort)
         start(laptop, freePort())
@@ -114,7 +129,7 @@ class PeerServiceTest {
         val paired = laptop.service.pairWith("127.0.0.1", tabletPort, code)
 
         assertTrue("pairing should succeed: ${paired.exceptionOrNull()}", paired.isSuccess)
-        assertEquals("tablet", paired.getOrThrow().tag)
+        assertEquals("tablet-$run", paired.getOrThrow().tag)
         assertEquals("Tablet", paired.getOrThrow().name)
 
         // The connection that follows is the real one, and each side fills the other's gap.
@@ -137,8 +152,8 @@ class PeerServiceTest {
     @Test
     fun `a mark made after the connection is up arrives on its own`() {
         val tabletPort = freePort()
-        val tablet = Device("tablet", "Tablet", document())
-        val laptop = Device("laptop", "Laptop", document())
+        val tablet = Device("tablet-$run", "Tablet", document())
+        val laptop = Device("laptop-$run", "Laptop", document())
         start(tablet, tabletPort)
         start(laptop, freePort())
 
@@ -147,10 +162,10 @@ class PeerServiceTest {
 
         // Wait for the connection rather than for a mark: there are none yet.
         val deadline = System.currentTimeMillis() + 20_000
-        while (!laptop.service.isConnected("tablet") && System.currentTimeMillis() < deadline) {
+        while (!laptop.service.isConnected("tablet-$run") && System.currentTimeMillis() < deadline) {
             Thread.sleep(50)
         }
-        assertTrue("the two should be connected", laptop.service.isConnected("tablet"))
+        assertTrue("the two should be connected", laptop.service.isConnected("tablet-$run"))
 
         // The pen moves on the tablet.
         val drawn = mark("tablet-live", at = 9_000L)
@@ -164,11 +179,45 @@ class PeerServiceTest {
         assertEquals(listOf("tablet-live"), laptop.open.get().strokesOn(0).map { it.id })
     }
 
+    /**
+     * Both devices reaching for each other in the same moment.
+     *
+     * This is what broke: each side tried to keep one socket and close the other, decided at the
+     * moment its own registered - when the other might not exist yet - and both could end up
+     * holding the one the other had closed. Nothing was said again, by either of them, forever.
+     */
+    @Test
+    fun `two devices dialling each other at once still end up in step`() {
+        val tabletPort = freePort()
+        val laptopPort = freePort()
+        val tablet = Device("tablet-$run", "Tablet", document(mark("tablet-1")))
+        val laptop = Device("laptop-$run", "Laptop", document(mark("laptop-1")))
+        start(tablet, tabletPort)
+        start(laptop, laptopPort)
+
+        // Paired, and then both told about the other at the same instant, so both dial.
+        tablet.service.offerPairing("505050")
+        val peer = laptop.service.pairWith("127.0.0.1", tabletPort, "505050").getOrThrow()
+        tablet.service.addPeer(
+            PeerService.Peer("laptop-$run", "Laptop", "127.0.0.1", laptopPort, "505050")
+        )
+        laptop.service.addPeer(peer)
+
+        assertTrue(
+            "the tablet's mark should reach the laptop",
+            laptop.marksArrived.await(25, TimeUnit.SECONDS)
+        )
+        assertTrue(
+            "the laptop's mark should reach the tablet",
+            tablet.marksArrived.await(25, TimeUnit.SECONDS)
+        )
+    }
+
     @Test
     fun `a device that writes a file says so, without sending the file`() {
         val tabletPort = freePort()
-        val tablet = Device("tablet", "Tablet", document())
-        val laptop = Device("laptop", "Laptop", document())
+        val tablet = Device("tablet-$run", "Tablet", document())
+        val laptop = Device("laptop-$run", "Laptop", document())
         start(tablet, tabletPort)
         start(laptop, freePort())
 
@@ -176,7 +225,7 @@ class PeerServiceTest {
         laptop.service.pairWith("127.0.0.1", tabletPort, "246810").getOrThrow()
 
         val deadline = System.currentTimeMillis() + 20_000
-        while (!laptop.service.isConnected("tablet") && System.currentTimeMillis() < deadline) {
+        while (!laptop.service.isConnected("tablet-$run") && System.currentTimeMillis() < deadline) {
             Thread.sleep(50)
         }
 
@@ -190,8 +239,8 @@ class PeerServiceTest {
     @Test
     fun `a device with the wrong code is refused and pushes nothing`() {
         val tabletPort = freePort()
-        val tablet = Device("tablet", "Tablet", document(mark("tablet-1")))
-        val stranger = Device("stranger", "Stranger", document(mark("stranger-1")))
+        val tablet = Device("tablet-$run", "Tablet", document(mark("tablet-1")))
+        val stranger = Device("stranger-$run", "Stranger", document(mark("stranger-1")))
         start(tablet, tabletPort)
         start(stranger, freePort())
 
@@ -209,8 +258,8 @@ class PeerServiceTest {
     @Test
     fun `pairing is refused once the code is no longer being offered`() {
         val tabletPort = freePort()
-        val tablet = Device("tablet", "Tablet", document())
-        val laptop = Device("laptop", "Laptop", document())
+        val tablet = Device("tablet-$run", "Tablet", document())
+        val laptop = Device("laptop-$run", "Laptop", document())
         start(tablet, tabletPort)
         start(laptop, freePort())
 

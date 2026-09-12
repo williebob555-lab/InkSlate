@@ -85,7 +85,17 @@ class PeerService(private val host: Host) {
     /** What a screen shows about a peer. */
     data class Status(val peer: Peer, val connected: Boolean, val lastSeenUtc: Long)
 
-    private val connections = ConcurrentHashMap<String, Connection>()
+    /**
+     * Live connections, by peer tag - possibly two to the same device.
+     *
+     * Two devices that reach for each other in the same second end up with a socket each. The
+     * obvious tidy-up is to keep one and close the other, and it does not work: each side decides
+     * at the moment its own socket registers, when the other may not exist yet, so both can end up
+     * holding the one the other has closed and nothing is said again. Keeping both is what avoids
+     * that, and it costs only a duplicate message - which this protocol is built to shrug off,
+     * because every message is idempotent and ends in the same merge.
+     */
+    private val connections = ConcurrentHashMap<String, MutableSet<Connection>>()
     private val statuses = ConcurrentHashMap<String, Status>()
     private val known = ConcurrentHashMap<String, Peer>()
 
@@ -104,7 +114,7 @@ class PeerService(private val host: Host) {
         statuses[it.tag] ?: Status(it, connected = false, lastSeenUtc = 0)
     }.sortedBy { it.peer.name.lowercase() }
 
-    fun isConnected(tag: String): Boolean = connections[tag]?.closed == false
+    fun isConnected(tag: String): Boolean = connections[tag]?.any { !it.closed } == true
 
     /**
      * Start listening, and start reaching out to each known peer.
@@ -146,11 +156,16 @@ class PeerService(private val host: Host) {
         thread("inkslate-peer-out") {
             while (running) {
                 for (peer in known.values) {
-                    if (connections[peer.tag]?.closed == false) continue
+                    if (isConnected(peer.tag)) continue
                     runCatching {
                         val socket = Socket()
                         socket.connect(InetSocketAddress(peer.host, peer.port), CONNECT_MS)
-                        thread("inkslate-peer-conn") { serve(socket, expecting = peer) }
+                        // Stopping happens while a connect is in flight, and a connection that
+                        // completes after it would be a service that was asked to stop and did
+                        // not. Cheap to check, and it is the difference between "stopped" and
+                        // "stopped except for the one that was already dialling".
+                        if (!running) socket.close()
+                        else thread("inkslate-peer-conn") { serve(socket, expecting = peer) }
                     }.onFailure {
                         // Expected and frequent: the other device is asleep or out of reach.
                         noteStatus(peer, connected = false)
@@ -174,7 +189,7 @@ class PeerService(private val host: Host) {
 
     fun forgetPeer(tag: String) {
         known.remove(tag)
-        connections.remove(tag)?.close()
+        connections.remove(tag)?.forEach { it.close() }
         statuses.remove(tag)
         host.onPeersChanged()
     }
@@ -184,7 +199,7 @@ class PeerService(private val host: Host) {
         running = false
         runCatching { server?.close() }
         server = null
-        connections.values.forEach { it.close() }
+        connections.values.flatten().forEach { it.close() }
         connections.clear()
         threads.forEach { it.interrupt() }
         threads.clear()
@@ -268,7 +283,7 @@ class PeerService(private val host: Host) {
     fun announceLibraryChanged() = broadcast(PeerMessage.LibraryChanged)
 
     private fun broadcast(message: PeerMessage) {
-        for (c in connections.values) c.send(message)
+        for (c in connections.values.flatten()) c.send(message)
     }
 
     /** Told by discovery that a known device is answering at a new address. */
@@ -302,9 +317,13 @@ class PeerService(private val host: Host) {
     }
 
     private fun serve(socket: Socket, expecting: Peer?) {
+        if (!running) {
+            runCatching { socket.close() }
+            return
+        }
         socket.tcpNoDelay = true
         socket.soTimeout = READ_TIMEOUT_MS
-        var registered: String? = null
+        var registered: Pair<String, Connection>? = null
         try {
             val out = DataOutputStream(socket.getOutputStream().buffered())
             val input = DataInputStream(socket.getInputStream().buffered())
@@ -342,9 +361,11 @@ class PeerService(private val host: Host) {
             }
             known[theirTag] = peer
 
-            val connection = Connection(socket, out, key, outgoing = expecting != null)
-            if (!register(theirTag, connection)) return
-            registered = theirTag
+            val connection = Connection(socket, out, key)
+            connections.computeIfAbsent(theirTag) {
+                java.util.Collections.newSetFromMap(ConcurrentHashMap())
+            }.add(connection)
+            registered = theirTag to connection
             noteStatus(peer, connected = true)
 
             // Offer what is open here, so a device that has just woken catches up at once.
@@ -356,16 +377,10 @@ class PeerService(private val host: Host) {
         } catch (_: Exception) {
             // A dropped or refused connection is ordinary. The retry loop picks it back up.
         } finally {
-            registered?.let { tag -> connections[tag]?.takeIf { !it.alive() }?.close() }
-            registered?.let { tag ->
-                // Only if it is still ours: a reconnection may already have taken the slot, and
-                // removing that one would drop a live connection on the way out of a dead one.
-                connections.computeIfPresent(tag) { _, current ->
-                    if (current.closed) null else current
-                }
-                if (connections[tag] == null) {
-                    known[tag]?.let { noteStatus(it, connected = false) }
-                }
+            registered?.let { (tag, connection) ->
+                connection.close()
+                connections[tag]?.remove(connection)
+                if (!isConnected(tag)) known[tag]?.let { noteStatus(it, connected = false) }
             }
             runCatching { socket.close() }
         }
@@ -424,30 +439,6 @@ class PeerService(private val host: Host) {
         }
     }
 
-    /**
-     * Settle which socket survives when both devices dialled each other at once.
-     *
-     * Two devices that reach for each other in the same second end up with two connections, and
-     * each closing "the old one" closes a different one - which leaves both dead and the pair
-     * trying again forever. So the rule is one both sides can apply to reach the same answer
-     * without discussing it: the device with the lower tag is the one whose call is kept.
-     *
-     * Returns false when this connection is the one to drop.
-     */
-    private fun register(theirTag: String, connection: Connection): Boolean {
-        val existing = connections[theirTag]
-        if (existing != null && !existing.closed) {
-            val keepOutgoing = host.deviceTag() < theirTag
-            if (existing.outgoing == keepOutgoing) {
-                connection.close()
-                return false
-            }
-            existing.close()
-        }
-        connections[theirTag] = connection
-        return true
-    }
-
     private fun noteStatus(peer: Peer, connected: Boolean) {
         val before = statuses[peer.tag]
         statuses[peer.tag] = Status(
@@ -461,9 +452,7 @@ class PeerService(private val host: Host) {
     private inner class Connection(
         private val socket: Socket,
         private val out: DataOutputStream,
-        val key: SecretKey,
-        /** Whether this device placed the call, which is how a crossed pair is settled. */
-        val outgoing: Boolean
+        val key: SecretKey
     ) {
         @Volatile var closed = false
             private set
@@ -477,9 +466,6 @@ class PeerService(private val host: Host) {
             closed = true
             runCatching { socket.close() }
         }
-
-        /** Whether the socket underneath is still usable, as opposed to merely not closed by us. */
-        fun alive(): Boolean = !closed && !socket.isClosed && socket.isConnected
     }
 
     private fun thread(name: String, block: () -> Unit) {
