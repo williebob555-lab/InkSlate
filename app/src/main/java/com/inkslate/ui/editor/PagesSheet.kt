@@ -14,16 +14,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -31,26 +27,29 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LibraryAdd
+import androidx.compose.material.icons.filled.RotateLeft
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,41 +62,49 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import com.inkslate.core.PagePlan
 import com.inkslate.ink.PageLayout
-import com.inkslate.pdf.PageArrangement
 import com.inkslate.pdf.BlankDocumentFactory
 import com.inkslate.pdf.ImportStaging
 import com.inkslate.pdf.ImportedPage
-import com.inkslate.ui.toSpec
-import com.inkslate.ui.toStyle
-import com.inkslate.ui.PaperPreview
+import com.inkslate.pdf.PageArrangement
+import com.inkslate.pdf.PlannedPage
 import com.inkslate.ui.BlankPaperOptions
 import com.inkslate.ui.ColorPickerDialog
-import com.inkslate.ui.PaperTarget
+import com.inkslate.ui.PaperPreview
 import com.inkslate.ui.PaperStyle
-import com.inkslate.pdf.PlannedPage
-import kotlinx.coroutines.launch
+import com.inkslate.ui.PaperTarget
+import com.inkslate.ui.toSpec
+import com.inkslate.ui.toStyle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Pages mode: how the document is laid out on screen, and what pages it has.
+ * Pages: what pages the document has, and how they are laid out on screen.
  *
- * The two used to be separate - an arrangement submenu buried in the overflow, and no way at all
- * to add, remove or move a page - and they answer the same question, which is what the document
- * looks like. They are one screen.
+ * Laid out the way the Windows build lays it out, because that is the version that reads well: a
+ * header that says whether anything is pending, one row of actions on the page in hand, and the
+ * pages beneath. It used to be a full-screen dialog with a row of labelled buttons along the bottom,
+ * which put the actions as far from the pages they act on as the screen allowed.
+ *
+ * What the tablet has on top of that is only what the Windows sheet has no room for or no need of:
+ * the arrangement and canvas controls (on Windows those sit in the view menu), holding a page to
+ * drag it, and exporting a page.
  *
  * Structural edits are planned rather than applied. Everything here operates on a list of
  * [PlannedPage], so deleting thirty pages, changing your mind and closing the sheet costs nothing;
  * the document on disk is not touched until Apply, and then in one verified rewrite.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PagesSheet(
     pageCount: Int,
@@ -121,14 +128,21 @@ fun PagesSheet(
     onExport: (pages: List<Int>) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var plan by remember(pageCount) { mutableStateOf(PageArrangement.identity(pageCount)) }
-    var selected by remember(pageCount) { mutableStateOf(setOf<Long>()) }
-    var nextUid by remember(pageCount) { mutableStateOf(pageCount.toLong() + 1) }
+    // One page in hand, as on Windows. The actions act on it and the arrows carry it with them, so
+    // moving a page five places is five taps on the same button rather than five re-selections.
+    var selected by remember(pageCount) {
+        mutableStateOf(currentPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+    }
+    var nextUid by remember(pageCount) { mutableStateOf(pageCount.toLong() + 1000L) }
     var confirmApply by remember { mutableStateOf(false) }
     var insertOpen by remember { mutableStateOf(false) }
     var importing by remember { mutableStateOf<List<ImportCandidate>?>(null) }
     var staging by remember { mutableStateOf(false) }
     var canvasPicking by remember { mutableStateOf<PaperTarget?>(null) }
+    // A blank page in the plan whose paper is being changed, by uid so a drag cannot retarget it.
+    var restyling by remember { mutableStateOf<Long?>(null) }
     // Remembered across insertions, so adding a second matching page is one tap rather than
     // rebuilding the same choices.
     var lastPaper by remember { mutableStateOf(PaperStyle()) }
@@ -146,59 +160,8 @@ fun PagesSheet(
     var pointer by remember { mutableStateOf(Offset.Zero) }
 
     val changed = !PageArrangement.isUnchanged(plan, pageCount)
-
-    fun selectedIndices(): List<Int> =
-        plan.indices.filter { plan[it].uid in selected }
-
-    fun mutate(block: (MutableList<PlannedPage>) -> Unit) {
-        plan = plan.toMutableList().also(block)
-    }
-
-    /** Where new pages go: after the last selected page, or at the end if nothing is selected. */
-    fun insertionPoint(): Int? = selectedIndices().maxOrNull()
-
-    fun insert(count: Int, w: Float, h: Float, paper: PaperStyle) {
-        val at = insertionPoint()?.plus(1) ?: plan.size
-        val fresh = (0 until count).map { PlannedPage(-1, nextUid++, w, h, paper.toSpec()) }
-        mutate { it.addAll(at, fresh) }
-        selected = fresh.map { it.uid }.toSet()
-        lastPaper = paper
-    }
-
-    fun addImported(picked: List<Triple<ImportCandidate, Int, Boolean>>) {
-        if (picked.isEmpty()) return
-        val at = insertionPoint()?.plus(1) ?: plan.size
-        val fresh = picked.map { (candidate, pageIndex, fit) ->
-            val w = if (candidate.isImage && fit) defaultPageWidth else candidate.width
-            val h = if (candidate.isImage && fit) defaultPageHeight else candidate.height
-            PlannedPage(
-                source = -1,
-                uid = nextUid++,
-                import = ImportedPage(
-                    path = candidate.path,
-                    pageIndex = pageIndex,
-                    isImage = candidate.isImage,
-                    width = w,
-                    height = h,
-                    fitToPage = fit
-                )
-            )
-        }
-        mutate { it.addAll(at, fresh) }
-        selected = fresh.map { it.uid }.toSet()
-    }
-
-    fun turnSelected(quarterTurns: Int) {
-        val picked = selectedIndices()
-        if (picked.isEmpty()) return
-        mutate { list ->
-            for (i in picked) {
-                list[i] = list[i].copy(
-                    quarterTurns = (list[i].quarterTurns + quarterTurns).mod(4)
-                )
-            }
-        }
-    }
+    val inHand = selected.coerceIn(0, (plan.size - 1).coerceAtLeast(0))
+    val inHandPage = plan.getOrNull(inHand)
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -225,304 +188,244 @@ fun PagesSheet(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    // Tall enough on a tablet to show a few rows of pages; never the whole screen, which is what
+    // made the old dialog feel like leaving the document.
+    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.85f).dp
 
-                // ---- header ----
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
+
+            // ---- header ----
+            Row(
+                Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Pages", style = MaterialTheme.typography.titleMedium)
+                    val count = "${plan.size} page${if (plan.size == 1) "" else "s"}"
+                    Text(
+                        if (changed) "$count - nothing is written until you apply" else count,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (changed) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (changed) {
+                    TextButton(onClick = { plan = PageArrangement.identity(pageCount) }) {
+                        Text("Undo all")
+                    }
+                }
+                if (canEditPages) {
+                    TextButton(enabled = changed, onClick = { confirmApply = true }) {
+                        Text("Apply")
+                    }
+                }
+            }
+
+            // ---- canvas ----
+            // A canvas has one page that grows, so arranging pages is meaningless for it and the
+            // arrangement row below is hidden rather than left there doing nothing.
+            if (canEditPages && (pageCount == 1 || canvasPaper != null)) {
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 4.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
                     Column(Modifier.weight(1f)) {
-                        Text("Pages", style = MaterialTheme.typography.titleMedium)
+                        Text("Canvas", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            if (changed) "${plan.size} pages after your changes"
-                            else "$pageCount pages",
+                            if (canvasPaper != null) "This page grows as you write near an edge"
+                            else "Let this page grow as you write",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    if (changed) {
-                        TextButton(onClick = { plan = PageArrangement.identity(pageCount) }) {
-                            Text("Reset")
+                    Switch(
+                        checked = canvasPaper != null,
+                        onCheckedChange = { on ->
+                            onCanvasChange(if (on) canvasPaper ?: PaperStyle() else null)
                         }
-                        Button(onClick = { confirmApply = true }) { Text("Apply") }
-                    }
+                    )
                 }
-
-                // ---- canvas ----
-                // A canvas has one page that grows, so arranging pages is meaningless for it and
-                // the section below is hidden rather than left there doing nothing.
-                if (canEditPages && (pageCount == 1 || canvasPaper != null)) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Canvas", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                if (canvasPaper != null) {
-                                    "This page grows whenever you write near an edge."
-                                } else {
-                                    "Let this page grow as you write, instead of ending where " +
-                                        "it ends."
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = canvasPaper != null,
-                            onCheckedChange = { on ->
-                                onCanvasChange(if (on) canvasPaper ?: PaperStyle() else null)
-                            }
+                if (canvasPaper != null) {
+                    Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 6.dp)) {
+                        BlankPaperOptions(
+                            style = canvasPaper,
+                            onChange = { onCanvasChange(it) },
+                            onPickColour = { target, _ -> canvasPicking = target }
                         )
                     }
-                    if (canvasPaper != null) {
-                        Column(Modifier.padding(horizontal = 16.dp)) {
-                            Text(
-                                "Paper beyond the original page",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            BlankPaperOptions(
-                                style = canvasPaper,
-                                onChange = { onCanvasChange(it) },
-                                onPickColour = { target, _ -> canvasPicking = target }
-                            )
-                        }
-                    }
-                    HorizontalDivider(Modifier.padding(top = 8.dp))
                 }
+            }
 
-                // ---- arrangement ----
-                // Meaningless for a canvas: it is one page, and it is placed at its own origin
-                // whatever the arrangement says.
-                if (canvasPaper == null) {
-                    Text(
-                        "Arrangement",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, top = 6.dp)
-                    )
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        PageLayout.entries.forEach { option ->
-                            FilterChip(
-                                selected = layout == option,
-                                onClick = { onLayoutChange(option) },
-                                label = { Text(option.label) }
-                            )
-                        }
+            // ---- arrangement ----
+            if (canvasPaper == null) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PageLayout.entries.forEach { option ->
+                        FilterChip(
+                            selected = layout == option,
+                            onClick = { onLayoutChange(option) },
+                            label = { Text(option.label) }
+                        )
                     }
                 }
+            }
 
-                HorizontalDivider()
-
-                if (!canEditPages) {
-                    Text(
-                        "This document has a single page that cannot be rearranged. " +
-                            "The arrangement options above still apply.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
-
-                // ---- the pages ----
-                Box(Modifier.weight(1f)) {
-                    LazyVerticalGrid(
-                        state = gridState,
-                        columns = GridCells.Adaptive(116.dp),
-                        contentPadding = PaddingValues(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (!canEditPages) Modifier
-                                else Modifier.pointerInput(plan.size) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { at ->
-                                            pointer = at
-                                            dragIndex = indexAt(gridState, at)
-                                        },
-                                        onDrag = { change, amount ->
-                                            change.consume()
-                                            pointer += amount
-                                            val from = dragIndex ?: return@detectDragGesturesAfterLongPress
-                                            val to = indexAt(gridState, pointer)
-                                            if (to != null && to != from && to in plan.indices) {
-                                                mutate { it.add(to, it.removeAt(from)) }
-                                                dragIndex = to
-                                            }
-                                            // Creep the grid when the finger reaches an edge, so a
-                                            // page can be dragged further than one screenful.
-                                            val h = size.height
-                                            if (pointer.y < h * 0.12f) {
-                                                scope.launch { gridState.creepBy(-24f) }
-                                            } else if (pointer.y > h * 0.88f) {
-                                                scope.launch { gridState.creepBy(24f) }
-                                            }
-                                        },
-                                        onDragEnd = { dragIndex = null },
-                                        onDragCancel = { dragIndex = null }
-                                    )
-                                }
-                            )
+            // ---- what can be done to the page in hand ----
+            if (canEditPages) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    IconButton(
+                        onClick = { plan = PagePlan.moved(plan, inHand, inHand - 1); selected = inHand - 1 },
+                        enabled = inHand > 0
+                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Move earlier") }
+                    IconButton(
+                        onClick = { plan = PagePlan.moved(plan, inHand, inHand + 1); selected = inHand + 1 },
+                        enabled = inHand < plan.lastIndex
+                    ) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "Move later") }
+                    IconButton(onClick = { plan = PagePlan.turned(plan, inHand, -1) }) {
+                        Icon(Icons.Default.RotateLeft, "Turn left")
+                    }
+                    IconButton(onClick = { plan = PagePlan.turned(plan, inHand, 1) }) {
+                        Icon(Icons.Default.RotateRight, "Turn right")
+                    }
+                    IconButton(onClick = { plan = PagePlan.duplicated(plan, inHand, nextUid++) }) {
+                        Icon(Icons.Default.Layers, "Duplicate")
+                    }
+                    // Not a plain white page on one tap, as on Windows: the paper is half of what a
+                    // blank page is, so this asks - pattern, both colours, spacing, size, how many.
+                    IconButton(onClick = { insertOpen = true }) {
+                        Icon(Icons.Default.Add, "Add blank pages after this one")
+                    }
+                    IconButton(
+                        enabled = !staging,
+                        // PDFs and pictures in one picker: from here they are the same thing,
+                        // which is a page this document is about to gain.
+                        onClick = { picker.launch(arrayOf("application/pdf", "image/*")) }
                     ) {
-                        itemsIndexed(plan, key = { _, p -> p.uid }) { index, p ->
-                            val key = thumbKey(p)
-                            LaunchedEffect(key) {
-                                if (key == null || thumbs.containsKey(key)) return@LaunchedEffect
-                                val imported = p.import
-                                val raw = when {
-                                    imported != null ->
-                                        importThumbnailFor(imported.path, imported.pageIndex)
-                                    else -> thumbnailFor(p.source)
-                                }
-                                thumbs[key] = turned(raw, p.quarterTurns)
-                            }
-                            PageCell(
-                                planned = p,
-                                position = index,
-                                bitmap = key?.let { thumbs[it] },
-                                selected = p.uid in selected,
-                                dragging = dragIndex == index,
-                                isCurrent = !p.isNew && p.source == currentPage && !changed,
-                                modifier = Modifier.animateItem(),
-                                onClick = {
-                                    if (!canEditPages) {
-                                        if (!p.isNew) { onGoToPage(p.source); onDismiss() }
-                                        return@PageCell
-                                    }
-                                    selected = if (p.uid in selected) selected - p.uid
-                                    else selected + p.uid
+                        if (staging) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        else Icon(Icons.Default.LibraryAdd, "Add pages from another file")
+                    }
+                    IconButton(
+                        // Exports the document as it is on disk, so an unapplied plan would export
+                        // something other than what is on screen. Better impossible than explained.
+                        enabled = !changed && inHandPage != null && !inHandPage.isNew,
+                        onClick = { inHandPage?.let { onExport(listOf(it.source)) } }
+                    ) { Icon(Icons.Default.Share, "Export this page") }
+                    Box(Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            plan = PagePlan.removed(plan, inHand)
+                            selected = inHand.coerceAtMost(plan.lastIndex)
+                        },
+                        enabled = plan.size > 1
+                    ) {
+                        Icon(
+                            Icons.Default.Delete, "Remove",
+                            tint = if (plan.size > 1) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    "This document is a single picture, so it has no pages to rearrange.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                )
+            }
+
+            HorizontalDivider()
+
+            // ---- the pages ----
+            LazyVerticalGrid(
+                state = gridState,
+                columns = GridCells.Adaptive(minSize = 118.dp),
+                contentPadding = PaddingValues(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .then(
+                        if (!canEditPages) Modifier
+                        else Modifier.pointerInput(plan.size) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { at ->
+                                    pointer = at
+                                    dragIndex = indexAt(gridState, at)
+                                    dragIndex?.let { selected = it }
                                 },
-                                onOpen = {
-                                    // Jumping to a page you have already planned changes for
-                                    // would show the old document, which is only confusing.
-                                    if (!changed && !p.isNew) { onGoToPage(p.source); onDismiss() }
-                                }
-                            )
-                        }
-                    }
-                }
-
-                // ---- actions ----
-                if (canEditPages) {
-                    HorizontalDivider()
-                    val count = selectedIndices().size
-                    Text(
-                        if (count == 0) "Tap to select · hold to drag"
-                        else "$count selected",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                    )
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .navigationBarsPadding()
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        TextButton(onClick = { insertOpen = true }) {
-                            Icon(Icons.Default.Add, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Insert")
-                        }
-
-                        TextButton(
-                            enabled = !staging,
-                            onClick = {
-                                // PDFs and pictures in one picker: from here they are the same
-                                // thing, which is a page this document is about to gain.
-                                picker.launch(arrayOf("application/pdf", "image/*"))
-                            }
-                        ) {
-                            Icon(Icons.Default.FileOpen, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text(if (staging) "Reading..." else "Import")
-                        }
-
-                        TextButton(
-                            enabled = count > 0,
-                            onClick = { turnSelected(1) }
-                        ) {
-                            Icon(Icons.Default.RotateRight, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Rotate")
-                        }
-
-                        TextButton(
-                            enabled = count > 0,
-                            onClick = {
-                                val picked = selectedIndices()
-                                val copies = ArrayList<Long>()
-                                mutate { list ->
-                                    // Right to left, so earlier insertions do not shift the
-                                    // indices of the ones still to come.
-                                    for (i in picked.sortedDescending()) {
-                                        val uid = nextUid++
-                                        copies.add(uid)
-                                        list.add(i + 1, list[i].copy(uid = uid))
+                                onDrag = { change, amount ->
+                                    change.consume()
+                                    pointer += amount
+                                    val from = dragIndex ?: return@detectDragGesturesAfterLongPress
+                                    val to = indexAt(gridState, pointer)
+                                    if (to != null && to != from && to in plan.indices) {
+                                        plan = PagePlan.moved(plan, from, to)
+                                        dragIndex = to
+                                        selected = to
                                     }
-                                }
-                                selected = copies.toSet()
-                            }
-                        ) {
-                            Icon(Icons.Default.ContentCopy, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Duplicate")
-                        }
-
-                        TextButton(
-                            // Exports the document as it is on disk, so an unapplied plan would
-                            // export something other than what is on screen. Better to make that
-                            // impossible than to explain it afterwards.
-                            enabled = count > 0 && !changed,
-                            onClick = {
-                                onExport(selectedIndices().mapNotNull {
-                                    plan[it].source.takeIf { s -> s >= 0 }
-                                })
-                            }
-                        ) {
-                            Icon(Icons.Default.Share, null, Modifier.size(17.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("Export")
-                        }
-
-                        TextButton(
-                            // A document with no pages is not a document.
-                            enabled = count > 0 && count < plan.size,
-                            onClick = {
-                                mutate { list -> list.removeAll { it.uid in selected } }
-                                selected = emptySet()
-                            }
-                        ) {
-                            Icon(
-                                Icons.Default.Delete, null, Modifier.size(17.dp),
-                                tint = if (count > 0 && count < plan.size) {
-                                    MaterialTheme.colorScheme.error
-                                } else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                                    // Creep the grid when the finger reaches an edge, so a page
+                                    // can be dragged further than one screenful.
+                                    val h = size.height
+                                    if (pointer.y < h * 0.12f) {
+                                        scope.launch { gridState.creepBy(-24f) }
+                                    } else if (pointer.y > h * 0.88f) {
+                                        scope.launch { gridState.creepBy(24f) }
+                                    }
+                                },
+                                onDragEnd = { dragIndex = null },
+                                onDragCancel = { dragIndex = null }
                             )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Delete")
                         }
+                    )
+            ) {
+                itemsIndexed(plan, key = { _, p -> p.uid }) { index, p ->
+                    val key = thumbKey(p)
+                    LaunchedEffect(key) {
+                        if (key == null || thumbs.containsKey(key)) return@LaunchedEffect
+                        val imported = p.import
+                        val raw = when {
+                            imported != null -> importThumbnailFor(imported.path, imported.pageIndex)
+                            else -> thumbnailFor(p.source)
+                        }
+                        thumbs[key] = turned(raw, p.quarterTurns)
                     }
+                    PageTile(
+                        planned = p,
+                        position = index,
+                        bitmap = key?.let { thumbs[it] },
+                        selected = canEditPages && index == inHand,
+                        dragging = dragIndex == index,
+                        isCurrent = !p.isNew && p.source == currentPage && !changed,
+                        modifier = Modifier.animateItem(),
+                        onClick = {
+                            // Tapping the page already in hand opens it - the touch version of
+                            // the double-click on Windows. A planned page has nowhere to open to,
+                            // and neither does any page once the order has changed.
+                            // A blank page just added has nothing to open, so tapping it again
+                            // brings back its paper instead: what was picked is still changeable.
+                            val open = !canEditPages || index == inHand
+                            if (open && canEditPages && p.isNew && !p.isImported) {
+                                restyling = p.uid
+                            } else if (open) {
+                                if (!changed && !p.isNew) { onGoToPage(p.source); onDismiss() }
+                            } else {
+                                selected = index
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -532,9 +435,10 @@ fun PagesSheet(
         // Match the page it is going next to rather than the first page of the document: a
         // landscape sheet dropped into the middle of a portrait chapter is never what was meant,
         // and neither is the reverse.
-        val neighbour = insertionPoint()?.let { plan.getOrNull(it) }
+        val neighbour = inHandPage
         val match = when {
             neighbour == null -> defaultPageWidth to defaultPageHeight
+            neighbour.isImported -> neighbour.import!!.width to neighbour.import!!.height
             neighbour.isNew -> neighbour.blankWidth to neighbour.blankHeight
             else -> runCatching { pageSizeAt(neighbour.source) }
                 .getOrDefault(defaultPageWidth to defaultPageHeight)
@@ -543,13 +447,40 @@ fun PagesSheet(
             documentWidth = match.first,
             documentHeight = match.second,
             initial = lastPaper,
-            insertAfter = insertionPoint(),
+            insertAfter = inHand,
             onDismiss = { insertOpen = false },
             onInsert = { count, w, h, paper ->
                 insertOpen = false
-                insert(count, w, h, paper)
+                val fresh = (0 until count).map {
+                    PlannedPage(source = -1, uid = nextUid++, blankWidth = w, blankHeight = h, paper = paper.toSpec())
+                }
+                plan = PagePlan.inserted(plan, inHand + 1, fresh)
+                selected = inHand + 1
+                lastPaper = paper
             }
         )
+    }
+
+    restyling?.let { uid ->
+        val at = plan.indexOfFirst { it.uid == uid }
+        val page = plan.getOrNull(at)
+        if (page != null) {
+            InsertPagesDialog(
+                documentWidth = page.blankWidth,
+                documentHeight = page.blankHeight,
+                initial = page.paper.toStyle(),
+                insertAfter = null,
+                editingPage = at,
+                onDismiss = { restyling = null },
+                onInsert = { _, w, h, paper ->
+                    restyling = null
+                    plan = plan.toMutableList().also {
+                        it[at] = page.copy(blankWidth = w, blankHeight = h, paper = paper.toSpec())
+                    }
+                    lastPaper = paper
+                }
+            )
+        }
     }
 
     canvasPicking?.let { target ->
@@ -576,15 +507,36 @@ fun PagesSheet(
             candidates = candidates,
             documentWidth = defaultPageWidth,
             documentHeight = defaultPageHeight,
-            insertAfter = insertionPoint(),
+            insertAfter = inHand,
             onDismiss = { importing = null },
             onImport = { picked ->
                 importing = null
-                addImported(picked)
+                if (picked.isEmpty()) return@ImportPagesDialog
+                val fresh = picked.map { (candidate, pageIndex, fit) ->
+                    val w = if (candidate.isImage && fit) defaultPageWidth else candidate.width
+                    val h = if (candidate.isImage && fit) defaultPageHeight else candidate.height
+                    PlannedPage(
+                        source = -1,
+                        uid = nextUid++,
+                        import = ImportedPage(
+                            path = candidate.path,
+                            pageIndex = pageIndex,
+                            isImage = candidate.isImage,
+                            width = w,
+                            height = h,
+                            fitToPage = fit
+                        )
+                    )
+                }
+                plan = PagePlan.inserted(plan, inHand + 1, fresh)
+                selected = inHand + 1
             }
         )
     }
 
+    // Applying rewrites the document itself, which is not something to do on one tap of a button
+    // sitting next to "Undo all". The summary says what is about to happen in the terms someone is
+    // thinking in - pages, turns, and where the handwriting goes.
     if (confirmApply) {
         AlertDialog(
             onDismissRequest = { confirmApply = false },
@@ -606,7 +558,8 @@ fun PagesSheet(
                                 "history. Your other devices will pick up the new order when " +
                                 "they next sync."
                         )
-                    }
+                    },
+                    style = MaterialTheme.typography.bodySmall
                 )
             },
             confirmButton = {
@@ -663,8 +616,9 @@ private suspend fun androidx.compose.foundation.lazy.grid.LazyGridState.creepBy(
     scroll { scrollBy(px) }
 }
 
+/** One page, drawn the way the Windows sheet draws it: a tinted card, the page, its number. */
 @Composable
-private fun PageCell(
+private fun PageTile(
     planned: PlannedPage,
     position: Int,
     bitmap: Bitmap?,
@@ -672,38 +626,46 @@ private fun PageCell(
     dragging: Boolean,
     isCurrent: Boolean,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    onOpen: () -> Unit
+    onClick: () -> Unit
 ) {
-    val border = when {
+    val edge = when {
         dragging -> MaterialTheme.colorScheme.tertiary
         selected -> MaterialTheme.colorScheme.primary
         isCurrent -> MaterialTheme.colorScheme.secondary
-        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
+        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
     }
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (selected || dragging) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceVariant
+            )
+            .clickable(onClick = onClick)
+            .padding(6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.77f)
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clip(RoundedCornerShape(4.dp))
+                .background(Color.White)
                 .border(
-                    if (selected || dragging) 2.5.dp else 1.dp,
-                    border,
-                    RoundedCornerShape(6.dp)
-                )
-                .clickable(onClick = onClick),
+                    if (selected || dragging || isCurrent) 2.dp else 1.dp,
+                    edge,
+                    RoundedCornerShape(4.dp)
+                ),
             contentAlignment = Alignment.Center
         ) {
             when {
-                // A new page draws its actual paper, because the colours are half of what was
-                // chosen and a label cannot show them. An imported one has a thumbnail like any
-                // other page, so it falls through to the branch below.
+                // A new blank page draws its actual paper, because the colours are half of what
+                // was chosen and a label cannot show them.
                 planned.isNew && !planned.isImported -> Box(Modifier.fillMaxSize()) {
-                    PaperPreview(planned.paper.toStyle(), Modifier.fillMaxSize())
+                    val style = planned.paper.toStyle()
+                    PaperPreview(style, Modifier.fillMaxSize())
                     Text(
-                        planned.paper.toStyle().background.label,
+                        style.background.label,
                         style = MaterialTheme.typography.labelSmall,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -731,15 +693,16 @@ private fun PageCell(
         }
         Text(
             "${position + 1}" + when {
-                planned.isImported -> " · imported"
-                planned.isNew -> " · new"
-                planned.quarterTurns != 0 -> " · turned"
+                planned.isImported -> "  ·  imported"
+                planned.isNew -> "  ·  new"
+                planned.quarterTurns != 0 -> "  ·  turned"
                 else -> ""
             },
             style = MaterialTheme.typography.labelSmall,
-            color = if (selected) MaterialTheme.colorScheme.primary
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
             else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 2.dp).clickable(onClick = onOpen)
+            modifier = Modifier.padding(top = 4.dp)
         )
     }
 }

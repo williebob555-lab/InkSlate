@@ -51,6 +51,11 @@ fun InsertPagesDialog(
     /** The style last used in this sheet, so adding a second matching page is one tap. */
     initial: PaperStyle,
     insertAfter: Int?,
+    /**
+     * Set when changing the paper of a blank page already in the plan, rather than adding pages.
+     * The same controls; only the count goes, because there is exactly one page being changed.
+     */
+    editingPage: Int? = null,
     onDismiss: () -> Unit,
     onInsert: (count: Int, width: Float, height: Float, paper: PaperStyle) -> Unit
 ) {
@@ -65,7 +70,15 @@ fun InsertPagesDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (count == 1) "Insert a page" else "Insert $count pages") },
+        title = {
+            Text(
+                when {
+                    editingPage != null -> "Paper for page ${editingPage + 1}"
+                    count == 1 -> "Insert a page"
+                    else -> "Insert $count pages"
+                }
+            )
+        },
         text = {
             Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -82,8 +95,11 @@ fun InsertPagesDialog(
                             )
                     )
                     Text(
-                        if (insertAfter == null) "Added at the end of the document"
-                        else "Added after page ${insertAfter + 1}",
+                        when {
+                            editingPage != null -> "Not written until you apply"
+                            insertAfter == null -> "Added at the end of the document"
+                            else -> "Added after page ${insertAfter + 1}"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(start = 12.dp)
@@ -107,16 +123,20 @@ fun InsertPagesDialog(
                     }
                 }
 
-                OptionLabel("How many: $count")
-                Slider(
-                    value = count.toFloat(),
-                    onValueChange = { count = it.toInt().coerceAtLeast(1) },
-                    valueRange = 1f..50f
-                )
+                if (editingPage == null) {
+                    OptionLabel("How many: $count")
+                    Slider(
+                        value = count.toFloat(),
+                        onValueChange = { count = it.toInt().coerceAtLeast(1) },
+                        valueRange = 1f..50f
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onInsert(count, width, height, paper) }) { Text("Insert") }
+            TextButton(onClick = { onInsert(count, width, height, paper) }) {
+                Text(if (editingPage != null) "Done" else "Insert")
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
