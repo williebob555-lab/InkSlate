@@ -1170,18 +1170,7 @@ fun EditorScreen(
                                     goToPage(page)
                                 }
                             )
-                            HorizontalDivider()
-                            PageLayout.entries.forEach { option ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (layout == option) "✓  " + option.label
-                                            else "      " + option.label
-                                        )
-                                    },
-                                    onClick = { menuOpen = false; layout = option }
-                                )
-                            }
+                            // The page arrangement lives in the Pages sheet, as on the tablet.
                             HorizontalDivider()
                             PageFilter.entries.forEach { option ->
                                 DropdownMenuItem(
@@ -1658,6 +1647,8 @@ fun EditorScreen(
             PagesSheet(
                 source = src,
                 currentPage = page,
+                layout = layout,
+                onLayoutChange = { layout = it },
                 thumbnailFor = { index -> src.render(index, 180) },
                 onApply = { plan ->
                     pagesOpen = false

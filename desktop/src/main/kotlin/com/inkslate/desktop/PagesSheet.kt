@@ -4,6 +4,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import com.inkslate.core.PageLayout
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,6 +82,8 @@ import kotlinx.coroutines.withContext
 fun PagesSheet(
     source: DesktopSource,
     currentPage: Int,
+    layout: PageLayout,
+    onLayoutChange: (PageLayout) -> Unit,
     thumbnailFor: suspend (Int) -> ImageBitmap?,
     onApply: (List<PlannedPage>) -> Unit,
     onGoToPage: (Int) -> Unit,
@@ -203,6 +209,26 @@ fun PagesSheet(
                     }
                 }
                 TextButton(enabled = changed, onClick = { confirmApply = true }) { Text("Apply") }
+            }
+
+            // ---- how the pages sit on screen ----
+            // Here rather than in the view menu, as on the tablet: the arrangement and the pages
+            // answer the same question, which is what the document looks like.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PageLayout.entries.forEach { option ->
+                    FilterChip(
+                        selected = layout == option,
+                        onClick = { onLayoutChange(option) },
+                        label = { Text(option.label) }
+                    )
+                }
             }
 
             // ---- what can be done to the page in hand ----
