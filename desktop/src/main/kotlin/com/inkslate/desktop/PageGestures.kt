@@ -43,6 +43,24 @@ private const val RULER_BAR_TOUCH = 12f
  * The middle button is passed over rather than handled - it pans, on a handler of its own, and it
  * consumes what it uses.
  */
+/** How often a mark being drawn offers its extent to the canvas, so it can grow to meet it. */
+private const val GROW_EVERY_NS = 120_000_000L
+
+/** The extent of the points collected so far, for a canvas deciding whether to grow. */
+private fun boundsOf(points: List<InkPoint>): InkBox {
+    var left = Float.MAX_VALUE
+    var top = Float.MAX_VALUE
+    var right = -Float.MAX_VALUE
+    var bottom = -Float.MAX_VALUE
+    for (p in points) {
+        if (p.x < left) left = p.x
+        if (p.x > right) right = p.x
+        if (p.y < top) top = p.y
+        if (p.y > bottom) bottom = p.y
+    }
+    return InkBox(left, top, right, bottom)
+}
+
 suspend fun AwaitPointerEventScope.awaitDrawingDown(): PointerInputChange {
     while (true) {
         val event = awaitPointerEvent()
@@ -505,6 +523,10 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             // point has to be dropped rather than committed, or every two-finger zoom leaves a
             // mark across the page from wherever the first finger landed.
             var abandoned = false
+            // A canvas grows under the pen, not when it is lifted. Writing past the edge of a
+            // whiteboard and having the paper appear only on release means writing into the dark
+            // for the length of a word - and on a long stroke, wondering whether it is working.
+            var grownAt = 0L
             dragUntilRelease(down.position) { change, _ ->
                 if (WindowsPointer.gesturing) {
                     abandoned = true
@@ -513,6 +535,16 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 } else if (!abandoned) {
                     sample(change.position, change.pressure, change.type)
                     onLive(ArrayList(collected))
+
+                    // Offered a few times a second rather than per sample: growing is free when
+                    // there is nothing to grow - the canvas hands back the same one - but the
+                    // bounds of the mark so far are not, and a stroke can carry thousands of
+                    // points.
+                    val now = System.nanoTime()
+                    if (now - grownAt > GROW_EVERY_NS && collected.size >= 2) {
+                        grownAt = now
+                        onDrew(boundsOf(collected))
+                    }
                 }
             }
             onLive(emptyList())

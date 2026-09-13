@@ -250,9 +250,23 @@ fun DocumentCanvas(
     var pendingStamp by remember { mutableStateOf<List<Stroke>>(emptyList()) }
     var marquee by remember { mutableStateOf<InkBox?>(null) }
 
+    /**
+     * The pages as they are now, readable from inside a gesture that is already running.
+     *
+     * The drawing gesture used to be keyed on the pages, so it was torn down and rebuilt whenever
+     * they changed - and a canvas growing under the pen changes them. That is why a whiteboard
+     * could only grow once the pen was lifted: growing it mid-stroke would have destroyed the
+     * stroke doing the growing.
+     */
+    val pages = rememberUpdatedState(slots)
+
+    /** And what is selected, for the same reason: the gesture outlives any change to it. */
+    val chosen = rememberUpdatedState(selection)
+
     /** Which page a document point belongs to: the one under it, or the nearest. */
-    fun slotAt(x: Float, y: Float): PageSlot? =
-        slots.firstOrNull { it.contains(x, y) } ?: slots.minByOrNull { it.distanceSq(x, y) }
+    fun slotAt(x: Float, y: Float): PageSlot? = pages.value.let { current ->
+        current.firstOrNull { it.contains(x, y) } ?: current.minByOrNull { it.distanceSq(x, y) }
+    }
 
     // ---- rendering the pages -------------------------------------------------
 
@@ -437,7 +451,9 @@ fun DocumentCanvas(
             // Deliberately not keyed on the zoom. Changing a key tears the gesture detector down
             // and builds it again, which at one key per frame of a zoom is most of the work of
             // zooming; the gesture reads the camera as it runs rather than being rebuilt for it.
-            .pointerInput(slots, selection) {
+            // Not keyed on the pages: see [pages]. A canvas that grows while it is being drawn
+            // on changes them, and rebuilding the gesture at that moment drops the stroke.
+            .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitDrawingDown()
 
@@ -483,7 +499,7 @@ fun DocumentCanvas(
                         slot = slot,
                         viewport = viewport,
                         strokes = strokes,
-                        selection = selection,
+                        selection = chosen.value,
                         onSelection = onSelection,
                         tools = tools,
                         newId = newId,
