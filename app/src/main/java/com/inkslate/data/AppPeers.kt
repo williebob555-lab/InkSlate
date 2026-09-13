@@ -27,6 +27,7 @@ object AppPeers {
     @Volatile private var marksListener: ((String, PeerMessage.Marks) -> Unit)? = null
     @Volatile private var remoteWriteListener: ((String, String?) -> Unit)? = null
     @Volatile private var peersListener: (() -> Unit)? = null
+    @Volatile private var documentWriteListener: ((String) -> Unit)? = null
 
     /** Devices announcing themselves on this network that are not paired yet. */
     @Volatile var discovered: List<PeerDiscovery.Announcement> = emptyList()
@@ -44,6 +45,7 @@ object AppPeers {
         override fun onRemoteWrite(peer: String, fileName: String?) {
             EventLog.info("peer", "$peer wrote ${fileName ?: "something in its library"}")
             remoteWriteListener?.invoke(peer, fileName)
+            fileName?.let { name -> documentWriteListener?.invoke(name) }
         }
 
         override fun onPaired(peer: PeerService.Peer) {
@@ -194,6 +196,16 @@ object AppPeers {
 
     fun onRemoteWrite(listener: ((String, String?) -> Unit)?) {
         remoteWriteListener = listener
+    }
+
+    /**
+     * For the open editor: a peer has written a file of this name.
+     *
+     * Separate from [onRemoteWrite], which the library holds. The editor needs it for a different
+     * reason - to not write the same document itself until that write has arrived.
+     */
+    fun onDocumentWrittenElsewhere(listener: ((String) -> Unit)?) {
+        documentWriteListener = listener
     }
 
     fun onPeersChanged(listener: (() -> Unit)?) {

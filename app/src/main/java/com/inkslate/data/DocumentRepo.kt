@@ -101,6 +101,15 @@ class OpenDocument(
      */
     var savedInk: InkDocument? = null
 
+    /**
+     * Syncthing's conflict copies of this document, folded in on open and waiting to be removed.
+     *
+     * Each is deleted only once the document on disk holds everything it carries - see
+     * [DocumentRepo.settleConflictCopies]. Held with the handwriting read out of it, so settling
+     * never has to parse a PDF again.
+     */
+    @Volatile var conflictCopies: List<Pair<File, InkDocument>> = emptyList()
+
     fun strokesOn(page: Int): List<Stroke> = ink.strokesOn(page)
 
     fun updatePage(page: Int, strokes: List<Stroke>) {
@@ -292,9 +301,13 @@ class DocumentRepo(private val context: Context) {
         }
         // Record it either way, so documents written before this existed adopt it silently
         // instead of warning once for no reason.
-        val stamped =
+        val geometryStamped =
             if (ink.source.geometry == geometry) ink
             else ink.copy(source = ink.source.copy(geometry = geometry))
+
+        // Syncthing's copies of the document itself, from two devices writing it at once.
+        val copies = foldConflictCopies(file, geometryStamped, geometry)
+        val stamped = copies.ink
 
         // Keep a local copy of whatever the document brought with it. Anything written on
         // another device and synced over has, until this moment, existed in exactly one place.
@@ -312,10 +325,14 @@ class DocumentRepo(private val context: Context) {
         )
         val opened = OpenDocument(
             file, source, stamped, deviceTag,
-            mergedConflicts = conflictsBefore.size,
-            mergedFrom = conflictDevices,
+            mergedConflicts = conflictsBefore.size + copies.folded.size,
+            mergedFrom = conflictDevices + copies.folded.mapNotNull { describeConflict(it) },
             sourceChanged = changed
         )
+        opened.conflictCopies = copies.pending
+        // The document as it was read already holds some of them, very often all: the link had
+        // carried every mark across before either device wrote. Those go now.
+        inspected.ink?.let { settleConflictCopies(opened, it) }
 
         // Which pages already carry the right annotation. Only knowable when the file on disk is
         // still exactly what this app last wrote - anything else having touched it means nothing
@@ -346,7 +363,12 @@ class DocumentRepo(private val context: Context) {
                 // When every page already matches, the file *is* this document. Saying so means
                 // opening something and closing it again writes nothing - and, just as much,
                 // that the editor can honestly show it as saved rather than assuming.
-                if (opened.dirtyPages().isEmpty()) opened.savedInk = stamped
+                // Not when a conflict copy brought something in: a bookmark is invisible to the
+                // page signatures, and claiming the file holds it would mean it is never written.
+                if (opened.dirtyPages().isEmpty() && copies.folded.isEmpty()) {
+                    opened.savedInk = stamped
+                    settleConflictCopies(opened, stamped)
+                }
                 val stale = opened.dirtyPages()
                 EventLog.info(
                     "open",
@@ -456,6 +478,86 @@ class DocumentRepo(private val context: Context) {
                 f.name.contains(".sync-conflict-") &&
                 f.name.endsWith(".${InkDocument.EXTENSION}")
         }?.toList().orEmpty()
+    }
+
+    private class FoldedCopies(
+        val ink: InkDocument,
+        /** Copies that brought in something this device did not already have. */
+        val folded: List<File>,
+        /** Every copy that was taken in, whether or not it had anything new. */
+        val pending: List<Pair<File, InkDocument>>
+    )
+
+    /**
+     * Take in Syncthing's conflict copies of a document that carries its handwriting inside it.
+     *
+     * With the handwriting embedded, the thing Syncthing fights over is the document itself, so a
+     * conflict leaves `homework.sync-conflict-20260913-101112-ABCDEFG.pdf` beside the original.
+     * Only the companion-file form of those used to be looked for, which is how they piled up.
+     *
+     * A copy is merged only when it is provably the same document on the same pages: its id has
+     * to match, and so does the page layout, unless both are canvases - a canvas grows its page,
+     * so its layout moving is the ordinary case. Anything else is left exactly where it is.
+     */
+    private fun foldConflictCopies(file: File, ink: InkDocument, geometry: String): FoldedCopies {
+        if (!InkEmbedder.supports(file)) return FoldedCopies(ink, emptyList(), emptyList())
+        val dir = file.parentFile ?: return FoldedCopies(ink, emptyList(), emptyList())
+        val prefix = "${file.nameWithoutExtension}.sync-conflict-"
+        val suffix = ".${file.extension}"
+        val found = dir.listFiles { f ->
+            f.isFile && f.name.startsWith(prefix) && f.name.endsWith(suffix, ignoreCase = true)
+        }?.sortedBy { it.name }.orEmpty()
+        if (found.isEmpty()) return FoldedCopies(ink, emptyList(), emptyList())
+
+        var doc = ink
+        val folded = ArrayList<File>()
+        val pending = ArrayList<Pair<File, InkDocument>>()
+        for (f in found) {
+            val theirs = runCatching { InkEmbedder.read(f) }.getOrNull()?.withoutSelfContradiction()
+            val why = when {
+                theirs == null -> "it carries no handwriting this app can read"
+                theirs.docId != ink.docId -> "it is a different document that shares the name"
+                ink.canvas == null && theirs.canvas == null &&
+                    theirs.source.geometry.isNotEmpty() && theirs.source.geometry != geometry ->
+                    "its pages are laid out differently"
+                else -> null
+            }
+            if (why != null || theirs == null) {
+                EventLog.warn("sync", "Left ${f.name} alone: $why")
+                continue
+            }
+            if (!com.inkslate.core.peer.PeerSync.holdsEverythingIn(doc, theirs)) {
+                doc = doc.mergeWith(theirs)
+                folded.add(f)
+            }
+            pending.add(f to theirs)
+        }
+        if (pending.isNotEmpty()) {
+            EventLog.warn(
+                "sync",
+                "${file.name}: ${pending.size} sync-conflict copy(s), " +
+                    "${folded.size} with handwriting not already here"
+            )
+        }
+        return FoldedCopies(doc, folded, pending)
+    }
+
+    /**
+     * Delete the conflict copies whose every mark is in [carried], which is on disk.
+     *
+     * The deletion is the useful part, not tidiness: Syncthing carries it to every other device,
+     * so one open clears the copies everywhere they were made.
+     */
+    private fun settleConflictCopies(doc: OpenDocument, carried: InkDocument) {
+        val waiting = doc.conflictCopies
+        if (waiting.isEmpty()) return
+        val kept = waiting.filter { (f, theirs) ->
+            if (!com.inkslate.core.peer.PeerSync.holdsEverythingIn(carried, theirs)) return@filter true
+            val gone = f.delete() || !f.exists()
+            if (gone) EventLog.info("sync", "Removed ${f.name}: ${doc.file.name} holds all of it")
+            !gone
+        }
+        doc.conflictCopies = kept
     }
 
     /** Pull the device name out of a Syncthing conflict filename, when it carries one. */
@@ -632,13 +734,15 @@ class DocumentRepo(private val context: Context) {
         // The page has to be the right size before the handwriting goes into it, or ink drawn
         // past the old edge is ink outside the page.
         matchCanvasPaper(doc).onFailure { return Result.failure(it) }
-        val result = InkEmbedder.write(doc.file, doc.ink)
+        val ink = doc.ink
+        val result = InkEmbedder.write(doc.file, ink)
         result.getOrNull()?.let {
             lastEmbedded[doc.file.absolutePath] = it
             journal.noteInSync(doc.file, it)
             // Same reason as in [exportLocked]: the document has just been rewritten, so the
             // note that vouches for the working copy has to describe the file as it is now.
-            journal.noteOwnership(doc.file, doc.ink)
+            journal.noteOwnership(doc.file, ink)
+            settleConflictCopies(doc, ink)
         }
         if (result.isSuccess) {
             EventLog.info(
@@ -969,6 +1073,7 @@ class DocumentRepo(private val context: Context) {
             PristineStore.savedPageState(context, doc.file) != null
         ) {
             EventLog.info("export", "${doc.file.name}: already current, nothing to write")
+            settleConflictCopies(doc, ink)
             return SaveResult.Written(target, wasCopy = false, backup = null)
         }
 
@@ -1202,6 +1307,7 @@ class DocumentRepo(private val context: Context) {
                             wasFullRewrite = !appended
                         )
                         if (recordHistory) journal.record(doc.file, ink)
+                        if (stamp != null) settleConflictCopies(doc, ink)
                     }
                 }
 

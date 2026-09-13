@@ -195,6 +195,39 @@ class PeerSyncTest {
         assertFalse(PeerSync.carriesSomethingNew(after, erasedThere))
     }
 
+    // ---- giving something up on the strength of the answer -----------------------
+
+    @Test
+    fun `a conflict copy whose marks are all here is held in full`() {
+        val ours = doc(mark("a-1"), mark("a-2"))
+        assertTrue(PeerSync.holdsEverythingIn(ours, doc(mark("a-1"))))
+        assertFalse(PeerSync.holdsEverythingIn(doc(mark("a-1")), ours))
+    }
+
+    /** A copy with no new handwriting can still be the only place a bookmark lives. */
+    @Test
+    fun `a bookmark only the other copy has is not held`() {
+        val ours = doc(mark("a-1"))
+        val theirs = ours.withBookmarkAdded(1, "Question 4")
+        assertFalse(PeerSync.carriesSomethingNew(ours, theirs))
+        assertFalse(PeerSync.holdsEverythingIn(ours, theirs))
+        assertTrue(PeerSync.holdsEverythingIn(ours.mergeWith(theirs), theirs))
+    }
+
+    /** Marks that came over the link are held by the copy that took them in. */
+    @Test
+    fun `what arrived over the link is held once applied`() {
+        val written = doc(mark("a-1"))
+        val live = PeerMessage.Marks("any", listOf(mark("tablet-live", at = 9_000L)))
+        val covered = PeerSync.applied(written, live)
+        assertTrue(PeerSync.holdsEverythingIn(covered, PeerSync.applied(written, live)))
+        // ...but a mark of this device's own on top of it is not.
+        val drawnHere = PeerSync.applied(written, live).withPage(
+            1, listOf(mark("mine", page = 1, at = 10_000L)), "phone"
+        )
+        assertFalse(PeerSync.holdsEverythingIn(covered, drawnHere))
+    }
+
     @Test
     fun `an explicit request is answered with exactly what was asked for`() {
         val tablet = doc(mark("tablet-1"), mark("tablet-2", page = 1))

@@ -101,6 +101,32 @@ object PeerSync {
         return arrived.deleted.any { (id, at) -> (ours.deleted[id] ?: -1L) < at }
     }
 
+    /**
+     * Whether [ours] already holds everything [other] says - marks, erases, bookmarks and room.
+     *
+     * The stricter cousin of [carriesSomethingNew], for the decisions that give something up on
+     * the strength of the answer: deleting a sync-conflict copy, or leaving the writing of a
+     * document to the device that drew on it. Handwriting alone is not the whole of a document,
+     * and a bookmark lost to a tidy-up is still lost.
+     */
+    fun holdsEverythingIn(ours: InkDocument, other: InkDocument): Boolean {
+        if (wantedFrom(ours, digestOf(other)).isNotEmpty()) return false
+        if (other.deleted.isNotEmpty()) {
+            val mine = ours.pages.values.flatten().associate { it.id to it.updatedUtc }
+            // An erase we have not recorded is still held when the mark was put back after it:
+            // merging would change nothing. Without this, a copy that saw an erase which was later
+            // undone here would look like news on every open, forever.
+            val unheard = other.deleted.any { (id, at) ->
+                (ours.deleted[id] ?: -1L) < at && (mine[id]?.let { it <= at } ?: true)
+            }
+            if (unheard) return false
+        }
+        if (!other.bookmarks.all { b -> ours.bookmarks.any { it.page == b.page } }) return false
+        val theirs = other.canvas ?: return true
+        val mine = ours.canvas ?: return false
+        return mine.mergeWith(theirs) == mine
+    }
+
     /** Whether an arriving batch would change anything, for deciding whether to repaint or save. */
     fun changesAnything(ours: InkDocument, marks: PeerMessage.Marks): Boolean {
         val mine = ours.pages.values.flatten().associate { it.id to it.updatedUtc }
