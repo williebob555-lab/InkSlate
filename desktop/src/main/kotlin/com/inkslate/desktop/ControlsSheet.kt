@@ -32,6 +32,16 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Canvas
 import com.inkslate.core.InputAction
@@ -98,10 +108,105 @@ fun ControlsSheet(onDismiss: () -> Unit) {
                     bindings = InputBindings()
                     InputBindingStore.bindings = bindings
                 }) { Text("Put them all back") }
+
+                KeySection()
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } }
     )
+}
+
+/**
+ * What each key does, and how to change one.
+ *
+ * Arming a row and pressing a key is the only way that works: a keyboard shortcut is a thing you
+ * press, and choosing one from a list of every key on the keyboard is a worse way to say Ctrl+S
+ * than pressing Ctrl+S.
+ */
+@Composable
+private fun KeySection() {
+    var chosen by remember { mutableStateOf(KeyBindingStore.chosen) }
+    var arming by remember { mutableStateOf<KeyAction?>(null) }
+    val catcher = remember { FocusRequester() }
+
+    Text(
+        "Keys",
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(top = 16.dp)
+    )
+    Text(
+        "Choose a row and press the keys you want. One key does one thing, so a key taken from " +
+            "somewhere else stops doing what it used to.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    Box(
+        Modifier
+            .focusRequester(catcher)
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                val action = arming
+                if (action == null || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // The modifiers on their own are not a shortcut, they are the half of one.
+                val bare = event.key == Key.CtrlLeft || event.key == Key.CtrlRight ||
+                    event.key == Key.ShiftLeft || event.key == Key.ShiftRight ||
+                    event.key == Key.AltLeft || event.key == Key.AltRight
+                if (bare) return@onPreviewKeyEvent true
+                KeyBindingStore.bind(
+                    action,
+                    KeyStroke(event.key.keyCode, event.isCtrlPressed, event.isShiftPressed)
+                )
+                chosen = KeyBindingStore.chosen
+                arming = null
+                true
+            }
+    ) {
+        Column {
+            KeyAction.entries.forEach { action ->
+                val stroke = KeyBindingStore.strokeFor(action)
+                val waiting = arming == action
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(
+                            if (waiting) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            else Color.Transparent
+                        )
+                        .clickable {
+                            arming = action
+                            runCatching { catcher.requestFocus() }
+                        }
+                        .padding(start = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        action.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        when {
+                            waiting -> "press the keys..."
+                            stroke == null -> "nothing"
+                            else -> stroke.label()
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (action in chosen) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = 10.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    TextButton(onClick = {
+        KeyBindingStore.reset()
+        chosen = KeyBindingStore.chosen
+        arming = null
+    }) { Text("Put the keys back") }
 }
 
 @Composable

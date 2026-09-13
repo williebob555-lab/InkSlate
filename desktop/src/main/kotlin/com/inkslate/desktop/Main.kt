@@ -87,28 +87,33 @@ private fun ui() = application {
         state = state,
         title = "InkSlate",
         onKeyEvent = { event ->
-            if (event.type != KeyEventType.KeyDown) false
-            else if (!event.isCtrlPressed) {
-                when (event.key) {
-                    Key.Escape -> shortcuts.fire(navigation.back)
-                    Key.Delete, Key.Backspace -> shortcuts.fire(shortcuts.delete)
-                    else -> false
+            // Looked up rather than decided here. What a key does is a table now, on the same
+            // terms as what a button does - see KeyBindingStore - so a shortcut can be moved, and
+            // there is somewhere to look up what the shortcuts are.
+            if (event.type != KeyEventType.KeyDown) {
+                false
+            } else {
+                val stroke = KeyStroke(
+                    event.key.keyCode,
+                    ctrl = event.isCtrlPressed,
+                    shift = event.isShiftPressed
+                )
+                when (KeyBindingStore.actionFor(stroke)) {
+                    KeyAction.SAVE -> shortcuts.fire(shortcuts.save)
+                    KeyAction.UNDO -> shortcuts.fire(shortcuts.undo)
+                    KeyAction.REDO -> shortcuts.fire(shortcuts.redo)
+                    KeyAction.CLOSE -> shortcuts.fire(shortcuts.close)
+                    KeyAction.COPY -> shortcuts.fire(shortcuts.copy)
+                    KeyAction.CUT -> shortcuts.fire(shortcuts.cut)
+                    KeyAction.PASTE -> shortcuts.fire(shortcuts.paste)
+                    KeyAction.DELETE -> shortcuts.fire(shortcuts.delete)
+                    KeyAction.SELECT_ALL -> shortcuts.fire(shortcuts.selectAll)
+                    KeyAction.ZOOM_IN -> shortcuts.fire(shortcuts.zoomIn)
+                    KeyAction.ZOOM_OUT -> shortcuts.fire(shortcuts.zoomOut)
+                    KeyAction.RESET_ZOOM -> shortcuts.fire(shortcuts.resetZoom)
+                    KeyAction.BACK -> shortcuts.fire(navigation.back)
+                    null -> false
                 }
-            } else when (event.key) {
-                Key.S -> shortcuts.fire(shortcuts.save)
-                // Ctrl+Shift+Z is the other half of undo everywhere except Windows' own apps,
-                // and costs nothing to accept alongside Ctrl+Y.
-                Key.Z -> shortcuts.fire(if (event.isShiftPressed) shortcuts.redo else shortcuts.undo)
-                Key.Y -> shortcuts.fire(shortcuts.redo)
-                Key.W -> shortcuts.fire(shortcuts.close)
-                Key.C -> shortcuts.fire(shortcuts.copy)
-                Key.X -> shortcuts.fire(shortcuts.cut)
-                Key.V -> shortcuts.fire(shortcuts.paste)
-                Key.A -> shortcuts.fire(shortcuts.selectAll)
-                Key.Equals, Key.Plus -> shortcuts.fire(shortcuts.zoomIn)
-                Key.Minus -> shortcuts.fire(shortcuts.zoomOut)
-                Key.Zero -> shortcuts.fire(shortcuts.resetZoom)
-                else -> false
             }
         }
     ) {
