@@ -140,7 +140,6 @@ object PaperPattern {
                 val staffGap = step / 4f
                 val systemGap = step * 2.4f
                 val staffHeight = staffGap * 4f
-                val inset = pageWidth * 0.06f
 
                 // Counted from the page rather than walked from the top of the region, and drawn
                 // whenever any part of a staff meets it. Walking from the region and skipping
@@ -154,11 +153,13 @@ object PaperPattern {
                 var guard = 0
                 while (system <= lastSystem && guard++ < MAX_LINES) {
                     val y = anchorY + systemGap * system
+                    // Across the paper, not across the page. A staff bounded by the page stops
+                    // at the edge of a sheet that is no longer there once the canvas has grown
+                    // past it, which leaves music paper that runs out. The line spans whatever is
+                    // being drawn, exactly as a ruled line does, so it continues as far as the
+                    // paper does and no further.
                     for (i in 0..4) {
-                        sink.line(
-                            anchorX + inset, y + staffGap * i,
-                            anchorX + pageWidth - inset, y + staffGap * i
-                        )
+                        sink.line(left, y + staffGap * i, right, y + staffGap * i)
                     }
                     system++
                 }

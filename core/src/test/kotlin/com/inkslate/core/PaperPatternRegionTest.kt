@@ -117,6 +117,45 @@ class PaperPatternRegionTest {
     }
 
     /**
+     * Music paper that has grown past its page is still music paper.
+     *
+     * The staves are anchored to the page - that is what keeps them still while the view moves -
+     * but they must not be bounded by it, or a whiteboard grown downwards has ruled music at the
+     * top and blank paper below.
+     */
+    @Test
+    fun `staves continue past the page they are anchored to`() {
+        // Well below and to the right of the page the anchor describes.
+        val left = 700f
+        val right = 1_400f
+        var reached = 0f
+        PaperPattern.emit(
+            background = PaperPattern.Pattern.MUSIC,
+            left = left, top = 900f, right = right, bottom = 1_600f,
+            spacing = 24f,
+            anchorX = -137f, anchorY = -211f,
+            pageWidth = 612f, pageHeight = 792f,
+            sink = object : PaperPattern.Sink {
+                override fun paper(left: Float, top: Float, right: Float, bottom: Float) = Unit
+                override fun lineWidth(width: Float) = Unit
+                override fun line(x0: Float, y0: Float, x1: Float, y1: Float) {
+                    // How far right any staff line actually reaches. Asking only whether lines
+                    // were emitted proves nothing: they were, off beyond the page, where nobody
+                    // could see them. What broke was where they stopped.
+                    reached = maxOf(reached, maxOf(x0, x1))
+                }
+
+                override fun dot(x: Float, y: Float, r: Float) = Unit
+            }
+        )
+
+        assertTrue(
+            "music paper stopped short of the paper it is drawn on: reached $reached of $right",
+            reached >= right - 1f
+        )
+    }
+
+    /**
      * And the one the report was about: a staff whose top line is above the strip is still drawn.
      */
     @Test
