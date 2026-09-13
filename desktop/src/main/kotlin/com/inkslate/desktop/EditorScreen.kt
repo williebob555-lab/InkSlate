@@ -776,6 +776,28 @@ fun EditorScreen(
         }
     }
 
+    /**
+     * Show a search result: the page it is on, with the words themselves in the middle.
+     *
+     * The hit's boxes are in the page's own points and the camera works in the document's, which
+     * on a whiteboard are not the same thing - the page is a rectangle somewhere inside a canvas.
+     */
+    fun goToHit(hit: com.inkslate.core.SearchHit) {
+        val src = source ?: return
+        page = hit.page.coerceIn(0, src.pageCount - 1)
+        val box = hit.boxes.firstOrNull()
+        val paper = paperBox(page)
+        if (box == null || paper == null || viewport.viewSize.width <= 0f) {
+            goToPage(page)
+        } else {
+            viewport.panTo(
+                paper.left + box.centerX - viewport.viewSize.width / (2f * viewport.scale),
+                paper.top + box.centerY - viewport.viewSize.height / (2f * viewport.scale)
+            )
+        }
+        searchOpen = false
+    }
+
     /** Drop a picture onto a page as a movable, resizable object. */
     fun placeImage(id: String, pageIndex: Int, box: com.inkslate.core.Box) {
         val placed = Stroke(
@@ -1627,6 +1649,63 @@ fun EditorScreen(
     }
 
     if (controlsOpen) ControlsSheet(onDismiss = { controlsOpen = false })
+
+    // Page management: also written, also never shown. Rearranging rewrites the document, so it
+    // saves what is in hand first and then reopens - the file on disk is a different document
+    // afterwards, and every page picture on screen belongs to the one before it.
+    if (pagesOpen) {
+        source?.let { src ->
+            PagesSheet(
+                source = src,
+                currentPage = page,
+                thumbnailFor = { index -> src.render(index, 180) },
+                onApply = { plan ->
+                    pagesOpen = false
+                    scope.launch {
+                        busy = true
+                        val done = withContext(Dispatchers.IO) {
+                            writeThrough()
+                            DocumentPages.rearrange(file, ink, plan, ::nextId)
+                        }
+                        busy = false
+                        done.onSuccess { rearranged ->
+                            DocumentIO.saveWorking(file, rearranged)
+                            positionRestored = true
+                            reopenTick++
+                            snackbar.showSnackbar("Pages rearranged")
+                        }.onFailure {
+                            snackbar.showSnackbar(
+                                it.message ?: "The pages could not be rearranged"
+                            )
+                        }
+                    }
+                },
+                onGoToPage = { target ->
+                    pagesOpen = false
+                    goToPage(target)
+                },
+                onDismiss = { pagesOpen = false }
+            )
+        }
+    }
+
+    // The button for this has been in the toolbar all along with nothing behind it: the sheet was
+    // written, the search was written, and the two were never introduced.
+    if (searchOpen) {
+        source?.let {
+            SearchSheet(
+                query = searchQuery,
+                onQueryChange = { searchQuery = it },
+                onSearch = ::runSearch,
+                hits = searchHits,
+                searching = searching,
+                progressPage = searchProgress,
+                pageCount = it.pageCount,
+                onGoToHit = ::goToHit,
+                onDismiss = { searchOpen = false }
+            )
+        }
+    }
 
     if (versionsOpen) {
         VersionHistoryDialog(
