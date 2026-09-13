@@ -177,7 +177,8 @@ object BlankDocumentFactory {
         }
         com.inkslate.core.PaperPattern.emit(
             com.inkslate.core.PaperPattern.patternOf(background.name),
-            left, top, left + w, top + h, spacing, anchorX, anchorY, sink
+            left, top, left + w, top + h, spacing, anchorX, anchorY,
+            sink = sink
         )
     }
 

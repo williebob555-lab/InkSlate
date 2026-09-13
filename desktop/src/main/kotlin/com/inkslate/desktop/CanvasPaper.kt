@@ -140,6 +140,10 @@ object CanvasPaper {
                 spacing = canvas.spacing,
                 anchorX = canvas.paperLeft,
                 anchorY = canvas.paperTop,
+                // Staves and Cornell rules are laid out against the page, not against whatever
+                // part of the canvas happens to be on screen.
+                pageWidth = canvas.paperWidth,
+                pageHeight = canvas.paperHeight,
                 sink = sink
             )
         }

@@ -156,7 +156,8 @@ object BlankDocumentFactory {
             }
         }
         PaperPattern.emit(
-            background.pattern, left, top, left + w, top + h, spacing, anchorX, anchorY, sink
+            background.pattern, left, top, left + w, top + h, spacing, anchorX, anchorY,
+            sink = sink
         )
     }
 

@@ -49,6 +49,93 @@ class PaperPatternRegionTest {
 
     private val whole = floatArrayOf(-600f, -600f, 600f, 600f)
 
+    /**
+     * Every pattern, not the three that happened to pass.
+     *
+     * The first version of this tested ruled lines, grids and dots - which are anchored repeats
+     * and so were invariant already. Staves, Cornell rules and isometric paper are laid out
+     * against a sheet, and all three were reading the region as if it were the sheet. A staff
+     * disappeared the moment its top line went off the top of the window, which is precisely when
+     * somebody is looking at it closely; the isometric diagonals slid sideways while panning.
+     *
+     * So: draw a strip of paper, draw all of it, and require that what the strip contains is what
+     * that part of the whole contains. Marks are compared by where they are, to the nearest tenth
+     * of a point, because a line drawn in two passes will not be bit-identical.
+     */
+    private fun marksOf(
+        pattern: PaperPattern.Pattern,
+        left: Float, top: Float, right: Float, bottom: Float
+    ): Set<String> {
+        val found = mutableSetOf<String>()
+        PaperPattern.emit(
+            background = pattern,
+            left = left, top = top, right = right, bottom = bottom,
+            spacing = 24f,
+            anchorX = -137f, anchorY = -211f,
+            pageWidth = 612f, pageHeight = 792f,
+            sink = object : PaperPattern.Sink {
+                override fun paper(left: Float, top: Float, right: Float, bottom: Float) = Unit
+                override fun lineWidth(width: Float) = Unit
+                override fun line(x0: Float, y0: Float, x1: Float, y1: Float) {
+                    // A line is named by the infinite line it lies on, so a segment cut short by
+                    // the edge of the strip still counts as the same line.
+                    found += if (y0 == y1) {
+                        "h:%.1f".format(y0)
+                    } else if (x0 == x1) {
+                        "v:%.1f".format(x0)
+                    } else {
+                        val slope = (y1 - y0) / (x1 - x0)
+                        "d:%.2f:%.1f".format(slope, y0 - slope * x0)
+                    }
+                }
+
+                override fun dot(x: Float, y: Float, r: Float) {
+                    found += "dot:%.1f,%.1f".format(x, y)
+                }
+            }
+        )
+        return found
+    }
+
+    @Test
+    fun `every pattern draws a strip the same as it draws the whole`() {
+        val strip = floatArrayOf(-100f, -100f, 220f, 40f)
+        for (pattern in PaperPattern.Pattern.entries) {
+            if (pattern == PaperPattern.Pattern.PLAIN) continue
+
+            val all = marksOf(pattern, whole[0], whole[1], whole[2], whole[3])
+            val part = marksOf(pattern, strip[0], strip[1], strip[2], strip[3])
+
+            assertTrue("$pattern drew nothing on the strip", part.isNotEmpty())
+            val strangers = part - all
+            assertTrue(
+                "$pattern drew marks on the strip that are not on the page: " +
+                    strangers.take(6).joinToString(),
+                strangers.isEmpty()
+            )
+        }
+    }
+
+    /**
+     * And the one the report was about: a staff whose top line is above the strip is still drawn.
+     */
+    @Test
+    fun `a staff running off the top of the view is still drawn`() {
+        val all = marksOf(PaperPattern.Pattern.MUSIC, whole[0], whole[1], whole[2], whole[3])
+        assertTrue("the page should have staves on it", all.isNotEmpty())
+
+        // A strip so narrow that no staff can lie wholly inside it.
+        var drewSomething = false
+        var y = -300f
+        while (y < 200f) {
+            if (marksOf(PaperPattern.Pattern.MUSIC, -100f, y, 220f, y + 6f).isNotEmpty()) {
+                drewSomething = true
+            }
+            y += 6f
+        }
+        assertTrue("no strip of a music page drew any staff at all", drewSomething)
+    }
+
     @Test
     fun `ruled lines sit where they would have on the whole canvas`() {
         val all = rule(PaperPattern.Pattern.RULED, whole[0], whole[1], whole[2], whole[3])

@@ -64,6 +64,17 @@ object PaperPattern {
         spacing: Float,
         anchorX: Float = 0f,
         anchorY: Float = 0f,
+        /**
+         * The page the anchor belongs to, for the patterns that are furniture on a sheet.
+         *
+         * Ruled lines, grids and dots repeat for ever and care only about where they are anchored.
+         * Staves and Cornell rules are laid out against a sheet of paper - so many systems down a
+         * page, a margin so far in from its edge - and they need to know how big it is. Defaulting
+         * to the region asked for is right for anybody drawing a whole page at once, which is what
+         * writing one into a document does.
+         */
+        pageWidth: Float = right - left,
+        pageHeight: Float = bottom - top,
         sink: Sink
     ) {
         sink.paper(left, top, right, bottom)
@@ -109,40 +120,65 @@ object PaperPattern {
             // and have no meaning repeated across open space. They are drawn once, against the
             // page the anchor describes, and the rest of a grown canvas is left plain.
             Pattern.CORNELL -> {
-                val pageBottom = anchorY + (bottom - anchorY).coerceAtMost(h)
+                // Measured from the page, never from the region. Taking the page's bottom from
+                // the region's meant the rules moved whenever less than all of the page was being
+                // drawn - which, once only the part on screen is drawn, is almost always.
+                val pageRight = anchorX + pageWidth
+                val ruleTo = anchorY + pageHeight - step * 3f
                 sink.lineWidth(0.5f)
-                val ruleTo = pageBottom - step * 3f
-                for (y in ticks(anchorY, step, anchorY, ruleTo)) sink.line(left, y, right, y)
+                for (y in ticks(anchorY, step, maxOf(anchorY, top), minOf(ruleTo, bottom))) {
+                    sink.line(anchorX, y, pageRight, y)
+                }
                 sink.lineWidth(1.2f)
-                val cue = anchorX + (right - anchorX) * 0.28f
+                val cue = anchorX + pageWidth * 0.28f
                 sink.line(cue, anchorY, cue, ruleTo)
-                sink.line(left, ruleTo, right, ruleTo)
+                sink.line(anchorX, ruleTo, pageRight, ruleTo)
             }
 
             Pattern.MUSIC -> {
                 sink.lineWidth(0.6f)
                 val staffGap = step / 4f
                 val systemGap = step * 2.4f
-                var y = anchorY + systemGap
+                val staffHeight = staffGap * 4f
+                val inset = pageWidth * 0.06f
+
+                // Counted from the page rather than walked from the top of the region, and drawn
+                // whenever any part of a staff meets it. Walking from the region and skipping
+                // anything starting above it dropped the whole staff the moment its top line went
+                // off the top of the window - so a staff vanished exactly when it was being looked
+                // at closely, which is the one time it matters.
+                val firstSystem = ceil((top - staffHeight - anchorY) / systemGap)
+                    .toInt().coerceAtLeast(1)
+                val lastSystem = floor((bottom - anchorY) / systemGap).toInt()
+                var system = firstSystem
                 var guard = 0
-                while (y + staffGap * 4 < bottom && guard++ < MAX_LINES) {
-                    if (y >= top) {
-                        val inset = (right - left) * 0.06f
-                        for (i in 0..4) {
-                            sink.line(left + inset, y + staffGap * i, right - inset, y + staffGap * i)
-                        }
+                while (system <= lastSystem && guard++ < MAX_LINES) {
+                    val y = anchorY + systemGap * system
+                    for (i in 0..4) {
+                        sink.line(
+                            anchorX + inset, y + staffGap * i,
+                            anchorX + pageWidth - inset, y + staffGap * i
+                        )
                     }
-                    y += systemGap
+                    system++
                 }
             }
 
             Pattern.ISOMETRIC -> {
                 sink.lineWidth(0.4f)
-                val run = h / 1.732f                  // 60 degrees: tan(60) = sqrt(3)
-                val dx = step * 1.732f
-                for (x in ticks(anchorX, dx, left - h * 1.2f, right + h * 1.2f)) {
-                    sink.line(x, top, x + run, bottom)
-                    sink.line(x, bottom, x + run, top)
+                val slope = 1.732f                    // 60 degrees: tan(60) = sqrt(3)
+                val run = h / slope
+                val dx = step * slope
+
+                // Each diagonal is named by where it crosses the anchor's own line, so it stays
+                // the same line whatever part of the paper is being drawn. Working from the top of
+                // the region instead made every diagonal slide sideways as the page was panned up
+                // and down, which is the same fault as the staves in a less obvious dress.
+                val fromAnchorTop = (top - anchorY) / slope
+                val fromAnchorBottom = (bottom - anchorY) / slope
+                for (x in ticks(anchorX, dx, left - run - dx, right + run + dx)) {
+                    sink.line(x + fromAnchorTop, top, x + fromAnchorBottom, bottom)
+                    sink.line(x - fromAnchorTop, top, x - fromAnchorBottom, bottom)
                 }
                 for (y in ticks(anchorY, step, top, bottom)) sink.line(left, y, right, y)
             }

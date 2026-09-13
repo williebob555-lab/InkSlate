@@ -1270,6 +1270,8 @@ class DrawingView @JvmOverloads constructor(
             c.spacing,
             anchorX = paperRect.left,
             anchorY = paperRect.top,
+            pageWidth = paperRect.width(),
+            pageHeight = paperRect.height(),
             sink = sink
         )
         target.restore()
