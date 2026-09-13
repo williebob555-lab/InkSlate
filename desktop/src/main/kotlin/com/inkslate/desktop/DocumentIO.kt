@@ -67,8 +67,22 @@ object DocumentIO {
 
         // Syncthing renames one side of a clash rather than merging. Left alone those are
         // invisible lost work, so they are folded in - but nothing is deleted from here.
-        val conflicts = conflictFiles(sidecar)
-        for (c in conflicts) read(c)?.let { doc = doc.mergeWith(it) }
+        val legacyConflicts = conflictFiles(sidecar)
+        for (c in legacyConflicts) read(c)?.let { doc = doc.mergeWith(it) }
+        // With the handwriting inside the document, the thing Syncthing fights over is the document
+        // itself, so the clash leaves `board.sync-conflict-<date>-<time>-<device>.pdf` beside it.
+        // Folded in when it is provably the same document; the tablet is the one that removes them.
+        val documentConflicts = if (!DesktopEmbedder.supports(file)) emptyList() else {
+            documentConflictFiles(file).filter { copy ->
+                val theirs = runCatching { DesktopEmbedder.read(copy) }.getOrNull()
+                    ?.withoutSelfContradiction()
+                if (theirs == null || theirs.docId != doc.docId) return@filter false
+                if (com.inkslate.core.peer.PeerSync.holdsEverythingIn(doc, theirs)) return@filter false
+                doc = doc.mergeWith(theirs)
+                true
+            }
+        }
+        val conflicts = legacyConflicts + documentConflicts
 
         val changed = doc.source.fingerprint.isNotEmpty() &&
             doc.source.fingerprint != DesktopSources.fingerprint(file)
@@ -94,6 +108,15 @@ object DocumentIO {
                 f.name.contains(".sync-conflict-") &&
                 f.name.endsWith("." + InkDocument.EXTENSION)
         }?.toList().orEmpty()
+    }
+
+    /** Syncthing's conflict copies of a document that carries its handwriting inside it. */
+    fun documentConflictFiles(file: File): List<File> {
+        val dir = file.parentFile ?: return emptyList()
+        val prefix = "${file.nameWithoutExtension}.sync-conflict-"
+        return dir.listFiles { f ->
+            f.isFile && f.name.startsWith(prefix) && f.name.endsWith(".${file.extension}", true)
+        }?.sortedBy { it.name }.orEmpty()
     }
 
     private fun read(f: File): InkDocument? =

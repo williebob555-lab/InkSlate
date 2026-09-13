@@ -110,6 +110,16 @@ class OpenDocument(
      */
     @Volatile var conflictCopies: List<Pair<File, InkDocument>> = emptyList()
 
+    /**
+     * The handwriting the document on disk is known to carry, whoever wrote it.
+     *
+     * Wider than [savedInk], which only ever describes this device's own last write. A document
+     * last written by the other device has none, and without something to measure against, marks
+     * arriving over the link could not be told apart from marks made here - so every one of them
+     * was written into the file again, racing the device that drew it.
+     */
+    var diskInk: InkDocument? = null
+
     fun strokesOn(page: Int): List<Stroke> = ink.strokesOn(page)
 
     fun updatePage(page: Int, strokes: List<Stroke>) {
@@ -382,6 +392,24 @@ class DocumentRepo(private val context: Context) {
                 )
             }
         }
+
+        // A document another device wrote, carrying everything this one has for it, is already
+        // this document. Treating it as unsaved wrote it straight back out on open - a write that
+        // changes nothing, made while the other device may well be writing the same file.
+        val fileInk = inspected.ink
+        // Only when the pages show it too: a payload with no marks on the pages is a document that
+        // still needs writing out for every other reader.
+        if (opened.savedInk == null && fileInk != null && copies.folded.isEmpty() &&
+            (inspected.bakedVisible || fileInk.totalStrokes == 0) &&
+            com.inkslate.core.peer.PeerSync.holdsEverythingIn(fileInk, stamped)
+        ) {
+            opened.savedSignatures = pageSignatures(stamped, opened.pageCount)
+            opened.pageStateKnown = true
+            opened.pagesHadNoInk = false
+            opened.savedInk = stamped
+            EventLog.info("open", "${file.name}: already carries all of its handwriting")
+        }
+        opened.diskInk = fileInk ?: opened.savedInk
         return opened
     }
 

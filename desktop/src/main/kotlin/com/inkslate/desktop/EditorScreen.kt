@@ -216,6 +216,25 @@ fun EditorScreen(
      */
     var diskStamp by remember(file) { mutableStateOf("") }
 
+    /**
+     * The handwriting the document on disk is known to hold: what was read on open, or last written.
+     *
+     * What lets marks from the tablet be told apart from marks made here. See [peerHold].
+     */
+    var writtenInk by remember(file) { mutableStateOf<InkDocument?>(null) }
+
+    /**
+     * Not writing the document at the same moment as the other device.
+     *
+     * The tablet was taught this first; the laptop kept writing every mark that arrived over the
+     * link into its own copy of the file a second after it arrived - while the tablet that drew it
+     * was writing the same file - and every one of those made a sync-conflict copy.
+     */
+    val peerHold = remember(file) { com.inkslate.core.peer.PeerWriteHold() }
+
+    /** A change on disk already looked at, so a held document does not read the file every tick. */
+    var examinedStamp by remember(file) { mutableStateOf("") }
+
     /** When the last edit happened, so the document is written into a pause rather than a stroke. */
     var lastEditAt by remember(file) { mutableStateOf(0L) }
 
@@ -260,6 +279,8 @@ fun EditorScreen(
         undo.clear(); redo.clear()
         dirty = false
         diskStamp = DocumentIO.stampOf(file)
+        writtenInk = doc.ink
+        peerHold.clear()
         DesktopPeers.documentOpened(file.name, merged)
         status = buildString {
             append("${merged.totalStrokes} mark(s)")
@@ -398,7 +419,11 @@ fun EditorScreen(
                 is SaveResult.Written -> {
                     dirty = false
                     diskStamp = DocumentIO.stampOf(file)
-                    if (!result.wasCopy) refreshPageIfGrown()
+                    if (!result.wasCopy) {
+                        writtenInk = doc
+                        peerHold.afterWrite(doc, currentInk())
+                        refreshPageIfGrown()
+                    }
                     status = if (result.wasCopy) {
                         "Saved a copy: ${result.target.name}"
                     } else {
@@ -446,11 +471,20 @@ fun EditorScreen(
             strokes.clear()
             strokes.addAll((0 until pages).flatMap { p -> doc.strokesOn(p) })
         }
+        // Everything unwritten came over the link, and the device it came from is writing it into
+        // this same file. The working copy above already has it; writing the document as well is
+        // precisely what makes a sync-conflict copy.
+        if (peerHold.leftToPeer(doc, System.currentTimeMillis())) {
+            saving = false
+            return
+        }
         val rules = prefs.effectiveFor(file.absolutePath)
             .copy(mode = SaveMode.OVERWRITE, backupOnOverwrite = false, confirmOverwrite = false)
         val result = withContext(Dispatchers.IO) { DocumentExport.save(file, doc, rules) }
         if (result is SaveResult.Written) {
             diskStamp = DocumentIO.stampOf(file)
+            writtenInk = doc
+            peerHold.afterWrite(doc, currentInk())
             DesktopPeers.announceWrote(file)
             refreshPageIfGrown()
             // Only settled if nothing arrived while it was being written: the write covered the
@@ -460,13 +494,58 @@ fun EditorScreen(
         saving = false
     }
 
+    /**
+     * A copy of the document has arrived that already holds everything on screen.
+     *
+     * The ordinary end of a held write: the tablet drew, the link brought the marks here, and now
+     * the tablet's own write of them has synced in. The document on disk is this document, so it
+     * is recorded as written instead of being written again - which would be a write for nothing,
+     * and on a slow sync, a conflict. Anything the arrival lacks, or brings that is new, is left to
+     * the ordinary save, which folds the two together.
+     */
+    suspend fun adoptArrival(stamp: String): Boolean {
+        if (!DesktopEmbedder.supports(file)) return false
+        val mine = currentInk()
+        val onDisk = withContext(Dispatchers.IO) {
+            runCatching { DesktopEmbedder.read(file) }.getOrNull()
+        } ?: return false
+        if (com.inkslate.core.peer.PeerSync.carriesSomethingNew(mine, onDisk)) return false
+        if (!com.inkslate.core.peer.PeerSync.holdsEverythingIn(onDisk, mine)) return false
+        // The page may have grown there; the room it grew into is taken, never the handwriting.
+        val adopted = if (onDisk.canvas != null && onDisk.canvas != mine.canvas) {
+            mine.copy(canvas = mine.canvas?.mergeWith(onDisk.canvas!!) ?: onDisk.canvas)
+        } else mine
+        ink = adopted
+        diskStamp = stamp
+        writtenInk = adopted
+        peerHold.clear()
+        dirty = false
+        refreshPageIfGrown()
+        return true
+    }
+
     // The pen has to be still before the document is written, so a write never lands in the middle
     // of a stroke. Checked often and acted on rarely, which is what keeps it invisible.
     LaunchedEffect(file.absolutePath, source) {
         while (true) {
             delay(1200)
             if (!dirty || saving || busy) continue
-            if (System.currentTimeMillis() - lastEditAt < IDLE_BEFORE_WRITE_MS) continue
+            val now = System.currentTimeMillis()
+            if (now - lastEditAt < IDLE_BEFORE_WRITE_MS) continue
+            val stamp = withContext(Dispatchers.IO) { DocumentIO.stampOf(file) }
+            if (stamp != diskStamp) {
+                // Somebody else's write has landed, so ours no longer waits for it - and if it
+                // already holds everything on screen, there is nothing left for ours to do.
+                peerHold.peerWroteAt = 0L
+                if (stamp != examinedStamp) {
+                    examinedStamp = stamp
+                    if (adoptArrival(stamp)) continue
+                }
+            } else if (peerHold.awaitingPeerWrite(now)) {
+                // The other device has just written this document and it is on its way here.
+                // Ours waits, so that it is an edit on top of theirs rather than a rival to it.
+                continue
+            }
             writeThrough()
         }
     }
@@ -562,6 +641,8 @@ fun EditorScreen(
                 }
                 val merged = com.inkslate.core.peer.PeerSync.applied(currentInk(), marks)
                 ink = merged
+                // The device that drew these is writing them into the file; see [peerHold].
+                peerHold.arrived(writtenInk, marks, System.currentTimeMillis())
                 val pages = source?.pageCount ?: 0
                 strokes.clear()
                 strokes.addAll((0 until pages).flatMap { p -> merged.strokesOn(p) })
@@ -572,7 +653,11 @@ fun EditorScreen(
                 selection = selection.filter { id -> strokes.any { it.id == id } }.toSet()
             }
         }
+        DesktopPeers.onDocumentWrittenElsewhere { name ->
+            if (name == file.name) scope.launch { peerHold.peerWroteAt = System.currentTimeMillis() }
+        }
         onDispose {
+            DesktopPeers.onDocumentWrittenElsewhere(null)
             DesktopPeers.onMarks(null)
             DesktopPeers.documentClosed()
         }
