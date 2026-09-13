@@ -68,6 +68,22 @@ data class InkCanvas(
      */
     @SerialName("ownPaper") val ownPaper: Boolean = false
 ) {
+    /**
+     * Whether this program can draw this canvas's paper itself.
+     *
+     * [ownPaper] says so outright, but it only exists on whiteboards made since it was added. For
+     * the ones made before, the pattern answers the same question: a canvas made out of somebody
+     * else's document is created with no pattern at all, and there is no way to give one to a
+     * canvas afterwards - the paper is chosen when a document is made and never again. So a canvas
+     * carrying a pattern is one this program ruled, whenever it was made.
+     *
+     * It matters for more than the seam. Where the paper is ours, the ruling is painted directly
+     * and the page's picture is not drawn over the middle of it - and that picture, magnified far
+     * enough, washes out towards the colour of the paper and takes the ruling with it.
+     */
+    val paperIsOurs: Boolean
+        get() = ownPaper || !background.equals("PLAIN", ignoreCase = true)
+
     val width: Float get() = right - left
     val height: Float get() = bottom - top
     val paperWidth: Float get() = paperRight - paperLeft

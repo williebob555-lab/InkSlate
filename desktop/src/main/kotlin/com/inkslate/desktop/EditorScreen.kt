@@ -59,6 +59,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -77,6 +78,7 @@ import com.inkslate.core.Tool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.roundToInt
@@ -655,6 +657,40 @@ fun EditorScreen(
     }
 
     /** Put a page at the top of the window, which is what every jump here means. */
+    /**
+     * Where the page itself is, in the coordinates the camera works in.
+     *
+     * On a whiteboard that is not the document: the canvas is the document, and the page is a
+     * rectangle somewhere inside it - usually with a good deal of empty canvas above and to the
+     * left of it, because a canvas grows in every direction. Opening at the document's corner
+     * therefore opened on nothing at all.
+     */
+    fun paperBox(target: Int): com.inkslate.core.Box? {
+        val src = source ?: return null
+        val c = ink.canvas
+        if (c != null) {
+            val origins = com.inkslate.core.PageArranger.arrange(
+                listOf(com.inkslate.core.PageExtent(c.width, c.height)), layout, 0, c.box
+            )
+            val (ox, oy) = origins.firstOrNull() ?: return null
+            return com.inkslate.core.Box(
+                ox + (c.paperLeft - c.left),
+                oy + (c.paperTop - c.top),
+                ox + (c.paperRight - c.left),
+                oy + (c.paperBottom - c.top)
+            )
+        }
+        val extents = (0 until src.pageCount).map {
+            val d = src.pageDim(it)
+            com.inkslate.core.PageExtent(d.width, d.height)
+        }
+        val clamped = target.coerceIn(0, src.pageCount - 1)
+        val origins = com.inkslate.core.PageArranger.arrange(extents, layout, clamped)
+        val (ox, oy) = origins.getOrNull(clamped) ?: return null
+        val d = src.pageDim(clamped)
+        return com.inkslate.core.Box(ox, oy, ox + d.width, oy + d.height)
+    }
+
     fun goToPage(target: Int) {
         val src = source ?: return
         val clamped = target.coerceIn(0, src.pageCount - 1)
@@ -679,11 +715,46 @@ fun EditorScreen(
         val src = source ?: return@LaunchedEffect
         if (positionRestored || viewport.viewSize.width <= 0f) return@LaunchedEffect
         positionRestored = true
-        if (!tools.rememberView) return@LaunchedEffect
-        val at = ReadingPosition.load(file.absolutePath) ?: return@LaunchedEffect
+        val at = if (tools.rememberView) ReadingPosition.load(file.absolutePath) else null
+        if (at == null) {
+            // Nothing remembered: open on the page, in the middle of the window. The corner of a
+            // document is the corner of a whiteboard's canvas, which is empty space some distance
+            // from anything anybody wrote.
+            paperBox(page)?.let { viewport.fit(it) }
+            return@LaunchedEffect
+        }
         layout = at.layout
         page = at.page.coerceIn(0, src.pageCount - 1)
-        if (at.hasCamera) viewport.restore(at.scale!!, at.x!!, at.y!!) else goToPage(page)
+        if (at.hasCamera) {
+            viewport.restore(at.scale!!, at.x!!, at.y!!)
+        } else {
+            paperBox(page)?.let { viewport.fit(it) } ?: goToPage(page)
+        }
+    }
+
+    /**
+     * Write down where the reader is, as they move, rather than on the way out.
+     *
+     * It was written in the editor's teardown, which does not happen when the program is closed:
+     * the process ends and nothing is saved, so "open where I left off" only ever worked if you
+     * had gone back to the library first. Everything else that survives a close - the window's own
+     * shape - is written as it settles, and this now is too.
+     *
+     * Settled rather than continuous: a write for every frame of a drag is a stream of writes for
+     * a number nobody reads until the document is opened again.
+     */
+    LaunchedEffect(file.absolutePath, source) {
+        if (source == null) return@LaunchedEffect
+        snapshotFlow { Triple(viewport.scale, viewport.offset, page to layout) }
+            .debounce(600)
+            .collect {
+                if (!tools.rememberView) return@collect
+                if (!positionRestored) return@collect
+                ReadingPosition.save(
+                    file.absolutePath, page, layout,
+                    viewport.scale, viewport.offset.x, viewport.offset.y
+                )
+            }
     }
 
     fun runSearch() {

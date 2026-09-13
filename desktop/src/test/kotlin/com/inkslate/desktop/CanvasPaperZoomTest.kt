@@ -58,20 +58,29 @@ class CanvasPaperZoomTest {
             }
         }
 
+        // Coverage says the paper was filled, which it always is. What matters is whether the
+        // ruling is on it: the lightest sample against the darkest.
         val pixels = bitmap.toPixelMap()
         var painted = 0
+        var lightest = 0f
+        var darkest = 1f
         var y = 0
         while (y < height) {
             var x = 0
             while (x < width) {
-                if (pixels[x, y].alpha > 0.5f) painted++
-                x += 3
+                val c = pixels[x, y]
+                if (c.alpha > 0.5f) painted++
+                val light = (c.red + c.green + c.blue) / 3f
+                if (light > lightest) lightest = light
+                if (light < darkest) darkest = light
+                x += 2
             }
-            y += 3
+            y += 2
         }
-        val total = ((height + 2) / 3) * ((width + 2) / 3)
-        return "%-7s %s scale %-6.1f painted %d%%".format(
-            pattern, if (grown) "grown" else "fresh", scale, painted * 100 / total
+        val total = ((height + 1) / 2) * ((width + 1) / 2)
+        return "%-7s %s scale %-6.1f painted %3d%%  ruling %.3f".format(
+            pattern, if (grown) "grown" else "fresh", scale,
+            painted * 100 / total, lightest - darkest
         )
     }
 

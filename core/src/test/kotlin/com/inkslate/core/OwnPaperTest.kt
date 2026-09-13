@@ -28,6 +28,26 @@ class OwnPaperTest {
         assertFalse(InkCanvas.startingAt(612f, 792f).ownPaper)
     }
 
+    /**
+     * Whiteboards made before the flag existed must still be drawn seamlessly, or the fix only
+     * reaches documents made after it - which is nobody's existing work.
+     */
+    @Test
+    fun `a whiteboard from before the flag is recognised by its paper`() {
+        val older = InkCanvas.startingAt(612f, 792f, "GRAPH")
+
+        assertFalse("it cannot say so outright", older.ownPaper)
+        assertTrue("but its pattern says so", older.paperIsOurs)
+    }
+
+    @Test
+    fun `a canvas made from somebody's document is not`() {
+        val converted = InkCanvas.startingAt(612f, 792f)
+
+        assertFalse(converted.paperIsOurs)
+        assertFalse(InkCanvas.startingAt(612f, 792f, "plain").paperIsOurs)
+    }
+
     @Test
     fun `it travels with the document`() {
         val doc = InkDocument.create(

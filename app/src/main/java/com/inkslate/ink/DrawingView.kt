@@ -1263,7 +1263,7 @@ class DrawingView @JvmOverloads constructor(
         // out of it and letting its picture cover the middle draws the same lines twice - once as
         // lines and once as a photograph of lines - and they agree everywhere except in sharpness,
         // which is what made the old page edge show up as the view came in.
-        if (!c.ownPaper) target.clipOutRect(paperRect)
+        if (!c.paperIsOurs) target.clipOutRect(paperRect)
         com.inkslate.core.PaperPattern.emit(
             background,
             canvasRect.left, canvasRect.top, canvasRect.right, canvasRect.bottom,
@@ -2163,7 +2163,7 @@ class DrawingView @JvmOverloads constructor(
 
             // A page whose paper this program ruled is already drawn, seamlessly, by the paint
             // above; its picture is the same ruling again and only differs by being a picture.
-            val ownPaper = this.canvas?.ownPaper == true && canvasRect != null
+            val ownPaper = this.canvas?.paperIsOurs == true && canvasRect != null
             if (!ownPaper) {
                 fillPaint.color = Color.WHITE
                 fillPaint.alpha = 255

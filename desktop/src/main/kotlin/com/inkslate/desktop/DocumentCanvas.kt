@@ -283,7 +283,7 @@ fun DocumentCanvas(
             if (pageWidth <= 0f || pageHeight <= 0f) continue
 
             // Nothing to render for paper this program ruled: it is painted, not photographed.
-            if (canvas?.ownPaper == true) continue
+            if (canvas?.paperIsOurs == true) continue
 
             val wholePage = InkBox(0f, 0f, pageWidth, pageHeight)
             if (slot.index !in overviews) {
@@ -774,7 +774,7 @@ private fun DrawScope.drawPage(
             // put a photograph of the same lines on top of the lines themselves - the same ruling
             // twice, agreeing everywhere except in sharpness, which is what made the old page
             // edge visible at close zoom. A page somebody brought with them is drawn as it is.
-            if (!canvas.ownPaper) {
+            if (!canvas.paperIsOurs) {
                 overview?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter) }
                 tile?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter) }
             }
