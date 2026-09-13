@@ -38,7 +38,14 @@ object StrokeOutline {
     /** Longest gap between generated cross-sections, in page points. */
     private const val MAX_STEP_PT = 0.55f
 
-    /** Ceiling on generated cross-sections, so a pathological stroke cannot melt the renderer. */
+    /**
+     * Roughly how many cross-sections a long stroke is given before they are spaced out further.
+     *
+     * A budget on density, not on length. It used to be a hard stop - resampling simply ended once
+     * this many had been made - so any stroke longer than about three thousand points of pen travel
+     * was drawn, and exported, only up to there. The handwriting past that point was stored and
+     * never shown: a long line looked as if the pen had been lifted part-way along it.
+     */
     private const val MAX_SAMPLES = 6000
 
     /** Sides in a round cap. Enough that a nib end never reads as a polygon. */
@@ -108,9 +115,15 @@ object StrokeOutline {
      * the single smooth contour used to hide.
      */
     private fun resample(pts: List<InkPoint>): List<InkPoint> {
+        // A long stroke keeps all of its length and gives up density instead: the step grows so the
+        // whole centreline fits the budget. Every input sample still yields at least one
+        // cross-section, so the cost stays linear in what was drawn and nothing is dropped.
+        var travel = 0f
+        for (i in 1 until pts.size) travel += hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y)
+        val step = max(MAX_STEP_PT, travel / MAX_SAMPLES)
+
         val out = ArrayList<InkPoint>(pts.size * 2)
         out.add(pts[0])
-        var budget = MAX_SAMPLES
         for (i in 1 until pts.size) {
             val prev = pts[i - 1]
             val cur = pts[i]
@@ -122,15 +135,13 @@ object StrokeOutline {
 
             val span = hypot(endX - startX, endY - startY) +
                 hypot(prev.x - startX, prev.y - startY)
-            val steps = ceil(span / MAX_STEP_PT).toInt().coerceIn(1, 24)
-            if (budget <= 0) break
+            val steps = ceil(span / step).toInt().coerceIn(1, 24)
             for (k in 1..steps) {
                 val t = k / steps.toFloat()
                 val u = 1f - t
                 val x = u * u * startX + 2f * u * t * prev.x + t * t * endX
                 val y = u * u * startY + 2f * u * t * prev.y + t * t * endY
                 out.add(InkPoint(x, y, prev.width + (cur.width - prev.width) * t))
-                if (--budget <= 0) break
             }
         }
         return out

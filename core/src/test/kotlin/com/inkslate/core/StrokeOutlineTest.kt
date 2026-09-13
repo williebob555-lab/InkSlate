@@ -91,6 +91,33 @@ class StrokeOutlineTest {
         )
     }
 
+    /**
+     * A long line is drawn to its end.
+     *
+     * Resampling used to stop after a fixed number of cross-sections, so a stroke with more pen
+     * travel than that was stored whole and drawn - on screen and in the saved PDF - only part way.
+     */
+    @Test
+    fun `a very long stroke is drawn all the way to its last point`() {
+        // Back and forth across a page, far past where the old cut-off fell.
+        val pts = ArrayList<InkPoint>()
+        for (row in 0 until 40) {
+            val y = 20f + row * 18f
+            for (i in 0..200) {
+                val x = if (row % 2 == 0) 20f + i * 2.8f else 580f - i * 2.8f
+                pts.add(InkPoint(x, y, 3f))
+            }
+        }
+        val last = pts.last()
+        val c = StrokeOutline.contours(stroke(pts, BrushType.BALLPOINT))
+        assertTrue(
+            "the end of a long stroke must be inside its ink",
+            winding(c, last.x, last.y) != 0
+        )
+        // ...and so must somewhere in the middle of its final row.
+        assertTrue(winding(c, 300f, last.y) != 0)
+    }
+
     @Test
     fun `every contour is wound the same way`() {
         val c = StrokeOutline.contours(stroke(loop(radius = 25f, width = 3f)))
