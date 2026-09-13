@@ -3,6 +3,8 @@ package com.inkslate.desktop
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import org.apache.pdfbox.Loader
+import org.apache.pdfbox.cos.COSDictionary
+import org.apache.pdfbox.cos.COSName
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.rendering.PDFRenderer
@@ -43,7 +45,7 @@ interface DesktopSource : Closeable {
 class PdfSource(private val file: File) : DesktopSource {
 
     private val doc: PDDocument = Loader.loadPDF(file)
-    private val renderer = PDFRenderer(doc)
+    private val renderer = pictureOf(doc)
     private val lock = Any()
 
     override val kind = "pdf"
@@ -108,7 +110,7 @@ class PdfSource(private val file: File) : DesktopSource {
                         region.height
                     )
                 )
-                PDFRenderer(doc).renderImage(index, scale).toComposeImageBitmap()
+                pictureOf(doc).renderImage(index, scale).toComposeImageBitmap()
             }.also {
                 page.setCropBox(kept)
             }.getOrNull()
@@ -127,6 +129,33 @@ class PdfSource(private val file: File) : DesktopSource {
 
     /** The underlying document, for export. */
     fun document(): PDDocument = doc
+
+    private companion object {
+        /**
+         * A renderer that leaves out the handwriting this app wrote into the file.
+         *
+         * A saved document carries its marks twice: as PDF annotations, so they show in any other
+         * reader, and as the editable copy that is drawn on top here. The tablet has always taken
+         * its page pictures from a copy with those annotations removed. This build drew them, so
+         * every mark had a second, flattened twin under it - invisible only while the two lined
+         * up exactly, and plainly doubled the moment they did not, which a whiteboard that had
+         * grown since the page was read was enough to cause.
+         *
+         * Filtered at render time rather than stripped from the document, which is open for the
+         * life of the editor and must stay what is on disk. Anyone else's annotations still show.
+         */
+        fun pictureOf(doc: PDDocument): PDFRenderer = PDFRenderer(doc).apply {
+            setAnnotationsFilter { annotation -> !isOurs(annotation.cosObject) }
+        }
+
+        // Both builds' keys: the laptop and the tablet each wrote a slightly different one, and
+        // either can be the one that last saved the file.
+        private val KEYS = listOf("InkSlateObj", "InkSlateObject")
+
+        fun isOurs(dict: COSDictionary): Boolean =
+            dict.getString(COSName.T) == "InkSlate" ||
+                KEYS.any { dict.getString(COSName.getPDFName(it)) == "InkSlate" }
+    }
 
     override fun close() {
         runCatching { doc.close() }

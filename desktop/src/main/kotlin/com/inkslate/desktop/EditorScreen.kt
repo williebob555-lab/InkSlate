@@ -160,6 +160,8 @@ fun EditorScreen(
     var exportOpen by remember { mutableStateOf(false) }
     var cropping by remember { mutableStateOf<Stroke?>(null) }
     var reopenTick by remember { mutableStateOf(0) }
+    /** The canvas paper the page was last read again for; see [refreshPageIfGrown]. */
+    var pageReadFor by remember(file) { mutableStateOf<com.inkslate.core.Box?>(null) }
     // Restored once per open, or every recomposition would drag the view back.
     var positionRestored by remember(file) { mutableStateOf(false) }
     var armedStampLabel by remember { mutableStateOf<String?>(null) }
@@ -321,6 +323,38 @@ fun EditorScreen(
     }
 
     /**
+     * Read the page again when the canvas's paper no longer matches the page that was read.
+     *
+     * The page on disk changes size under an open whiteboard in two ordinary ways: a save here
+     * that grew it, and another device's grown copy folded in before a save. The picture of the
+     * page was still the one taken when the document opened, so the paper and the picture of it
+     * disagreed about where the page ends. Only the page is read again - the handwriting, the undo
+     * history and the view are all left exactly as they are.
+     */
+    suspend fun refreshPageIfGrown() {
+        val c = ink.canvas ?: return
+        val src = source ?: return
+        if (!DesktopSources.isPdf(file) || src.pageCount == 0) return
+        val read = src.pageDim(0)
+        val same = kotlin.math.abs(read.width - c.paperWidth) < 0.5f &&
+            kotlin.math.abs(read.height - c.paperHeight) < 0.5f
+        if (same) return
+        // Once per size the paper claims. Two devices that grew the canvas in different directions
+        // merge to paper bigger than either page, and no amount of reading will make them agree -
+        // so without this every quiet save would read the whole document again.
+        if (pageReadFor == c.paperBox) return
+        pageReadFor = c.paperBox
+        val fresh = withContext(Dispatchers.IO) { DesktopSources.open(file) } ?: return
+        source = fresh
+        withContext(Dispatchers.IO) { runCatching { src.close() } }
+        EventLog.info(
+            "canvas",
+            "${file.name}: page read again at ${c.paperWidth.toInt()}x${c.paperHeight.toInt()} " +
+                "(was ${read.width.toInt()}x${read.height.toInt()})"
+        )
+    }
+
+    /**
      * Write the document out under the rules this file saves by.
      *
      * The working copy is written first and unconditionally: it is what stands between a failed
@@ -364,6 +398,7 @@ fun EditorScreen(
                 is SaveResult.Written -> {
                     dirty = false
                     diskStamp = DocumentIO.stampOf(file)
+                    if (!result.wasCopy) refreshPageIfGrown()
                     status = if (result.wasCopy) {
                         "Saved a copy: ${result.target.name}"
                     } else {
@@ -417,6 +452,7 @@ fun EditorScreen(
         if (result is SaveResult.Written) {
             diskStamp = DocumentIO.stampOf(file)
             DesktopPeers.announceWrote(file)
+            refreshPageIfGrown()
             // Only settled if nothing arrived while it was being written: the write covered the
             // document as it was when it started, not as it is now.
             if (currentInk() === doc) dirty = false

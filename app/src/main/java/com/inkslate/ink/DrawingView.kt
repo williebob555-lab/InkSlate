@@ -2159,7 +2159,14 @@ class DrawingView @JvmOverloads constructor(
             // Where the document's own page actually is. For an ordinary page that is the page;
             // for a canvas that has grown it is the part the raster covers, and everything
             // outside it is paper this view draws itself.
-            val pageRect = slot.paperRect?.let { RectF(it) } ?: RectF(0f, 0f, slot.width, slot.height)
+            //
+            // Placed where the canvas says the page starts, but sized by the page that was actually
+            // read. The canvas's paper is a merge of what every device believes, and when two of
+            // them grew the page different ways it claims more page than exists in the file here;
+            // sized by that claim, the page's picture was stretched across it.
+            val pageRect = slot.paperRect?.let {
+                RectF(it.left, it.top, it.left + slot.width, it.top + slot.height)
+            } ?: RectF(0f, 0f, slot.width, slot.height)
 
             if (canvasRect != null) drawCanvasPaper(canvas, canvasRect, pageRect)
 

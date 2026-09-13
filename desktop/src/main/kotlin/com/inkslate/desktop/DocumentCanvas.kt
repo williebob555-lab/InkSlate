@@ -292,8 +292,12 @@ fun DocumentCanvas(
             val printed = extents.getOrNull(slot.index)
             val originX = canvas?.paperLeft ?: 0f
             val originY = canvas?.paperTop ?: 0f
-            val pageWidth = canvas?.paperWidth ?: printed?.width ?: slot.width
-            val pageHeight = canvas?.paperHeight ?: printed?.height ?: slot.height
+            // Sized by the page that was actually read, not by the paper the canvas says it has.
+            // The two part company whenever the page on disk grows after it was read - a save
+            // here that enlarged it, or another device's copy merged in - and a picture of the
+            // old page laid across the new paper was stretched to fit, everything on it included.
+            val pageWidth = printed?.width ?: canvas?.paperWidth ?: slot.width
+            val pageHeight = printed?.height ?: canvas?.paperHeight ?: slot.height
             if (pageWidth <= 0f || pageHeight <= 0f) continue
 
             // Nothing to render for paper this program ruled: it is painted, not photographed.
