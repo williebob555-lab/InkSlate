@@ -152,6 +152,8 @@ sealed interface PeerMessage {
         @SerialName("deleted") val deleted: Map<String, Long> = emptyMap(),
         /** Bookmarks, when the other side's differ. Null means "no news", not "none". */
         @SerialName("bookmarks") val bookmarks: List<InkDocument.Bookmark>? = null,
+        /** Bookmarks removed, sent with [bookmarks]. */
+        @SerialName("bookmarksRemoved") val bookmarksRemoved: Map<String, Long>? = null,
         /** The canvas, when the other side's differs. Null means "no news". */
         @SerialName("canvas") val canvas: InkCanvas? = null,
         /**
@@ -162,7 +164,8 @@ sealed interface PeerMessage {
         @SerialName("layout") val layout: String = ""
     ) : PeerMessage {
         val isEmpty: Boolean
-            get() = strokes.isEmpty() && deleted.isEmpty() && bookmarks == null && canvas == null
+            get() = strokes.isEmpty() && deleted.isEmpty() && bookmarks == null &&
+                bookmarksRemoved == null && canvas == null
     }
 
     /**
@@ -185,6 +188,24 @@ sealed interface PeerMessage {
          * assume they arrived. This is the acknowledgement the live link otherwise does not have.
          */
         @SerialName("digest") val digest: Digest? = null
+    ) : PeerMessage
+
+    /** "Send me these pictures" - ones a mark in this document shows and this device lacks. */
+    @Serializable
+    @SerialName("imageWant")
+    data class ImageWant(
+        @SerialName("docId") val docId: String,
+        @SerialName("ids") val ids: List<String> = emptyList()
+    ) : PeerMessage
+
+    /** One picture, as the PNG file it is stored as. See [ImageLink]. */
+    @Serializable
+    @SerialName("imageData")
+    data class ImageData(
+        @SerialName("docId") val docId: String,
+        @SerialName("id") val id: String,
+        /** The file's bytes, in base64. */
+        @SerialName("png") val png: String
     ) : PeerMessage
 
     /** "Something in my library changed" - a new document, a rename, a folder added. */

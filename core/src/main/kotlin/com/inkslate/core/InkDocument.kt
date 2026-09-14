@@ -50,6 +50,12 @@ data class InkDocument(
      */
     @SerialName("bookmarks") val bookmarks: List<Bookmark> = emptyList(),
     /**
+     * Bookmarks taken away, by [Bookmark.key], with when. Without these a bookmark removed on one
+     * device came straight back from the other, which still had it - the same resurrection
+     * [deleted] exists to stop for marks.
+     */
+    @SerialName("bookmarksRemoved") val bookmarksRemoved: Map<String, Long> = emptyMap(),
+    /**
      * Set when this document is a canvas that grows to fit what is drawn on it.
      *
      * Null for an ordinary paginated document, which is nearly all of them - a worksheet has the
@@ -100,7 +106,13 @@ data class InkDocument(
         @SerialName("page") val page: Int,
         @SerialName("label") val label: String,
         @SerialName("createdUtc") val createdUtc: Long = 0
-    )
+    ) {
+        /**
+         * Which bookmark this is, whatever page it is on now: pages move, and a bookmark moves with
+         * its page. Adding one again after removing it makes a new one.
+         */
+        val key: String get() = "$createdUtc|$label"
+    }
 
     fun strokesOn(page: Int): List<Stroke> = pages[page.toString()].orEmpty()
 
@@ -168,10 +180,16 @@ data class InkDocument(
         )
     }
 
-    fun withBookmarkRemoved(page: Int): InkDocument = copy(
-        bookmarks = bookmarks.filterNot { it.page == page },
-        modifiedUtc = System.currentTimeMillis()
-    )
+    fun withBookmarkRemoved(page: Int): InkDocument {
+        val now = System.currentTimeMillis()
+        val gone = bookmarks.filter { it.page == page }
+        if (gone.isEmpty()) return this
+        return copy(
+            bookmarks = bookmarks - gone.toSet(),
+            bookmarksRemoved = bookmarksRemoved + gone.associate { it.key to now },
+            modifiedUtc = now
+        )
+    }
 
     fun isBookmarked(page: Int) = bookmarks.any { it.page == page }
 
@@ -267,9 +285,11 @@ data class InkDocument(
             maxOf(clocks[it] ?: 0L, other.clocks[it] ?: 0L)
         }
 
-        val mergedBookmarks = (bookmarks + other.bookmarks)
-            .distinctBy { it.page }
-            .sortedBy { it.page }
+        val removedBookmarks = (bookmarksRemoved.keys + other.bookmarksRemoved.keys).associateWith {
+            maxOf(bookmarksRemoved[it] ?: 0L, other.bookmarksRemoved[it] ?: 0L)
+        }
+        // One per page, and the same one whichever device merges: the earliest made.
+        val mergedBookmarks = mergedBookmarks(bookmarks + other.bookmarks, removedBookmarks)
 
         // The union of two canvases, which cannot lose anyone's room to write and does not
         // depend on which device merged first. See [InkCanvas.mergeWith].
@@ -283,6 +303,7 @@ data class InkDocument(
             pages = mergedPages,
             canvas = mergedCanvas,
             bookmarks = mergedBookmarks,
+            bookmarksRemoved = removedBookmarks,
             deleted = tombs,
             clocks = mergedClocks,
             pageSizes = if (pageSizes.size >= other.pageSizes.size) pageSizes else other.pageSizes,
@@ -290,6 +311,11 @@ data class InkDocument(
             modifiedBy = if (modifiedUtc >= other.modifiedUtc) modifiedBy else other.modifiedBy
         )
     }
+
+    private fun mergedBookmarks(all: List<Bookmark>, removed: Map<String, Long>): List<Bookmark> =
+        all.filter { it.key !in removed }
+            .sortedWith(compareBy<Bookmark>({ it.page }, { it.createdUtc }, { it.label }))
+            .distinctBy { it.page }
 
     /**
      * Drop this document's tombstones for strokes it still holds.

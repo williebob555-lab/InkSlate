@@ -214,6 +214,29 @@ class PeerSyncTest {
         assertTrue(PeerSync.holdsEverythingIn(ours.mergeWith(theirs), theirs))
     }
 
+    /** Removing a bookmark used to be undone by the next merge with a device that still had it. */
+    @Test
+    fun `a bookmark removed on one device stays removed, over the link and in the file`() {
+        val both = doc(mark("a-1")).withBookmarkAdded(1, "Question 4")
+        Thread.sleep(2)
+        val removedHere = both.withBookmarkRemoved(1)
+        assertTrue(both.mergeWith(removedHere).bookmarks.isEmpty())
+        assertTrue(removedHere.mergeWith(both).bookmarks.isEmpty())
+        assertFalse(PeerSync.holdsEverythingIn(both, removedHere))
+        assertTrue(PeerSync.holdsEverythingIn(removedHere, both))
+
+        // And over the link: the removal travels with the next answer.
+        val answer = PeerSync.answerFor(removedHere, PeerSync.digestOf(both))
+        assertTrue(PeerSync.changesAnything(both, answer))
+        assertTrue(PeerSync.applied(both, answer).bookmarks.isEmpty())
+
+        // Bookmarking the page again is a new bookmark, which the old removal does not touch.
+        Thread.sleep(2)
+        val again = removedHere.withBookmarkAdded(1, "Question 4")
+        assertEquals(listOf(1), again.mergeWith(both).bookmarks.map { it.page })
+        assertEquals(listOf(1), both.mergeWith(again).bookmarks.map { it.page })
+    }
+
     /** Marks that came over the link are held by the copy that took them in. */
     @Test
     fun `what arrived over the link is held once applied`() {

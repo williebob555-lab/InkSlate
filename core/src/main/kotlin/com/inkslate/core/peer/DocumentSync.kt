@@ -54,7 +54,9 @@ class DocumentSync(
      */
     lastKnownWrite: WriteRecord? = null,
     private val send: (peer: String, message: PeerMessage) -> Unit,
-    private val log: (String) -> Unit = {}
+    private val log: (String) -> Unit = {},
+    /** Pictures the marks show, asked for from the devices that have them. Null: marks only. */
+    private val images: ImageLink? = null
 ) {
 
     /** What the link is doing for this document, for the indicator beside the save state. */
@@ -179,6 +181,7 @@ class DocumentSync(
     /** Something arrived. Returns the document to show, which may now hold more. */
     fun received(peer: String, message: PeerMessage, current: InkDocument, now: Long): InkDocument {
         see(current)
+        if (images?.received(peer, message) == true) return current
         val p = peers.getOrPut(peer) {
             Peer().also {
                 it.connected = true
@@ -340,6 +343,7 @@ class DocumentSync(
     fun tick(now: Long, current: InkDocument, idle: Boolean): Boolean {
         see(current)
         stream(current)
+        images?.lookFor(openPeers(), current, now)
         flushGrants()
         moveRequestAlong(now)
         if (behind()) return false

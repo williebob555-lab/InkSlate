@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
 import com.inkslate.core.PageLayout
+import com.inkslate.core.peer.ImageLink
 import com.inkslate.core.peer.DocumentSync
 import com.inkslate.core.peer.FileRevision
 import com.inkslate.core.peer.LinkHub
@@ -713,7 +714,32 @@ fun EditorScreen(
             diskInk = writtenInk,
             lastKnownWrite = DesktopPeers.hub.lastWrite(start.docId),
             send = { peer, message -> DesktopPeers.send(peer, message) },
-            log = { EventLog.info("link", it) }
+            log = { EventLog.info("link", it) },
+            images = ImageLink(
+                docId = start.docId,
+                have = { images.exists(it) },
+                serve = { peer, ids ->
+                    scope.launch(Dispatchers.IO) {
+                        for (id in ids) {
+                            val bytes = images.bytes(id) ?: continue
+                            ImageLink.dataFor(start.docId, id, bytes)?.let { DesktopPeers.send(peer, it) }
+                        }
+                    }
+                },
+                keep = { id, png ->
+                    scope.launch {
+                        val picture = withContext(Dispatchers.IO) {
+                            if (ImageStore.keepLinked(id, png)) images.load(id) else null
+                        }
+                        if (picture != null) {
+                            EventLog.info("image", "Picture $id arrived over the link")
+                            loadedImages[id] = picture
+                        }
+                    }
+                },
+                send = { peer, message -> DesktopPeers.send(peer, message) },
+                log = { EventLog.info("link", it) }
+            )
         )
         link = session
         val attached = object : LinkHub.Document {

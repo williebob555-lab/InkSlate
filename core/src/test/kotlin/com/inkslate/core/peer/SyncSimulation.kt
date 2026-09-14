@@ -410,9 +410,10 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             Thread.sleep(2)
             erased.remove(back.id)
             // The same mark erased on the other device under the id it had before a rearrangement
-            // is put back too: the undo is the later of the two.
+            // is put back too: the undo is the later of the two. So is the same mark erased after a rearrangement this device has not caught up with.
             erased.entries.removeAll { (id, where) ->
-                descendants(id, where.first, where.second, doc.layout)?.any { it.first == back.id } == true
+                descendants(id, where.first, where.second, doc.layout)?.any { it.first == back.id } == true ||
+                    descendants(back.id, doc.layout, back.pageIndex, where.first)?.any { it.first == id } == true
             }
             note("$name undoes erase of ${back.id}")
             edited(doc.withPage(back.pageIndex, doc.strokesOn(back.pageIndex) + back, name))
@@ -423,6 +424,13 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             val page = rng.nextInt(doc.source.pageCount)
             note("$name bookmarks page $page")
             edited(doc.withBookmarkAdded(page, "Page ${page + 1}"))
+        }
+
+        fun removeBookmark() {
+            val doc = ink ?: return
+            val mark = doc.bookmarks.randomOrNull(rng) ?: return
+            note("$name removes the bookmark on page ${mark.page}")
+            edited(doc.withBookmarkRemoved(mark.page))
         }
 
         fun growCanvas() {
@@ -535,7 +543,8 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
                 in 54..59 -> d.close()
                 in 60..67 -> d.open()
                 in 68..71 -> d.save()
-                in 72..74 -> d.bookmark()
+                in 72..73 -> d.bookmark()
+                74 -> d.removeBookmark()
                 in 75..77 -> d.growCanvas()
                 in 78..79 -> d.recolour()
                 in 80..85 -> if (flaky) {

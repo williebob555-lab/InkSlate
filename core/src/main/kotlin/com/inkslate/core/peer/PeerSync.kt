@@ -36,6 +36,7 @@ object PeerSync {
             doc.bookmarks.sortedBy { it.page }.forEach {
                 append(it.page).append(':').append(it.label).append('|')
             }
+            doc.bookmarksRemoved.keys.sorted().forEach { append('-').append(it).append('|') }
             append('#').append(doc.canvas?.toString().orEmpty())
         }
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
@@ -92,6 +93,7 @@ object PeerSync {
         return PeerMessage.Marks(
             ours.docId, strokes, deletions,
             bookmarks = if (metaDiffers) ours.bookmarks else null,
+            bookmarksRemoved = if (metaDiffers) ours.bookmarksRemoved else null,
             canvas = if (metaDiffers) ours.canvas else null,
             layout = ours.layout
         )
@@ -114,6 +116,7 @@ object PeerSync {
             pages = marks.strokes.groupBy { it.pageIndex.toString() },
             deleted = marks.deleted,
             bookmarks = marks.bookmarks.orEmpty(),
+            bookmarksRemoved = marks.bookmarksRemoved.orEmpty(),
             canvas = marks.canvas
         )
         return ours.mergeWith(incoming)
@@ -162,7 +165,10 @@ object PeerSync {
             }
             if (unheard) return false
         }
-        if (!other.bookmarks.all { b -> ours.bookmarks.any { it.page == b.page } }) return false
+        val theirBookmarks = other.bookmarks.filter { it.key !in ours.bookmarksRemoved }
+        if (!theirBookmarks.all { b -> ours.bookmarks.any { it.page == b.page } }) return false
+        // A removal of a bookmark this copy still has is news; one of a bookmark it never had is not.
+        if (other.bookmarksRemoved.keys.any { k -> ours.bookmarks.any { it.key == k } }) return false
         val theirs = other.canvas ?: return true
         val mine = ours.canvas ?: return false
         return mine.mergeWith(theirs) == mine
@@ -179,7 +185,7 @@ object PeerSync {
             buried(at, mine[id] ?: Long.MIN_VALUE) || (ours.deleted[id] ?: -1L) < at
         }
         if (newMark || newDeletion) return true
-        if (marks.bookmarks == null && marks.canvas == null) return false
+        if (marks.bookmarks == null && marks.bookmarksRemoved == null && marks.canvas == null) return false
         return metaOf(applied(ours, marks)) != metaOf(ours)
     }
 }

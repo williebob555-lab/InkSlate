@@ -38,16 +38,27 @@ class ImageStore(private val sourceFile: File) {
         id
     }.onFailure { EventLog.error("image", "Could not store image: ${it.message}") }.getOrNull()
 
+    /**
+     * The picture's file: in the folder beside the document, or else one that arrived over the
+     * link before file sync brought it. See [keepLinked].
+     */
+    fun fileFor(id: String): File? {
+        File(dir, "$id.png").takeIf { it.isFile }?.let { return it }
+        return linkedDir?.let { File(it, "$id.png") }?.takeIf { it.isFile }
+    }
+
+    /** The picture's bytes, to send to another device. */
+    fun bytes(id: String): ByteArray? = fileFor(id)?.let { runCatching { it.readBytes() }.getOrNull() }
+
     fun load(id: String): Bitmap? {
         cache.get(cacheKey(id))?.let { return it }
-        val f = File(dir, "$id.png")
-        if (!f.isFile) return null
+        val f = fileFor(id) ?: return null
         val bmp = runCatching { BitmapFactory.decodeFile(f.absolutePath) }.getOrNull() ?: return null
         cache.put(cacheKey(id), bmp)
         return bmp
     }
 
-    fun exists(id: String) = File(dir, "$id.png").isFile
+    fun exists(id: String) = fileFor(id) != null
 
     /** Remove assets no longer referenced by any stroke, so deletions do not accumulate. */
     fun prune(referenced: Set<String>) {
@@ -64,6 +75,27 @@ class ImageStore(private val sourceFile: File) {
     private fun cacheKey(id: String) = "${dir.absolutePath}|$id"
 
     companion object {
+        /**
+         * Pictures that arrived over the link, kept in the app's own storage.
+         *
+         * Not in the folder beside the document: file sync is bringing that same file from the
+         * other device, and two devices creating one file at once is exactly how a sync conflict
+         * starts. These are found when the folder does not have the picture yet, and are never the
+         * copy anything else reads.
+         */
+        @Volatile var linkedDir: File? = null
+
+        /** Keep a picture that arrived over the link. Returns whether it was kept. */
+        fun keepLinked(id: String, png: ByteArray): Boolean = runCatching {
+            val dir = linkedDir ?: return false
+            dir.mkdirs()
+            val target = File(dir, "$id.png")
+            val tmp = File(dir, ".$id.tmp")
+            tmp.writeBytes(png)
+            if (!tmp.renameTo(target)) { tmp.copyTo(target, overwrite = true); tmp.delete() }
+            true
+        }.getOrDefault(false)
+
         /** Shared across documents; keyed by folder so two files cannot collide. */
         private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
             override fun sizeOf(key: String, value: Bitmap) = value.byteCount

@@ -64,6 +64,8 @@ class LinkWhenDocumentOpensTest {
         @Volatile var ink: InkDocument? = null
         @Volatile var session: DocumentSync? = null
         private var attached: LinkHub.Document? = null
+        /** This device's pictures, by id. */
+        val pictures = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
         val connects = AtomicInteger()
         val drops = AtomicInteger()
 
@@ -75,7 +77,7 @@ class LinkWhenDocumentOpensTest {
         )
 
         fun sendLogged(peer: String, m: PeerMessage) {
-            note("$name -> ${m::class.simpleName} ${PeerMessage.encode(m).take(160)}")
+            note("$name -> ${m::class.simpleName} ${if (m is PeerMessage.ImageData) "${m.png.length} chars" else PeerMessage.encode(m).take(160)}")
             service.send(peer, m)
         }
 
@@ -87,7 +89,23 @@ class LinkWhenDocumentOpensTest {
                 me = tag, docId = doc.docId, fileName = "board.pdf",
                 disk = FileRevision(10, "start"), diskInk = doc,
                 send = { peer, m -> sendLogged(peer, m) },
-                log = { note("$name link: $it") }
+                log = { note("$name link: $it") },
+                images = ImageLink(
+                    docId = doc.docId,
+                    have = { pictures.containsKey(it) },
+                    // Off the UI thread, as the apps do: a picture is megabytes, and Android
+                    // forbids the network there.
+                    serve = { peer, ids ->
+                        Thread {
+                            ids.forEach { id ->
+                                ImageLink.dataFor(doc.docId, id, pictures.getValue(id))?.let { sendLogged(peer, it) }
+                            }
+                        }.start()
+                    },
+                    keep = { id, png -> pictures[id] = png; note("$name KEEPS picture $id (${png.size} bytes)") },
+                    send = { peer, m -> sendLogged(peer, m) },
+                    log = { note("$name link: $it") }
+                )
             )
             session = s
             val d = object : LinkHub.Document {
@@ -323,6 +341,29 @@ class LinkWhenDocumentOpensTest {
         val afterReopen = lines.drop(lines.indexOfLast { "Tablet OPENS" in it })
         val unnamed = afterReopen.filter { ("\"t\":\"want\"" in it || "\"t\":\"digest\"" in it) && "\"layout\":\"\"" in it }
         assertTrue("messages for the old arrangement after both reopened: $unnamed", unnamed.isEmpty())
+    }
+
+    @Test
+    fun `a picture placed on one device reaches the other over the link`() {
+        val (tablet, laptop) = pairedPair()
+        // A photograph-sized picture: several megabytes, in one message.
+        val png = ByteArray(3 * 1024 * 1024).also {
+            java.util.Random(7).nextBytes(it)
+            byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte()).copyInto(it)
+        }
+        laptop.pictures["photo01"] = png
+        val picture = Stroke(
+            id = "laptop-pic", kind = Stroke.Kind.IMAGE, color = 0, baseWidth = 1f,
+            points = listOf(InkPoint(0f, 0f, 1f), InkPoint(100f, 100f, 1f)), pageIndex = 0,
+            imageId = "photo01", updatedUtc = 1_000
+        )
+        val doc = document().let { it.withPage(0, listOf(picture), "laptop") }
+        laptop.open(doc)
+        tablet.open(doc.copy(pages = emptyMap()))
+        val deadline = System.currentTimeMillis() + 20_000
+        while (System.currentTimeMillis() < deadline && !tablet.pictures.containsKey("photo01")) Thread.sleep(100)
+        report("picture", tablet, laptop)
+        assertTrue("the picture should have reached the tablet", tablet.pictures["photo01"]?.contentEquals(png) == true)
     }
 
     @Test

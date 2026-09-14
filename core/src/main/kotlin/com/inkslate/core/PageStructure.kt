@@ -166,7 +166,8 @@ object PageStructure {
         val bookmarks = doc.bookmarks.mapNotNull { bm ->
             val at = change.pages.indexOfFirst { it.source == bm.page }
             if (at < 0) null else bm.copy(page = at)
-        }.distinctBy { it.page }.sortedBy { it.page }
+        }.sortedWith(compareBy<InkDocument.Bookmark>({ it.page }, { it.createdUtc }, { it.label }))
+            .distinctBy { it.page }
 
         return doc.copy(
             pages = pages,

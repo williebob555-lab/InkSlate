@@ -74,6 +74,7 @@ import com.inkslate.data.DocumentRepo
 import com.inkslate.data.AppPeers
 import com.inkslate.core.peer.DocumentSync
 import com.inkslate.core.peer.FileRevision
+import com.inkslate.core.peer.ImageLink
 import com.inkslate.core.peer.LinkHub
 import com.inkslate.core.peer.PeerMessage
 import com.inkslate.data.EventLog
@@ -241,7 +242,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     // Where the camera has been told to write, kept across the trip out to the camera app.
     var cameraFile by remember { mutableStateOf<java.io.File?>(null) }
     var versionsOpen by remember { mutableStateOf(false) }
-    val imageStore = remember(file.absolutePath) { ImageStore(file) }
+    val imageStore = remember(file.absolutePath) {
+        ImageStore.linkedDir = File(context.filesDir, "linked-images")
+        ImageStore(file)
+    }
     var bookmarkPrompt by remember { mutableStateOf<Int?>(null) }
     var outline by remember { mutableStateOf<List<OutlineEntry>?>(null) }
     var bookmarks by remember { mutableStateOf<List<InkBookmark>>(emptyList()) }
@@ -1324,7 +1328,30 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             diskInk = d.diskInk,
             lastKnownWrite = AppPeers.hub.lastWrite(d.ink.docId),
             send = { peer, message -> AppPeers.send(peer, message) },
-            log = { EventLog.info("link", it) }
+            log = { EventLog.info("link", it) },
+            images = ImageLink(
+                docId = d.ink.docId,
+                have = { imageStore.exists(it) },
+                serve = { peer, ids ->
+                    scope.launch(Dispatchers.IO) {
+                        for (id in ids) {
+                            val bytes = imageStore.bytes(id) ?: continue
+                            ImageLink.dataFor(d.ink.docId, id, bytes)?.let { AppPeers.send(peer, it) }
+                        }
+                    }
+                },
+                keep = { id, png ->
+                    scope.launch {
+                        val kept = withContext(Dispatchers.IO) { ImageStore.keepLinked(id, png) }
+                        if (kept) {
+                            EventLog.info("image", "Picture $id arrived over the link")
+                            drawingView.value?.invalidate()
+                        }
+                    }
+                },
+                send = { peer, message -> AppPeers.send(peer, message) },
+                log = { EventLog.info("link", it) }
+            )
         )
         link = session
         val attached = object : LinkHub.Document {
