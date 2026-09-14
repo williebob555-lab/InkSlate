@@ -365,7 +365,10 @@ class DocumentSync(
 
         if (!holding(open)) {
             val holder = lease?.holder
-            val writerIsHere = holder != null && holder != me && holder in open
+            // A writer whose pages are arranged the old way cannot write until it has the new
+            // file, and the new file is the one this device has to write.
+            val writerIsHere = holder != null && holder != me && holder in open &&
+                peers[holder]?.let { behindMe(it, current) } != true
             // Another device that has this open writes it, and gets this side's marks live. Only
             // a Save asked for here, or a writer that has gone, is a reason to ask for the lease.
             val wantLease = (dirty && !writerIsHere) || saveRequested
@@ -527,12 +530,24 @@ class DocumentSync(
      */
     private fun behind(): Boolean {
         val doc = seen ?: return false
+        return peers.values.any { p -> p.connected && p.open && behindMe(p, doc, reverse = true) }
+    }
+
+    /**
+     * Whether [p]'s pages are arranged the old way compared with [doc] - or, with [reverse], whether
+     * this side's are compared with theirs.
+     */
+    private fun behindMe(p: Peer, doc: InkDocument, reverse: Boolean = false): Boolean {
+        val theirs = p.layout ?: return false
         val mine = doc.layout
-        val mineAt = PageStructure.layoutAt(mine, doc.structureHistory)
-        return peers.values.any { p ->
-            val theirs = p.layout
-            p.connected && p.open && theirs != null && theirs != mine &&
-                PageStructure.path(theirs, mine, doc.structureHistory) == null &&
+        if (theirs == mine) return false
+        val history = doc.structureHistory
+        val mineAt = PageStructure.layoutAt(mine, history)
+        return if (!reverse) {
+            PageStructure.path(theirs, mine, history) != null ||
+                PageStructure.outranks(mine, mineAt, theirs, p.layoutAt)
+        } else {
+            PageStructure.path(theirs, mine, history) == null &&
                 !PageStructure.outranks(mine, mineAt, theirs, p.layoutAt)
         }
     }

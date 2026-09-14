@@ -19,7 +19,15 @@ class ReplaySeedTest {
         val tablet = sim.devices.getValue("tablet").ink
         val laptop = sim.devices.getValue("laptop").ink
         out.writeText(
-            sim.trace.joinToString("\n") + "\n\nerased=${sim.erased.sorted()}\n" +
+            sim.trace.joinToString("\n") + "\n\nerased=${sim.erased.toSortedMap()}\n" +
+                "tablet layout=${tablet?.layout} laptop layout=${laptop?.layout}\n" +
+                "erased and present again=${tablet?.let { t ->
+                    val present = t.pages.values.flatten().map { it.id }.toSet()
+                    sim.erased.mapNotNull { (id, where) ->
+                        val back = sim.descendants(id, where.first, where.second, t.layout).orEmpty().filter { it.first in present }
+                        if (back.isEmpty()) null else "$id (erased on page ${where.second} of ${where.first}) -> $back"
+                    }
+                }}\n" +
                 "tablet ids=${tablet?.pages?.values?.flatten()?.map { it.id + "@" + it.updatedUtc }?.sorted()}\n" +
                 "tablet tombs=${tablet?.deleted}\n" +
                 "laptop ids=${laptop?.pages?.values?.flatten()?.map { it.id + "@" + it.updatedUtc }?.sorted()}\n" +

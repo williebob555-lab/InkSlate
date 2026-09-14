@@ -11,12 +11,14 @@ import org.junit.Test
  *
  *  1. **Both devices end up with the same document** - the same marks, the same erasures, the same
  *     bookmarks, the same canvas.
- *  2. **Nothing drawn is lost** unless it was erased, and **nothing erased comes back** unless the
- *     erase was undone.
+ *  2. **Nothing drawn is lost** unless it was erased or its page removed, and **nothing erased
+ *     comes back** unless the erase was undone. Marks are followed through every rearrangement of
+ *     the pages, to wherever their page went.
  *  3. **Both files on disk end up identical**, and hold everything on screen.
  *  4. **While the devices stay linked, file sync never makes a conflict copy.** With the link
  *     dropping and returning, a conflict copy can be made - two devices writing while they cannot
  *     speak is exactly what file sync is for - and the first three promises still hold.
+ *  5. **While linked, no device writes an older arrangement of pages over a newer one.**
  *
  * A failure prints the seed and the tail of what happened, so it can be replayed exactly.
  */
@@ -34,7 +36,10 @@ class DocumentSyncSimulationTest {
 
     private fun run(seeds: LongRange, flaky: Boolean) {
         val failures = ArrayList<String>()
-        for (seed in seeds) {
+        // SIM_SWEEP=n runs n seeds instead, for a long look after a change to the engine.
+        val sweep = System.getenv("SIM_SWEEP")?.toLongOrNull()
+        val range = if (sweep != null) seeds.first until seeds.first + sweep else seeds
+        for (seed in range) {
             val sim = SyncSimulation(seed, flaky)
             val problem = runCatching {
                 sim.play(steps = 40 + sim.rng.nextInt(120))
@@ -66,11 +71,30 @@ class DocumentSyncSimulationTest {
             return "the devices disagree:\n  tablet ${describe(a)}\n  laptop ${describe(b)}"
         }
 
-        val present = a.pages.values.flatten().map { it.id }.toSet()
-        val lost = sim.created - sim.erased - present
+        val present = a.pages.values.flatten().associate { it.id to it.pageIndex }
+        val erasedLineage = HashSet<String>()
+        for ((id, where) in sim.erased) {
+            erasedLineage += id
+            sim.descendants(id, where.first, where.second, a.layout)?.forEach { erasedLineage += it.first }
+        }
+        val lost = ArrayList<String>()
+        for ((id, where) in sim.created) {
+            val now = sim.descendants(id, where.first, where.second, a.layout)
+                ?: return "no way from ${where.first} to ${a.layout} for $id"
+            if (id in erasedLineage || now.any { it.first in erasedLineage }) continue
+            for ((mark, page) in now) {
+                if (present[mark] != page) lost += "$id (as $mark on page $page)"
+            }
+        }
         if (lost.isNotEmpty()) return "marks lost: $lost"
-        val back = sim.erased intersect present
+        val back = sim.erased.entries.flatMap { (id, where) ->
+            (sim.descendants(id, where.first, where.second, a.layout).orEmpty().map { it.first } + id)
+                .filter { it in present }
+        }
         if (back.isNotEmpty()) return "erased marks came back: $back"
+        if (!flaky && sim.staleLayoutWrites > 0) {
+            return "${sim.staleLayoutWrites} write(s) of an older arrangement of pages while linked"
+        }
 
         val fileA = sim.sync.files.getValue("tablet")
         val fileB = sim.sync.files.getValue("laptop")
@@ -97,6 +121,6 @@ class DocumentSyncSimulationTest {
         val canvas = doc.canvas?.let {
             "${it.left},${it.top},${it.right},${it.bottom} colour ${it.paperColor}"
         }
-        return "marks[$marks] bookmarks$bookmarks canvas[$canvas]"
+        return "layout ${doc.layout.ifEmpty { "-" }} marks[$marks] bookmarks$bookmarks canvas[$canvas]"
     }
 }

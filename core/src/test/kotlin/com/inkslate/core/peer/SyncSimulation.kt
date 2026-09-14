@@ -4,7 +4,10 @@ import com.inkslate.core.Box
 import com.inkslate.core.InkCanvas
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
+import com.inkslate.core.PageStructure
+import com.inkslate.core.PlannedPage
 import com.inkslate.core.Stroke
+import com.inkslate.core.StructureChange
 import java.util.PriorityQueue
 import kotlin.random.Random
 
@@ -67,8 +70,35 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
         sourceName = "board.pdf", kind = "pdf", pageCount = 3, sizeBytes = 1, fingerprint = ""
     ).copy(canvas = null)
 
-    val created = HashSet<String>()
-    val erased = HashSet<String>()
+    /** Every mark drawn: the arrangement of pages it was drawn on, and the page. */
+    val created = HashMap<String, Pair<String, Int>>()
+    /** Every mark erased and not put back: the arrangement it was erased in, and its page. */
+    val erased = HashMap<String, Pair<String, Int>>()
+    /** Every rearrangement made, by the layout it made. */
+    val changes = HashMap<String, StructureChange>()
+    /** Writes of an arrangement of pages older than one already written. */
+    var staleLayoutWrites = 0
+        private set
+    private var newestLayout = ""
+
+    /**
+     * Where a mark drawn as [id] on [page] of layout [from] is now, in layout [to]: one place for
+     * each copy of its page, none if its page was removed. Null if [to] is not reached from [from].
+     */
+    fun descendants(id: String, from: String, page: Int, to: String): List<Pair<String, Int>>? {
+        val route = PageStructure.path(from, to, changes.values.toList()) ?: return null
+        var at = listOf(id to page)
+        for (change in route) {
+            at = at.flatMap { (mark, p) ->
+                var occurrence = 0
+                change.pages.withIndex().mapNotNull { (i, sp) ->
+                    if (sp.source != p) null
+                    else (PageStructure.remappedId(mark, change, occurrence++) to i)
+                }
+            }
+        }
+        return at
+    }
 
     // ---- file sync -----------------------------------------------------------------
 
@@ -93,6 +123,14 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
 
         fun write(device: String, content: InkDocument): FileRevision {
             val rev = FileRevision(1000 + ++revCounter, "w$revCounter")
+            if (content.layout != newestLayout) {
+                if (PageStructure.path(content.layout, newestLayout, changes.values.toList()) != null) {
+                    staleLayoutWrites++
+                    note("STALE LAYOUT: $device writes pages arranged ${content.layout.ifEmpty { "as made" }} over $newestLayout")
+                } else {
+                    newestLayout = content.layout
+                }
+            }
             val old = files.getValue(device)
             files[device] = FileState(content, rev, old.vv, now)
             note("$device wrote ${rev.tail}")
@@ -230,6 +268,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
         private var writeSnapshot: InkDocument? = null
         private var lastEditAt = Long.MIN_VALUE / 2
         private var lastErased: Stroke? = null
+        private var lastErasedLayout = ""
         private var strokeCounter = 0
         private var ticking = 0
 
@@ -319,6 +358,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             val s = session ?: return
             val file = sync.files.getValue(name)
             val arrival = s.diskChanged(file.rev, { file.content }, ink!!, now)
+            if (arrival.pagesChanged) note("$name loads the rearranged pages ${arrival.ink.layout}")
             ink = arrival.ink
         }
 
@@ -330,7 +370,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
 
         fun draw() {
             val doc = ink ?: return
-            val page = rng.nextInt(3)
+            val page = rng.nextInt(doc.source.pageCount)
             val id = "$name-${++strokeCounter}"
             val x = rng.nextFloat() * 500f
             val s = Stroke(
@@ -338,21 +378,22 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
                 points = listOf(InkPoint(x, 10f, 2f), InkPoint(x + 20f, 40f, 2f)),
                 pageIndex = page, updatedUtc = System.currentTimeMillis()
             )
-            created.add(id)
-            note("$name draws $id")
+            created[id] = doc.layout to page
+            note("$name draws $id on page $page of ${doc.layout.ifEmpty { "-" }}")
             edited(doc.withPage(page, doc.strokesOn(page) + s, name))
         }
 
         fun erase() {
             val doc = ink ?: return
-            val page = rng.nextInt(3)
+            val page = rng.nextInt(doc.source.pageCount)
             val on = doc.strokesOn(page)
             if (on.isEmpty()) return
             // Strictly after anything else in wall-clock time, which is what the merge orders by.
             Thread.sleep(2)
             val victim = on[rng.nextInt(on.size)]
-            erased.add(victim.id)
+            erased[victim.id] = doc.layout to page
             lastErased = victim
+            lastErasedLayout = doc.layout
             note("$name erases ${victim.id}")
             edited(doc.withPage(page, on - victim, name))
         }
@@ -361,6 +402,9 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             val doc = ink ?: return
             val back = lastErased ?: return
             lastErased = null
+            // Undo does not reach back across a rearrangement: the editor starts afresh with the
+            // new pages.
+            if (lastErasedLayout != doc.layout) return
             if (doc.strokesOn(back.pageIndex).any { it.id == back.id }) return
             Thread.sleep(2)
             erased.remove(back.id)
@@ -370,7 +414,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
 
         fun bookmark() {
             val doc = ink ?: return
-            val page = rng.nextInt(3)
+            val page = rng.nextInt(doc.source.pageCount)
             note("$name bookmarks page $page")
             edited(doc.withBookmarkAdded(page, "Page ${page + 1}"))
         }
@@ -401,6 +445,49 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             val s = session ?: return
             note("$name presses Save")
             s.requestSave()
+        }
+
+        /**
+         * Move, copy, turn or remove pages - as the editors do it: only once this device may write,
+         * asking to first when another device writes, and writing the rearranged file at once.
+         */
+        fun rearrange() {
+            val s = session ?: return
+            val doc = ink ?: return
+            if (writeEndsAt >= 0) return
+            if (!s.mayWriteNow(now)) {
+                note("$name wants to rearrange pages, and asks to write first")
+                s.requestSave()
+                return
+            }
+            val count = doc.source.pageCount
+            var plan = (0 until count).map { PlannedPage(source = it, uid = it.toLong()) }
+            repeat(1 + rng.nextInt(2)) {
+                val at = rng.nextInt(plan.size)
+                plan = when (rng.nextInt(5)) {
+                    0 -> plan.toMutableList().also { it.add(rng.nextInt(plan.size), it.removeAt(at)) }
+                    1 -> if (plan.size < 6) plan.toMutableList().also { it.add(at + 1, it[at].copy(uid = 100L + at)) } else plan
+                    2 -> if (plan.size > 1) plan.toMutableList().also { it.removeAt(at) } else plan
+                    3 -> plan.toMutableList().also { it[at] = it[at].copy(quarterTurns = 1 + rng.nextInt(3)) }
+                    else -> if (plan.size < 6) plan.toMutableList().also { it.add(at, PlannedPage(-1, 200L + at)) } else plan
+                }
+            }
+            val layout = "$name-L${++strokeCounter}"
+            // A rearrangement retires marks as of its own moment, and an erase in the very same
+            // millisecond on another device reads as one of those retirements. Real devices do not
+            // share a millisecond like a simulation running a session in a blink does.
+            Thread.sleep(2)
+            val (next, change) = PageStructure.restructure(
+                doc, plan, { 612f to 792f }, at = System.currentTimeMillis(), to = layout
+            )
+            changes[layout] = change
+            note("$name REARRANGES ${doc.layout.ifEmpty { "-" }} -> $layout: ${change.pages.map { it.source }}")
+            lastErased = null
+            edited(next)
+            val rev = sync.write(name, next)
+            s.written(rev, next, now)
+            hub.wrote(base.docId, s.lastWrite)
+            Thread.sleep(2)
         }
 
         /**
@@ -449,6 +536,10 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
                     if (linkUp) linkDown() else linkUpAgain()
                 }
                 in 86..88 -> d.writeOnTheWayOut()
+                // Only the tablet rearranges when the link comes and goes. Two devices rearranging
+                // the same document while unable to speak cannot both keep their arrangement, and
+                // are settled by keeping the later one - covered on its own, not here.
+                in 89..92 -> if (!flaky || d.name == "tablet") d.rearrange()
                 else -> Unit
             }
         }
