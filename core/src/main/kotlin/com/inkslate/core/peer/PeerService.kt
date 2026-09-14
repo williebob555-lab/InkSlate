@@ -429,7 +429,7 @@ class PeerService(private val host: Host) {
             is PeerMessage.Digest -> host.openDocument()?.let { open ->
                 if (open.docId != message.docId) return@let
                 val answer = PeerSync.answerFor(open.doc, message)
-                if (answer.strokes.isNotEmpty() || answer.deleted.isNotEmpty()) {
+                if (!answer.isEmpty) {
                     connection.send(answer)
                 }
                 val wanted = PeerSync.wantedFrom(open.doc, message)
@@ -448,6 +448,8 @@ class PeerService(private val host: Host) {
             is PeerMessage.Wrote -> host.onRemoteWrite(peer.name, message.name)
 
             PeerMessage.LibraryChanged -> host.onRemoteWrite(peer.name, null)
+
+            is PeerMessage.LeaseRequest, is PeerMessage.LeaseGrant, is PeerMessage.LeaseState -> Unit
         }
     }
 

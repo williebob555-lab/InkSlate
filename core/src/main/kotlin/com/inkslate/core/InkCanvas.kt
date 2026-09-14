@@ -66,7 +66,15 @@ data class InkCanvas(
      * False for a canvas made out of a document somebody brought with them, whose page has content
      * that has to be shown.
      */
-    @SerialName("ownPaper") val ownPaper: Boolean = false
+    @SerialName("ownPaper") val ownPaper: Boolean = false,
+    /**
+     * When the paper's look - pattern, colours, spacing - was last chosen.
+     *
+     * Room merges by union, which needs no clock. A colour cannot be unioned: one of two choices has
+     * to win, and it has to be the same one on every device, or two devices trading their settings
+     * would swap them back and forth for ever. The later choice wins; zero is "never chosen here".
+     */
+    @SerialName("settingsUtc") val settingsUtc: Long = 0
 ) {
     /**
      * Whether this program can draw this canvas's paper itself.
@@ -176,16 +184,34 @@ data class InkCanvas(
      * than really exists only means some paper is drawn twice, whereas claiming a smaller one
      * would leave a hole.
      */
-    fun mergeWith(other: InkCanvas): InkCanvas = copy(
-        left = min(left, other.left),
-        top = min(top, other.top),
-        right = max(right, other.right),
-        bottom = max(bottom, other.bottom),
-        paperLeft = min(paperLeft, other.paperLeft),
-        paperTop = min(paperTop, other.paperTop),
-        paperRight = max(paperRight, other.paperRight),
-        paperBottom = max(paperBottom, other.paperBottom)
-    )
+    fun mergeWith(other: InkCanvas): InkCanvas {
+        // The look comes from whichever side chose it later; ties go to the larger description so
+        // that the answer never depends on which side ran the merge.
+        val look = when {
+            other.settingsUtc > settingsUtc -> other
+            other.settingsUtc < settingsUtc -> this
+            other.lookKey() > lookKey() -> other
+            else -> this
+        }
+        return copy(
+            left = min(left, other.left),
+            top = min(top, other.top),
+            right = max(right, other.right),
+            bottom = max(bottom, other.bottom),
+            paperLeft = min(paperLeft, other.paperLeft),
+            paperTop = min(paperTop, other.paperTop),
+            paperRight = max(paperRight, other.paperRight),
+            paperBottom = max(paperBottom, other.paperBottom),
+            background = look.background,
+            paperColor = look.paperColor,
+            lineColor = look.lineColor,
+            spacing = look.spacing,
+            ownPaper = look.ownPaper,
+            settingsUtc = look.settingsUtc
+        )
+    }
+
+    private fun lookKey(): String = "$background|$paperColor|$lineColor|$spacing|$ownPaper"
 
     companion object {
         /** Plain white paper. ARGB, matching the platform's own packing. */

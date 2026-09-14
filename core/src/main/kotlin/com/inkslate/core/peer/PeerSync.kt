@@ -19,8 +19,27 @@ object PeerSync {
     fun digestOf(doc: InkDocument): PeerMessage.Digest = PeerMessage.Digest(
         docId = doc.docId,
         marks = doc.pages.values.flatten().associate { it.id to it.updatedUtc },
-        deleted = doc.deleted
+        deleted = doc.deleted,
+        meta = metaOf(doc)
     )
+
+    /**
+     * A fingerprint of what a document holds besides its marks.
+     *
+     * Bookmarks and the canvas are a handful of bytes, so rather than track their changes they are
+     * sent whole whenever two devices' fingerprints differ - and a fingerprint that never changes
+     * is what stops them being sent on every tick.
+     */
+    fun metaOf(doc: InkDocument): String {
+        val text = buildString {
+            doc.bookmarks.sortedBy { it.page }.forEach {
+                append(it.page).append(':').append(it.label).append('|')
+            }
+            append('#').append(doc.canvas?.toString().orEmpty())
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        return digest.take(8).joinToString("") { "%02x".format(it) }
+    }
 
     /** Whether a tombstone written at [tombstoned] still outranks a mark stamped [updated]. */
     private fun buried(tombstoned: Long?, updated: Long): Boolean =
@@ -66,7 +85,14 @@ object PeerSync {
         }
         // Ours that they have not heard about, or heard an older version of.
         val deletions = ours.deleted.filter { (id, at) -> (theirs.deleted[id] ?: -1L) < at }
-        return PeerMessage.Marks(ours.docId, strokes, deletions)
+        // An explicit request is for marks and nothing else; a digest answer brings the rest along
+        // when the two devices disagree about it.
+        val metaDiffers = wanted == null && theirs.meta != metaOf(ours)
+        return PeerMessage.Marks(
+            ours.docId, strokes, deletions,
+            bookmarks = if (metaDiffers) ours.bookmarks else null,
+            canvas = if (metaDiffers) ours.canvas else null
+        )
     }
 
     /**
@@ -77,12 +103,14 @@ object PeerSync {
      * same path - and that path is the one the file sync already trusts.
      */
     fun applied(ours: InkDocument, marks: PeerMessage.Marks): InkDocument {
-        if (marks.strokes.isEmpty() && marks.deleted.isEmpty()) return ours
+        if (marks.isEmpty) return ours
         val incoming = InkDocument(
             docId = ours.docId,
             source = ours.source,
             pages = marks.strokes.groupBy { it.pageIndex.toString() },
-            deleted = marks.deleted
+            deleted = marks.deleted,
+            bookmarks = marks.bookmarks.orEmpty(),
+            canvas = marks.canvas
         )
         return ours.mergeWith(incoming)
     }
@@ -137,6 +165,8 @@ object PeerSync {
         val newDeletion = marks.deleted.any { (id, at) ->
             buried(at, mine[id] ?: Long.MIN_VALUE) || (ours.deleted[id] ?: -1L) < at
         }
-        return newMark || newDeletion
+        if (newMark || newDeletion) return true
+        if (marks.bookmarks == null && marks.canvas == null) return false
+        return metaOf(applied(ours, marks)) != metaOf(ours)
     }
 }

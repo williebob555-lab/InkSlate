@@ -1,5 +1,7 @@
 package com.inkslate.core.peer
 
+import com.inkslate.core.InkCanvas
+import com.inkslate.core.InkDocument
 import com.inkslate.core.Stroke
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -38,17 +40,58 @@ sealed interface PeerMessage {
         @SerialName("app") val app: String = "InkSlate"
     ) : PeerMessage
 
-    /** "I have this document open." Live marks only flow for documents both sides are holding. */
+    /**
+     * "I have this document open."
+     *
+     * Live marks only flow for documents both sides are holding. It also says who this device
+     * believes writes the document and the last write it knows of, which is everything the other
+     * side needs to agree about writing before either touches the file.
+     */
     @Serializable
     @SerialName("editing")
     data class Editing(
         @SerialName("docId") val docId: String,
-        @SerialName("fileName") val fileName: String
+        @SerialName("fileName") val fileName: String,
+        @SerialName("lease") val lease: Lease? = null,
+        @SerialName("lastWrite") val lastWrite: WriteRecord? = null
     ) : PeerMessage
 
+    /** "I have closed this document", and the last write of it I know of. */
     @Serializable
     @SerialName("closed")
-    data class Closed(@SerialName("docId") val docId: String) : PeerMessage
+    data class Closed(
+        @SerialName("docId") val docId: String,
+        @SerialName("lastWrite") val lastWrite: WriteRecord? = null
+    ) : PeerMessage
+
+    /** "I would like to write this document." Every other device holding it has to agree. */
+    @Serializable
+    @SerialName("leaseRequest")
+    data class LeaseRequest(
+        @SerialName("docId") val docId: String,
+        @SerialName("lease") val lease: Lease
+    ) : PeerMessage
+
+    /**
+     * "Go ahead" - sent only once this device has finished any write it had started, and carrying
+     * that write, so the new writer knows which bytes to wait for before writing on top of them.
+     */
+    @Serializable
+    @SerialName("leaseGrant")
+    data class LeaseGrant(
+        @SerialName("docId") val docId: String,
+        @SerialName("lease") val lease: Lease,
+        @SerialName("lastWrite") val lastWrite: WriteRecord? = null
+    ) : PeerMessage
+
+    /** "Not that one - this is who writes." The answer to a request something else outranks. */
+    @Serializable
+    @SerialName("leaseState")
+    data class LeaseState(
+        @SerialName("docId") val docId: String,
+        @SerialName("lease") val lease: Lease? = null,
+        @SerialName("lastWrite") val lastWrite: WriteRecord? = null
+    ) : PeerMessage
 
     /**
      * What one side holds for a document: every mark's id and when it last changed, plus the
@@ -67,7 +110,12 @@ sealed interface PeerMessage {
          * The time is the point of it: a tombstone only outranks a mark that is older than it, so
          * a mark put back by an undo still reaches a device that saw the erase.
          */
-        @SerialName("deleted") val deleted: Map<String, Long> = emptyMap()
+        @SerialName("deleted") val deleted: Map<String, Long> = emptyMap(),
+        /**
+         * A fingerprint of everything in the document that is not a mark - bookmarks, the canvas.
+         * Those are small, so they are simply sent whole whenever this does not match.
+         */
+        @SerialName("meta") val meta: String = ""
     ) : PeerMessage
 
     /** "Send me these." Sent after comparing a [Digest] against what we hold. */
@@ -89,8 +137,15 @@ sealed interface PeerMessage {
     data class Marks(
         @SerialName("docId") val docId: String,
         @SerialName("strokes") val strokes: List<Stroke> = emptyList(),
-        @SerialName("deleted") val deleted: Map<String, Long> = emptyMap()
-    ) : PeerMessage
+        @SerialName("deleted") val deleted: Map<String, Long> = emptyMap(),
+        /** Bookmarks, when the other side's differ. Null means "no news", not "none". */
+        @SerialName("bookmarks") val bookmarks: List<InkDocument.Bookmark>? = null,
+        /** The canvas, when the other side's differs. Null means "no news". */
+        @SerialName("canvas") val canvas: InkCanvas? = null
+    ) : PeerMessage {
+        val isEmpty: Boolean
+            get() = strokes.isEmpty() && deleted.isEmpty() && bookmarks == null && canvas == null
+    }
 
     /**
      * "I have just written this file."
@@ -103,7 +158,15 @@ sealed interface PeerMessage {
     data class Wrote(
         @SerialName("name") val name: String,
         @SerialName("sizeBytes") val sizeBytes: Long = 0,
-        @SerialName("modifiedUtc") val modifiedUtc: Long = 0
+        @SerialName("modifiedUtc") val modifiedUtc: Long = 0,
+        /** Set for a write of a document both devices have open. */
+        @SerialName("docId") val docId: String? = null,
+        @SerialName("write") val write: WriteRecord? = null,
+        /**
+         * What the write carried, so a device whose marks it lacks can send them again rather than
+         * assume they arrived. This is the acknowledgement the live link otherwise does not have.
+         */
+        @SerialName("digest") val digest: Digest? = null
     ) : PeerMessage
 
     /** "Something in my library changed" - a new document, a rename, a folder added. */
