@@ -58,7 +58,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
 
     fun note(line: String) {
         trace.addLast("[${now}ms] $line")
-        while (trace.size > 600) trace.removeFirst()
+        while (trace.size > 3000) trace.removeFirst()
     }
 
     // ---- the document --------------------------------------------------------------
@@ -194,7 +194,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
         linkEpoch++
         lastDelivery.clear()
         note("LINK DOWN")
-        for ((name, d) in devices) d.session?.disconnected(other(name), now)
+        for ((name, d) in devices) d.hub.disconnected(other(name))
     }
 
     fun linkUpAgain() {
@@ -204,7 +204,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
         note("LINK UP")
         at(now + rng.nextLong(50, 800)) {
             if (!linkUp || linkEpoch != epoch) return@at
-            for ((name, d) in devices) d.connectTo(other(name))
+            for ((name, d) in devices) d.hub.connected(other(name))
         }
     }
 
@@ -217,6 +217,15 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             private set
         private var journal: InkDocument? = null
         private val ledger = WriteLedger()
+
+        /** The same hub the apps use, running everything at once on the simulation's one thread. */
+        val hub = LinkHub(
+            post = { block -> block() },
+            ledger = ledger,
+            keepLedger = {},
+            send = { peer, m -> send(name, peer, m) }
+        )
+        private var attached: LinkHub.Document? = null
         private var writeEndsAt = -1L
         private var writeSnapshot: InkDocument? = null
         private var lastEditAt = Long.MIN_VALUE / 2
@@ -241,14 +250,18 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             )
             session = s
             note("$name OPENS")
-            if (linkUp) s.connected(other(name), doc, now)
+            val document = object : LinkHub.Document {
+                override val docId = base.docId
+                override fun onConnected(peer: String) = s.connected(peer, ink!!, now)
+                override fun onDisconnected(peer: String) = s.disconnected(peer, now)
+                override fun onMessage(peer: String, message: PeerMessage) {
+                    ink = s.received(peer, message, ink!!, now)
+                }
+            }
+            attached = document
+            hub.attach(document)
             val loop = ++ticking
             scheduleTick(loop)
-        }
-
-        fun connectTo(peer: String) {
-            val s = session ?: return
-            s.connected(peer, ink!!, now)
         }
 
         private fun scheduleTick(loop: Int) {
@@ -277,7 +290,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             val snapshot = writeSnapshot ?: return
             val rev = sync.write(name, snapshot)
             s.written(rev, snapshot, now)
-            ledger.note(base.docId, s.lastWrite)
+            hub.wrote(base.docId, s.lastWrite)
             writeEndsAt = -1
             writeSnapshot = null
         }
@@ -290,19 +303,17 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
                 val rev = sync.write(name, doc)
                 s.written(rev, doc, now)
             }
+            attached?.let { hub.detach(it) }
+            attached = null
             s.closed(now)
-            ledger.note(base.docId, s.lastWrite)
+            hub.wrote(base.docId, s.lastWrite)
             session = null
             ink = null
             ticking++
             note("$name CLOSES")
         }
 
-        fun receive(from: String, message: PeerMessage) {
-            ledger.heard(message)
-            val s = session ?: return
-            ink = s.received(from, message, ink!!, now)
-        }
+        fun receive(from: String, message: PeerMessage) = hub.message(from, message)
 
         fun fileArrived() {
             val s = session ?: return
@@ -391,6 +402,20 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             note("$name presses Save")
             s.requestSave()
         }
+
+        /**
+         * A write the app makes of its own accord, outside the heartbeat: going to the background,
+         * or writing before sharing the file. Allowed only when the link says so.
+         */
+        fun writeOnTheWayOut() {
+            val s = session ?: return
+            val doc = ink ?: return
+            if (writeEndsAt >= 0 || !s.mayWriteNow(now)) return
+            note("$name goes to the background and writes")
+            val rev = sync.write(name, doc)
+            s.written(rev, doc, now)
+            hub.wrote(base.docId, s.lastWrite)
+        }
     }
 
     val devices = linkedMapOf("tablet" to Device("tablet"), "laptop" to Device("laptop"))
@@ -402,6 +427,8 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
 
     /** Random use, then a long quiet spell with both devices open and linked. */
     fun play(steps: Int) {
+        // The link is up from the start; each device's hub knows the other is there.
+        for ((name, d) in devices) d.hub.connected(other(name))
         devices.values.forEach { if (rng.nextBoolean()) it.open() }
         if (devices.values.none { it.isOpen }) devices.values.first().open()
 
@@ -421,6 +448,7 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
                 in 80..85 -> if (flaky) {
                     if (linkUp) linkDown() else linkUpAgain()
                 }
+                in 86..88 -> d.writeOnTheWayOut()
                 else -> Unit
             }
         }

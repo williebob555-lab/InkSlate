@@ -79,7 +79,10 @@ class PeerServiceTest {
         val connections = AtomicInteger()
         lateinit var service: PeerService
 
-        val hub = LinkHub(post = { block -> thread.execute(block) }, ledger = WriteLedger(), keepLedger = {})
+        val hub = LinkHub(
+            post = { block -> thread.execute(block) }, ledger = WriteLedger(), keepLedger = {},
+            send = { peer, m -> service.send(peer, m) }
+        )
 
         private val session = DocumentSync(
             me = tag, docId = doc.docId, fileName = "homework.pdf",

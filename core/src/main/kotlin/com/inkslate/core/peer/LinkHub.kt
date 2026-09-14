@@ -14,7 +14,9 @@ class LinkHub(
     private val post: (() -> Unit) -> Unit,
     private val ledger: WriteLedger,
     /** Keep the ledger somewhere that outlives the process. Called on the editor's thread. */
-    private val keepLedger: (WriteLedger) -> Unit
+    private val keepLedger: (WriteLedger) -> Unit,
+    /** Say something to one device. */
+    private val send: (peer: String, message: PeerMessage) -> Unit
 ) {
 
     /** What an open document hands the hub. All calls arrive on the editor's thread. */
@@ -42,6 +44,12 @@ class LinkHub(
         // Heard whether or not the document is open here: it is what a document opened a moment
         // from now needs to know.
         if (ledger.heard(message)) keepLedger(ledger)
+        // A device that has just opened a document waits to hear whether this one has it open
+        // before it writes. When it is not open here, that has to be said - silence would leave it
+        // waiting, and guessing would leave it writing beside a write it did not know about.
+        if (message is PeerMessage.Editing && open?.docId != message.docId) {
+            send(peer, PeerMessage.Closed(message.docId, ledger[message.docId]))
+        }
         open?.onMessage(peer, message)
     }
 

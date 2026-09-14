@@ -71,6 +71,10 @@ import com.inkslate.data.CrashLog
 import com.inkslate.data.DeviceId
 import com.inkslate.data.DocumentRepo
 import com.inkslate.data.AppPeers
+import com.inkslate.core.peer.DocumentSync
+import com.inkslate.core.peer.FileRevision
+import com.inkslate.core.peer.LinkHub
+import com.inkslate.core.peer.PeerMessage
 import com.inkslate.data.EventLog
 import com.inkslate.data.FileOverride
 import com.inkslate.data.FileRepo
@@ -156,7 +160,13 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     // When the pen last touched the page, and whether the document on disk has caught up.
     var lastEditAt by remember { mutableStateOf(0L) }
     var pendingWrite by remember { mutableStateOf(false) }
-    val peerHold = remember(file.absolutePath) { com.inkslate.core.peer.PeerWriteHold() }
+    /**
+     * This document's end of the link to your other devices. See [DocumentSync]: every decision
+     * about what to send, what to take in and when to write while another device has the document
+     * open is made there, not here.
+     */
+    var link by remember { mutableStateOf<DocumentSync?>(null) }
+    var linkStatus by remember { mutableStateOf(DocumentSync.Status.ALONE) }
     // What the document on disk is doing, so the bar can say "saved" rather than say nothing.
     var writeState by remember { mutableStateOf(WriteState.UNSAVED) }
     var benchRunning by remember { mutableStateOf(false) }
@@ -663,6 +673,27 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     }
 
     /**
+     * Tell the link that a write of this document has just finished, and what went into it.
+     *
+     * What the write held is what the save recorded as saved - the snapshot the write was built
+     * from - not whatever is on screen now, which may already hold the next stroke.
+     */
+    suspend fun linkWritten(d: OpenDocument) {
+        val written = d.savedInk ?: return
+        d.diskInk = written
+        val session = link ?: return
+        val now = System.currentTimeMillis()
+        val rev = withContext(Dispatchers.IO) { FileRevision.of(d.file) }
+        if (rev == null) {
+            session.writeFailed(now)
+            return
+        }
+        session.written(rev, written, now)
+        AppPeers.hub.wrote(written.docId, session.lastWrite)
+        linkStatus = session.status(now)
+    }
+
+    /**
      * Bring the document on disk up to date, quietly.
      *
      * Same path as the Save button, minus the parts that only make sense when a person asked:
@@ -674,27 +705,17 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
      * result is appended rather than the whole document written out again. Called while the
      * document is open, so that closing it, or losing the app, finds the file already finished.
      */
-    suspend fun writeThrough(force: Boolean = false): Boolean {
-        val d = doc ?: return false
-        if (!strokesLoaded) return false
-        if (writesFrozen) return false
+    suspend fun writeThrough(): WriteOutcome {
+        val d = doc ?: return WriteOutcome.FAILED
+        if (!strokesLoaded) return WriteOutcome.FAILED
+        if (writesFrozen) return WriteOutcome.FAILED
         val rules = prefs.effectiveFor(d.file.absolutePath).copy(mode = SaveMode.OVERWRITE)
         syncPage()
         if (d.ink === d.savedInk) {
             pendingWrite = false
             writeState = WriteState.SAVED
-            return true
-        }
-        // Everything unwritten came over the link, and the device it came from is writing it into
-        // this same file. Writing it here as well is precisely what makes a sync-conflict copy.
-        // The working copy still takes it, so nothing depends on the other device following up.
-        if (!force && peerHold.leftToPeer(d.ink, System.currentTimeMillis())) {
-            if (peerHold.journaled !== d.ink) {
-                val ink = d.ink
-                withContext(Dispatchers.IO) { repo.saveWorkingQuietly(d) }
-                peerHold.journaled = ink
-            }
-            return true
+            link?.diskAlreadyHolds(d.ink)
+            return WriteOutcome.NOTHING
         }
         writeState = WriteState.SAVING
         val ok = writingDocument {
@@ -704,8 +725,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             }
         }
         if (ok is SaveResult.Written) {
-            peerHold.afterWrite(d.savedInk, d.ink)
-            d.diskInk = d.savedInk ?: d.diskInk
+            linkWritten(d)
             // Only settled if nothing arrived while it was being written. The write covered the
             // document as it was when it started, not as it is now.
             if (d.ink === d.savedInk) {
@@ -715,30 +735,36 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 writeState = WriteState.SAVED
             }
             fileRepo.invalidateThumb(d.file)
-            return true
+            return WriteOutcome.WRITTEN
         }
         writeState = WriteState.UNSAVED
-        return false
+        return if (ok == SaveResult.NothingToDo) WriteOutcome.NOTHING else WriteOutcome.FAILED
     }
 
     /**
-     * Write the document out once the hand comes off the page.
+     * The link's heartbeat, and the document written out once the hand comes off the page.
      *
      * Not on a fixed interval: a write while someone is mid-sentence is the one moment it could
-     * be felt, and there is nothing to write until they stop anyway. A short settle after the
-     * last mark catches the ordinary rhythm of writing a line and pausing to think.
+     * be felt. Whether to write at all is the link's answer - alone, it is whenever there is
+     * something new; with another device holding the document open, only when this device is the
+     * one agreed to write it and its disk has the other device's latest write.
      */
     LaunchedEffect(doc, strokesLoaded) {
         if (doc == null || !strokesLoaded) return@LaunchedEffect
         while (true) {
-            delay(1200)
-            if (!pendingWrite || selfWrites > 0 || leaving) continue
+            delay(400)
+            val d = doc ?: continue
+            val session = link ?: continue
+            syncPage()
             val now = System.currentTimeMillis()
-            if (now - lastEditAt < IDLE_BEFORE_WRITE_MS) continue
-            // The other device has just written this document and it is on its way here. Ours
-            // waits, so that it is an edit on top of theirs rather than a rival to it.
-            if (peerHold.awaitingPeerWrite(now)) continue
-            writeThrough()
+            val free = !writesFrozen && selfWrites == 0 && !leaving
+            val idle = free && now - lastEditAt >= IDLE_BEFORE_WRITE_MS
+            if (session.tick(now, d.ink, idle)) {
+                if (!free || writeThrough() != WriteOutcome.WRITTEN) {
+                    session.writeFailed(System.currentTimeMillis())
+                }
+            }
+            linkStatus = session.status(System.currentTimeMillis())
         }
     }
 
@@ -753,12 +779,33 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, doc) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && pendingWrite) {
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && pendingWrite &&
+                link?.mayWriteNow(System.currentTimeMillis()) != false
+            ) {
                 scope.launch { writeThrough() }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    /**
+     * Put what arrived from another device - over the link, or in the file - on the page.
+     *
+     * The strokes on screen are pushed into the document first by the caller ([syncPage]), so this
+     * replaces nothing that has not already been folded in.
+     */
+    fun takeIn(next: InkDocument) {
+        val d = doc ?: return
+        if (next === d.ink) return
+        val canvasBefore = d.ink.canvas
+        d.ink = next
+        drawingView.value?.setStrokes(d.allStrokes())
+        if (next.canvas != canvasBefore) drawingView.value?.canvas = next.canvas
+        bookmarks = next.bookmarks
+        dirty = true
+        pendingWrite = true
+        writeState = WriteState.UNSAVED
     }
 
     LaunchedEffect(externalTick) {
@@ -771,80 +818,56 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         // report itself as an arrival from another device.
         while (selfWrites > 0) delay(250)
         if (!file.isFile) return@LaunchedEffect          // mid-rename; the next event will tell us
-        val now = withContext(Dispatchers.IO) { PageSources.fingerprint(file) }
-        if (now == ourStamp || now == ignoredStamp) return@LaunchedEffect
+        val stamp = withContext(Dispatchers.IO) { PageSources.fingerprint(file) }
+        if (stamp == ourStamp || stamp == ignoredStamp) return@LaunchedEffect
 
-        // The length and the timestamp only say the file was written, and every save writes it -
-        // ours included, twice over when the pages are overwritten as well as the payload. So
-        // before saying anything, ask the question that actually matters: is the handwriting in
-        // there still the handwriting we put there? A save changes the bytes and leaves that
-        // answer alone; a copy arriving from another device does not.
+        // Every save of ours changes the length and the timestamp. The handwriting still being
+        // the handwriting we put there is what says this was ours.
         val stillOurs = withContext(Dispatchers.IO) { repo.documentStillOurs(file) }
         if (stillOurs) {
-            // Re-baseline so the cheap check catches it next time round.
-            ourStamp = now
+            ourStamp = stamp
             return@LaunchedEffect
         }
-        // Somebody else's write has landed, so ours no longer has to wait for it.
-        peerHold.peerWroteAt = 0L
-        // What actually arrived. Two of your own devices connected to each other write each
-        // other's marks to disk constantly, and every one of those writes used to raise this -
-        // a dialog about handwriting that was already on the page, in the middle of drawing.
+        val rev = withContext(Dispatchers.IO) { FileRevision.of(file) }
         val arrived = withContext(Dispatchers.IO) { repo.inkInFile(file) }
-        val mine = doc?.ink
-        if (arrived != null && mine != null) {
-            if (!com.inkslate.core.peer.PeerSync.carriesSomethingNew(mine, arrived)) {
-                // Already here - over the link, or because we wrote it. Re-baseline and say
-                // nothing: this is the ordinary case when two devices are both awake.
-                ourStamp = now
-                // And when the file holds everything on screen, it is this document: the marks
-                // that came over the link have been written, by the device that drew them.
-                // Saying so is what keeps this device from writing them again.
-                val d = doc
-                if (d != null && d.ink === mine && mine !== d.savedInk &&
-                    com.inkslate.core.peer.PeerSync.holdsEverythingIn(arrived, mine)
-                ) {
-                    d.savedSignatures = com.inkslate.data.pageSignatures(mine, d.pageCount)
-                    d.savedInk = mine
-                    d.diskInk = arrived
-                    peerHold.clear()
-                    pendingWrite = false
-                    unbaked = false
-                    writeState = WriteState.SAVED
-                }
-                return@LaunchedEffect
-            }
-            // Something new, and the pages are the same pages: fold it in where you can see it,
-            // rather than asking. The merge is the one every other path uses, and it cannot lose
-            // either side's work.
-            val sameShape = arrived.source.pageCount == mine.source.pageCount &&
-                arrived.pageSizes.size == mine.pageSizes.size
-            if (sameShape) {
-                syncPage()
-                val d = doc
-                if (d != null) {
-                    d.ink = d.ink.mergeWith(arrived)
-                    d.diskInk = arrived
-                    drawingView.value?.setStrokes(d.allStrokes())
-                    dirty = true
-                    pendingWrite = true
-                    writeState = WriteState.UNSAVED
-                    ourStamp = now
-                    EventLog.info(
-                        "sync",
-                        "${file.name}: folded in changes that arrived while it was open"
-                    )
-                    snackbar.showSnackbar("Folded in handwriting from another device")
-                }
-                return@LaunchedEffect
-            }
+        val d = doc ?: return@LaunchedEffect
+        val session = link ?: return@LaunchedEffect
+        ourStamp = stamp
+
+        // Pages added, removed or resized elsewhere. Marks cannot be laid onto pages that are not
+        // the pages they were drawn on, so this is still a reload rather than a merge.
+        val sameShape = arrived == null || (
+            arrived.source.pageCount == d.ink.source.pageCount &&
+                arrived.pageSizes.size == d.ink.pageSizes.size
+            )
+        if (!sameShape) {
+            EventLog.warn("sync", "${file.name} changed shape on disk while it was open")
+            persistWorking()
+            externalChange = true
+            return@LaunchedEffect
         }
 
-        EventLog.warn("sync", "${file.name} changed on disk while it was open")
-        // Get this device's marks into the working store first. Whatever the user decides next,
-        // the reload merges the two sides, and it can only do that if ours are written down.
-        persistWorking()
-        externalChange = true
+        syncPage()
+        val arrival = session.diskChanged(rev, { arrived }, d.ink, System.currentTimeMillis())
+        if (arrival.merged) {
+            takeIn(arrival.ink)
+            EventLog.info("sync", "${file.name}: folded in changes that arrived while it was open")
+            // Worth saying only when nothing came over the link: then it is news. When the other
+            // device is linked, what the file brings was already on the page.
+            if (session.openPeers().isEmpty()) {
+                snackbar.showSnackbar("Folded in handwriting from another device")
+            }
+        }
+        if (arrived != null) d.diskInk = arrived
+        // The file now holds everything on screen, so it is this document: nothing left to write.
+        if (arrival.holdsEverything && d.ink === arrival.ink && d.ink !== d.savedInk) {
+            d.savedSignatures = com.inkslate.data.pageSignatures(d.ink, d.pageCount)
+            d.savedInk = d.ink
+            pendingWrite = false
+            unbaked = false
+            writeState = WriteState.SAVED
+        }
+        linkStatus = session.status(System.currentTimeMillis())
     }
 
     /**
@@ -1079,6 +1102,24 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     fun doExport(mode: SaveMode, onDone: () -> Unit = {}) {
         val d = doc ?: return
         syncPage()
+        // Another device writes this document while it has it open. Overwriting it from here as
+        // well would be a rival file; asking the link hands the writing over first, and the next
+        // write - which carries everything on this page - happens here.
+        val session = link
+        if (mode == SaveMode.OVERWRITE && session != null &&
+            !session.mayWriteNow(System.currentTimeMillis())
+        ) {
+            session.requestSave()
+            scope.launch {
+                snackbar.showSnackbar("Saving once your other device hands the document over")
+            }
+            // The working copy first, whatever happens next - this may be the way out.
+            scope.launch {
+                withContext(Dispatchers.IO) { repo.saveWorkingQuietly(d) }
+                onDone()
+            }
+            return
+        }
         // Saving on purpose settles the question the freeze was holding open.
         writesFrozen = false
         scope.launch {
@@ -1095,8 +1136,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             // there is nothing left for the exit-time bake to do.
             if (result is SaveResult.Written && !result.wasCopy) {
                 unbaked = false
-                peerHold.afterWrite(d.savedInk, d.ink)
-                d.diskInk = d.savedInk ?: d.diskInk
+                linkWritten(d)
                 // Without this the write on the way to the background sees work still pending
                 // and does the whole thing again - which is most of what made leaving feel slow,
                 // because the two are serialised and you wait for both.
@@ -1150,9 +1190,11 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             // whole of what they notice.
             syncPage()
             if (d.ink === d.savedInk) { onClose(); return }
-            // Nothing of this device's own is unwritten - only marks from a device that is still
-            // writing them. Keep them in the working copy and go, rather than race it to the file.
-            if (peerHold.leftToPeer(d.ink, System.currentTimeMillis())) {
+            // With the link, whether to write on the way out is its answer: a device that does not
+            // write this document, or has not yet received the other device's latest write, leaves
+            // the file alone - the working copy holds everything, and the next open writes it.
+            val session = link
+            if (session != null && !session.closing(d.ink, System.currentTimeMillis())) {
                 leaving = true
                 scope.launch {
                     withContext(Dispatchers.IO) { repo.saveWorkingQuietly(d) }
@@ -1204,8 +1246,9 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
      */
     fun shareDocument() {
         scope.launch {
-            // Forced: what is handed on has to be what is on screen, whoever drew it.
-            writeThrough(force = true)
+            // Written first when this device may write it; otherwise the device that writes it
+            // already has everything on this page, and writes it when its pen pauses.
+            if (link?.mayWriteNow(System.currentTimeMillis()) != false) writeThrough()
             val d = doc ?: return@launch
             runCatching {
                 val uri = androidx.core.content.FileProvider.getUriForFile(
@@ -1236,7 +1279,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     fun checkpoint() {
         scope.launch {
             val d = doc ?: return@launch
-            writeThrough(force = true)
+            if (link?.mayWriteNow(System.currentTimeMillis()) != false) writeThrough()
             withContext(Dispatchers.IO) { repo.checkpoint(d) }
             snackbar.showSnackbar("Checkpointed ${d.file.name}")
         }
@@ -1245,57 +1288,51 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     /**
      * The link to your other devices, while this document is open.
      *
-     * Two halves. What this device owes is worked out by comparing the page against what was last
-     * sent - not fired from each place a mark is made, because a mark is made in a dozen places and
-     * the one that forgot would be a mark that never left the tablet. What arrives is merged and
-     * put on the page you are looking at, so you can watch it happen.
+     * One [DocumentSync] per opened document, plugged into the app's [LinkHub], which tells it
+     * about every device already on the link and everything they say afterwards - on this thread.
      */
-    val outbox = remember(file.absolutePath) { com.inkslate.core.peer.PeerOutbox() }
-
     DisposableEffect(doc, strokesLoaded) {
         val d = doc
-        if (d != null && strokesLoaded) {
-            outbox.reset()
-            AppPeers.documentOpened(d.file.name, d.ink)
-            AppPeers.onMarks { docId, marks ->
-                val current = doc ?: return@onMarks
-                if (docId != current.ink.docId) return@onMarks
-                if (!com.inkslate.core.peer.PeerSync.changesAnything(current.ink, marks)) return@onMarks
-                scope.launch {
-                    syncPage()
-                    val merged = com.inkslate.core.peer.PeerSync.applied(current.ink, marks)
-                    current.ink = merged
-                    drawingView.value?.setStrokes(current.allStrokes())
-                    // Theirs is not in this device's copy of the file yet - but the device that
-                    // drew it is writing it there, so this one leaves that to it. See [PeerWriteHold].
-                    peerHold.arrived(current.savedInk ?: current.diskInk, marks, System.currentTimeMillis())
-                    dirty = true
-                    pendingWrite = true
-                    writeState = WriteState.UNSAVED
-                    lastEditAt = System.currentTimeMillis()
-                }
+        if (d == null || !strokesLoaded) return@DisposableEffect onDispose { }
+        val session = DocumentSync(
+            me = DeviceId.get(context),
+            docId = d.ink.docId,
+            fileName = d.file.name,
+            disk = FileRevision.of(d.file),
+            diskInk = d.diskInk,
+            lastKnownWrite = AppPeers.hub.lastWrite(d.ink.docId),
+            send = { peer, message -> AppPeers.send(peer, message) },
+            log = { EventLog.info("link", it) }
+        )
+        link = session
+        val attached = object : LinkHub.Document {
+            override val docId = d.ink.docId
+
+            override fun onConnected(peer: String) {
+                syncPage()
+                session.connected(peer, d.ink, System.currentTimeMillis())
+                linkStatus = session.status(System.currentTimeMillis())
+            }
+
+            override fun onDisconnected(peer: String) {
+                session.disconnected(peer, System.currentTimeMillis())
+                linkStatus = session.status(System.currentTimeMillis())
+            }
+
+            override fun onMessage(peer: String, message: PeerMessage) {
+                if (doc !== d) return
+                syncPage()
+                takeIn(session.received(peer, message, d.ink, System.currentTimeMillis()))
+                linkStatus = session.status(System.currentTimeMillis())
             }
         }
-        AppPeers.onDocumentWrittenElsewhere { name ->
-            if (name == file.name) scope.launch { peerHold.peerWroteAt = System.currentTimeMillis() }
-        }
+        AppPeers.hub.attach(attached)
         onDispose {
-            AppPeers.onMarks(null)
-            AppPeers.onDocumentWrittenElsewhere(null)
-            AppPeers.documentClosed()
-        }
-    }
-
-    LaunchedEffect(doc, strokesLoaded) {
-        if (doc == null || !strokesLoaded) return@LaunchedEffect
-        while (true) {
-            delay(400)
-            val d = doc ?: continue
-            syncPage()
-            AppPeers.documentChanged(d.file.name, d.ink)
-            val owed = outbox.pending(d.ink) ?: continue
-            AppPeers.sendMarks(d.ink.docId, owed.strokes, owed.deleted)
-            outbox.sent(d.ink)
+            AppPeers.hub.detach(attached)
+            session.closed(System.currentTimeMillis())
+            AppPeers.hub.wrote(d.ink.docId, session.lastWrite)
+            if (link === session) link = null
+            linkStatus = DocumentSync.Status.ALONE
         }
     }
 
@@ -1319,12 +1356,23 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             )
                             doc?.let {
                                 Text(
-                                    "Page ${page + 1} of ${it.pageCount}  ·  " +
-                                        when (writeState) {
+                                    "Page ${page + 1} of ${it.pageCount}  ·  " + when {
+                                        // The other device writes it; "unsaved" here would only
+                                        // be saying that its write is still on the way.
+                                        linkStatus == DocumentSync.Status.WRITTEN_ELSEWHERE ->
+                                            "linked, saved by your other device"
+                                        else -> when (writeState) {
                                             WriteState.SAVING -> "saving..."
                                             WriteState.SAVED -> "saved"
                                             WriteState.UNSAVED -> "unsaved"
-                                        },
+                                        } + when (linkStatus) {
+                                            DocumentSync.Status.WRITING_HERE -> "  ·  linked"
+                                            DocumentSync.Status.AGREEING -> "  ·  linking..."
+                                            DocumentSync.Status.WAITING_FOR_FILE ->
+                                                "  ·  waiting for sync"
+                                            else -> ""
+                                        }
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1941,6 +1989,17 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 onDismiss = { pagesOpen = false },
                 onApply = { plan ->
                     pagesOpen = false
+                    // Another device with this document open would lay its marks onto the old
+                    // pages. Until page changes travel over the link, they wait until it is closed
+                    // there.
+                    if (link?.openPeers()?.isNotEmpty() == true) {
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                "Close this document on your other device before changing its pages"
+                            )
+                        }
+                        return@PagesSheet
+                    }
                     restructuring = true
                     scope.launch {
                         // The strokes on screen are the truth; get them into the document before
@@ -2467,6 +2526,9 @@ private fun LoadFailure(message: String, onClose: () -> Unit) {
 
 /** Whether the file on disk has caught up with what is on screen. */
 private enum class WriteState { SAVED, SAVING, UNSAVED }
+
+/** What a write-through came to - the link needs to know whether a write actually happened. */
+enum class WriteOutcome { NOTHING, WRITTEN, FAILED }
 
 /** How long the pen has to be still before the document is written out behind the scenes. */
 private const val IDLE_BEFORE_WRITE_MS = 1200L

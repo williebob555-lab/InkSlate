@@ -78,6 +78,14 @@ class DocumentSync(
 
     private class Peer {
         var connected = false
+        /**
+         * They have said whether they have this document open - [PeerMessage.Editing] for it, or
+         * [PeerMessage.Closed]. Until then this side cannot know it is alone, and does not act as if
+         * it were: a device that has only just opened the document was writing in the moment before
+         * the other device's answer arrived, beside that device's write.
+         */
+        var heard = false
+        var connectedAt = 0L
         /** They have this document open. */
         var open = false
         /** Their digest has been answered, so streaming the difference to them is meaningful. */
@@ -127,6 +135,8 @@ class DocumentSync(
         val p = peers.getOrPut(peer) { Peer() }
         p.connected = true
         p.open = false
+        p.heard = false
+        p.connectedAt = now
         p.caughtUp = false
         p.outbox.reset()
         send(peer, editing())
@@ -149,9 +159,15 @@ class DocumentSync(
 
     /** Something arrived. Returns the document to show, which may now hold more. */
     fun received(peer: String, message: PeerMessage, current: InkDocument, now: Long): InkDocument {
-        val p = peers.getOrPut(peer) { Peer().also { it.connected = true } }
+        val p = peers.getOrPut(peer) {
+            Peer().also {
+                it.connected = true
+                it.connectedAt = now
+            }
+        }
         when (message) {
             is PeerMessage.Editing -> {
+                p.heard = true
                 if (message.docId != docId) {
                     if (p.open) closedBy(peer, p)
                     return current
@@ -171,6 +187,7 @@ class DocumentSync(
             }
 
             is PeerMessage.Closed -> if (message.docId == docId) {
+                p.heard = true
                 absorb(message.lastWrite)
                 closedBy(peer, p)
             }
@@ -285,6 +302,7 @@ class DocumentSync(
 
         if (open.isEmpty()) {
             if (!dirty || writing) return false
+            if (undecided(now)) return false
             if (partitionedAt != 0L && now - partitionedAt < PARTITION_GRACE_MS) return false
             if (!caughtUp(now)) return false
             if (!saveRequested && (!idle || now - lastWriteAt < MIN_WRITE_INTERVAL_MS)) return false
@@ -350,6 +368,30 @@ class DocumentSync(
         flushGrants()
     }
 
+    /**
+     * Whether this device could write the document right now without making a rival file.
+     *
+     * For the writes the app makes of its own accord outside [tick] - on the way to the background,
+     * before sharing the file. A device that does not write the document, or whose disk has not yet
+     * caught up with the latest write, leaves the file alone; its marks are in its working copy.
+     */
+    fun mayWriteNow(now: Long): Boolean {
+        if (writing) return false
+        if (undecided(now)) return false
+        val open = openPeers()
+        if (open.isNotEmpty() && !holding(open)) return false
+        val l = latest
+        return l == null || disk == l.file || gaveUpWaitingFor == l.file
+    }
+
+    /**
+     * The file on disk is already known to hold [ink] - the app found nothing to write. Saves asking
+     * again every tick about a document that is, in fact, written.
+     */
+    fun diskAlreadyHolds(ink: InkDocument) {
+        diskInk = ink
+    }
+
     /** Somebody pressed Save here. Written by this device, after agreeing it with the others. */
     fun requestSave() {
         saveRequested = true
@@ -363,7 +405,7 @@ class DocumentSync(
         stream(current)
         val open = openPeers()
         if (!isDirty(current)) return false
-        val mayWrite = open.isEmpty() || holding(open)
+        val mayWrite = (open.isEmpty() && !undecided(now)) || holding(open)
         if (!mayWrite) return false
         // Closing cannot wait for the other device's write to arrive. The working copy has
         // everything, and the next open writes it; writing now would be a rival file.
@@ -406,6 +448,15 @@ class DocumentSync(
 
     private fun holding(open: Set<String>): Boolean =
         lease?.holder == me && open.all { it in confirmedBy }
+
+    /**
+     * A device on the link that has not yet said whether it has this document open.
+     *
+     * Not waited on for ever: a device that never answers - an older build, a connection that
+     * came up and went straight down - is taken to have it closed after a few seconds.
+     */
+    private fun undecided(now: Long): Boolean =
+        peers.values.any { it.connected && !it.heard && now - it.connectedAt < HANDSHAKE_MS }
 
     private fun closedBy(peer: String, p: Peer) {
         p.open = false
@@ -592,6 +643,9 @@ class DocumentSync(
 
         /** How long a writer that dropped off the link is given to come back. */
         const val PARTITION_GRACE_MS = 20_000L
+
+        /** How long a device that has just come onto the link is given to say what it has open. */
+        const val HANDSHAKE_MS = 5_000L
 
         const val REQUEST_RETRY_MS = 5_000L
         const val REQUEST_GIVE_UP_MS = 30_000L

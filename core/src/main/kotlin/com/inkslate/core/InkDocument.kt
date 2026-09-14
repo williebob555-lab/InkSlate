@@ -119,7 +119,15 @@ data class InkDocument(
         // copy still carries one, and a merge with it would take the stroke away again. So a
         // stroke being restored is stamped as of now - it does exist, as of now - which is what
         // lets it outrank a tombstone written before it. See [mergeWith].
-        val restored = remaining.filter { it in deleted }.toSet()
+        //
+        // Only a stroke the tombstone would actually bury is being restored. A merge can leave a
+        // stroke beside an older tombstone of its own - the other device saw an erase, then an undo
+        // that outranked it - and that is not a restore at all. Restamping it anyway made it
+        // outrank the *next* erase of it too, made on another device a moment earlier: an erased
+        // mark came back just because something else was drawn on the same page.
+        val restored = strokes.filter { s ->
+            deleted[s.id]?.let { tomb -> s.updatedUtc <= tomb } ?: false
+        }.map { it.id }.toSet()
         val restamped = if (restored.isEmpty()) {
             strokes
         } else {

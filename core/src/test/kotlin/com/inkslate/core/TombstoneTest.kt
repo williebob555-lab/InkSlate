@@ -35,6 +35,39 @@ class TombstoneTest {
         assertTrue("restoring should clear the tombstone", "dev-2" !in doc.deleted)
     }
 
+    /**
+     * Found by the sync simulation: erase, undo, erase again elsewhere - and the mark came back.
+     *
+     * The tablet held the mark beside an old tombstone (it had heard of an erase, then of the undo
+     * that outranked it). The laptop erased the mark again. Before that reached the tablet,
+     * something was drawn on the same page there - and saving that page took the mark for one being
+     * restored, stamped it as of now, and so outranked the laptop's second erase.
+     */
+    @Test
+    fun `a stroke merely beside an older tombstone is not stamped as restored`() {
+        val tomb = 1_000L
+        val undone = stroke("dev-1").copy(updatedUtc = 2_000L)   // put back after the erase
+        val onTablet = empty().copy(
+            pages = mapOf("0" to listOf(undone)),
+            deleted = mapOf("dev-1" to tomb)
+        )
+
+        // The laptop erases it again, a moment before the tablet draws something else.
+        val secondErase = 3_000L
+        val drawnOnTablet = onTablet.withPage(0, listOf(undone, stroke("dev-9")), "tablet")
+        assertEquals(
+            "a stroke the tombstone does not bury keeps its own stamp",
+            2_000L, drawnOnTablet.strokesOn(0).first { it.id == "dev-1" }.updatedUtc
+        )
+
+        val laptop = empty().copy(deleted = mapOf("dev-1" to secondErase))
+        val merged = drawnOnTablet.mergeWith(laptop)
+        assertTrue(
+            "the second erase must win",
+            merged.strokesOn(0).none { it.id == "dev-1" }
+        )
+    }
+
     @Test
     fun `a restored stroke survives being reloaded and merged`() {
         val a = stroke("dev-1")

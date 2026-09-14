@@ -1,11 +1,11 @@
 package com.inkslate.data
 
 import android.content.Context
-import com.inkslate.core.InkDocument
-import com.inkslate.core.Stroke
+import com.inkslate.core.peer.LinkHub
 import com.inkslate.core.peer.PeerDiscovery
 import com.inkslate.core.peer.PeerMessage
 import com.inkslate.core.peer.PeerService
+import com.inkslate.core.peer.WriteLedger
 import java.io.File
 
 /**
@@ -23,29 +23,39 @@ object AppPeers {
 
     private lateinit var appContext: Context
 
-    @Volatile private var open: PeerService.Open? = null
-    @Volatile private var marksListener: ((String, PeerMessage.Marks) -> Unit)? = null
     @Volatile private var remoteWriteListener: ((String, String?) -> Unit)? = null
     @Volatile private var peersListener: (() -> Unit)? = null
-    @Volatile private var documentWriteListener: ((String) -> Unit)? = null
 
     /** Devices announcing themselves on this network that are not paired yet. */
     @Volatile var discovered: List<PeerDiscovery.Announcement> = emptyList()
         private set
 
-    private val host = object : PeerService.Host {
+    private val main by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+
+    /**
+     * Where the open document plugs in. Everything it is told arrives on the main thread, which is
+     * the thread the editor keeps its document on.
+     */
+    val hub: LinkHub by lazy {
+        LinkHub(
+            post = { block -> main.post(block) },
+            ledger = WriteLedger.decode(prefs().getString(K_LEDGER, null)),
+            keepLedger = { ledger -> prefs().edit().putString(K_LEDGER, ledger.encode()).apply() },
+            send = { peer, message -> service.send(peer, message) }
+        )
+    }
+
+    private val host: PeerService.Host = object : PeerService.Host {
         override fun deviceTag() = DeviceId.get(appContext)
         override fun deviceName() = DeviceId.label(appContext)
-        override fun openDocument() = open
 
-        override fun onMarks(docId: String, marks: PeerMessage.Marks) {
-            marksListener?.invoke(docId, marks)
-        }
+        override fun onConnected(peer: String) = hub.connected(peer)
+        override fun onDisconnected(peer: String) = hub.disconnected(peer)
+        override fun onMessage(peer: String, message: PeerMessage) = hub.message(peer, message)
 
         override fun onRemoteWrite(peer: String, fileName: String?) {
             EventLog.info("peer", "$peer wrote ${fileName ?: "something in its library"}")
             remoteWriteListener?.invoke(peer, fileName)
-            fileName?.let { name -> documentWriteListener?.invoke(name) }
         }
 
         override fun onPaired(peer: PeerService.Peer) {
@@ -65,7 +75,7 @@ object AppPeers {
         }
     }
 
-    private val service by lazy { PeerService(host) }
+    private val service: PeerService by lazy { PeerService(host) }
 
     private val discovery by lazy {
         PeerDiscovery(
@@ -150,6 +160,7 @@ object AppPeers {
     fun stop() {
         service.stop()
         discovery.stop()
+        hub.reset()
     }
 
     fun offerPairing(code: String) = service.offerPairing(code)
@@ -166,23 +177,10 @@ object AppPeers {
 
     // ---- what the editor and the library tell it -------------------------------
 
-    fun documentOpened(fileName: String, doc: InkDocument) {
-        open = PeerService.Open(fileName, doc)
-        service.announceOpen()
-    }
+    /** Say something to one device - for [com.inkslate.core.peer.DocumentSync]. */
+    fun send(peer: String, message: PeerMessage) = service.send(peer, message)
 
-    fun documentChanged(fileName: String, doc: InkDocument) {
-        open = PeerService.Open(fileName, doc)
-    }
-
-    fun documentClosed() {
-        open?.let { service.announceClosed(it.docId) }
-        open = null
-    }
-
-    fun sendMarks(docId: String, added: List<Stroke>, removed: Map<String, Long> = emptyMap()) =
-        service.sendMarks(docId, added, removed)
-
+    /** A file this device wrote that no other device has open - a copy, an export. */
     fun announceWrote(file: File) =
         service.announceWrote(file.name, file.length(), file.lastModified())
 
@@ -190,22 +188,8 @@ object AppPeers {
 
     // ---- listeners -------------------------------------------------------------
 
-    fun onMarks(listener: ((String, PeerMessage.Marks) -> Unit)?) {
-        marksListener = listener
-    }
-
     fun onRemoteWrite(listener: ((String, String?) -> Unit)?) {
         remoteWriteListener = listener
-    }
-
-    /**
-     * For the open editor: a peer has written a file of this name.
-     *
-     * Separate from [onRemoteWrite], which the library holds. The editor needs it for a different
-     * reason - to not write the same document itself until that write has arrived.
-     */
-    fun onDocumentWrittenElsewhere(listener: ((String) -> Unit)?) {
-        documentWriteListener = listener
     }
 
     fun onPeersChanged(listener: (() -> Unit)?) {
@@ -217,6 +201,7 @@ object AppPeers {
     private const val K_DISCOVERY = "discovery"
     private const val K_PORT = "port"
     private const val K_PEERS = "devices"
+    private const val K_LEDGER = "write_ledger"
 
     /** Not a character anyone types into a device name. */
     private const val SEP = "\u001F"
