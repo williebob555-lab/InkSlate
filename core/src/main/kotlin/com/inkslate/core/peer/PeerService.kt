@@ -37,11 +37,17 @@ class PeerService(private val host: Host) {
         /** What to call this device on the other one's screen. */
         fun deviceName(): String
 
-        /** The document open right now, if any: its id, its name, and the marks in it. */
-        fun openDocument(): Open?
+        /** A paired device is now reachable. Called off the UI thread, before any of its messages. */
+        fun onConnected(peer: String) {}
 
-        /** Marks arrived for a document. Called off the UI thread. */
-        fun onMarks(docId: String, marks: PeerMessage.Marks)
+        /** The last connection to a device closed. Called off the UI thread. */
+        fun onDisconnected(peer: String) {}
+
+        /**
+         * Anything a device said about documents. Called off the UI thread, in the order it was
+         * said. What to make of it is [DocumentSync]'s business, not this transport's.
+         */
+        fun onMessage(peer: String, message: PeerMessage) {}
 
         /** A peer wrote a file, or changed what is in its library ([fileName] null). */
         fun onRemoteWrite(peer: String, fileName: String?)
@@ -54,18 +60,6 @@ class PeerService(private val host: Host) {
 
         /** Somewhere to put a line about what happened. */
         fun log(level: String, message: String) {}
-    }
-
-    /**
-     * The document open right now.
-     *
-     * Its identity is the one inside it - [InkDocument.docId] - and not something the app chooses
-     * alongside. Two devices holding the same worksheet agree about that id because it travels in
-     * the file; anything else would be two names for one thing, and the first bug it caused was a
-     * catch-up that silently matched nothing.
-     */
-    data class Open(val fileName: String, val doc: InkDocument) {
-        val docId: String get() = doc.docId
     }
 
     /**
@@ -273,20 +267,20 @@ class PeerService(private val host: Host) {
 
     // ---- what the app tells its peers -----------------------------------------
 
-    /** Marks just made here. Sent as they happen, which is the whole point of the connection. */
-    fun sendMarks(docId: String, strokes: List<Stroke>, deleted: Map<String, Long> = emptyMap()) {
-        if (strokes.isEmpty() && deleted.isEmpty()) return
-        broadcast(PeerMessage.Marks(docId, strokes, deleted))
+    /**
+     * Say something to one device.
+     *
+     * On one of its connections, not all: there can be two to the same device for a moment, and
+     * saying everything twice is merely wasteful, but a request answered twice is a question the
+     * other side has to think about.
+     */
+    fun send(tag: String, message: PeerMessage) {
+        connections[tag]?.firstOrNull { !it.closed }?.send(message)
     }
 
-    /** "I have this open now", so the other side knows to stream to us, and to catch us up. */
-    fun announceOpen() {
-        val open = host.openDocument() ?: return
-        broadcast(PeerMessage.Editing(open.docId, open.fileName))
-        broadcast(PeerSync.digestOf(open.doc))
-    }
-
-    fun announceClosed(docId: String) = broadcast(PeerMessage.Closed(docId))
+    /** The devices with a live connection right now. */
+    fun connectedPeers(): Set<String> =
+        connections.filterValues { set -> set.any { !it.closed } }.keys.toSet()
 
     /** "I have written this file" - not the bytes, just the news, so the other side looks again. */
     fun announceWrote(fileName: String, sizeBytes: Long, modifiedUtc: Long) =
@@ -374,25 +368,33 @@ class PeerService(private val host: Host) {
             known[theirTag] = peer
 
             val connection = Connection(socket, out, key)
-            connections.computeIfAbsent(theirTag) {
-                java.util.Collections.newSetFromMap(ConcurrentHashMap())
-            }.add(connection)
+            // Registered and announced in one step, so that two sockets to the same device arriving
+            // together announce it exactly once.
+            val first = synchronized(connections) {
+                val set = connections.computeIfAbsent(theirTag) {
+                    java.util.Collections.newSetFromMap(ConcurrentHashMap())
+                }
+                val none = set.none { !it.closed }
+                set.add(connection)
+                none
+            }
             registered = theirTag to connection
             noteStatus(peer, connected = true)
-
-            // Offer what is open here, so a device that has just woken catches up at once.
-            host.openDocument()?.let {
-                connection.send(PeerMessage.Editing(it.docId, it.fileName))
-                connection.send(PeerSync.digestOf(it.doc))
-            }
+            if (first) host.onConnected(theirTag)
             pump(connection, input, peer)
         } catch (_: Exception) {
             // A dropped or refused connection is ordinary. The retry loop picks it back up.
         } finally {
             registered?.let { (tag, connection) ->
                 connection.close()
-                connections[tag]?.remove(connection)
-                if (!isConnected(tag)) known[tag]?.let { noteStatus(it, connected = false) }
+                val gone = synchronized(connections) {
+                    connections[tag]?.remove(connection)
+                    !isConnected(tag)
+                }
+                if (gone) {
+                    known[tag]?.let { noteStatus(it, connected = false) }
+                    host.onDisconnected(tag)
+                }
             }
             runCatching { socket.close() }
         }
@@ -419,37 +421,16 @@ class PeerService(private val host: Host) {
 
     private fun handle(message: PeerMessage, connection: Connection, peer: Peer) {
         when (message) {
-            is PeerMessage.Hello, PeerMessage.Ping, is PeerMessage.Closed -> Unit
+            is PeerMessage.Hello, PeerMessage.Ping -> Unit
 
-            is PeerMessage.Editing -> host.openDocument()?.let { open ->
-                // Both holding the same document: offer ours, so whoever is behind catches up.
-                if (open.docId == message.docId) connection.send(PeerSync.digestOf(open.doc))
+            is PeerMessage.Wrote -> {
+                host.onRemoteWrite(peer.name, message.name)
+                host.onMessage(peer.tag, message)
             }
-
-            is PeerMessage.Digest -> host.openDocument()?.let { open ->
-                if (open.docId != message.docId) return@let
-                val answer = PeerSync.answerFor(open.doc, message)
-                if (!answer.isEmpty) {
-                    connection.send(answer)
-                }
-                val wanted = PeerSync.wantedFrom(open.doc, message)
-                if (wanted.isNotEmpty()) connection.send(PeerMessage.Want(message.docId, wanted))
-            }
-
-            is PeerMessage.Want -> host.openDocument()?.let { open ->
-                if (open.docId != message.docId) return@let
-                connection.send(
-                    PeerSync.answerFor(open.doc, PeerMessage.Digest(message.docId), message.ids)
-                )
-            }
-
-            is PeerMessage.Marks -> host.onMarks(message.docId, message)
-
-            is PeerMessage.Wrote -> host.onRemoteWrite(peer.name, message.name)
 
             PeerMessage.LibraryChanged -> host.onRemoteWrite(peer.name, null)
 
-            is PeerMessage.LeaseRequest, is PeerMessage.LeaseGrant, is PeerMessage.LeaseState -> Unit
+            else -> host.onMessage(peer.tag, message)
         }
     }
 

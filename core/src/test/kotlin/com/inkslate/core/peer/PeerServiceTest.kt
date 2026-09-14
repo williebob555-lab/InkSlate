@@ -10,33 +10,33 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Two devices, two sockets, one document - on one machine, over the loopback.
  *
- * The pure decisions are pinned down in [PeerSyncTest]; this is the other half, and it is the half
- * that cannot be reasoned about from the code alone: that a device which has never met another can
- * pair with it using a code read off a screen, that a mark made a second later arrives, and that a
- * device which knows no code gets nothing at all however well it behaves otherwise.
+ * The decisions are pinned down by the simulation in [DocumentSyncSimulationTest]; this is the other
+ * half, the half that cannot be reasoned about from the code alone: that a device which has never met
+ * another can pair with it using a code read off a screen, that the real engine then keeps the two
+ * in step over real sockets, and that a device which knows no code gets nothing at all.
  */
 class PeerServiceTest {
 
     private companion object {
-        val counter = java.util.concurrent.atomic.AtomicInteger()
+        val counter = AtomicInteger()
     }
 
-    private val started = mutableListOf<PeerService>()
+    private val started = mutableListOf<Device>()
 
     /**
      * A different identity for every test in the class.
      *
      * The services run on real sockets and their retry loops outlive the test that made them by a
-     * moment. Reusing "tablet" and "laptop" meant a leftover loop from one test could connect to
-     * the next test's listener - the operating system hands out the same loopback ports again -
-     * and pair with it, which is a failure that only appears on a machine fast enough to get
-     * there first.
+     * moment. Reusing names meant a leftover loop from one test could connect to the next test's
+     * listener and pair with it - a failure that only appears on a machine fast enough to get there.
      */
     private val run = counter.incrementAndGet()
 
@@ -46,16 +46,9 @@ class PeerServiceTest {
         started.clear()
     }
 
-    /**
-     * One document, as both devices see it.
-     *
-     * Deliberately the same [InkDocument.docId] on each side: two devices hold the same worksheet
-     * because they hold the same file, and the id travels inside it. Giving each device its own id
-     * would be testing two documents that merely look alike.
-     */
+    /** One document, as both devices see it: the same id, because it is the same file. */
     private val base = InkDocument.create(
-        sourceName = "homework.pdf", kind = "pdf", pageCount = 1,
-        sizeBytes = 10, fingerprint = ""
+        sourceName = "homework.pdf", kind = "pdf", pageCount = 1, sizeBytes = 10, fingerprint = ""
     )
 
     private fun document(vararg strokes: Stroke): InkDocument =
@@ -71,65 +64,96 @@ class PeerServiceTest {
         updatedUtc = at
     )
 
-    /** A device under test: its own tag, its own open document, and what it has been told. */
-    private class Device(
-        val tag: String,
-        val name: String,
-        doc: InkDocument
-    ) : PeerService.Host {
-        val open = AtomicReference(doc)
+    /**
+     * A device under test: a transport, the shared hub, and the real engine with a document open,
+     * all driven the way an app drives them - one thread for the engine, a ticker on it.
+     */
+    private inner class Device(val tag: String, val name: String, doc: InkDocument) : PeerService.Host {
+        private val thread = Executors.newSingleThreadExecutor()
+        private val ticker = Executors.newSingleThreadScheduledExecutor()
+        val ink = AtomicReference(doc)
         val paired = AtomicReference<PeerService.Peer?>(null)
-        val marksArrived = CountDownLatch(1)
         val writes = AtomicReference<String?>(null)
         val writeHeard = CountDownLatch(1)
+        val connectedTo = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val connections = AtomicInteger()
         lateinit var service: PeerService
+
+        val hub = LinkHub(post = { block -> thread.execute(block) }, ledger = WriteLedger(), keepLedger = {})
+
+        private val session = DocumentSync(
+            me = tag, docId = doc.docId, fileName = "homework.pdf",
+            disk = null, diskInk = null,
+            send = { peer, m -> service.send(peer, m) }
+        )
+
+        init {
+            hub.attach(object : LinkHub.Document {
+                override val docId = doc.docId
+                override fun onConnected(peer: String) = session.connected(peer, ink.get(), now())
+                override fun onDisconnected(peer: String) = session.disconnected(peer, now())
+                override fun onMessage(peer: String, message: PeerMessage) {
+                    ink.set(session.received(peer, message, ink.get(), now()))
+                }
+            })
+            ticker.scheduleAtFixedRate({
+                thread.execute {
+                    // Never idle, so nothing here tries to write a file this test does not have.
+                    session.tick(now(), ink.get(), idle = false)
+                }
+            }, 100, 100, TimeUnit.MILLISECONDS)
+        }
+
+        /** A mark made on this device, the way an edit reaches the engine: on its thread. */
+        fun draw(stroke: Stroke) = thread.execute {
+            ink.set(ink.get().withPage(0, ink.get().strokesOn(0) + stroke, tag))
+        }
+
+        fun ids(): Set<String> = ink.get().pages.values.flatten().map { it.id }.toSet()
+
+        private fun now() = System.currentTimeMillis()
 
         override fun deviceTag() = tag
         override fun deviceName() = name
-        override fun openDocument() = PeerService.Open("homework.pdf", open.get())
-
-        /** Stands in for the editor's ticker: whatever this device now holds and has not sent. */
-        private val outbox = PeerOutbox()
-
-        fun flush() {
-            val doc = open.get()
-            val owed = outbox.pending(doc) ?: return
-            service.sendMarks(doc.docId, owed.strokes, owed.deleted)
-            outbox.sent(doc)
+        override fun onConnected(peer: String) {
+            connectedTo.add(peer)
+            connections.incrementAndGet()
+            hub.connected(peer)
         }
-
-        override fun onMarks(docId: String, marks: PeerMessage.Marks) {
-            val before = open.get()
-            val after = PeerSync.applied(before, marks)
-            open.set(after)
-            if (after.totalStrokes > before.totalStrokes) marksArrived.countDown()
-        }
-
+        override fun onDisconnected(peer: String) = hub.disconnected(peer)
+        override fun onMessage(peer: String, message: PeerMessage) = hub.message(peer, message)
         override fun onRemoteWrite(peer: String, fileName: String?) {
             writes.set(fileName ?: "(library)")
             writeHeard.countDown()
         }
+        override fun onPaired(peer: PeerService.Peer) = paired.set(peer)
 
-        override fun onPaired(peer: PeerService.Peer) {
-            paired.set(peer)
+        fun stop() {
+            ticker.shutdownNow()
+            service.stop()
+            thread.shutdownNow()
         }
     }
 
     private fun start(device: Device, port: Int, peers: List<PeerService.Peer> = emptyList()) {
-        device.service = PeerService(device).also {
-            started.add(it)
-            it.start(peers, port)
-        }
+        device.service = PeerService(device)
+        started.add(device)
+        device.service.start(peers, port)
     }
 
     private fun freePort(): Int = java.net.ServerSocket(0).use { it.localPort }
+
+    private fun waitFor(what: String, seconds: Long = 20, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + seconds * 1000
+        while (!condition() && System.currentTimeMillis() < deadline) Thread.sleep(50)
+        assertTrue(what, condition())
+    }
 
     @Test
     fun `two devices pair with a code and then agree about the document`() {
         val tabletPort = freePort()
         val tablet = Device("tablet-$run", "Tablet", document(mark("tablet-1")))
         val laptop = Device("laptop-$run", "Laptop", document(mark("laptop-1")))
-
         start(tablet, tabletPort)
         start(laptop, freePort())
 
@@ -142,20 +166,10 @@ class PeerServiceTest {
         assertEquals("tablet-$run", paired.getOrThrow().tag)
         assertEquals("Tablet", paired.getOrThrow().name)
 
-        // The connection that follows is the real one, and each side fills the other's gap.
-
-        assertTrue(
-            "the tablet's mark should reach the laptop",
-            laptop.marksArrived.await(20, TimeUnit.SECONDS)
-        )
-        assertTrue(
-            "the laptop's mark should reach the tablet",
-            tablet.marksArrived.await(20, TimeUnit.SECONDS)
-        )
-
         val expected = setOf("tablet-1", "laptop-1")
-        assertEquals(expected, laptop.open.get().pages.values.flatten().map { it.id }.toSet())
-        assertEquals(expected, tablet.open.get().pages.values.flatten().map { it.id }.toSet())
+        waitFor("each side should fill the other's gap") {
+            tablet.ids() == expected && laptop.ids() == expected
+        }
         assertNotNull("the tablet should have stored the laptop too", tablet.paired.get())
     }
 
@@ -169,32 +183,21 @@ class PeerServiceTest {
 
         tablet.service.offerPairing("135790")
         laptop.service.pairWith("127.0.0.1", tabletPort, "135790").getOrThrow()
-
-        // Wait for the connection rather than for a mark: there are none yet.
-        val deadline = System.currentTimeMillis() + 20_000
-        while (!laptop.service.isConnected("tablet-$run") && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50)
-        }
-        assertTrue("the two should be connected", laptop.service.isConnected("tablet-$run"))
+        waitFor("the two should be connected") { laptop.service.isConnected("tablet-$run") }
 
         // The pen moves on the tablet.
-        val drawn = mark("tablet-live", at = 9_000L)
-        tablet.open.set(tablet.open.get().withPage(0, listOf(drawn), "tablet"))
-        tablet.service.sendMarks(tablet.open.get().docId, listOf(drawn))
+        tablet.draw(mark("tablet-live", at = 9_000L))
 
-        assertTrue(
-            "a live mark should arrive without anyone asking",
-            laptop.marksArrived.await(20, TimeUnit.SECONDS)
-        )
-        assertEquals(listOf("tablet-live"), laptop.open.get().strokesOn(0).map { it.id })
+        waitFor("a live mark should arrive without anyone asking") {
+            laptop.ids() == setOf("tablet-live")
+        }
     }
 
     /**
      * Both devices reaching for each other in the same moment.
      *
-     * This is what broke: each side tried to keep one socket and close the other, decided at the
-     * moment its own registered - when the other might not exist yet - and both could end up
-     * holding the one the other had closed. Nothing was said again, by either of them, forever.
+     * Each ends up with two sockets for a while. The engine has to be told about the other device
+     * once - not once per socket - and the two still have to end up in step.
      */
     @Test
     fun `two devices dialling each other at once still end up in step`() {
@@ -205,22 +208,17 @@ class PeerServiceTest {
         start(tablet, tabletPort)
         start(laptop, laptopPort)
 
-        // Paired, and then both told about the other at the same instant, so both dial.
         tablet.service.offerPairing("505050")
         val peer = laptop.service.pairWith("127.0.0.1", tabletPort, "505050").getOrThrow()
-        tablet.service.addPeer(
-            PeerService.Peer("laptop-$run", "Laptop", "127.0.0.1", laptopPort, "505050")
-        )
+        tablet.service.addPeer(PeerService.Peer("laptop-$run", "Laptop", "127.0.0.1", laptopPort, "505050"))
         laptop.service.addPeer(peer)
 
-        assertTrue(
-            "the tablet's mark should reach the laptop",
-            laptop.marksArrived.await(25, TimeUnit.SECONDS)
-        )
-        assertTrue(
-            "the laptop's mark should reach the tablet",
-            tablet.marksArrived.await(25, TimeUnit.SECONDS)
-        )
+        val expected = setOf("tablet-1", "laptop-1")
+        waitFor("both should end up with both marks", seconds = 25) {
+            tablet.ids() == expected && laptop.ids() == expected
+        }
+        assertTrue(tablet.connectedTo.contains("laptop-$run"))
+        assertTrue(laptop.connectedTo.contains("tablet-$run"))
     }
 
     @Test
@@ -233,11 +231,7 @@ class PeerServiceTest {
 
         tablet.service.offerPairing("246810")
         laptop.service.pairWith("127.0.0.1", tabletPort, "246810").getOrThrow()
-
-        val deadline = System.currentTimeMillis() + 20_000
-        while (!laptop.service.isConnected("tablet-$run") && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50)
-        }
+        waitFor("the two should be connected") { laptop.service.isConnected("tablet-$run") }
 
         tablet.service.announceWrote("homework.pdf", 4096, 1_700_000_000_000L)
 
@@ -258,11 +252,9 @@ class PeerServiceTest {
         val attempt = stranger.service.pairWith("127.0.0.1", tabletPort, "999999")
 
         assertTrue("a wrong code must not pair", attempt.isFailure)
-        assertFalse(
-            "nothing should have reached the tablet",
-            tablet.marksArrived.await(2, TimeUnit.SECONDS)
-        )
-        assertEquals(listOf("tablet-1"), tablet.open.get().strokesOn(0).map { it.id })
+        Thread.sleep(1_500)
+        assertFalse("the tablet should not count the stranger as connected", tablet.connectedTo.isNotEmpty())
+        assertEquals(setOf("tablet-1"), tablet.ids())
     }
 
     @Test

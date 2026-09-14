@@ -185,7 +185,7 @@ sealed interface PeerMessage {
          * builds ship from one repository, but they are installed separately and one of them is
          * usually a version behind.
          */
-        const val PROTOCOL = 1
+        const val PROTOCOL = 2
 
         private val json = Json {
             ignoreUnknownKeys = true

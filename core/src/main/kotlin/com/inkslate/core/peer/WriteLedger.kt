@@ -1,5 +1,7 @@
 package com.inkslate.core.peer
 
+import kotlinx.serialization.builtins.serializer
+
 /**
  * The latest write of each document this device has heard of, whether or not it was open.
  *
@@ -31,4 +33,27 @@ class WriteLedger(initial: Map<String, WriteRecord> = emptyMap()) {
     operator fun get(docId: String): WriteRecord? = latest[docId]
 
     fun snapshot(): Map<String, WriteRecord> = HashMap(latest)
+
+    /** As text, for keeping in settings. Only the most recent documents are kept. */
+    fun encode(): String = json.encodeToString(serializer, latest.entries
+        .sortedByDescending { it.value.seq }
+        .take(KEEP)
+        .associate { it.key to it.value })
+
+    companion object {
+        /** Enough documents to cover any afternoon's switching between devices. */
+        private const val KEEP = 200
+
+        private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        private val serializer = kotlinx.serialization.builtins.MapSerializer(
+            String.serializer(), WriteRecord.serializer()
+        )
+
+        /** Read back what [encode] wrote; an unreadable ledger is an empty one, not an error. */
+        fun decode(text: String?): WriteLedger = WriteLedger(
+            text?.takeIf { it.isNotBlank() }
+                ?.let { runCatching { json.decodeFromString(serializer, it) }.getOrNull() }
+                .orEmpty()
+        )
+    }
 }
