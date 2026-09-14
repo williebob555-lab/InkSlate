@@ -1340,6 +1340,8 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
 
     // ---- UI ------------------------------------------------------------------
 
+    val linkSummary = com.inkslate.ui.rememberLinkSummary()
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -1366,11 +1368,15 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                             WriteState.SAVED -> "saved"
                                             WriteState.UNSAVED -> "unsaved"
                                         } + when (linkStatus) {
-                                            DocumentSync.Status.WRITING_HERE -> "  ·  linked"
+                                            DocumentSync.Status.WRITING_HERE -> "  ·  linked, saved here"
                                             DocumentSync.Status.AGREEING -> "  ·  linking..."
                                             DocumentSync.Status.WAITING_FOR_FILE ->
                                                 "  ·  waiting for sync"
-                                            else -> ""
+                                            // The other device does not have this open, or is not
+                                            // connected at all - which one is worth knowing.
+                                            else -> linkSummary?.let {
+                                                "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
+                                            }.orEmpty()
                                         }
                                     },
                                     style = MaterialTheme.typography.labelSmall,

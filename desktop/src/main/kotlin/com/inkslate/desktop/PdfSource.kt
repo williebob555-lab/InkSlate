@@ -42,9 +42,40 @@ interface DesktopSource : Closeable {
     fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? = null
 }
 
-class PdfSource(private val file: File) : DesktopSource {
+class PdfSource(
+    private val file: File,
+    /**
+     * Read the document without keeping its file open.
+     *
+     * For the editor, which holds a document for as long as it is on screen. Windows refuses to let
+     * anything replace a file this program holds open - measured, not assumed: see
+     * OpenDocumentLetsGoTest - and replacing it is exactly how file sync delivers the other
+     * device's copy. With a document open here, the tablet's writes were refused over and over and
+     * arrived only once it was closed. Short-lived readers, such as a thumbnail, leave this off and
+     * close the file within the call.
+     */
+    detached: Boolean = false
+) : DesktopSource {
 
-    private val doc: PDDocument = Loader.loadPDF(file)
+    /** The copy the document was read from when it was too large to hold in memory, if any. */
+    private var detachedCopy: File? = null
+
+    private val doc: PDDocument = when {
+        !detached -> Loader.loadPDF(file)
+        file.length() <= IN_MEMORY_BYTES -> Loader.loadPDF(file.readBytes())
+        else -> {
+            // A large book read into memory whole is a large book's worth of heap for the whole
+            // session. A private copy costs a moment of disk instead, and nothing syncs it.
+            val dir = File(
+                System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "InkSlate/open"
+            ).apply { mkdirs() }
+            val copy = File(dir, "${java.util.UUID.randomUUID()}.pdf")
+            file.copyTo(copy, overwrite = true)
+            copy.deleteOnExit()
+            detachedCopy = copy
+            Loader.loadPDF(copy)
+        }
+    }
     private val renderer = pictureOf(doc)
     private val lock = Any()
 
@@ -131,6 +162,9 @@ class PdfSource(private val file: File) : DesktopSource {
     fun document(): PDDocument = doc
 
     private companion object {
+        /** Documents up to this size are read into memory when opened detached. */
+        const val IN_MEMORY_BYTES = 48L * 1024 * 1024
+
         /**
          * A renderer that leaves out the handwriting this app wrote into the file.
          *
@@ -159,6 +193,7 @@ class PdfSource(private val file: File) : DesktopSource {
 
     override fun close() {
         runCatching { doc.close() }
+        detachedCopy?.let { runCatching { it.delete() } }
     }
 }
 
@@ -186,9 +221,10 @@ object DesktopSources {
     fun isImage(f: File) = f.extension.lowercase() in IMAGE_EXT
     fun isSupported(f: File) = isPdf(f) || isImage(f)
 
-    fun open(file: File): DesktopSource? = runCatching {
+    /** Open a document to draw from. [detached] for anything that keeps it open - see [PdfSource]. */
+    fun open(file: File, detached: Boolean = false): DesktopSource? = runCatching {
         when {
-            isPdf(file) -> PdfSource(file)
+            isPdf(file) -> PdfSource(file, detached)
             isImage(file) -> ImageSource(file)
             else -> null
         }

@@ -667,20 +667,67 @@ private fun YourDevicesSection() {
             )
         } else {
             statuses.forEach { status ->
-                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)) {
-                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(status.peer.name, style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                (if (status.connected) "Connected  ·  " else "Not reachable  ·  ") +
-                                    "${status.peer.host}:${status.peer.port}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (status.connected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        TextButton(onClick = { AppPeers.forget(status.peer.tag); tick++ }) {
-                            Text("Forget")
+                androidx.compose.runtime.key(status.peer.tag) {
+                    var testing by remember { mutableStateOf(false) }
+                    var result by remember { mutableStateOf<com.inkslate.core.peer.PeerService.LinkCheck?>(null) }
+                    Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(status.peer.name, style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        (if (status.connected) "Linked" else "Not linked") +
+                                            "  \u00b7  ${status.peer.host}:${status.peer.port}" +
+                                            status.version.takeIf { it.isNotBlank() }
+                                                ?.let { "  \u00b7  InkSlate $it" }.orEmpty(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (status.connected) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.error
+                                    )
+                                }
+                                TextButton(
+                                    enabled = !testing,
+                                    onClick = {
+                                        testing = true
+                                        result = null
+                                        scope.launch {
+                                            result = withContext(Dispatchers.IO) {
+                                                AppPeers.check(status.peer.tag)
+                                            }
+                                            testing = false
+                                            tick++
+                                        }
+                                    }
+                                ) { Text(if (testing) "Testing..." else "Test link") }
+                                TextButton(onClick = { AppPeers.forget(status.peer.tag); tick++ }) {
+                                    Text("Forget")
+                                }
+                            }
+                            val shown = result
+                            if (shown != null) {
+                                Text(
+                                    shown.headline,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (shown.ok) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                                Text(
+                                    shown.detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else if (!status.connected && status.problem != null) {
+                                // Why, whenever it is known - "not linked" alone was a dead end.
+                                Text(
+                                    status.problem!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
                         }
                     }
                 }

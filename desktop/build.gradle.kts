@@ -20,6 +20,18 @@ kotlin {
 //     ./gradlew :desktop:test -Dinkslate.pdfs="C:/Users/me/Documents"
 // Gradle keeps a -D to itself, so it has to be handed on to the tests deliberately.
 tasks.withType<Test>().configureEach {
+    // The app keeps its settings, event log and working copies in %LOCALAPPDATA%\InkSlate, and
+    // the tests exercise that code for real. Pointed at the real folder, a test run on a machine
+    // that also has the app installed rewrote that person's save rules and cleared their per-file
+    // overrides. The tests get a folder of their own, emptied before each run.
+    val sandbox = layout.buildDirectory.dir("test-appdata").get().asFile
+    doFirst {
+        sandbox.deleteRecursively()
+        sandbox.mkdirs()
+    }
+    environment("LOCALAPPDATA", sandbox.absolutePath)
+    systemProperty("user.home", sandbox.absolutePath)
+
     System.getProperty("inkslate.pdfs")?.let {
         systemProperty("inkslate.pdfs", it)
         // The documents behind it can change without anything here changing, and a sweep that

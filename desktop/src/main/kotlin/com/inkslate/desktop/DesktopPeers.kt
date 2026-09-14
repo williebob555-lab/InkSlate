@@ -1,6 +1,7 @@
 package com.inkslate.desktop
 
 import com.inkslate.core.peer.LinkHub
+import com.inkslate.core.peer.LinkSummary
 import com.inkslate.core.peer.PeerDiscovery
 import com.inkslate.core.peer.PeerMessage
 import com.inkslate.core.peer.PeerService
@@ -41,6 +42,7 @@ object DesktopPeers {
     private val host: PeerService.Host = object : PeerService.Host {
         override fun deviceTag() = DocumentIO.deviceTag()
         override fun deviceName() = name()
+        override fun appVersion() = System.getProperty("inkslate.version").orEmpty()
 
         override fun onConnected(peer: String) = hub.connected(peer)
         override fun onDisconnected(peer: String) = hub.disconnected(peer)
@@ -142,6 +144,23 @@ object DesktopPeers {
     }
 
     fun statuses(): List<PeerService.Status> = service.statuses()
+
+    /**
+     * Whether this device is linked right now, for the indicator on the home screen and in the
+     * editor. Null when the link is off or nothing is paired - then there is nothing to indicate.
+     */
+    fun summary(): LinkSummary? {
+        if (!enabled()) return null
+        val all = statuses()
+        if (all.isEmpty()) return null
+        return LinkSummary(
+            linkedTo = all.filter { it.connected }.map { it.peer.name },
+            paired = all.map { it.peer.name }
+        )
+    }
+
+    /** The link test in Settings. Blocking: never on the main thread. */
+    fun check(tag: String): PeerService.LinkCheck = service.check(tag)
 
     // ---- running ---------------------------------------------------------------
 

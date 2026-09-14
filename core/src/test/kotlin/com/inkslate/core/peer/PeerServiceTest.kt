@@ -242,6 +242,47 @@ class PeerServiceTest {
         assertEquals("homework.pdf", laptop.writes.get())
     }
 
+    /** The button in Settings: a live link answers, and says so with a time. */
+    @Test
+    fun `the link test times a reply over a live link`() {
+        val tabletPort = freePort()
+        val tablet = Device("tablet-$run", "Tablet", document())
+        val laptop = Device("laptop-$run", "Laptop", document())
+        start(tablet, tabletPort)
+        start(laptop, freePort())
+
+        tablet.service.offerPairing("777777")
+        laptop.service.pairWith("127.0.0.1", tabletPort, "777777").getOrThrow()
+        waitFor("the two should be connected") { laptop.service.isConnected("tablet-$run") }
+
+        val result = laptop.service.check("tablet-$run")
+        assertTrue("a live link should pass: ${result.detail}", result.ok)
+        assertTrue(result.headline, result.headline.contains("Tablet"))
+        assertTrue(result.detail, result.detail.contains(" ms"))
+    }
+
+    /** And a device that is not there fails with a reason a person can act on. */
+    @Test
+    fun `the link test says why a device cannot be reached`() {
+        val laptop = Device("laptop-$run", "Laptop", document())
+        val nobodyHome = freePort()
+        start(
+            laptop, freePort(),
+            peers = listOf(PeerService.Peer("tablet-$run", "Tablet", "127.0.0.1", nobodyHome, "123456"))
+        )
+
+        val result = laptop.service.check("tablet-$run")
+        assertFalse("nothing is listening, so this cannot pass", result.ok)
+        assertTrue(result.headline, result.headline.contains("Not linked"))
+        assertTrue(
+            "the reason should name the address it tried: ${result.detail}",
+            result.detail.contains("127.0.0.1:$nobodyHome")
+        )
+        val status = laptop.service.statuses().single()
+        assertFalse(status.connected)
+        assertNotNull("the device list should carry the same reason", status.problem)
+    }
+
     /** The rule the whole thing rests on: being on the network grants nothing. */
     @Test
     fun `a device with the wrong code is refused and pushes nothing`() {

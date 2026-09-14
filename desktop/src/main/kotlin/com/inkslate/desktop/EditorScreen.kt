@@ -253,7 +253,7 @@ fun EditorScreen(
     LaunchedEffect(file.absolutePath, reopenTick) {
         busy = true
         val loaded = withContext(Dispatchers.IO) {
-            val src = DesktopSources.open(file) ?: return@withContext null
+            val src = DesktopSources.open(file, detached = true) ?: return@withContext null
             val doc = DocumentIO.load(file, src.pageCount)
             // Anything autosaved here since the last explicit save is folded back in.
             val working = DocumentIO.loadWorking(file)
@@ -363,7 +363,7 @@ fun EditorScreen(
         // so without this every quiet save would read the whole document again.
         if (pageReadFor == c.paperBox) return
         pageReadFor = c.paperBox
-        val fresh = withContext(Dispatchers.IO) { DesktopSources.open(file) } ?: return
+        val fresh = withContext(Dispatchers.IO) { DesktopSources.open(file, detached = true) } ?: return
         source = fresh
         withContext(Dispatchers.IO) { runCatching { src.close() } }
         EventLog.info(
@@ -1137,6 +1137,8 @@ fun EditorScreen(
 
     // ---- layout --------------------------------------------------------------
 
+    val linkSummary = rememberLinkSummary()
+
     val writeState = when {
         saving -> WriteState.SAVING
         dirty -> WriteState.UNSAVED
@@ -1163,11 +1165,15 @@ fun EditorScreen(
                                     // saying that its write is still on the way.
                                     DocumentSync.Status.WRITTEN_ELSEWHERE ->
                                         "linked, saved by your other device"
-                                    DocumentSync.Status.WRITING_HERE -> "${writeState.label}  ·  linked"
+                                    DocumentSync.Status.WRITING_HERE -> "${writeState.label}  ·  linked, saved here"
                                     DocumentSync.Status.AGREEING -> "${writeState.label}  ·  linking..."
                                     DocumentSync.Status.WAITING_FOR_FILE ->
                                         "${writeState.label}  ·  waiting for sync"
-                                    DocumentSync.Status.ALONE -> writeState.label
+                                    // The other device does not have this open, or is not
+                                    // connected at all - which one is worth knowing.
+                                    DocumentSync.Status.ALONE -> writeState.label + linkSummary?.let {
+                                        "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
+                                    }.orEmpty()
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1293,18 +1299,6 @@ fun EditorScreen(
                                     }
                                 )
                             }
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (tools.recogniseShapes) "✓  Tidy rough shapes"
-                                        else "      Tidy rough shapes"
-                                    )
-                                },
-                                onClick = {
-                                    menuOpen = false
-                                    tools.recogniseShapes = !tools.recogniseShapes
-                                }
-                            )
                             DropdownMenuItem(
                                 text = {
                                     Text(

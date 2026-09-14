@@ -97,7 +97,6 @@ class ToolState(private val context: Context) {
     var autoSwitchInput by mutableStateOf(true)
     var pressureEnabled by mutableStateOf(true)
     var snapShapes by mutableStateOf(false)
-    var recogniseShapes by mutableStateOf(false)
     var snapHighlighterToText by mutableStateOf(true)
     var cropMargins by mutableStateOf(false)
     var rulerVisible by mutableStateOf(false)
@@ -318,7 +317,6 @@ class ToolState(private val context: Context) {
         view.autoSwitchInput = autoSwitchInput
         view.pressureEnabled = pressureEnabled
         view.snapShapes = snapShapes
-        view.recogniseShapes = recogniseShapes
         view.snapHighlighterToText = snapHighlighterToText
         view.cropMargins = cropMargins
         view.rulerVisible = rulerVisible
@@ -503,7 +501,6 @@ class ToolState(private val context: Context) {
             .putBoolean(K_AUTO, autoSwitchInput)
             .putBoolean(K_PRESSURE, pressureEnabled)
             .putBoolean(K_SNAP, snapShapes)
-            .putBoolean(K_RECOGNISE, recogniseShapes)
             .putBoolean(K_SNAP_TEXT, snapHighlighterToText)
             .putBoolean(K_CROP, cropMargins)
             .putBoolean(K_FLING, flingEnabled)
@@ -533,7 +530,6 @@ class ToolState(private val context: Context) {
         autoSwitchInput = sp.getBoolean(K_AUTO, true)
         pressureEnabled = sp.getBoolean(K_PRESSURE, true)
         snapShapes = sp.getBoolean(K_SNAP, false)
-        recogniseShapes = sp.getBoolean(K_RECOGNISE, false)
         snapHighlighterToText = sp.getBoolean(K_SNAP_TEXT, true)
         cropMargins = sp.getBoolean(K_CROP, false)
         flingEnabled = sp.getBoolean(K_FLING, true)
@@ -576,7 +572,6 @@ class ToolState(private val context: Context) {
         private const val K_AUTO = "auto_switch"
         private const val K_PRESSURE = "pressure"
         private const val K_SNAP = "snap"
-        private const val K_RECOGNISE = "recognise"
         private const val K_SNAP_TEXT = "snap_text"
         private const val K_CROP = "crop_margins"
         private const val K_FLING = "fling"

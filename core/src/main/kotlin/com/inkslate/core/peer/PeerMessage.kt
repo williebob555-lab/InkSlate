@@ -37,7 +37,9 @@ sealed interface PeerMessage {
          * out - so it is said here rather than guessed.
          */
         @SerialName("port") val port: Int = 0,
-        @SerialName("app") val app: String = "InkSlate"
+        @SerialName("app") val app: String = "InkSlate",
+        /** The build, as a person reads it - for saying which one is behind when they differ. */
+        @SerialName("version") val version: String = ""
     ) : PeerMessage
 
     /**
@@ -174,6 +176,18 @@ sealed interface PeerMessage {
     @SerialName("library")
     data object LibraryChanged : PeerMessage
 
+    /** "Are you there?" - the link test in Settings. Answered at once, by the transport itself. */
+    @Serializable
+    @SerialName("probe")
+    data class Probe(@SerialName("nonce") val nonce: String) : PeerMessage
+
+    @Serializable
+    @SerialName("probeReply")
+    data class ProbeReply(
+        @SerialName("nonce") val nonce: String,
+        @SerialName("version") val version: String = ""
+    ) : PeerMessage
+
     /** Keeps a quiet connection from being reaped by anything in between. */
     @Serializable
     @SerialName("ping")
@@ -185,7 +199,7 @@ sealed interface PeerMessage {
          * builds ship from one repository, but they are installed separately and one of them is
          * usually a version behind.
          */
-        const val PROTOCOL = 2
+        const val PROTOCOL = 3
 
         private val json = Json {
             ignoreUnknownKeys = true

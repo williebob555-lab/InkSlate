@@ -81,3 +81,43 @@ class PageWithoutOwnInkTest {
         )
     }
 }
+
+/**
+ * A document open in the editor does not stop file sync replacing it.
+ *
+ * Windows refuses to replace a file a program holds open - and replacing it is how file sync
+ * delivers the other device's copy. The editor used to keep the document's file open for as long
+ * as it was on screen, so the tablet's writes were refused until it was closed. Opened the old way
+ * this test fails with AccessDeniedException.
+ */
+class OpenDocumentLetsGoTest {
+
+    @get:org.junit.Rule
+    val temp = org.junit.rules.TemporaryFolder()
+
+    private fun onePagePdf(file: File) {
+        PDDocument().use { pdf ->
+            pdf.addPage(PDPage(PDRectangle(200f, 200f)))
+            pdf.save(file)
+        }
+    }
+
+    @Test
+    fun `a document open in the editor can be replaced underneath it`() {
+        val dir = temp.newFolder()
+        val doc = File(dir, "board.pdf").also { onePagePdf(it) }
+        val arriving = File(dir, ".syncthing.board.pdf.tmp").also { onePagePdf(it) }
+
+        val source = DesktopSources.open(doc, detached = true)!!
+        source.use {
+            // What file sync does with a copy from the other device: rename it over the original.
+            java.nio.file.Files.move(
+                arriving.toPath(), doc.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE
+            )
+            // And the editor can still draw the page it read.
+            assertTrue(it.render(0, 100) != null)
+        }
+    }
+}

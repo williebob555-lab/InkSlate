@@ -181,6 +181,7 @@ class DocumentSync(
                 // Whatever this device held, it held without this one. It is agreed again.
                 confirmedBy.remove(peer)
                 if (!wasOpen) {
+                    log("$fileName: $peer has it open too")
                     send(peer, editing())
                     send(peer, PeerSync.digestOf(current))
                 }

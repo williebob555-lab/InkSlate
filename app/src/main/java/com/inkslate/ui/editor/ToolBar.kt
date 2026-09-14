@@ -655,15 +655,6 @@ fun ToolBar(
                         Chip(if (state.snapShapes) "Snap: on" else "Snap: off", state.snapShapes) {
                             change { state.snapShapes = !state.snapShapes; state.persistNow() }
                         }
-                        Chip(
-                            if (state.recogniseShapes) "Tidy shapes: on" else "Tidy shapes: off",
-                            state.recogniseShapes
-                        ) {
-                            change {
-                                state.recogniseShapes = !state.recogniseShapes
-                                state.persistNow()
-                            }
-                        }
                     }
                 }
             }

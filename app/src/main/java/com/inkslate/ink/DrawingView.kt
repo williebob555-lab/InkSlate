@@ -386,9 +386,6 @@ class DrawingView @JvmOverloads constructor(
 
     fun armedPlacement(): Placement? = armedPlacement
 
-    /** Correct rough freehand shapes into clean ones on release. */
-    var recogniseShapes: Boolean = false
-
     /**
      * Make the highlighter follow the document's text lines.
      *
@@ -3275,7 +3272,9 @@ class DrawingView @JvmOverloads constructor(
             cells = if (isTable) List(newTableRows * newTableCols) { "" } else emptyList(),
             updatedUtc = now()
         )
-        var finished = if (recogniseShapes) com.inkslate.core.ShapeRecogniser.recognise(s) ?: s else s
+        // What was drawn is what is kept. Tidying rough shapes into lines and circles was an
+        // option once; it rewrote handwriting on its own, and it is gone.
+        val finished = s
 
         // A highlighter dragged across a line becomes clean bars over the words it crossed.
         // Falls back to the freehand stroke when there is no text layer, which is what a scanned

@@ -562,14 +562,9 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                     pageIndex = index,
                     updatedUtc = System.currentTimeMillis()
                 )
-                // A rough circle becomes a circle. The bar for replacing what someone drew is
-                // deliberately high, and a stroke already ruled is left alone - it is straight
-                // because it was meant to be, and tidying it further could only move it.
-                val s = if (tools.recogniseShapes && !ruled) {
-                    com.inkslate.core.ShapeRecogniser.recognise(drawn) ?: drawn
-                } else {
-                    drawn
-                }
+                // What was drawn is what is kept. Tidying rough shapes into lines and circles was an
+                // option once; it rewrote handwriting on its own, and it is gone.
+                val s = drawn
 
                 // A highlighter dragged across a line becomes clean bars over the words it
                 // crossed. Falls back to the freehand mark when there is no text layer, which is

@@ -37,6 +37,9 @@ class PeerService(private val host: Host) {
         /** What to call this device on the other one's screen. */
         fun deviceName(): String
 
+        /** This build's version, as a person reads it. Said to the other device, for diagnosis. */
+        fun appVersion(): String = ""
+
         /** A paired device is now reachable. Called off the UI thread, before any of its messages. */
         fun onConnected(peer: String) {}
 
@@ -76,8 +79,28 @@ class PeerService(private val host: Host) {
         val code: String
     )
 
-    /** What a screen shows about a peer. */
-    data class Status(val peer: Peer, val connected: Boolean, val lastSeenUtc: Long)
+    /**
+     * What a screen shows about a peer.
+     *
+     * [problem] is why the link is not up, in words a person can act on - the address did not
+     * answer, the other device runs a different build, the pairing no longer matches. Null while
+     * connected, and until an attempt has actually failed.
+     */
+    data class Status(
+        val peer: Peer,
+        val connected: Boolean,
+        val lastSeenUtc: Long,
+        val problem: String? = null,
+        /** The other device's build, once it has said. */
+        val version: String = ""
+    )
+
+    /**
+     * The outcome of the link test in Settings.
+     *
+     * [headline] is the answer; [detail] is what it means and, when it failed, what to do next.
+     */
+    data class LinkCheck(val ok: Boolean, val headline: String, val detail: String)
 
     /**
      * Live connections, by peer tag - possibly two to the same device.
@@ -161,8 +184,11 @@ class PeerService(private val host: Host) {
                         if (!running) socket.close()
                         else thread("inkslate-peer-conn") { serve(socket, expecting = peer) }
                     }.onFailure {
-                        // Expected and frequent: the other device is asleep or out of reach.
-                        noteStatus(peer, connected = false)
+                        // Expected and frequent: the other device is asleep or out of reach. Said
+                        // plainly all the same, so that "not connected" comes with a reason.
+                        if (!isConnected(peer.tag)) {
+                            noteStatus(peer, connected = false, problem = unreachable(peer, it))
+                        }
                     }
                 }
                 sleep(RETRY_MS)
@@ -305,7 +331,8 @@ class PeerService(private val host: Host) {
     private fun hello() = PeerMessage.Hello(
         deviceTag = host.deviceTag(),
         deviceName = host.deviceName(),
-        port = listenPort
+        port = listenPort,
+        version = host.appVersion()
     )
 
     /**
@@ -334,7 +361,14 @@ class PeerService(private val host: Host) {
             val out = DataOutputStream(socket.getOutputStream().buffered())
             val input = DataInputStream(socket.getInputStream().buffered())
             val theirTag = exchangeTags(out, input)
-            if (expecting != null && expecting.tag != theirTag) return
+            if (expecting != null && expecting.tag != theirTag) {
+                noteStatus(
+                    expecting, connected = false,
+                    problem = "Something else answers at ${expecting.host}:${expecting.port}, not " +
+                        "${expecting.name}. If its address changed, pair again."
+                )
+                return
+            }
             // A peer's address can end up pointing back here - a stale record, or a loopback name.
             // Talking to yourself is harmless but it is not a peer, and it would sit in the list
             // looking like one.
@@ -342,13 +376,42 @@ class PeerService(private val host: Host) {
 
             // A device we know, or one presenting itself with a code we are currently offering.
             val offered = pendingCode?.takeIf { System.currentTimeMillis() < pendingUntil }
-            val secret = known[theirTag]?.code ?: offered ?: return
+            val secret = known[theirTag]?.code ?: offered ?: run {
+                // Silence here once hid a lost pairing for an afternoon: the other device kept
+                // calling, this one kept hanging up, and neither said why.
+                host.log("warn", "Refused a connection from an unpaired device ($theirTag)")
+                return
+            }
             val key = PeerFrames.keyFrom(secret, PeerFrames.saltFor(host.deviceTag(), theirTag))
 
             PeerFrames.write(out, key, hello())
-            val theirs = PeerFrames.read(input, key) as? PeerMessage.Hello ?: return
+            val theirs = try {
+                PeerFrames.read(input, key) as? PeerMessage.Hello ?: return
+            } catch (_: java.security.GeneralSecurityException) {
+                // What a pairing code that no longer matches looks like from here: the other device
+                // answered, and what it said will not decrypt.
+                known[theirTag]?.let {
+                    noteStatus(
+                        it, connected = false,
+                        problem = "${it.name} answered, but the pairing no longer matches. Forget " +
+                            "it on both devices and pair again."
+                    )
+                }
+                host.log("warn", "A device answered with a pairing that does not match ($theirTag)")
+                return
+            }
             if (theirs.protocol != PeerMessage.PROTOCOL) {
-                host.log("warn", "${theirs.deviceName} is running a different version of InkSlate")
+                val theirBuild = theirs.version.ifBlank { "an older build" }
+                host.log("warn", "${theirs.deviceName} is running a different version of InkSlate ($theirBuild)")
+                known[theirTag]?.let {
+                    noteStatus(
+                        it, connected = false,
+                        problem = "${it.name} runs $theirBuild, which cannot link with this " +
+                            "one (${host.appVersion().ifBlank { "this build" }}). Update both to " +
+                            "the same build.",
+                        version = theirs.version
+                    )
+                }
                 return
             }
 
@@ -379,8 +442,11 @@ class PeerService(private val host: Host) {
                 none
             }
             registered = theirTag to connection
-            noteStatus(peer, connected = true)
-            if (first) host.onConnected(theirTag)
+            noteStatus(peer, connected = true, version = theirs.version)
+            if (first) {
+                host.log("info", "Connected to ${peer.name} at ${peer.host}:${peer.port}")
+                host.onConnected(theirTag)
+            }
             pump(connection, input, peer)
         } catch (_: Exception) {
             // A dropped or refused connection is ordinary. The retry loop picks it back up.
@@ -393,6 +459,7 @@ class PeerService(private val host: Host) {
                 }
                 if (gone) {
                     known[tag]?.let { noteStatus(it, connected = false) }
+                    host.log("info", "Lost the connection to ${known[tag]?.name ?: tag}")
                     host.onDisconnected(tag)
                 }
             }
@@ -423,6 +490,13 @@ class PeerService(private val host: Host) {
         when (message) {
             is PeerMessage.Hello, PeerMessage.Ping -> Unit
 
+            is PeerMessage.Probe -> connection.send(PeerMessage.ProbeReply(message.nonce, host.appVersion()))
+
+            is PeerMessage.ProbeReply -> probes.remove(message.nonce)?.let { waiting ->
+                waiting.version = message.version
+                waiting.latch.countDown()
+            }
+
             is PeerMessage.Wrote -> {
                 host.onRemoteWrite(peer.name, message.name)
                 host.onMessage(peer.tag, message)
@@ -434,14 +508,107 @@ class PeerService(private val host: Host) {
         }
     }
 
-    private fun noteStatus(peer: Peer, connected: Boolean) {
+    private fun noteStatus(
+        peer: Peer,
+        connected: Boolean,
+        problem: String? = null,
+        version: String? = null
+    ) {
         val before = statuses[peer.tag]
-        statuses[peer.tag] = Status(
+        val next = Status(
             peer = peer,
             connected = connected,
-            lastSeenUtc = if (connected) System.currentTimeMillis() else before?.lastSeenUtc ?: 0
+            lastSeenUtc = if (connected) System.currentTimeMillis() else before?.lastSeenUtc ?: 0,
+            // Connected clears it; a disconnect with nothing new to say keeps the last reason.
+            problem = if (connected) null else problem ?: before?.problem,
+            version = version ?: before?.version.orEmpty()
         )
-        if (before?.connected != connected) host.onPeersChanged()
+        statuses[peer.tag] = next
+        if (before?.connected != connected || before.problem != next.problem ||
+            before.version != next.version
+        ) {
+            host.onPeersChanged()
+        }
+    }
+
+    /** Why dialling a device failed, in words that say what to check. */
+    private fun unreachable(peer: Peer, failure: Throwable): String {
+        val where = "${peer.host}:${peer.port}"
+        return when (failure) {
+            is java.net.SocketTimeoutException ->
+                "Nothing answered at $where. Check both devices are on the same network or " +
+                    "Tailscale, and that InkSlate is open on ${peer.name}."
+            is java.net.ConnectException ->
+                "$where refused the connection: InkSlate is not open on ${peer.name}, or " +
+                    "\u201CTalk to my other devices\u201D is off there."
+            is java.net.NoRouteToHostException ->
+                "No route to $where. The two devices are not on a network that joins them."
+            is java.net.UnknownHostException ->
+                "The address ${peer.host} was not found."
+            else -> "Could not reach $where: ${failure.message ?: failure::class.simpleName}"
+        }
+    }
+
+    /** A probe on its way, and what came back. */
+    private class Waiting {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        @Volatile var version: String = ""
+    }
+
+    private val probes = ConcurrentHashMap<String, Waiting>()
+
+    /**
+     * Test the link to [tag], for the button in Settings. Blocking - call it off the interface.
+     *
+     * Connected: a probe goes over the live connection and the reply is timed, which proves the
+     * whole path - the socket, the cipher, the other app reading and answering - not merely that
+     * a connection object exists. Not connected: the next few dial attempts are waited on, and if
+     * none gets through, the reason the last one failed is the answer.
+     */
+    fun check(tag: String, timeoutMs: Long = 5_000): LinkCheck {
+        val peer = known[tag] ?: return LinkCheck(
+            false, "Not paired", "This device is not paired with that one any more."
+        )
+        if (!running) {
+            return LinkCheck(
+                false, "The link is off",
+                "Turn on \u201CTalk to my other devices\u201D on this device first."
+            )
+        }
+
+        // Give the dialler a moment when it is not up: it tries every couple of seconds.
+        val waitUntil = System.currentTimeMillis() + RETRY_MS * 3 + CONNECT_MS
+        while (!isConnected(tag) && System.currentTimeMillis() < waitUntil) sleep(200)
+        if (!isConnected(tag)) {
+            val why = statuses[tag]?.problem
+                ?: "It has not answered at ${peer.host}:${peer.port}."
+            return LinkCheck(false, "Not linked to ${peer.name}", why)
+        }
+
+        val nonce = java.util.UUID.randomUUID().toString()
+        val waiting = Waiting()
+        probes[nonce] = waiting
+        val started = System.nanoTime()
+        send(tag, PeerMessage.Probe(nonce))
+        val answered = waiting.latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        probes.remove(nonce)
+        if (!answered) {
+            // Open on paper and dead in fact. Closing it is what gets a fresh one dialled.
+            connections[tag]?.forEach { it.close() }
+            return LinkCheck(
+                false, "${peer.name} stopped answering",
+                "The connection looked open but a test message got no reply within " +
+                    "${timeoutMs / 1000} seconds. It has been reset - test again in a few seconds."
+            )
+        }
+        val millis = (System.nanoTime() - started) / 1_000_000
+        known[tag]?.let { noteStatus(it, connected = true, version = waiting.version) }
+        val build = waiting.version.takeIf { it.isNotBlank() }?.let { " It runs InkSlate $it." }.orEmpty()
+        return LinkCheck(
+            true, "Linked to ${peer.name}",
+            "Answered in $millis ms over ${peer.host}.$build Marks drawn on either device appear " +
+                "on the other as they are drawn."
+        )
     }
 
     private inner class Connection(

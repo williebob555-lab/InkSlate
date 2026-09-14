@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -128,31 +129,49 @@ fun HomeScreen(
 
     fun refresh() { reload++ }
 
-    LaunchedEffect(refreshKey, reload, here?.absolutePath) {
-        loading = true
-        val at = here
-        val loaded = withContext(Dispatchers.IO) {
-            if (at == null) {
-                Loaded(
-                    folders = repo.libraryFolders(),
-                    recents = repo.recents(12),
-                    starred = repo.pinned().filter { it.exists() },
-                    documents = repo.libraryFiles(limit = 40)
-                )
-            } else {
-                Loaded(
-                    folders = repo.subfolders(at),
-                    recents = emptyList(),
-                    starred = emptyList(),
-                    documents = repo.documentsIn(at)
-                )
-            }
+    suspend fun lists(at: File?): Loaded = withContext(Dispatchers.IO) {
+        if (at == null) {
+            Loaded(
+                folders = repo.libraryFolders(),
+                recents = repo.recents(12),
+                starred = repo.pinned().filter { it.exists() },
+                documents = repo.libraryFiles(limit = 40)
+            )
+        } else {
+            Loaded(
+                folders = repo.subfolders(at),
+                recents = emptyList(),
+                starred = emptyList(),
+                documents = repo.documentsIn(at)
+            )
         }
+    }
+
+    fun show(loaded: Loaded) {
         folders = loaded.folders
         recents = loaded.recents
         starred = loaded.starred
         documents = loaded.documents
+    }
+
+    LaunchedEffect(refreshKey, reload, here?.absolutePath) {
+        loading = true
+        show(lists(here))
         loading = false
+    }
+
+    // Documents arrive from your other devices while this screen is open - by file sync, which
+    // says nothing to this app about it. So the lists are looked at again every few seconds and
+    // redrawn only when something in them actually changed: a new document, a rename, a file
+    // written elsewhere. Quietly, with no spinner; nothing is being waited for.
+    LaunchedEffect(here?.absolutePath) {
+        while (true) {
+            delay(HOME_REFRESH_MS)
+            if (loading) continue
+            val fresh = lists(here)
+            val showing = Loaded(folders, recents, starred, documents)
+            if (fresh != showing && !loading) show(fresh)
+        }
     }
 
     LaunchedEffect(query) {
@@ -187,6 +206,7 @@ fun HomeScreen(
                     )
                 },
                 actions = {
+                    LinkIndicator()
                     IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
                         Icon(Icons.Default.Search, "Search")
                     }
@@ -485,6 +505,9 @@ fun HomeScreen(
         )
     }
 }
+
+/** How often the home screen looks for documents that changed while it was open. */
+private const val HOME_REFRESH_MS = 5_000L
 
 private data class Loaded(
     val folders: List<File>,

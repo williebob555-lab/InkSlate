@@ -216,23 +216,6 @@ class ToolState {
      */
     var ruler by mutableStateOf<com.inkslate.core.Ruler?>(null)
 
-    /**
-     * True while shapes drawn freehand are tidied into the shape they were meant to be.
-     *
-     * Off until asked for, as on the tablet. It was on here and nowhere else, so handwriting
-     * straightened itself into lines on one of the two builds - and a thing that rewrites what
-     * you drew is not something to have on by default in either.
-     */
-    private val recogniseState =
-        mutableStateOf(DesktopPrefs.get(K_RECOGNISE)?.toBoolean() ?: false)
-
-    var recogniseShapes: Boolean
-        get() = recogniseState.value
-        set(value) {
-            recogniseState.value = value
-            DesktopPrefs.put(K_RECOGNISE, value.toString())
-        }
-
     /** Whether a pen's reported pressure is used at all, or every line comes out one width. */
     var pressureEnabled: Boolean
         get() = pressureState.value
@@ -467,7 +450,6 @@ class ToolState {
         const val K_BTN1_SEEN = "tool_button1_seen"
         const val K_BTN2_SEEN = "tool_button2_seen"
         const val K_AUTO_SWITCH = "tool_auto_switch"
-        const val K_RECOGNISE = "tool_recognise_shapes"
         const val K_PRESSURE = "tool_pressure"
         const val K_SNAP_SHAPES = "tool_snap_shapes"
         const val K_SNAP_TEXT = "tool_snap_highlighter"
