@@ -34,9 +34,6 @@ class PagePlanTest {
         )
     }
 
-    private var minted = 0
-    private fun newId(): String = "new-${++minted}"
-
     // ---- the plan itself -----------------------------------------------------
 
     @Test
@@ -85,7 +82,7 @@ class PagePlanTest {
     fun `moving a page takes its handwriting with it`() {
         val ink = threePages()
         val plan = PagePlan.moved(PagePlan.identity(3), from = 0, to = 2)
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         // Page 0 went to the end, so what was on it is now on the last page.
         assertEquals(1, remapped.strokesOn(2).size)
@@ -97,7 +94,7 @@ class PagePlanTest {
     fun `a removed page takes its handwriting with it`() {
         val ink = threePages()
         val plan = PagePlan.removed(PagePlan.identity(3), at = 1)
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         assertEquals(2, remapped.totalStrokes)
         assertEquals(2, remapped.pageSizes.size)
@@ -107,7 +104,7 @@ class PagePlanTest {
     fun `a duplicated page's handwriting is duplicated with it`() {
         val ink = threePages()
         val plan = PagePlan.duplicated(PagePlan.identity(3), at = 0, uid = 77L)
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         assertEquals(4, remapped.totalStrokes)
         assertEquals(1, remapped.strokesOn(0).size)
@@ -120,7 +117,7 @@ class PagePlanTest {
         val plan = PagePlan.inserted(
             PagePlan.identity(3), at = 1, pages = listOf(PlannedPage(source = -1, uid = 50L))
         )
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         assertEquals(4, remapped.pageSizes.size)
         assertTrue("the new page is blank", remapped.strokesOn(1).isEmpty())
@@ -137,7 +134,7 @@ class PagePlanTest {
     fun `turning a page turns its handwriting too`() {
         val ink = threePages()
         val plan = PagePlan.turned(PagePlan.identity(3), at = 0, quarterTurns = 1)
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         val moved = remapped.strokesOn(0).single()
         val original = ink.strokesOn(0).single()
@@ -162,7 +159,7 @@ class PagePlanTest {
     fun `rearranging retires every old stroke id`() {
         val ink = threePages()
         val plan = PagePlan.moved(PagePlan.identity(3), from = 2, to = 0)
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         for (page in 0 until 3) {
             for (s in ink.strokesOn(page)) {
@@ -179,7 +176,7 @@ class PagePlanTest {
     fun `a stale copy merged back in cannot resurrect the old order`() {
         val ink = threePages()
         val plan = PagePlan.moved(PagePlan.identity(3), from = 0, to = 2)
-        val remapped = PagePlan.remapInk(ink, plan, ::newId)
+        val remapped = PagePlan.remapInk(ink, plan)
 
         // The other device still has the document as it was, and syncs it back.
         val merged = remapped.mergeWith(ink)
@@ -197,12 +194,12 @@ class PagePlanTest {
             .withBookmarkAdded(2, "last")
 
         val moved = PagePlan.remapInk(
-            ink, PagePlan.moved(PagePlan.identity(3), from = 0, to = 2), ::newId
+            ink, PagePlan.moved(PagePlan.identity(3), from = 0, to = 2)
         )
         assertEquals(setOf(1, 2), moved.bookmarks.map { it.page }.toSet())
 
         val dropped = PagePlan.remapInk(
-            ink, PagePlan.removed(PagePlan.identity(3), at = 0), ::newId
+            ink, PagePlan.removed(PagePlan.identity(3), at = 0)
         )
         assertEquals(listOf("last"), dropped.bookmarks.map { it.label })
     }
@@ -211,6 +208,6 @@ class PagePlanTest {
     fun `the recorded page count follows the plan`() {
         val ink = threePages()
         val plan = PagePlan.removed(PagePlan.identity(3), at = 0)
-        assertEquals(2, PagePlan.remapInk(ink, plan, ::newId).source.pageCount)
+        assertEquals(2, PagePlan.remapInk(ink, plan).source.pageCount)
     }
 }

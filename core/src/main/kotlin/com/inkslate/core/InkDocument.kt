@@ -56,6 +56,14 @@ data class InkDocument(
      * edges it has, and pretending otherwise would be wrong rather than generous.
      */
     @SerialName("canvas") val canvas: InkCanvas? = null,
+    /**
+     * Which arrangement of pages the handwriting is laid out for. "" until the pages are first
+     * rearranged. Two copies with different layouts cannot be merged page by page - page 2 of one
+     * is not page 2 of the other - so [mergeWith] first brings the older one forward.
+     */
+    @SerialName("layout") val layout: String = "",
+    /** How the pages got to [layout]. See [PageStructure]. */
+    @SerialName("structureHistory") val structureHistory: List<StructureChange> = emptyList(),
     @SerialName("createdUtc") val createdUtc: Long = 0,
     @SerialName("modifiedUtc") val modifiedUtc: Long = 0,
     @SerialName("modifiedBy") val modifiedBy: String = "",
@@ -177,6 +185,62 @@ data class InkDocument(
      * device runs it or in what order sync delivered the files.
      */
     fun mergeWith(other: InkDocument): InkDocument {
+        if (layout != other.layout) return mergeAcrossLayouts(other)
+        val history = PageStructure.merged(structureHistory, other.structureHistory)
+        return mergeSameLayout(other).let {
+            if (it.structureHistory == history) it else it.copy(structureHistory = history)
+        }
+    }
+
+    /**
+     * Two copies laid out differently: the pages were rearranged on one device, and the other has
+     * not caught up. The older copy is brought forward through the recorded changes, which gives
+     * every mark it holds the same id and page the rearranging device gave it, and the two then
+     * merge as usual. Marks drawn on the older copy since - on a device that had not heard of the
+     * rearrangement yet - land on the page they were drawn on, wherever that page went.
+     *
+     * When neither copy can be brought to the other's layout, both were rearranged separately.
+     * The pages themselves differ, and handwriting cannot be placed on a page that is not there,
+     * so the copy rearranged last is kept. That needs two devices to rearrange the same document
+     * while apart; nothing short of asking the user could do better.
+     */
+    private fun mergeAcrossLayouts(other: InkDocument): InkDocument {
+        val history = PageStructure.merged(structureHistory, other.structureHistory)
+        val (older, newer) = when {
+            PageStructure.path(layout, other.layout, history) != null -> this to other
+            PageStructure.path(other.layout, layout, history) != null -> other to this
+            else -> {
+                val winner = if (PageStructure.laterLayout(layout, other.layout, history) == layout) this else other
+                val loser = if (winner === this) other else this
+                return winner.copy(
+                    deleted = (winner.deleted.keys + loser.deleted.keys).associateWith {
+                        maxOf(winner.deleted[it] ?: 0L, loser.deleted[it] ?: 0L)
+                    },
+                    clocks = (winner.clocks.keys + loser.clocks.keys).associateWith {
+                        maxOf(winner.clocks[it] ?: 0L, loser.clocks[it] ?: 0L)
+                    },
+                    structureHistory = history,
+                    modifiedUtc = maxOf(modifiedUtc, other.modifiedUtc)
+                )
+            }
+        }
+        // A copy can claim an older layout it is not in: a build from before layouts were recorded
+        // reads a rearranged file, drops what it does not understand, and writes it back as "".
+        // Its marks already wear the rearranged ids, and replaying the change would move them a
+        // second time. A copy genuinely in the older layout cannot share a live mark with the newer
+        // one, because every mark that crossed the change was given a new id.
+        val newerIds = newer.pages.values.flatten().mapTo(HashSet()) { it.id }
+        val alreadyThere = older.pages.values.any { page -> page.any { it.id in newerIds } }
+        val forward = if (alreadyThere) {
+            older.copy(layout = newer.layout)
+        } else {
+            PageStructure.bringTo(older, newer.layout, history) ?: older.copy(layout = newer.layout)
+        }
+        return newer.mergeSameLayout(forward)
+            .copy(structureHistory = history, source = newer.source, pageSizes = newer.pageSizes)
+    }
+
+    private fun mergeSameLayout(other: InkDocument): InkDocument {
         // The later of the two, per stroke: an erase that happened after another device's erase
         // is still an erase, and the time of it is what a restore has to beat.
         val tombs = (deleted.keys + other.deleted.keys).associateWith {

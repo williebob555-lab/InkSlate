@@ -46,8 +46,7 @@ object DocumentPages {
     fun rearrange(
         source: File,
         ink: InkDocument,
-        plan: List<PlannedPage>,
-        newId: () -> String
+        plan: List<PlannedPage>
     ): Result<InkDocument> = runCatching {
         require(DesktopSources.isPdf(source)) { "Only PDFs can have their pages rearranged" }
 
@@ -57,7 +56,7 @@ object DocumentPages {
                 val box = pdf.getPage(i).let { it.cropBox ?: it.mediaBox }
                 sizes[i] = box.width to box.height
             }
-            val ordered = PagePlan.remapInk(ink, plan, newId) { i ->
+            val ordered = PagePlan.remapInk(ink, plan) { i ->
                 sizes[i] ?: (612f to 792f)
             }
 

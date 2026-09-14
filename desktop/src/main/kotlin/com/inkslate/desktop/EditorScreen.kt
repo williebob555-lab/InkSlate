@@ -1825,7 +1825,7 @@ fun EditorScreen(
                         busy = true
                         val done = withContext(Dispatchers.IO) {
                             writeThrough()
-                            DocumentPages.rearrange(file, ink, plan, ::nextId)
+                            DocumentPages.rearrange(file, ink, plan)
                         }
                         busy = false
                         done.onSuccess { rearranged ->

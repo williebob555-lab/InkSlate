@@ -1,6 +1,7 @@
 package com.inkslate.core.peer
 
 import com.inkslate.core.InkDocument
+import com.inkslate.core.PageStructure
 
 /**
  * One open document, kept in step with every other device that has it open.
@@ -32,6 +33,10 @@ import com.inkslate.core.InkDocument
  *   rival version of the file.
  * - **Alone, a device writes as it always has**, and says so when it next meets another, so that
  *   the two settle who has the newer file before either writes again.
+ * - **Pages are rearranged by the device that writes.** Marks keep flowing from a device that has
+ *   not caught up - they are brought forward to the new arrangement on arrival - but that device
+ *   writes nothing until the rearranged file has reached it, because what it would write is the old
+ *   arrangement of pages. See [PageStructure].
  */
 class DocumentSync(
     private val me: String,
@@ -73,7 +78,13 @@ class DocumentSync(
         /** True when the file brought something the document did not already have. */
         val merged: Boolean,
         /** True when the file on disk now holds everything in [ink]: nothing left to write. */
-        val holdsEverything: Boolean
+        val holdsEverything: Boolean,
+        /**
+         * True when the pages were rearranged elsewhere and [ink] is now laid out for the file's
+         * new arrangement. The document's pages have to be loaded again from the file before it is
+         * shown - handwriting for page 3 of the new arrangement is not for page 3 of the old.
+         */
+        val pagesChanged: Boolean = false
     )
 
     private class Peer {
@@ -93,6 +104,9 @@ class DocumentSync(
         val outbox = PeerOutbox()
         /** Marks their last write lacked; sent again if the next write still lacks them. */
         var suspectMissing: Set<String> = emptySet()
+        /** The arrangement of pages their marks are laid out for, once they have said. */
+        var layout: String? = null
+        var layoutAt = -1L
     }
 
     private val peers = HashMap<String, Peer>()
@@ -124,6 +138,9 @@ class DocumentSync(
     /** When the writer dropped off the link without closing, or 0. */
     private var partitionedAt = 0L
 
+    /** The document as last handed in, for its arrangement of pages. */
+    private var seen: InkDocument? = diskInk
+
     // The last dirty answer, by identity: the same question is asked every tick.
     private var dirtyFor: Pair<InkDocument?, InkDocument>? = null
     private var dirtyAnswer = true
@@ -132,12 +149,14 @@ class DocumentSync(
 
     /** A device came onto the link. Tell it what is open here and what this side holds. */
     fun connected(peer: String, current: InkDocument, now: Long) {
+        see(current)
         val p = peers.getOrPut(peer) { Peer() }
         p.connected = true
         p.open = false
         p.heard = false
         p.connectedAt = now
         p.caughtUp = false
+        p.layout = null
         p.outbox.reset()
         send(peer, editing())
         send(peer, PeerSync.digestOf(current))
@@ -159,6 +178,7 @@ class DocumentSync(
 
     /** Something arrived. Returns the document to show, which may now hold more. */
     fun received(peer: String, message: PeerMessage, current: InkDocument, now: Long): InkDocument {
+        see(current)
         val p = peers.getOrPut(peer) {
             Peer().also {
                 it.connected = true
@@ -173,8 +193,11 @@ class DocumentSync(
                     return current
                 }
                 val wasOpen = p.open
+                val rearranged = wasOpen && p.layout != null && p.layout != message.layout
                 p.connected = true
                 p.open = true
+                p.layout = message.layout
+                p.layoutAt = message.layoutAt
                 partitionedAt = 0L
                 absorb(message.lastWrite)
                 message.lease?.let { if (it.outranks(lease)) lease = it }
@@ -183,6 +206,14 @@ class DocumentSync(
                 if (!wasOpen) {
                     log("$fileName: $peer has it open too")
                     send(peer, editing())
+                    send(peer, PeerSync.digestOf(current))
+                } else if (rearranged) {
+                    // Their pages moved - rearranged there, or caught up with a rearrangement
+                    // here. What each side sent the other was for the old arrangement, so the two
+                    // compare again from the start.
+                    log("$fileName: pages on $peer are now arranged as ${message.layout.take(8)}")
+                    p.caughtUp = false
+                    p.outbox.reset()
                     send(peer, PeerSync.digestOf(current))
                 }
             }
@@ -194,6 +225,9 @@ class DocumentSync(
             }
 
             is PeerMessage.Digest -> if (message.docId == docId) {
+                // A digest describes marks by id, and ids are only comparable within one
+                // arrangement of pages. Whichever side is behind sends another once it catches up.
+                if (message.layout != current.layout) return current
                 val answer = PeerSync.answerFor(current, message)
                 if (!answer.isEmpty) send(peer, answer)
                 val wanted = PeerSync.wantedFrom(current, message)
@@ -202,18 +236,25 @@ class DocumentSync(
                 p.caughtUp = true
             }
 
-            is PeerMessage.Want -> if (message.docId == docId) {
+            is PeerMessage.Want -> if (message.docId == docId && message.layout == current.layout) {
                 send(peer, PeerSync.answerFor(current, PeerMessage.Digest(docId), message.ids))
             }
 
             is PeerMessage.Marks -> if (message.docId == docId) {
-                p.outbox.heard(message)
+                if (message.layout == current.layout) {
+                    p.outbox.heard(message)
+                } else if (!PeerSync.canPlace(current, message.layout)) {
+                    // Laid out for pages this side does not have yet. The digests exchanged once
+                    // it does bring these across again.
+                    return current
+                }
                 return PeerSync.applied(current, message)
             }
 
             is PeerMessage.Wrote -> if (message.docId == docId) {
                 absorb(message.write)
-                message.digest?.let { d -> resendWhatWasMissed(peer, p, d, current) }
+                message.digest?.takeIf { it.layout == current.layout }
+                    ?.let { d -> resendWhatWasMissed(peer, p, d, current) }
             }
 
             is PeerMessage.LeaseRequest -> if (message.docId == docId) {
@@ -279,9 +320,12 @@ class DocumentSync(
         val arrived = runCatching(read).getOrNull()
             ?: return Arrival(current, merged = false, holdsEverything = false)
         diskInk = arrived
-        val merged = if (PeerSync.holdsEverythingIn(current, arrived)) current
+        val same = arrived.layout == current.layout
+        val merged = if (same && PeerSync.holdsEverythingIn(current, arrived)) current
         else current.mergeWith(arrived)
-        return Arrival(merged, merged !== current, holds(arrived, merged))
+        val pagesChanged = merged.layout != current.layout
+        if (pagesChanged) log("$fileName: the pages were rearranged elsewhere; loading the new arrangement")
+        return Arrival(merged, merged !== current, holds(arrived, merged), pagesChanged)
     }
 
     // ---- writing -----------------------------------------------------------------
@@ -294,9 +338,11 @@ class DocumentSync(
      * [written] or [writeFailed]; until then nothing else is written.
      */
     fun tick(now: Long, current: InkDocument, idle: Boolean): Boolean {
+        see(current)
         stream(current)
         flushGrants()
         moveRequestAlong(now)
+        if (behind()) return false
 
         val open = openPeers()
         val dirty = isDirty(current)
@@ -379,6 +425,7 @@ class DocumentSync(
     fun mayWriteNow(now: Long): Boolean {
         if (writing) return false
         if (undecided(now)) return false
+        if (behind()) return false
         val open = openPeers()
         if (open.isNotEmpty() && !holding(open)) return false
         val l = latest
@@ -403,8 +450,10 @@ class DocumentSync(
      * should write it before it goes - which it should only when it is the one that writes.
      */
     fun closing(current: InkDocument, now: Long): Boolean {
+        see(current)
         stream(current)
         val open = openPeers()
+        if (behind()) return false
         if (!isDirty(current)) return false
         val mayWrite = (open.isEmpty() && !undecided(now)) || holding(open)
         if (!mayWrite) return false
@@ -424,6 +473,7 @@ class DocumentSync(
         val open = openPeers()
         return when {
             open.isEmpty() -> Status.ALONE
+            behind() -> Status.WAITING_FOR_FILE
             request != null -> Status.AGREEING
             holding(open) -> {
                 val l = latest
@@ -443,7 +493,49 @@ class DocumentSync(
 
     // ---- inside ------------------------------------------------------------------
 
-    private fun editing() = PeerMessage.Editing(docId, fileName, lease, latest)
+    private fun editing(): PeerMessage.Editing {
+        val doc = seen
+        val layout = doc?.layout ?: ""
+        val at = doc?.let { PageStructure.layoutAt(it.layout, it.structureHistory) } ?: -1L
+        return PeerMessage.Editing(docId, fileName, lease, latest, layout, at)
+    }
+
+    /**
+     * Notice the document's arrangement of pages changing here - rearranged on this device, or
+     * loaded again after a rearrangement elsewhere - and tell the devices on the link.
+     */
+    private fun see(current: InkDocument) {
+        val before = seen
+        seen = current
+        if (before == null || before.layout == current.layout) return
+        dirtyFor = null
+        for ((tag, p) in peers) {
+            if (!p.connected) continue
+            p.caughtUp = false
+            p.outbox.reset()
+            send(tag, editing())
+            if (p.open) send(tag, PeerSync.digestOf(current))
+        }
+    }
+
+    /**
+     * Another device that has this document open has its pages arranged in a way this one has not
+     * reached. Whatever this device wrote now would be the old arrangement, over the new one.
+     *
+     * Two arrangements made while apart, neither from the other, are settled the way the merge
+     * settles them: the later one is kept, and only the device with the other one is behind.
+     */
+    private fun behind(): Boolean {
+        val doc = seen ?: return false
+        val mine = doc.layout
+        val mineAt = PageStructure.layoutAt(mine, doc.structureHistory)
+        return peers.values.any { p ->
+            val theirs = p.layout
+            p.connected && p.open && theirs != null && theirs != mine &&
+                PageStructure.path(theirs, mine, doc.structureHistory) == null &&
+                !PageStructure.outranks(mine, mineAt, theirs, p.layoutAt)
+        }
+    }
 
     private fun maxTerm(): Long = maxOf(lease?.term ?: 0L, request?.term ?: 0L)
 
@@ -470,7 +562,7 @@ class DocumentSync(
 
     private fun stream(current: InkDocument) {
         for ((tag, p) in peers) {
-            if (!p.connected || !p.open || !p.caughtUp) continue
+            if (!p.connected || !p.open || !p.caughtUp || p.layout != current.layout) continue
             val owed = p.outbox.pending(current) ?: continue
             send(tag, owed)
             p.outbox.sent(current)

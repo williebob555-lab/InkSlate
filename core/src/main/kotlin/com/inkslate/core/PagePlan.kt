@@ -134,61 +134,16 @@ object PagePlan {
 
     // ---- the ink -------------------------------------------------------------
 
+    /**
+     * The handwriting rearranged to match [plan]. See [PageStructure] for how every device reaches
+     * the same result, which is what lets a rearrangement travel.
+     */
     fun remapInk(
         ink: InkDocument,
         plan: List<PlannedPage>,
-        newId: () -> String,
         /** The document's real page sizes, which the recorded ones can lag behind. */
         pageSizeOf: (Int) -> Pair<Float, Float> = { i ->
             ink.pageSizes.getOrNull(i)?.let { it.w to it.h } ?: (612f to 792f)
         }
-    ): InkDocument {
-        val now = System.currentTimeMillis()
-        val pages = LinkedHashMap<String, List<Stroke>>()
-        for ((newIndex, p) in plan.withIndex()) {
-            if (p.isNew) continue
-            val existing = ink.strokesOn(p.source)
-            if (existing.isEmpty()) continue
-            val (w, h) = pageSizeOf(p.source)
-            pages[newIndex.toString()] = existing.map {
-                // Turning the page without turning what is written on it would leave the marks
-                // beside the work rather than on it.
-                it.turnedWithPage(p.quarterTurns, w, h)
-                    .copy(id = newId(), pageIndex = newIndex, updatedUtc = now)
-            }
-        }
-
-        // Everything that was here before is now retired, whether it moved, was copied or was
-        // dropped with its page. See the note on this object about why.
-        val retired = ink.pages.values.flatten().map { it.id }
-
-        val sizes = plan.map { p ->
-            val (w, h) = when {
-                p.import != null -> p.import.width to p.import.height
-                p.isNew -> p.blankWidth to p.blankHeight
-                else -> pageSizeOf(p.source)
-            }
-            if (PageTurn.swapsDimensions(p.quarterTurns)) InkDocument.PageSize(h, w)
-            else InkDocument.PageSize(w, h)
-        }
-
-        // A bookmark follows its page to wherever that page ended up; one whose page was removed
-        // goes with it.
-        val bookmarks = ink.bookmarks.mapNotNull { bm ->
-            val at = plan.indexOfFirst { !it.isNew && it.source == bm.page }
-            if (at < 0) null else bm.copy(page = at)
-        }.distinctBy { it.page }.sortedBy { it.page }
-
-        return ink.copy(
-            pages = pages,
-            pageSizes = sizes,
-            bookmarks = bookmarks,
-            deleted = ink.deleted + retired.associateWith { now },
-            // The page layout has deliberately changed, so the recorded geometry is stale by
-            // design. Blanking it lets the next open re-stamp it silently instead of announcing
-            // a change the user just made on purpose.
-            source = ink.source.copy(pageCount = plan.size, geometry = ""),
-            modifiedUtc = now
-        )
-    }
+    ): InkDocument = PageStructure.restructure(ink, plan, pageSizeOf).first
 }

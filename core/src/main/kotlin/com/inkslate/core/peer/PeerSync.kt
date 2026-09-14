@@ -20,7 +20,8 @@ object PeerSync {
         docId = doc.docId,
         marks = doc.pages.values.flatten().associate { it.id to it.updatedUtc },
         deleted = doc.deleted,
-        meta = metaOf(doc)
+        meta = metaOf(doc),
+        layout = doc.layout
     )
 
     /**
@@ -91,7 +92,8 @@ object PeerSync {
         return PeerMessage.Marks(
             ours.docId, strokes, deletions,
             bookmarks = if (metaDiffers) ours.bookmarks else null,
-            canvas = if (metaDiffers) ours.canvas else null
+            canvas = if (metaDiffers) ours.canvas else null,
+            layout = ours.layout
         )
     }
 
@@ -103,10 +105,12 @@ object PeerSync {
      * same path - and that path is the one the file sync already trusts.
      */
     fun applied(ours: InkDocument, marks: PeerMessage.Marks): InkDocument {
-        if (marks.isEmpty) return ours
+        if (marks.isEmpty || !canPlace(ours, marks.layout)) return ours
         val incoming = InkDocument(
             docId = ours.docId,
             source = ours.source,
+            // Marks laid out for an older arrangement are brought forward by the merge.
+            layout = marks.layout,
             pages = marks.strokes.groupBy { it.pageIndex.toString() },
             deleted = marks.deleted,
             bookmarks = marks.bookmarks.orEmpty(),
@@ -114,6 +118,15 @@ object PeerSync {
         )
         return ours.mergeWith(incoming)
     }
+
+    /**
+     * Whether marks laid out for [layout] can be placed on [ours]: the same arrangement of pages, or
+     * one [ours] was rearranged from. Marks for an arrangement [ours] has not reached cannot be -
+     * page 2 there is not page 2 here - and wait until this device has the rearranged file.
+     */
+    fun canPlace(ours: InkDocument, layout: String): Boolean =
+        layout == ours.layout ||
+            com.inkslate.core.PageStructure.path(layout, ours.layout, ours.structureHistory) != null
 
     /**
      * Whether a copy of the document that turned up carries anything we do not already hold.

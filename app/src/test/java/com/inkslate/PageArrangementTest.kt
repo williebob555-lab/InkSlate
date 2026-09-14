@@ -40,11 +40,9 @@ class PageArrangementTest {
     private fun plan(vararg sources: Int) =
         sources.mapIndexed { i, s -> PlannedPage(source = s, uid = i.toLong()) }
 
-    private fun ids(): () -> String = { "new-${++n}" }
-
     @Test
     fun `reordering moves the ink with its page`() {
-        val out = PageArrangement.remapInk(doc(3), plan(2, 0, 1), ids())
+        val out = PageArrangement.remapInk(doc(3), plan(2, 0, 1))
         // page 2's mark is now on page 0, and so on
         assertEquals(1, out.strokesOn(0).size)
         assertEquals(0, out.strokesOn(0).first().pageIndex)
@@ -53,7 +51,7 @@ class PageArrangementTest {
 
     @Test
     fun `a removed page takes its handwriting with it`() {
-        val out = PageArrangement.remapInk(doc(3), plan(0, 2), ids())
+        val out = PageArrangement.remapInk(doc(3), plan(0, 2))
         assertEquals(2, out.pages.size)
         assertEquals(2, out.pages.values.sumOf { it.size })
         assertEquals(2, out.source.pageCount)
@@ -61,7 +59,7 @@ class PageArrangementTest {
 
     @Test
     fun `a duplicated page duplicates its handwriting under fresh ids`() {
-        val out = PageArrangement.remapInk(doc(2), plan(0, 0, 1), ids())
+        val out = PageArrangement.remapInk(doc(2), plan(0, 0, 1))
         assertEquals(3, out.pages.size)
         val all = out.pages.values.flatten()
         assertEquals(3, all.size)
@@ -74,7 +72,7 @@ class PageArrangementTest {
     @Test
     fun `every old id is tombstoned so a stale device cannot resurrect it`() {
         val before = doc(3)
-        val out = PageArrangement.remapInk(before, plan(2, 1, 0), ids())
+        val out = PageArrangement.remapInk(before, plan(2, 1, 0))
         for (old in before.pages.values.flatten()) {
             assertTrue("$old.id must be tombstoned", out.deleted.containsKey(old.id))
         }
@@ -89,7 +87,7 @@ class PageArrangementTest {
     @Test
     fun `merging a stale copy back in adds nothing`() {
         val stale = doc(3)
-        val rearranged = PageArrangement.remapInk(stale, plan(2, 0, 1), ids())
+        val rearranged = PageArrangement.remapInk(stale, plan(2, 0, 1))
         val merged = rearranged.mergeWith(stale)
         assertEquals(
             "the old marks are tombstoned, so the merge is a no-op",
@@ -100,10 +98,10 @@ class PageArrangementTest {
 
     @Test
     fun `a bookmark follows its page and dies with it`() {
-        val moved = PageArrangement.remapInk(doc(3), plan(2, 1, 0), ids())
+        val moved = PageArrangement.remapInk(doc(3), plan(2, 1, 0))
         assertEquals(listOf(1), moved.bookmarks.map { it.page })
 
-        val removed = PageArrangement.remapInk(doc(3), plan(0, 2), ids())
+        val removed = PageArrangement.remapInk(doc(3), plan(0, 2))
         assertTrue(removed.bookmarks.isEmpty())
     }
 
@@ -115,8 +113,7 @@ class PageArrangementTest {
                 PlannedPage(0, 0),
                 PlannedPage(-1, 99, blankWidth = 595f, blankHeight = 842f),
                 PlannedPage(1, 1)
-            ),
-            ids()
+            )
         )
         assertEquals(3, out.pageSizes.size)
         assertEquals(595f, out.pageSizes[1].w)
@@ -126,7 +123,7 @@ class PageArrangementTest {
 
     @Test
     fun `the stale page geometry is cleared rather than left to warn about itself`() {
-        val out = PageArrangement.remapInk(doc(3), plan(0, 1), ids())
+        val out = PageArrangement.remapInk(doc(3), plan(0, 1))
         assertEquals("", out.source.geometry)
     }
 
@@ -151,7 +148,7 @@ class PageArrangementTest {
     fun `turning a page swaps its recorded size and moves its ink`() {
         val sizes: (Int) -> Pair<Float, Float> = { 600f to 800f }
         val turned = listOf(PlannedPage(0, 0, quarterTurns = 1), PlannedPage(1, 1))
-        val out = PageArrangement.remapInk(doc(2), turned, ids(), sizes)
+        val out = PageArrangement.remapInk(doc(2), turned, sizes)
 
         assertEquals(800f, out.pageSizes[0].w, 0.001f)
         assertEquals(600f, out.pageSizes[0].h, 0.001f)
@@ -167,7 +164,7 @@ class PageArrangementTest {
     fun `a page turned all the way round is where it started`() {
         val sizes: (Int) -> Pair<Float, Float> = { 600f to 800f }
         val out = PageArrangement.remapInk(
-            doc(1), listOf(PlannedPage(0, 0, quarterTurns = 4)), ids(), sizes
+            doc(1), listOf(PlannedPage(0, 0, quarterTurns = 4)), sizes
         )
         assertEquals(600f, out.pageSizes[0].w, 0.001f)
         assertEquals(1f, out.strokesOn(0).first().points[0].x, 0.01f)
@@ -186,8 +183,7 @@ class PageArrangementTest {
     fun `an imported page arrives sized and empty`() {
         val out = PageArrangement.remapInk(
             doc(2),
-            listOf(PlannedPage(0, 0), imported(50), PlannedPage(1, 1)),
-            ids()
+            listOf(PlannedPage(0, 0), imported(50), PlannedPage(1, 1))
         )
         assertEquals(3, out.pageSizes.size)
         assertEquals(595f, out.pageSizes[1].w, 0.001f)
@@ -199,7 +195,7 @@ class PageArrangementTest {
     @Test
     fun `an imported page can be turned before it is committed`() {
         val out = PageArrangement.remapInk(
-            doc(1), listOf(imported(50).copy(quarterTurns = 1)), ids()
+            doc(1), listOf(imported(50).copy(quarterTurns = 1))
         )
         assertEquals(842f, out.pageSizes[0].w, 0.001f)
         assertEquals(595f, out.pageSizes[0].h, 0.001f)

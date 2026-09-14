@@ -55,7 +55,15 @@ sealed interface PeerMessage {
         @SerialName("docId") val docId: String,
         @SerialName("fileName") val fileName: String,
         @SerialName("lease") val lease: Lease? = null,
-        @SerialName("lastWrite") val lastWrite: WriteRecord? = null
+        @SerialName("lastWrite") val lastWrite: WriteRecord? = null,
+        /**
+         * The arrangement of pages the sender's marks are laid out for - see
+         * [com.inkslate.core.PageStructure]. Marks for an arrangement the receiver has not reached
+         * cannot be placed on its pages, and are left until it has.
+         */
+        @SerialName("layout") val layout: String = "",
+        /** When the pages were arranged that way, which settles two arrangements made apart. */
+        @SerialName("layoutAt") val layoutAt: Long = -1
     ) : PeerMessage
 
     /** "I have closed this document", and the last write of it I know of. */
@@ -117,7 +125,8 @@ sealed interface PeerMessage {
          * A fingerprint of everything in the document that is not a mark - bookmarks, the canvas.
          * Those are small, so they are simply sent whole whenever this does not match.
          */
-        @SerialName("meta") val meta: String = ""
+        @SerialName("meta") val meta: String = "",
+        @SerialName("layout") val layout: String = ""
     ) : PeerMessage
 
     /** "Send me these." Sent after comparing a [Digest] against what we hold. */
@@ -125,7 +134,8 @@ sealed interface PeerMessage {
     @SerialName("want")
     data class Want(
         @SerialName("docId") val docId: String,
-        @SerialName("ids") val ids: List<String> = emptyList()
+        @SerialName("ids") val ids: List<String> = emptyList(),
+        @SerialName("layout") val layout: String = ""
     ) : PeerMessage
 
     /**
@@ -143,7 +153,13 @@ sealed interface PeerMessage {
         /** Bookmarks, when the other side's differ. Null means "no news", not "none". */
         @SerialName("bookmarks") val bookmarks: List<InkDocument.Bookmark>? = null,
         /** The canvas, when the other side's differs. Null means "no news". */
-        @SerialName("canvas") val canvas: InkCanvas? = null
+        @SerialName("canvas") val canvas: InkCanvas? = null,
+        /**
+         * The arrangement of pages the sender's marks are laid out for - see
+         * [com.inkslate.core.PageStructure]. Marks for an arrangement the receiver has not reached
+         * cannot be placed on its pages, and are left until it has.
+         */
+        @SerialName("layout") val layout: String = ""
     ) : PeerMessage {
         val isEmpty: Boolean
             get() = strokes.isEmpty() && deleted.isEmpty() && bookmarks == null && canvas == null
@@ -199,7 +215,7 @@ sealed interface PeerMessage {
          * builds ship from one repository, but they are installed separately and one of them is
          * usually a version behind.
          */
-        const val PROTOCOL = 3
+        const val PROTOCOL = 4
 
         private val json = Json {
             ignoreUnknownKeys = true

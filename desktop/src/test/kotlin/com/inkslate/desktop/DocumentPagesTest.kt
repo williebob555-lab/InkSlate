@@ -28,9 +28,6 @@ class DocumentPagesTest {
     @get:Rule
     val temp = TemporaryFolder()
 
-    private var minted = 0
-    private fun newId(): String = "new-${++minted}"
-
     /** A document of [pages] pages, with one mark on each, tagged by the page it started on. */
     private fun document(pages: Int): Pair<File, InkDocument> {
         val file = BlankDocumentFactory.create(
@@ -70,7 +67,7 @@ class DocumentPagesTest {
         val (file, ink) = document(3)
         val plan = PagePlan.moved(PagePlan.identity(3), from = 0, to = 2)
 
-        val remapped = DocumentPages.rearrange(file, ink, plan, ::newId).getOrThrow()
+        val remapped = DocumentPages.rearrange(file, ink, plan).getOrThrow()
 
         assertEquals(3, pageCountOf(file))
         // The mark that was on page 0 is now on the last page, and its x still identifies it.
@@ -83,7 +80,7 @@ class DocumentPagesTest {
         val (file, ink) = document(3)
         val plan = PagePlan.removed(PagePlan.identity(3), at = 1)
 
-        val remapped = DocumentPages.rearrange(file, ink, plan, ::newId).getOrThrow()
+        val remapped = DocumentPages.rearrange(file, ink, plan).getOrThrow()
 
         assertEquals(2, pageCountOf(file))
         assertEquals(2, remapped.totalStrokes)
@@ -94,7 +91,7 @@ class DocumentPagesTest {
         val (file, ink) = document(2)
         val plan = PagePlan.duplicated(PagePlan.identity(2), at = 0, uid = 99L)
 
-        val remapped = DocumentPages.rearrange(file, ink, plan, ::newId).getOrThrow()
+        val remapped = DocumentPages.rearrange(file, ink, plan).getOrThrow()
 
         assertEquals(3, pageCountOf(file))
         assertEquals(3, remapped.totalStrokes)
@@ -114,7 +111,7 @@ class DocumentPagesTest {
             )
         )
 
-        DocumentPages.rearrange(file, ink, plan, ::newId).getOrThrow()
+        DocumentPages.rearrange(file, ink, plan).getOrThrow()
 
         assertEquals(3, pageCountOf(file))
         DesktopSources.open(file)!!.use {
@@ -128,7 +125,7 @@ class DocumentPagesTest {
         val before = DesktopSources.open(file)!!.use { it.pageDim(0) }
 
         DocumentPages.rearrange(
-            file, ink, PagePlan.turned(PagePlan.identity(1), 0, 1), ::newId
+            file, ink, PagePlan.turned(PagePlan.identity(1), 0, 1)
         ).getOrThrow()
 
         val after = DesktopSources.open(file)!!.use { it.pageDim(0) }
@@ -148,7 +145,7 @@ class DocumentPagesTest {
         val before = file.length()
 
         DocumentPages.rearrange(
-            file, ink, PagePlan.duplicated(PagePlan.identity(1), 0, 55L), ::newId
+            file, ink, PagePlan.duplicated(PagePlan.identity(1), 0, 55L)
         ).getOrThrow()
 
         assertEquals(2, pageCountOf(file))
@@ -162,7 +159,7 @@ class DocumentPagesTest {
     fun `a document with one page keeps it`() {
         val (file, ink) = document(1)
         DocumentPages.rearrange(
-            file, ink, PagePlan.removed(PagePlan.identity(1), 0), ::newId
+            file, ink, PagePlan.removed(PagePlan.identity(1), 0)
         ).getOrThrow()
         assertEquals(1, pageCountOf(file))
     }
@@ -172,7 +169,7 @@ class DocumentPagesTest {
         val notPdf = temp.newFile("photo.png").apply { writeText("not really a png") }
         val result = DocumentPages.rearrange(
             notPdf, InkDocument.create("photo.png", "image", 1, 0L, ""),
-            PagePlan.identity(1), ::newId
+            PagePlan.identity(1)
         )
         assertTrue(result.isFailure)
     }

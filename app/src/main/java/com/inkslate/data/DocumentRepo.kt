@@ -807,16 +807,13 @@ class DocumentRepo(private val context: Context) {
 
         journal.record(doc.file, doc.ink)
 
-        val ids = StrokeIdGen(deviceTag).also {
-            it.seedFrom(doc.ink.allStrokeIds() + doc.ink.deleted.keys)
-        }
         // Real page sizes from the source, not the recorded ones: a turn computed against a
         // stale size puts every mark on the page in the wrong place.
         val sizeOf: (Int) -> Pair<Float, Float> = { i ->
             runCatching { doc.source.pageDim(i).let { it.width to it.height } }
                 .getOrDefault(612f to 792f)
         }
-        val remapped = PageArrangement.remapInk(doc.ink, plan, { ids.next() }, sizeOf)
+        val remapped = PageArrangement.remapInk(doc.ink, plan, sizeOf)
 
         val result = InkEmbedder.rewritePdf(doc.file, remapped, plan.size) { pdf ->
             PageArrangement.applyToPdf(pdf, plan)

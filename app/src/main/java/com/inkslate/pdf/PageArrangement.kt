@@ -214,21 +214,14 @@ object PageArrangement {
     // ---- the ink side --------------------------------------------------------
 
     /**
-     * Move the handwriting to match [plan], re-issuing every stroke under a fresh id.
-     *
-     * [newId] supplies those ids; it must not repeat one this document has ever used, which is
-     * what a device-tagged generator seeded from the existing ids guarantees.
-     */
-    /**
      * Rewrite the handwriting to match [plan]. Shared with the Windows build - see the note on
-     * `core/PagePlan` about why every stroke is re-issued under a fresh id.
+     * `core/PagePlan` about why every stroke is re-issued under a new id.
      */
     fun remapInk(
         ink: InkDocument,
         plan: List<PlannedPage>,
-        newId: () -> String,
         pageSizeOf: (Int) -> Pair<Float, Float> = { i ->
             ink.pageSizes.getOrNull(i)?.let { it.w to it.h } ?: (612f to 792f)
         }
-    ): InkDocument = com.inkslate.core.PagePlan.remapInk(ink, plan, newId, pageSizeOf)
+    ): InkDocument = com.inkslate.core.PagePlan.remapInk(ink, plan, pageSizeOf)
 }
