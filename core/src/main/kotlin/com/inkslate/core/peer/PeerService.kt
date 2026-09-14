@@ -27,7 +27,15 @@ import javax.crypto.SecretKey
  * address. Addresses move: a tailnet name, a home network, a hotspot. Pairing binds a secret to a
  * tag once, and after that either side may be found at whatever address it turns up on.
  */
-class PeerService(private val host: Host) {
+class PeerService(
+    private val host: Host,
+    /**
+     * Wraps each connection's outgoing stream. The apps leave it alone; tests use it to hold the
+     * transport to a platform's rules - Android refuses network writes on its main thread, which a
+     * desktop test would otherwise never notice.
+     */
+    private val guardOutput: (java.io.OutputStream) -> java.io.OutputStream = { it }
+) {
 
     /** What the app around this service has to answer, and what it wants to be told. */
     interface Host {
@@ -358,7 +366,7 @@ class PeerService(private val host: Host) {
         socket.soTimeout = READ_TIMEOUT_MS
         var registered: Pair<String, Connection>? = null
         try {
-            val out = DataOutputStream(socket.getOutputStream().buffered())
+            val out = DataOutputStream(guardOutput(socket.getOutputStream()).buffered())
             val input = DataInputStream(socket.getInputStream().buffered())
             val theirTag = exchangeTags(out, input)
             if (expecting != null && expecting.tag != theirTag) {
@@ -448,8 +456,17 @@ class PeerService(private val host: Host) {
                 host.onConnected(theirTag)
             }
             pump(connection, input, peer)
-        } catch (_: Exception) {
-            // A dropped or refused connection is ordinary. The retry loop picks it back up.
+        } catch (e: Exception) {
+            // A dropped or refused connection is ordinary, and the retry loop picks it back up -
+            // but a connection that was up and then failed says why, because "lost the
+            // connection" with no reason, forty times a minute, is not something anyone can fix.
+            if (registered != null && running) {
+                host.log(
+                    "warn",
+                    "Connection to ${known[registered.first]?.name ?: registered.first} failed: " +
+                        "${e::class.simpleName}: ${e.message}"
+                )
+            }
         } finally {
             registered?.let { (tag, connection) ->
                 connection.close()
@@ -471,7 +488,12 @@ class PeerService(private val host: Host) {
         var lastPing = System.currentTimeMillis()
         while (running && !connection.closed) {
             val message = try {
-                PeerFrames.read(input, connection.key) ?: break
+                PeerFrames.read(input, connection.key) ?: run {
+                    if (running && !connection.closed) {
+                        host.log("info", "${peer.name} closed the connection")
+                    }
+                    null
+                } ?: break
             } catch (_: SocketTimeoutException) {
                 // Nothing said for a while: say something, so a silent connection is known to be
                 // alive rather than assumed to be.
@@ -611,6 +633,16 @@ class PeerService(private val host: Host) {
         )
     }
 
+    /**
+     * One live connection, and the only thread that writes to it.
+     *
+     * Messages are queued and written by the connection's own writer, never by whoever called
+     * [send]. The apps call from their interface thread - that is where the open document lives -
+     * and Android refuses network writes there outright: the throw was caught as a failed send, the
+     * connection closed, and it happened again on every reconnect. That was the link dropping the
+     * moment a document was opened. Queuing also keeps a slow network from ever stalling a pen.
+     * Order is kept: one writer, one queue.
+     */
     private inner class Connection(
         private val socket: Socket,
         private val out: DataOutputStream,
@@ -619,13 +651,41 @@ class PeerService(private val host: Host) {
         @Volatile var closed = false
             private set
 
+        private val queue = java.util.concurrent.LinkedBlockingQueue<PeerMessage>()
+
+        private val writer = Thread({
+            try {
+                while (!closed) {
+                    val message = queue.poll(1, java.util.concurrent.TimeUnit.SECONDS) ?: continue
+                    try {
+                        PeerFrames.write(out, key, message)
+                    } catch (e: Exception) {
+                        if (!closed) {
+                            host.log(
+                                "warn",
+                                "Could not send ${message::class.simpleName}: " +
+                                    "${e::class.simpleName}: ${e.message}"
+                            )
+                        }
+                        close()
+                    }
+                }
+            } catch (_: InterruptedException) {
+                // closing
+            }
+        }, "inkslate-peer-write").apply {
+            isDaemon = true
+            start()
+        }
+
         fun send(message: PeerMessage) {
             if (closed) return
-            runCatching { PeerFrames.write(out, key, message) }.onFailure { close() }
+            queue.offer(message)
         }
 
         fun close() {
             closed = true
+            writer.interrupt()
             runCatching { socket.close() }
         }
     }

@@ -91,7 +91,10 @@ object PeerFrames {
             init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, iv))
         }
         val text = String(cipher.doFinal(body), Charsets.UTF_8)
+        // Not null: null means the other side hung up, and a message that arrived intact but could
+        // not be understood is a different fault that has to be told apart from that.
         return PeerMessage.decode(text)
+            ?: throw IllegalStateException("Could not read a message: ${text.take(300)}")
     }
 
     /** A code to read off one screen and type into another. Digits only, and no confusable pairs. */
