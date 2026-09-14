@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -90,6 +91,12 @@ import kotlin.math.roundToInt
 /** What the title bar says about the document's relationship to the disk. */
 /** How long the pointer has to be still before the document is written out behind the scenes. */
 private const val IDLE_BEFORE_WRITE_MS = 1200L
+
+/**
+ * How long rearranging pages waits for another device with the document open to hand over writing
+ * it. Longer than the link's own patience with a silent device, which then carries on without it.
+ */
+private const val REARRANGE_WAIT_MS = 40_000L
 
 /** The furthest outside the canvas a mark may be and still count as asking it to grow. */
 private const val MAX_GROWTH_STEP = 2_000f
@@ -152,6 +159,13 @@ fun EditorScreen(
     var saving by remember { mutableStateOf(false) }
     var status by remember(file) { mutableStateOf("Opening ${file.name}...") }
     var busy by remember { mutableStateOf(false) }
+
+    /**
+     * The pages are being rearranged, here or by reading another device's rearrangement. Until the
+     * document is read again, the marks on screen belong to the old pages and nothing may be
+     * written, merged or put on the page.
+     */
+    var restructuring by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var confirmLeave by remember { mutableStateOf(false) }
     var editingText by remember { mutableStateOf<Stroke?>(null) }
@@ -279,6 +293,7 @@ fun EditorScreen(
         dirty = false
         diskStamp = DocumentIO.stampOf(file)
         writtenInk = doc.ink
+        restructuring = false
         loadCount++
         status = buildString {
             append("${merged.totalStrokes} mark(s)")
@@ -545,13 +560,30 @@ fun EditorScreen(
             runCatching { if (DesktopEmbedder.supports(file)) DesktopEmbedder.read(file) else null }
                 .getOrNull()
         }
-        if (saving) return
+        if (saving || restructuring) return
         diskStamp = stamp
         val current = currentInk()
         ink = current
-        // Pages added or removed elsewhere. Marks cannot be laid onto pages that are not the pages
-        // they were drawn on, so the document is read again - with everything drawn here kept in
-        // the working copy, which the read folds back in.
+        // Pages rearranged in InkSlate on another device carry a record of how, which is what lets
+        // the handwriting here follow them: the document is read again, and the read folds the
+        // working copy - everything drawn here - onto the page it was drawn on, wherever it went.
+        if (onDisk != null && onDisk.docId == current.docId && onDisk.layout != current.layout) {
+            val arrival = session.diskChanged(rev, { onDisk }, current, System.currentTimeMillis())
+            if (arrival.pagesChanged) {
+                EventLog.info("sync", "${file.name}: pages were rearranged on another device; reading it again")
+                restructuring = true
+                withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, current) }
+                positionRestored = true
+                reopenTick++
+                snackbar.showSnackbar("Pages were rearranged on your other device")
+                return
+            }
+            if (arrival.merged) takeIn(arrival.ink)
+            return
+        }
+        // Pages added or removed by anything else. Marks cannot be laid onto pages that are not the
+        // pages they were drawn on, so the document is read again - with everything drawn here kept
+        // in the working copy, which the read folds back in.
         if (onDisk != null && onDisk.source.pageCount != current.source.pageCount) {
             EventLog.warn("sync", "${file.name} changed shape on disk while it was open; reading it again")
             withContext(Dispatchers.IO) { DocumentIO.saveWorking(file, current) }
@@ -576,7 +608,7 @@ fun EditorScreen(
         while (true) {
             delay(400)
             val session = link ?: continue
-            if (source == null) continue
+            if (source == null || restructuring) continue
             if (!saving) noticeDiskChange(session)
             val current = currentInk()
             if (current !== ink) ink = current
@@ -700,7 +732,9 @@ fun EditorScreen(
             }
 
             override fun onMessage(peer: String, message: PeerMessage) {
-                if (link !== session) return
+                // Mid-rearrangement nothing can be put on the page. Whatever this was is exchanged
+                // again once the rearranged document is open.
+                if (link !== session || restructuring) return
                 val current = currentInk()
                 ink = current
                 takeIn(session.received(peer, message, current, System.currentTimeMillis()))
@@ -1171,7 +1205,7 @@ fun EditorScreen(
                                         "${writeState.label}  ·  waiting for sync"
                                     // The other device does not have this open, or is not
                                     // connected at all - which one is worth knowing.
-                                    DocumentSync.Status.ALONE -> writeState.label + linkSummary?.let {
+                                    DocumentSync.Status.ALONE -> writeState.label + linkSummary?.takeIf { it.linked }?.let {
                                         "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
                                     }.orEmpty()
                                 },
@@ -1187,6 +1221,8 @@ fun EditorScreen(
                     }
                 },
                 actions = {
+                    // Only there while linked, so a glance says whether marks are travelling.
+                    LinkIndicator(short = true, modifier = Modifier.align(Alignment.CenterVertically))
                     // The same button the tablet has, in the same place: a control that says
                     // "keep this, now" rather than a menu entry two taps away. Tinted while
                     // there is something not yet in the document.
@@ -1810,30 +1846,56 @@ fun EditorScreen(
                 thumbnailFor = { index -> src.render(index, 180) },
                 onApply = { plan ->
                     pagesOpen = false
-                    // Another device with this document open would lay its marks onto the old
-                    // pages. Until page changes travel over the link, they wait until it is closed
-                    // there.
-                    if (link?.openPeers()?.isNotEmpty() == true) {
-                        scope.launch {
-                            snackbar.showSnackbar(
-                                "Close this document on your other device before changing its pages"
-                            )
-                        }
-                        return@PagesSheet
-                    }
                     scope.launch {
+                        // Rearranging writes the document, and while another device has it open
+                        // only one of the two writes. This one takes that over first; the other
+                        // carries on drawing, and its marks follow the pages to where they went.
+                        val session = link
+                        if (session != null && !session.mayWriteNow(System.currentTimeMillis())) {
+                            session.requestSave()
+                            val waiting = launch {
+                                snackbar.showSnackbar(
+                                    "Waiting for your other device...",
+                                    duration = SnackbarDuration.Indefinite
+                                )
+                            }
+                            val giveUpAt = System.currentTimeMillis() + REARRANGE_WAIT_MS
+                            while (link === session && System.currentTimeMillis() < giveUpAt &&
+                                !session.mayWriteNow(System.currentTimeMillis())
+                            ) delay(250)
+                            waiting.cancel()
+                            if (link !== session || !session.mayWriteNow(System.currentTimeMillis())) {
+                                snackbar.showSnackbar(
+                                    "Your other device did not answer, so the pages were left " +
+                                        "as they were. Try again in a moment."
+                                )
+                                return@launch
+                            }
+                        }
                         busy = true
+                        writeThrough()
+                        restructuring = true
                         val done = withContext(Dispatchers.IO) {
-                            writeThrough()
                             DocumentPages.rearrange(file, ink, plan)
                         }
                         busy = false
                         done.onSuccess { rearranged ->
                             DocumentIO.saveWorking(file, rearranged)
+                            // Announced like any other write, so a device with this open waits for
+                            // these bytes, and takes the new pages from them.
+                            link?.let { s ->
+                                val rev = withContext(Dispatchers.IO) { FileRevision.of(file) }
+                                if (rev != null) {
+                                    s.written(rev, rearranged, System.currentTimeMillis())
+                                    DesktopPeers.hub.wrote(rearranged.docId, s.lastWrite)
+                                }
+                            }
+                            diskStamp = DocumentIO.stampOf(file)
                             positionRestored = true
                             reopenTick++
                             snackbar.showSnackbar("Pages rearranged")
                         }.onFailure {
+                            restructuring = false
                             snackbar.showSnackbar(
                                 it.message ?: "The pages could not be rearranged"
                             )

@@ -231,7 +231,7 @@ class DocumentSync(
                 val answer = PeerSync.answerFor(current, message)
                 if (!answer.isEmpty) send(peer, answer)
                 val wanted = PeerSync.wantedFrom(current, message)
-                if (wanted.isNotEmpty()) send(peer, PeerMessage.Want(docId, wanted))
+                if (wanted.isNotEmpty()) send(peer, PeerMessage.Want(docId, wanted, current.layout))
                 p.outbox.sent(current)
                 p.caughtUp = true
             }

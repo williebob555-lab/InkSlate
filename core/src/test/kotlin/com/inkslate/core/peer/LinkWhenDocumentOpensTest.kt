@@ -2,6 +2,8 @@ package com.inkslate.core.peer
 
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
+import com.inkslate.core.PageStructure
+import com.inkslate.core.PlannedPage
 import com.inkslate.core.Stroke
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -42,7 +44,7 @@ class LinkWhenDocumentOpensTest {
     }
 
     private fun document(vararg ids: String): InkDocument {
-        val base = InkDocument.create("board.pdf", "pdf", 1, 10, "")
+        val base = InkDocument.create("board.pdf", "pdf", 3, 10, "")
         val strokes = ids.map {
             Stroke(
                 id = it, kind = Stroke.Kind.FREEHAND, color = 0xFF000000.toInt(), baseWidth = 2f,
@@ -99,6 +101,54 @@ class LinkWhenDocumentOpensTest {
             attached = d
             hub.attach(d)
         }
+
+        /** Draw a mark, the way the editor does: into the document the link is given next. */
+        fun draw(id: String, page: Int) = thread.execute {
+            val doc = ink ?: return@execute
+            note("$name DRAWS $id on page $page of ${doc.layout.ifEmpty { "-" }}")
+            val mark = Stroke(
+                id = id, kind = Stroke.Kind.FREEHAND, color = 0xFF000000.toInt(), baseWidth = 2f,
+                points = listOf(InkPoint(1f, 1f, 2f), InkPoint(9f, 9f, 2f)), pageIndex = page,
+                updatedUtc = System.currentTimeMillis()
+            )
+            ink = doc.withPage(page, doc.strokesOn(page) + mark, tag)
+        }
+
+        /** Rearrange the pages as the editors do: once this device may write, writing at once. */
+        fun rearrange(vararg sources: Int, onDone: (Boolean) -> Unit) = thread.execute {
+            val s = session!!
+            if (!s.mayWriteNow(now())) {
+                note("$name wants to rearrange, asks to write")
+                s.requestSave()
+                onDone(false)
+                return@execute
+            }
+            val plan = sources.mapIndexed { i, src -> PlannedPage(source = src, uid = i.toLong()) }
+            val next = PageStructure.restructure(ink!!, plan, { 612f to 792f }).first
+            note("$name REARRANGES into ${next.layout.take(8)}")
+            ink = next
+            writtenFile = next
+            s.written(FileRevision(99, "rearranged"), next, now())
+            hub.wrote(next.docId, s.lastWrite)
+            onDone(true)
+        }
+
+        /** The rearranged file reaches this device, and the editor reads the document again. */
+        fun fileArrives(file: InkDocument) = thread.execute {
+            val s = session ?: return@execute
+            val arrival = s.diskChanged(FileRevision(99, "rearranged"), { file }, ink!!, now())
+            note("$name gets the file: pagesChanged=${arrival.pagesChanged}")
+            if (arrival.pagesChanged) {
+                // What the editor does: close, and open the document again with everything in it.
+                attached?.let { hub.detach(it) }
+                s.closed(now())
+                session = null
+                reopen = arrival.ink
+            }
+        }
+
+        @Volatile var writtenFile: InkDocument? = null
+        @Volatile var reopen: InkDocument? = null
 
         fun close() = thread.execute {
             val s = session ?: return@execute
@@ -229,6 +279,50 @@ class LinkWhenDocumentOpensTest {
             "the laptop's mark should have reached the tablet over the link",
             setOf("laptop-1"), tablet.ink?.pages?.values?.flatten()?.map { it.id }?.toSet()
         )
+    }
+
+    @Test
+    fun `rearranging pages while both have it open keeps every mark, on the page it was drawn on`() {
+        val (tablet, laptop) = pairedPair()
+        val doc = document("start-0")
+        laptop.open(doc)
+        tablet.open(doc)
+        Thread.sleep(2_000)
+
+        // The laptop takes over writing and moves page 0 to the end.
+        var done = false
+        val deadline = System.currentTimeMillis() + 15_000
+        while (!done && System.currentTimeMillis() < deadline) {
+            laptop.rearrange(1, 2, 0) { done = it }
+            Thread.sleep(600)
+        }
+        assertTrue("the laptop should have been handed the writing", done)
+        // The tablet has not got the file yet, and draws on its old page 0.
+        tablet.draw("tablet-early", 0)
+        laptop.draw("laptop-after", 1)
+        Thread.sleep(2_000)
+        tablet.fileArrives(laptop.writtenFile!!)
+        Thread.sleep(1_000)
+        tablet.open(tablet.reopen!!)
+        Thread.sleep(4_000)
+
+        report("rearranged", tablet, laptop)
+        val onTablet = tablet.ink!!
+        val onLaptop = laptop.ink!!
+        assertEquals("both on the new pages", onLaptop.layout, onTablet.layout)
+        fun describe(d: InkDocument) = d.pages.values.flatten().map { it.id to it.pageIndex }.toSet()
+        assertEquals("both hold the same marks, in the same places", describe(onLaptop), describe(onTablet))
+        // Old page 0 is now page 2; the tablet's mark followed it there.
+        val early = PageStructure.remappedId("tablet-early", onLaptop.structureHistory.last(), 0)
+        assertTrue("the tablet's mark reached the laptop, on page 2: ${describe(onLaptop)}",
+            (early to 2) in describe(onLaptop) || ("tablet-early" to 2) in describe(onLaptop))
+        assertTrue("the laptop's mark reached the tablet", describe(onTablet).any { it.first == "laptop-after" })
+        // Every message about marks names the arrangement it is for; one that does not is ignored
+        // by a device whose pages have moved.
+        val lines = timeline.toList()
+        val afterReopen = lines.drop(lines.indexOfLast { "Tablet OPENS" in it })
+        val unnamed = afterReopen.filter { ("\"t\":\"want\"" in it || "\"t\":\"digest\"" in it) && "\"layout\":\"\"" in it }
+        assertTrue("messages for the old arrangement after both reopened: $unnamed", unnamed.isEmpty())
     }
 
     @Test

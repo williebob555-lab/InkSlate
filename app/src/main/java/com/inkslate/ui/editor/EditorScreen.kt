@@ -45,6 +45,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.FilledTonalIconButton
@@ -300,6 +301,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 "an unsupported format."
         } else {
             doc = opened
+            restructuring = false
             // Not a default of "saved". Until the file is known to match, the honest answer is
             // that it does not.
             writeState =
@@ -616,6 +618,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         val d = doc ?: return
         val view = drawingView.value ?: return
         if (!strokesLoaded) return
+        // While the pages are being rearranged, the view still holds the old pages' strokes and
+        // the document is about to hold the new ones. Pushing one into the other would put every
+        // mark on the page it used to be on.
+        if (restructuring) return
         val before = d.ink
         d.updateAll(view.strokesSnapshot(), callerHoldsWholeDocument = true)
         // Whatever this turned up is the same thing closing asks about, so the indicator has to
@@ -834,9 +840,13 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         val session = link ?: return@LaunchedEffect
         ourStamp = stamp
 
-        // Pages added, removed or resized elsewhere. Marks cannot be laid onto pages that are not
-        // the pages they were drawn on, so this is still a reload rather than a merge.
-        val sameShape = arrived == null || (
+        // Pages rearranged in InkSlate on another device carry a record of how, which is what lets
+        // the handwriting here follow them - see [DocumentSync.Arrival.pagesChanged] below.
+        val rearrangedHere = arrived != null && arrived.docId == d.ink.docId &&
+            arrived.layout != d.ink.layout
+        // Pages added, removed or resized by anything else. Marks cannot be laid onto pages that
+        // are not the pages they were drawn on, so that is still a question for the user.
+        val sameShape = arrived == null || rearrangedHere || (
             arrived.source.pageCount == d.ink.source.pageCount &&
                 arrived.pageSizes.size == d.ink.pageSizes.size
             )
@@ -849,6 +859,18 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
 
         syncPage()
         val arrival = session.diskChanged(rev, { arrived }, d.ink, System.currentTimeMillis())
+        if (arrival.pagesChanged) {
+            // The file has the new pages; the handwriting here is still laid out for the old ones.
+            // The working copy is kept as it is and the document opened again, and opening folds
+            // the two together - bringing every mark made here onto the page it was made on,
+            // wherever that page went.
+            EventLog.info("sync", "${file.name}: pages were rearranged on another device; reloading")
+            restructuring = true
+            withContext(Dispatchers.IO) { repo.saveWorkingQuietly(d) }
+            reloadNonce++
+            snackbar.showSnackbar("Pages were rearranged on your other device")
+            return@LaunchedEffect
+        }
         if (arrival.merged) {
             takeIn(arrival.ink)
             EventLog.info("sync", "${file.name}: folded in changes that arrived while it was open")
@@ -1320,7 +1342,9 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             }
 
             override fun onMessage(peer: String, message: PeerMessage) {
-                if (doc !== d) return
+                // Mid-rearrangement nothing can be put on the page. Whatever this was is exchanged
+                // again once the rearranged document is open.
+                if (doc !== d || restructuring) return
                 syncPage()
                 takeIn(session.received(peer, message, d.ink, System.currentTimeMillis()))
                 linkStatus = session.status(System.currentTimeMillis())
@@ -1374,7 +1398,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                                 "  ·  waiting for sync"
                                             // The other device does not have this open, or is not
                                             // connected at all - which one is worth knowing.
-                                            else -> linkSummary?.let {
+                                            else -> linkSummary?.takeIf { it.linked }?.let {
                                                 "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
                                             }.orEmpty()
                                         }
@@ -1391,6 +1415,11 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                         }
                     },
                     actions = {
+                        // Only there while linked, so a glance says whether marks are travelling.
+                        com.inkslate.ui.LinkIndicator(
+                            short = true,
+                            modifier = Modifier.align(Alignment.CenterVertically)
+                        )
                         // Back by request. It was removed when the document started being
                         // written as you work, on the reasoning that closing is either a no-op
                         // or the last few hundred milliseconds of it - which is true right up
@@ -1995,33 +2024,56 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 onDismiss = { pagesOpen = false },
                 onApply = { plan ->
                     pagesOpen = false
-                    // Another device with this document open would lay its marks onto the old
-                    // pages. Until page changes travel over the link, they wait until it is closed
-                    // there.
-                    if (link?.openPeers()?.isNotEmpty() == true) {
-                        scope.launch {
-                            snackbar.showSnackbar(
-                                "Close this document on your other device before changing its pages"
-                            )
-                        }
-                        return@PagesSheet
-                    }
-                    restructuring = true
                     scope.launch {
+                        // Rearranging writes the document, and while another device has it open
+                        // only one of the two writes. This one takes that over first; the other
+                        // carries on drawing, and its marks follow the pages to where they went.
+                        val session = link
+                        if (session != null && !session.mayWriteNow(System.currentTimeMillis())) {
+                            session.requestSave()
+                            val waiting = launch {
+                                snackbar.showSnackbar(
+                                    "Waiting for your other device...",
+                                    duration = SnackbarDuration.Indefinite
+                                )
+                            }
+                            val giveUpAt = System.currentTimeMillis() + REARRANGE_WAIT_MS
+                            while (link === session && System.currentTimeMillis() < giveUpAt &&
+                                !session.mayWriteNow(System.currentTimeMillis())
+                            ) delay(250)
+                            waiting.cancel()
+                            if (link !== session || !session.mayWriteNow(System.currentTimeMillis())) {
+                                snackbar.showSnackbar(
+                                    "Your other device did not answer, so the pages were left " +
+                                        "as they were. Try again in a moment."
+                                )
+                                return@launch
+                            }
+                        }
                         // The strokes on screen are the truth; get them into the document before
                         // anything reorders the pages under them.
                         syncPage()
+                        restructuring = true
                         val result = writingDocument {
                             withContext(Dispatchers.IO) {
                                 repo.saveWorking(d)
                                 repo.rearrangePages(d, plan)
                             }
                         }
-                        restructuring = false
                         result.fold(
                             onSuccess = {
                                 dirty = false
                                 unbaked = false
+                                // Announced like any other write, so a device with this open waits
+                                // for these bytes, and takes the new pages from them.
+                                link?.let { s ->
+                                    val rev = withContext(Dispatchers.IO) { FileRevision.of(d.file) }
+                                    val now = System.currentTimeMillis()
+                                    if (rev != null) {
+                                        s.written(rev, d.ink, now)
+                                        AppPeers.hub.wrote(d.ink.docId, s.lastWrite)
+                                    }
+                                }
                                 fileRepo.invalidateThumb(d.file)
                                 // Nothing the editor is holding survives this: page count, page
                                 // sizes and every stroke id have changed. Reopen rather than
@@ -2030,6 +2082,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                 snackbar.showSnackbar("Rearranged ${d.file.name}")
                             },
                             onFailure = {
+                                restructuring = false
                                 snackbar.showSnackbar(
                                     it.message ?: "Could not rearrange the pages"
                                 )
@@ -2538,3 +2591,9 @@ enum class WriteOutcome { NOTHING, WRITTEN, FAILED }
 
 /** How long the pen has to be still before the document is written out behind the scenes. */
 private const val IDLE_BEFORE_WRITE_MS = 1200L
+
+/**
+ * How long rearranging pages waits for another device with the document open to hand over writing
+ * it. Longer than the link's own patience with a silent device, which then carries on without it.
+ */
+private const val REARRANGE_WAIT_MS = 40_000L

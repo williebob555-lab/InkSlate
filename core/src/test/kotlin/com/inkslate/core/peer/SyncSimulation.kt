@@ -60,7 +60,8 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
     val trace = ArrayDeque<String>()
 
     fun note(line: String) {
-        trace.addLast("[${now}ms] $line")
+        // The wall clock too: it is what marks and tombstones are stamped with.
+        trace.addLast("[${now}ms @${System.currentTimeMillis() % 1_000_000}] $line")
         while (trace.size > 3000) trace.removeFirst()
     }
 
@@ -408,6 +409,11 @@ class SyncSimulation(seed: Long, private val flaky: Boolean) {
             if (doc.strokesOn(back.pageIndex).any { it.id == back.id }) return
             Thread.sleep(2)
             erased.remove(back.id)
+            // The same mark erased on the other device under the id it had before a rearrangement
+            // is put back too: the undo is the later of the two.
+            erased.entries.removeAll { (id, where) ->
+                descendants(id, where.first, where.second, doc.layout)?.any { it.first == back.id } == true
+            }
             note("$name undoes erase of ${back.id}")
             edited(doc.withPage(back.pageIndex, doc.strokesOn(back.pageIndex) + back, name))
         }
