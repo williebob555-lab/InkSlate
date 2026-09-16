@@ -278,6 +278,8 @@ data class Stroke(
     /** How a line's first and last points end. An [Kind.ARROW] always has an arrow at its last. */
     val startEnd: LineEnd = LineEnd.NONE,
     val finishEnd: LineEnd = LineEnd.NONE,
+    /** How big a line's ends are, against the size its weight gives them. */
+    val endScale: Float = 1f,
     val pageIndex: Int = 0,
     /** Wall-clock millis of the last edit. Last-writer-wins key when two devices merge. */
     val updatedUtc: Long = 0L
@@ -317,7 +319,7 @@ data class Stroke(
             (startEnd != LineEnd.NONE || effectiveFinishEnd != LineEnd.NONE)
 
     /** How far an end reaches from its point: the size the arrowhead has always been. */
-    fun lineEndSize(): Float = max(8f, baseWidth * 3.6f)
+    fun lineEndSize(): Float = max(8f, baseWidth * 3.6f) * endScale.coerceIn(0.2f, 6f)
 
     /**
      * The ends of a line as open polylines, in the stroke's own coordinates.
@@ -355,7 +357,7 @@ data class Stroke(
                     }
                 }
                 LineEnd.DOT -> {
-                    val radius = max(3.2f, baseWidth * 1.6f)
+                    val radius = max(3.2f, baseWidth * 1.6f) * endScale.coerceIn(0.2f, 6f)
                     for (r in listOf(radius, radius * 0.5f)) {
                         out.add((0..16).map { i ->
                             val t = 2.0 * Math.PI * i / 16

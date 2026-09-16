@@ -107,8 +107,41 @@ object Stamps {
         val dash: DashStyle = DashStyle.SOLID,
         val fill: FillStyle = FillStyle.NONE,
         val startEnd: LineEnd = LineEnd.NONE,
-        val finishEnd: LineEnd = LineEnd.ARROW
+        val finishEnd: LineEnd = LineEnd.ARROW,
+
+        // ---- the parts of a stamp, each on its own -------------------------------------
+        // Every one of these defaults to drawing exactly what the stamp drew before it existed.
+        // A colour of 0 means "the stamp's own colour", so a stamp recoloured in one go still
+        // recolours everywhere nobody has chosen otherwise.
+
+        /** Line ends, and the arrowheads a stamp draws: their size against the weight's. */
+        val endScale: Float = 1f,
+        /** The heads on a stamp's own arrows - axes, number lines, flow arrows. */
+        val arrowEnds: LineEnd = LineEnd.ARROW,
+        /** Tick marks, dividers and other secondary lines. */
+        val detailColor: Int = 0,
+        val detailWeight: Float = 1f,
+        val tickLength: Float = 1f,
+        /** Gridlines, hatching and the finest lines. */
+        val gridColor: Int = 0,
+        val gridWeight: Float = 1f,
+        val gridDash: DashStyle = DashStyle.SOLID,
+        /** Shaded parts, and the fill of a box or oval. */
+        val fillColor: Int = 0,
+        /** Labels and axis names. */
+        val textColor: Int = 0,
+        val textScale: Float = 1f,
+        val textFont: TextFont = TextFont.SANS,
+        val textBold: Boolean = false,
+        /** Numbers at ticks: their size against the labels', and anything written after them. */
+        val valueScale: Float = 1f,
+        val valueSuffix: String = "",
+        /** The whole stamp. */
+        val opacity: Float = 1f
     )
+
+    /** The separate parts a stamp is drawn with, each of which has its own settings. */
+    enum class Feature { TEXT, VALUES, DETAIL, FINE, FILL, ARROWS }
 
     enum class Kind(
         val label: String,
@@ -385,8 +418,30 @@ object Stamps {
             size = if (o.size.isFinite() && o.size > 0f) o.size.coerceIn(8f, 4000f) else 0f,
             // A name is a label, not a paragraph.
             xName = o.xName.take(24),
-            yName = o.yName.take(24)
+            yName = o.yName.take(24),
+            endScale = scale(o.endScale, 0.2f, 6f),
+            detailWeight = scale(o.detailWeight, 0.1f, 6f),
+            tickLength = scale(o.tickLength, 0f, 5f),
+            gridWeight = scale(o.gridWeight, 0.1f, 6f),
+            textScale = scale(o.textScale, 0.3f, 4f),
+            valueScale = scale(o.valueScale, 0.3f, 4f),
+            valueSuffix = o.valueSuffix.take(8),
+            opacity = scale(o.opacity, 0.05f, 1f)
         )
+    }
+
+    private fun scale(v: Float, lo: Float, hi: Float): Float = if (v.isFinite()) v.coerceIn(lo, hi) else 1f.coerceIn(lo, hi)
+
+    /**
+     * Which separate parts [kind] actually draws with [options], so a settings panel shows the
+     * controls for those and nothing else. Worked out by building it, which cannot drift from
+     * what building it draws.
+     */
+    fun features(kind: Kind, options: StampOptions = kind.defaults): Set<Feature> {
+        val found = HashSet<Feature>()
+        var n = 0
+        buildTraced(kind, Box(0f, 0f, 240f, 240f / kind.aspect(sanitise(kind, options))), 0, options, null, found) { "f${n++}" }
+        return found
     }
 
     /**
@@ -447,6 +502,16 @@ object Stamps {
         options: StampOptions = kind.defaults,
         group: String? = null,
         nextId: () -> String
+    ): List<Stroke> = buildTraced(kind, bounds, page, options, group, null, nextId)
+
+    private fun buildTraced(
+        kind: Kind,
+        bounds: Box,
+        page: Int,
+        options: StampOptions,
+        group: String?,
+        trace: MutableSet<Feature>?,
+        nextId: () -> String
     ): List<Stroke> {
         val o = sanitise(kind, options)
         val color = o.color
@@ -454,31 +519,53 @@ object Stamps {
         val now = System.currentTimeMillis()
         val out = ArrayList<Stroke>()
 
-        fun line(x0: Float, y0: Float, x1: Float, y1: Float, w: Float = width) {
+        // The weights secondary and fine lines are drawn at, before their own settings. Call
+        // sites pass these, and the helpers below recognise them to give each line its part's
+        // colour and weight - the two can never be equal, so a line is never taken for the other.
+        val thin = width * 0.6f
+        val hair = width * 0.45f
+        val detailColor = if (o.detailColor != 0) o.detailColor else color
+        val gridColor = if (o.gridColor != 0) o.gridColor else color
+        val fillColor = if (o.fillColor != 0) o.fillColor else color
+        val textColor = if (o.textColor != 0) o.textColor else color
+
+        /** Colour, weight and dash for a line passed [w], by which part it is. */
+        fun part(w: Float, dash: DashStyle = DashStyle.SOLID): Triple<Int, Float, DashStyle> = when (w) {
+            hair -> { trace?.add(Feature.FINE); Triple(gridColor, hair * o.gridWeight, if (dash == DashStyle.SOLID) o.gridDash else dash) }
+            thin -> { trace?.add(Feature.DETAIL); Triple(detailColor, thin * o.detailWeight, dash) }
+            else -> Triple(color, w, dash)
+        }
+
+        fun line(x0: Float, y0: Float, x1: Float, y1: Float, w: Float = width, tint: Int? = null) {
+            val (c, wt, d) = part(w)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.LINE, color = color, baseWidth = w,
-                    points = listOf(InkPoint(x0, y0, w), InkPoint(x1, y1, w)),
-                    pageIndex = page, updatedUtc = now
+                    id = nextId(), kind = StrokeKind.LINE, color = tint ?: c, baseWidth = wt,
+                    points = listOf(InkPoint(x0, y0, wt), InkPoint(x1, y1, wt)),
+                    dash = d, pageIndex = page, updatedUtc = now
                 )
             )
         }
 
         fun dashed(x0: Float, y0: Float, x1: Float, y1: Float, w: Float = width * 0.7f) {
+            val (c, wt, _) = part(w)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.LINE, color = color, baseWidth = w,
-                    points = listOf(InkPoint(x0, y0, w), InkPoint(x1, y1, w)),
+                    id = nextId(), kind = StrokeKind.LINE, color = c, baseWidth = wt,
+                    points = listOf(InkPoint(x0, y0, wt), InkPoint(x1, y1, wt)),
                     dash = DashStyle.DASHED, pageIndex = page, updatedUtc = now
                 )
             )
         }
 
         fun arrow(x0: Float, y0: Float, x1: Float, y1: Float, w: Float = width) {
+            trace?.add(Feature.ARROWS)
+            val (c, wt, d) = part(w)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.ARROW, color = color, baseWidth = w,
-                    points = listOf(InkPoint(x0, y0, w), InkPoint(x1, y1, w)),
+                    id = nextId(), kind = StrokeKind.LINE, color = c, baseWidth = wt,
+                    points = listOf(InkPoint(x0, y0, wt), InkPoint(x1, y1, wt)),
+                    dash = d, finishEnd = o.arrowEnds, endScale = o.endScale,
                     pageIndex = page, updatedUtc = now
                 )
             )
@@ -488,11 +575,14 @@ object Stamps {
             l: Float, t: Float, r: Float, b: Float,
             w: Float = width, fill: FillStyle = FillStyle.NONE
         ) {
+            if (fill != FillStyle.NONE) trace?.add(Feature.FILL)
+            val (c, wt, d) = part(w)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.RECT, color = color, baseWidth = w,
-                    points = listOf(InkPoint(l, t, w), InkPoint(r, b, w)),
-                    fill = fill, fillColor = color, pageIndex = page, updatedUtc = now
+                    id = nextId(), kind = StrokeKind.RECT,
+                    color = if (fill != FillStyle.NONE) fillColor else c, baseWidth = wt,
+                    points = listOf(InkPoint(l, t, wt), InkPoint(r, b, wt)),
+                    dash = d, fill = fill, fillColor = fillColor, pageIndex = page, updatedUtc = now
                 )
             )
         }
@@ -501,11 +591,13 @@ object Stamps {
             l: Float, t: Float, r: Float, b: Float,
             w: Float = width, fill: FillStyle = FillStyle.NONE
         ) {
+            if (fill != FillStyle.NONE) trace?.add(Feature.FILL)
+            val (c, wt, d) = part(w)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.ELLIPSE, color = color, baseWidth = w,
-                    points = listOf(InkPoint(l, t, w), InkPoint(r, b, w)),
-                    fill = fill, fillColor = color, pageIndex = page, updatedUtc = now
+                    id = nextId(), kind = StrokeKind.ELLIPSE, color = c, baseWidth = wt,
+                    points = listOf(InkPoint(l, t, wt), InkPoint(r, b, wt)),
+                    dash = d, fill = fill, fillColor = fillColor, pageIndex = page, updatedUtc = now
                 )
             )
         }
@@ -526,12 +618,13 @@ object Stamps {
          * visibly off their ticks.
          */
         fun label(text: String, cx: Float, top: Float, size: Float) {
+            trace?.add(Feature.TEXT)
             val boxW = labelWidth(text, size)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.TEXT, color = color, baseWidth = 1f,
+                    id = nextId(), kind = StrokeKind.TEXT, color = textColor, baseWidth = 1f,
                     points = listOf(InkPoint(cx - boxW / 2f, top, 1f)),
-                    text = text, textSize = size, boxWidth = boxW,
+                    text = text, textSize = size, boxWidth = boxW, font = o.textFont, bold = o.textBold,
                     align = TextAlign.CENTER, pageIndex = page, updatedUtc = now
                 )
             )
@@ -539,12 +632,14 @@ object Stamps {
 
         /** A label whose right edge is at [right], for numbers up the side of an axis. */
         fun labelRight(text: String, right: Float, top: Float, size: Float) {
+            trace?.add(Feature.TEXT)
             val boxW = labelWidth(text, size)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.TEXT, color = color, baseWidth = 1f,
+                    id = nextId(), kind = StrokeKind.TEXT, color = textColor, baseWidth = 1f,
                     points = listOf(InkPoint(right - boxW, top, 1f)),
                     text = text, textSize = size, boxWidth = boxW, padding = 1f,
+                    font = o.textFont, bold = o.textBold,
                     align = TextAlign.RIGHT, pageIndex = page, updatedUtc = now
                 )
             )
@@ -552,11 +647,13 @@ object Stamps {
 
         /** A label whose top-left corner is where you put it. */
         fun labelAt(text: String, x: Float, y: Float, size: Float) {
+            trace?.add(Feature.TEXT)
             out.add(
                 Stroke(
-                    id = nextId(), kind = StrokeKind.TEXT, color = color, baseWidth = 1f,
+                    id = nextId(), kind = StrokeKind.TEXT, color = textColor, baseWidth = 1f,
                     points = listOf(InkPoint(x, y, 1f)),
-                    text = text, textSize = size, pageIndex = page, updatedUtc = now
+                    text = text, textSize = size, font = o.textFont, bold = o.textBold,
+                    pageIndex = page, updatedUtc = now
                 )
             )
         }
@@ -569,10 +666,8 @@ object Stamps {
         val h = bounds.height
         val cx = bounds.centerX
         val cy = bounds.centerY
-        val thin = width * 0.6f
-        val hair = width * 0.45f
         /** A type size that stays readable without swamping the drawing it annotates. */
-        val textSize = (min(w, h) * 0.09f).coerceIn(5f, 26f)
+        val textSize = (min(w, h) * 0.09f).coerceIn(5f, 26f) * o.textScale
 
         /** Points of a regular n-gon inscribed in the box, first vertex at the top. */
         fun ngon(n: Int, rx: Float, ry: Float, phase: Double = -PI / 2): List<FloatArray> =
@@ -598,10 +693,11 @@ object Stamps {
             val lines = max(4, (span / 4f).roundToInt())
             for (i in 1 until lines) {
                 val a = Math.toRadians((fromDeg + span * i / lines).toDouble())
+                trace?.add(Feature.FILL)
                 line(
                     ax, ay,
                     ax + (cos(a) * r).toFloat(), ay + (sin(a) * r).toFloat(),
-                    hair
+                    hair, tint = fillColor
                 )
             }
         }
@@ -614,6 +710,12 @@ object Stamps {
             } else {
                 ("%.2f".format(rounded)).trimEnd('0').trimEnd('.')
             }
+        }
+
+        /** A number at a tick, as it is written: trimmed, with whatever follows it. */
+        fun value(v: Float): String {
+            trace?.add(Feature.VALUES)
+            return num(v) + o.valueSuffix
         }
 
         /**
@@ -656,7 +758,7 @@ object Stamps {
                     id = nextId(), kind = StrokeKind.LINE, color = color, baseWidth = width,
                     points = listOf(InkPoint(left, cy, width), InkPoint(right, cy, width)),
                     dash = o.dash, startEnd = o.startEnd, finishEnd = o.finishEnd,
-                    pageIndex = page, updatedUtc = now
+                    endScale = o.endScale, pageIndex = page, updatedUtc = now
                 )
             )
 
@@ -666,7 +768,7 @@ object Stamps {
                     kind = if (kind == Kind.BOX) StrokeKind.RECT else StrokeKind.ELLIPSE,
                     color = color, baseWidth = width,
                     points = listOf(InkPoint(left, top, width), InkPoint(right, bottom, width)),
-                    dash = o.dash, fill = o.fill, fillColor = color,
+                    dash = o.dash, fill = o.fill, fillColor = fillColor,
                     pageIndex = page, updatedUtc = now
                 )
             )
@@ -697,7 +799,7 @@ object Stamps {
                 arrow(if (xs < 0f) left else ox, oy, right, oy)
                 arrow(ox, if (ys < 0f) bottom else oy, ox, top)
 
-                val tick = (min(w, h) * 0.025f).coerceAtMost(min(spacingX, spacingY) * 0.4f)
+                val tick = (min(w, h) * 0.025f).coerceAtMost(min(spacingX, spacingY) * 0.4f) * o.tickLength
                 if (o.ticks) {
                     xTicks.forEach { v ->
                         if (v != 0f) line(mapX(v), oy - tick, mapX(v), oy + tick, thin)
@@ -706,20 +808,20 @@ object Stamps {
                         if (v != 0f) line(ox - tick, mapY(v), ox + tick, mapY(v), thin)
                     }
                 }
-                val valueSize = textSize * 0.72f
+                val valueSize = textSize * 0.72f * o.valueScale
                 val below = if (o.ticks) tick else 0f
                 if (o.tickValues) {
-                    val xChars = xTicks.maxOfOrNull { num(it).length } ?: 1
+                    val xChars = xTicks.maxOfOrNull { num(it).length + o.valueSuffix.length } ?: 1
                     val everyX = labelStride(spacingX, xChars, valueSize)
                     val everyY = labelStride(spacingY, 2, valueSize)
                     xTicks.forEach { v ->
                         if (v != 0f && multipleOfStride(v, o.step, everyX)) {
-                            label(num(v), mapX(v), oy + below + 1f, valueSize)
+                            label(value(v), mapX(v), oy + below + 1f, valueSize)
                         }
                     }
                     yTicks.forEach { v ->
                         if (v != 0f && multipleOfStride(v, o.yStep, everyY)) {
-                            labelRight(num(v), ox - below - 2f, mapY(v) - valueSize * 0.68f, valueSize)
+                            labelRight(value(v), ox - below - 2f, mapY(v) - valueSize * 0.68f, valueSize)
                         }
                     }
                     if (xs < 0f && 0f < xe && ys < 0f && 0f < ye) {
@@ -747,16 +849,16 @@ object Stamps {
                 fun mapX(v: Float) = l + (v - o.rangeFrom) / span * usable
                 val ticks = tickValues(o.rangeFrom, o.rangeTo, o.step)
                 val spacing = usable * o.step / span
-                val tick = h * 0.16f
-                val size = min(h * 0.22f, 22f).coerceAtLeast(4f)
+                val tick = h * 0.16f * o.tickLength
+                val size = (min(h * 0.22f, 22f).coerceAtLeast(4f)) * o.textScale * o.valueScale
                 if (o.ticks) ticks.forEach { v -> line(mapX(v), cy - tick, mapX(v), cy + tick, thin) }
                 if (o.tickValues) {
-                    val chars = ticks.maxOfOrNull { num(it).length } ?: 1
+                    val chars = ticks.maxOfOrNull { num(it).length + o.valueSuffix.length } ?: 1
                     val every = labelStride(spacing, chars, size)
                     val below = if (o.ticks) tick else 0f
                     ticks.forEach { v ->
                         if (multipleOfStride(v, o.step, every)) {
-                            label(num(v), mapX(v), cy + below + size * 0.25f, size)
+                            label(value(v), mapX(v), cy + below + size * 0.25f, size)
                         }
                     }
                 }
@@ -1048,15 +1150,15 @@ object Stamps {
                 fun mapY(v: Float) = oy - (v - ys) / (ye - ys) * (oy - top)
                 val values = tickValues(ys, ye, o.yStep)
                 val spacing = (oy - top) * o.yStep / (ye - ys)
-                val every = labelStride(spacing, 2, textSize * 0.8f)
-                val tick = min(w, h) * 0.02f
+                val every = labelStride(spacing, 2, textSize * 0.8f * o.valueScale)
+                val tick = min(w, h) * 0.02f * o.tickLength
                 values.forEach { v ->
                     val y = mapY(v)
                     if (v != ys) line(ox, y, right, y, hair)
                     if (o.ticks) line(ox - tick, y, ox, y, thin)
                     if (o.tickValues && multipleOfStride(v, o.yStep, every)) {
-                        val s2 = textSize * 0.8f
-                        labelRight(num(v), ox - tick - 2f, y - s2 * 0.68f, s2)
+                        val s2 = textSize * 0.8f * o.valueScale
+                        labelRight(value(v), ox - tick - 2f, y - s2 * 0.68f, s2)
                     }
                 }
                 line(ox, top, ox, oy)
@@ -1355,6 +1457,9 @@ object Stamps {
                 dashed(fl + d, fb - d, fl + d, ft - d)
             }
         }
+        if (o.opacity < 1f) {
+            for (i in out.indices) out[i] = out[i].copy(opacity = o.opacity)
+        }
         if (group == null || out.isEmpty()) return out
         val extent = reach(out) ?: return out
         val tag = StampTag(
@@ -1387,8 +1492,8 @@ object Stamps {
             kind = StrokeKind.LINE,
             color = o.color, baseWidth = o.weight,
             points = listOf(InkPoint(ax, ay, o.weight), InkPoint(bx, by, o.weight)),
-            dash = o.dash, startEnd = o.startEnd, finishEnd = o.finishEnd,
-            pageIndex = page, updatedUtc = System.currentTimeMillis()
+            dash = o.dash, startEnd = o.startEnd, finishEnd = o.finishEnd, endScale = o.endScale,
+            opacity = o.opacity, pageIndex = page, updatedUtc = System.currentTimeMillis()
         )
         if (group == null) return listOf(stroke)
         val reach = stroke.rawBoundsBox()
@@ -1482,7 +1587,9 @@ object Stamps {
             val now = System.currentTimeMillis()
             return strokes.map {
                 it.copy(
-                    id = nextId(), color = o.color, fillColor = o.color, baseWidth = o.weight,
+                    id = nextId(), color = o.color,
+                    fillColor = if (o.fillColor != 0) o.fillColor else o.color, baseWidth = o.weight,
+                    endScale = o.endScale, opacity = o.opacity,
                     points = it.points.map { p -> p.copy(width = o.weight) },
                     dash = o.dash,
                     fill = if (kind == Kind.BOX || kind == Kind.OVAL) o.fill else it.fill,

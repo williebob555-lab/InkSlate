@@ -86,7 +86,11 @@ fun DrawScope.drawTextStroke(s: Stroke, measurer: TextMeasurer) {
                 textMeasurer = measurer,
                 text = line,
                 topLeft = Offset(p.x + s.padding + s.lineOffsetX(w, contentWidth), y),
-                style = style
+                style = style,
+                // Sized to the line rather than left to default. Unsized, the room is taken to be
+                // from the text to the far edge of the drawing area - negative for text that starts
+                // past that edge, which throws rather than drawing nothing.
+                size = Size(w + 4f, max(1f, s.textSize * s.lineSpacing * 1.6f))
             )
         }
         y += s.textSize * s.lineSpacing

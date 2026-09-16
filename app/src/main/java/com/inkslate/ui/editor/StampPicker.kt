@@ -60,6 +60,8 @@ import com.inkslate.core.LineEnd
 import com.inkslate.core.Palette
 import com.inkslate.core.StampShelf
 import com.inkslate.core.Stamps
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import com.inkslate.core.TextFont
 import com.inkslate.ink.StrokeRasteriser
 import com.inkslate.ui.ColorPickerDialog
 import com.inkslate.ui.OptionChip
@@ -263,7 +265,8 @@ fun StampSettingsPanel(
     onDone: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var picking by remember { mutableStateOf(false) }
+    // Which colour is being picked from the full picker: where it starts, and where it goes.
+    var picking by remember { mutableStateOf<Pair<Int, (Int) -> Unit>?>(null) }
     // What is typed, kept apart from what is drawn. A range is briefly backwards while it is being
     // retyped - from 10 before the "to" has been raised - and sanitising that on every keystroke
     // would throw the half-finished numbers away and put the old ones back under the cursor.
@@ -296,7 +299,7 @@ fun StampSettingsPanel(
             }
             Column(
                 Modifier
-                    .heightIn(max = 380.dp)
+                    .heightIn(max = 460.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 18.dp)
                     .padding(bottom = 14.dp)
@@ -315,19 +318,19 @@ fun StampSettingsPanel(
                     }
                 }
 
-                StampSettingsBody(kind, draft, recentColours, ::edit) { picking = true }
+                StampSettingsBody(kind, draft, recentColours, ::edit) { initial, apply -> picking = initial to apply }
             }
         }
     }
 
-    if (picking) {
+    picking?.let { (initial, apply) ->
         ColorPickerDialog(
-            initial = options.color,
+            initial = if (initial != 0) initial else options.color,
             title = kind.label + " colour",
             presets = Palette.COLORS,
             recents = recentColours,
-            onDismiss = { picking = false },
-            onPick = { c -> picking = false; edit { it.copy(color = c) } }
+            onDismiss = { picking = null },
+            onPick = { c -> picking = null; apply(c) }
         )
     }
 }
@@ -338,45 +341,20 @@ private fun StampSettingsBody(
     options: Stamps.StampOptions,
     recentColours: List<Int>,
     edit: ((Stamps.StampOptions) -> Stamps.StampOptions) -> Unit,
-    onCustomColour: () -> Unit
+    onCustomColour: (Int, (Int) -> Unit) -> Unit
 ) {
     Heading("Colour")
-    val swatches = remember(recentColours) { (Palette.COLORS.take(10) + recentColours).distinct().take(14) }
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        swatches.forEach { c ->
-            val chosen = c == options.color
-            Box(
-                Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(Color(c))
-                    .border(
-                        if (chosen) 3.dp else 1.dp,
-                        if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                        CircleShape
-                    )
-                    .clickable { edit { it.copy(color = c) } }
-            )
-        }
-        Box(
-            Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .clickable(onClick = onCustomColour),
-            contentAlignment = Alignment.Center
-        ) { Icon(Icons.Default.Add, "Another colour", Modifier.size(16.dp)) }
+    ColourRow(options.color, false, recentColours, { c -> edit { it.copy(color = c) } }) {
+        onCustomColour(options.color) { c -> edit { it.copy(color = c) } }
     }
 
-    Heading("Line weight  ·  " + trimNumber(options.weight))
+    Heading("Line weight: " + trimNumber(options.weight))
     Slider(
-        value = options.weight.coerceIn(0.5f, 6f),
+        value = options.weight.coerceIn(0.5f, 8f),
         onValueChange = { v -> edit { it.copy(weight = (v * 4f).roundToInt() / 4f) } },
-        valueRange = 0.5f..6f
+        valueRange = 0.5f..8f
     )
+    ScaleSlider("Opacity", options.opacity, 0.1f..1f) { v -> edit { it.copy(opacity = v) } }
 
     if (Stamps.Knob.VARIANT in kind.knobs && kind.variants.isNotEmpty()) {
         Heading("Style")
@@ -396,6 +374,9 @@ private fun StampSettingsBody(
         Heading("End")
         OptionWrapRow {
             LineEnd.entries.forEach { e -> OptionChip(e.label, options.finishEnd == e) { edit { it.copy(finishEnd = e) } } }
+        }
+        if (options.startEnd != LineEnd.NONE || options.finishEnd != LineEnd.NONE) {
+            ScaleSlider("End size", options.endScale, 0.3f..4f) { v -> edit { it.copy(endScale = v) } }
         }
     }
     if (Stamps.Knob.DASH in kind.knobs) {
@@ -493,6 +474,151 @@ private fun StampSettingsBody(
 
     if (Stamps.Knob.LABELS in kind.knobs) {
         SwitchRow("Labels", options.labels) { v -> edit { it.copy(labels = v) } }
+    }
+
+    val parts = remember(kind, options) { Stamps.features(kind, Stamps.sanitise(kind, options)) }
+    val hasTicks = Stamps.Knob.TICKS in kind.knobs
+
+    if (Stamps.Feature.ARROWS in parts && Stamps.Knob.ENDS !in kind.knobs) {
+        Section("Arrowheads")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.arrowEnds == e) { edit { it.copy(arrowEnds = e) } } }
+        }
+        if (options.arrowEnds != LineEnd.NONE) {
+            ScaleSlider("Size", options.endScale, 0.3f..4f) { v -> edit { it.copy(endScale = v) } }
+        }
+    }
+
+    if (Stamps.Feature.DETAIL in parts || hasTicks) {
+        Section(if (hasTicks) "Ticks and dividers" else "Dividers and detail lines")
+        Heading("Colour")
+        ColourRow(options.detailColor, true, recentColours, { c -> edit { it.copy(detailColor = c) } }) {
+            onCustomColour(options.detailColor) { c -> edit { it.copy(detailColor = c) } }
+        }
+        ScaleSlider("Weight", options.detailWeight, 0.25f..4f) { v -> edit { it.copy(detailWeight = v) } }
+        if (hasTicks) {
+            ScaleSlider("Tick length", options.tickLength, 0f..4f) { v -> edit { it.copy(tickLength = v) } }
+        }
+    }
+
+    if (Stamps.Feature.FINE in parts) {
+        Section("Grid and fine lines")
+        Heading("Colour")
+        ColourRow(options.gridColor, true, recentColours, { c -> edit { it.copy(gridColor = c) } }) {
+            onCustomColour(options.gridColor) { c -> edit { it.copy(gridColor = c) } }
+        }
+        ScaleSlider("Weight", options.gridWeight, 0.25f..4f) { v -> edit { it.copy(gridWeight = v) } }
+        Heading("Line")
+        OptionWrapRow {
+            DashStyle.entries.forEach { d -> OptionChip(d.label, options.gridDash == d) { edit { it.copy(gridDash = d) } } }
+        }
+    }
+
+    if (Stamps.Feature.FILL in parts || (Stamps.Knob.FILL in kind.knobs && options.fill != FillStyle.NONE)) {
+        Section("Fill")
+        Heading("Colour")
+        ColourRow(options.fillColor, true, recentColours, { c -> edit { it.copy(fillColor = c) } }) {
+            onCustomColour(options.fillColor) { c -> edit { it.copy(fillColor = c) } }
+        }
+    }
+
+    if (Stamps.Feature.TEXT in parts) {
+        Section("Text")
+        Heading("Colour")
+        ColourRow(options.textColor, true, recentColours, { c -> edit { it.copy(textColor = c) } }) {
+            onCustomColour(options.textColor) { c -> edit { it.copy(textColor = c) } }
+        }
+        ScaleSlider("Size", options.textScale, 0.4f..3f) { v -> edit { it.copy(textScale = v) } }
+        Heading("Font")
+        OptionWrapRow {
+            TextFont.entries.forEach { f -> OptionChip(f.label, options.textFont == f) { edit { it.copy(textFont = f) } } }
+            OptionChip("Bold", options.textBold) { edit { it.copy(textBold = !it.textBold) } }
+        }
+    }
+
+    if (Stamps.Feature.VALUES in parts) {
+        Section("Numbers")
+        ScaleSlider("Size, against the text", options.valueScale, 0.4f..3f) { v -> edit { it.copy(valueScale = v) } }
+        OutlinedTextField(
+            value = options.valueSuffix,
+            onValueChange = { v -> edit { it.copy(valueSuffix = v.take(8)) } },
+            label = { Text("After each number") },
+            placeholder = { Text("e.g. cm, °, %") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+        )
+    }
+}
+
+/** A heading that starts a group of settings for one part of the stamp. */
+@Composable
+private fun Section(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 18.dp, bottom = 2.dp)
+    )
+}
+
+/**
+ * A slider for a size or weight against the stamp's own, shown as a percentage.
+ *
+ * Relative rather than absolute because the stamp can be any size: "twice as heavy" means the
+ * same thing on a thumbnail and on a whole-page graph, where "3 points" does not.
+ */
+@Composable
+private fun ScaleSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+    Heading(label + ": " + (value * 100f).roundToInt() + "%")
+    Slider(
+        value = value.coerceIn(range.start, range.endInclusive),
+        onValueChange = { v -> onChange((v * 20f).roundToInt() / 20f) },
+        valueRange = range
+    )
+}
+
+/**
+ * Colour swatches for one part. [allowSame] adds a "same as the stamp" choice, which is the value
+ * 0 - so a part nobody has coloured follows the stamp's colour when that changes.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ColourRow(
+    selected: Int,
+    allowSame: Boolean,
+    recentColours: List<Int>,
+    onPick: (Int) -> Unit,
+    onCustom: () -> Unit
+) {
+    val swatches = remember(recentColours) { (Palette.COLORS.take(10) + recentColours).distinct().take(14) }
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        if (allowSame) OptionChip("Same as stamp", selected == 0) { onPick(0) }
+        swatches.forEach { c ->
+            val chosen = c == selected
+            Box(
+                Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(Color(c))
+                    .border(
+                        if (chosen) 3.dp else 1.dp,
+                        if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                        CircleShape
+                    )
+                    .clickable { onPick(c) }
+            )
+        }
+        Box(
+            Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable(onClick = onCustom),
+            contentAlignment = Alignment.Center
+        ) { Icon(Icons.Default.Add, "Another colour", Modifier.size(15.dp)) }
     }
 }
 

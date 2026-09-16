@@ -167,6 +167,54 @@ class StampGraphTest {
     }
 
     @Test
+    fun `each part of a graph takes its own colour and the rest keep the stamp's`() {
+        val red = 0xFFDC2626.toInt()
+        val blue = 0xFF1D4ED8.toInt()
+        val grey = 0xFF9CA3AF.toInt()
+        val green = 0xFF16A34A.toInt()
+        val o = Stamps.StampOptions(
+            color = Stamps.INK, detailColor = red, gridColor = grey, textColor = blue,
+            textFont = TextFont.SERIF, textBold = true
+        )
+        val strokes = build(Stamps.Kind.COORD_GRID, o)
+        val text = strokes.filter { it.kind == Stroke.Kind.TEXT }
+        assertTrue(text.isNotEmpty() && text.all { it.color == blue && it.font == TextFont.SERIF && it.bold })
+        val lines = strokes.filter { it.kind != Stroke.Kind.TEXT }
+        assertTrue("ticks", lines.any { it.color == red })
+        assertTrue("gridlines", lines.any { it.color == grey })
+        assertTrue("the axes themselves", lines.any { it.color == Stamps.INK && it.finishEnd == LineEnd.ARROW })
+        assertTrue(lines.none { it.color == green })
+    }
+
+    @Test
+    fun `numbers can carry a unit, and sizes and ends follow their own settings`() {
+        val words = texts(build(Stamps.Kind.NUMBER_LINE, Stamps.StampOptions(rangeFrom = 0f, rangeTo = 4f, step = 1f, valueSuffix = " cm")))
+        assertTrue("2 cm" in words)
+        val big = build(Stamps.Kind.AXES, Stamps.StampOptions(textScale = 2f)).filter { it.kind == Stroke.Kind.TEXT }.maxOf { it.textSize }
+        val small = build(Stamps.Kind.AXES, Stamps.StampOptions()).filter { it.kind == Stroke.Kind.TEXT }.maxOf { it.textSize }
+        assertEquals(small * 2f, big, 0.01f)
+        val plain = build(Stamps.Kind.AXES, Stamps.StampOptions(arrowEnds = LineEnd.NONE))
+        assertTrue(plain.none { it.hasLineEnds })
+        var n = 0
+        val line = Stamps.buildLine(Stamps.Kind.LINE, 0f, 0f, 100f, 0f, 0, Stamps.StampOptions(endScale = 2f)) { "l${n++}" }.single()
+        assertEquals(line.copy(endScale = 1f).lineEndSize() * 2f, line.lineEndSize(), 0.01f)
+    }
+
+    @Test
+    fun `a stamp's opacity reaches every stroke`() {
+        assertTrue(build(Stamps.Kind.PIE, Stamps.StampOptions(opacity = 0.5f)).all { it.opacity == 0.5f })
+    }
+
+    @Test
+    fun `a stamp reports the parts it draws, and only those`() {
+        val axes = Stamps.features(Stamps.Kind.AXES)
+        assertTrue(axes.containsAll(listOf(Stamps.Feature.TEXT, Stamps.Feature.VALUES, Stamps.Feature.DETAIL, Stamps.Feature.ARROWS)))
+        assertTrue(Stamps.Feature.FILL in Stamps.features(Stamps.Kind.PIE))
+        assertTrue(Stamps.features(Stamps.Kind.CHECK).isEmpty())
+        assertTrue(Stamps.Feature.TEXT !in Stamps.features(Stamps.Kind.AXES, Stamps.StampOptions(tickValues = false, xName = "", yName = "")))
+    }
+
+    @Test
     fun `pasted copies of a stamp get groups of their own`() {
         val placed = build(Stamps.Kind.AXES, Stamps.StampOptions(), group = "g")
         var n = 0
