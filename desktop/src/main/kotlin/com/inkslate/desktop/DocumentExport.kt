@@ -175,10 +175,12 @@ object DocumentExport {
         target: File,
         doc: InkDocument,
         pages: List<Int>?,
-        flatten: Boolean
+        flatten: Boolean,
+        /** The document whose pasted pictures these are, when [source] is a staged copy of it. */
+        imagesOf: File = source
     ): Result<File> = runCatching {
         require(DesktopSources.isPdf(source)) { "Only PDFs can be exported this way" }
-        DocumentIO.imageResolver = ImageStore(source)::awtImage
+        DocumentIO.imageResolver = ImageStore(imagesOf)::awtImage
         target.parentFile?.mkdirs()
 
         val format = if (flatten) InkFormat.FLATTENED else InkFormat.ANNOTATIONS
@@ -205,12 +207,73 @@ object DocumentExport {
         target
     }
 
+    /**
+     * Export an annotated picture, as a picture or as a one-page PDF.
+     *
+     * Both go through the same PDF page: the picture as its background at one point per pixel,
+     * the handwriting drawn over it by the same code that writes it into any other PDF. A PNG is
+     * then that page rendered at exactly the picture's own size. One drawing path means text,
+     * pasted pictures and highlighter come out identically either way, rather than a second
+     * renderer that has to be kept in step with the first.
+     */
+    fun exportImage(source: File, target: File, doc: InkDocument, asPdf: Boolean): Result<File> =
+        runCatching {
+            require(DesktopSources.isImage(source)) { "Not a picture" }
+            val picture = javax.imageio.ImageIO.read(source) ?: error("Could not read ${source.name}")
+            DocumentIO.imageResolver = ImageStore(source)::awtImage
+            target.parentFile?.mkdirs()
+
+            val w = picture.width.toFloat()
+            val h = picture.height.toFloat()
+            PDDocument().use { pdf ->
+                val page = PDPage(PDRectangle(w, h))
+                pdf.addPage(page)
+                val background = if (picture.colorModel.hasAlpha()) {
+                    org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory.createFromImage(pdf, picture)
+                } else {
+                    org.apache.pdfbox.pdmodel.graphics.image.JPEGFactory.createFromImage(pdf, picture, 0.92f)
+                }
+                DocumentIO.exportingInto = pdf
+                try {
+                    PDPageContentStream(pdf, page).use { cs ->
+                        cs.drawImage(background, 0f, 0f, w, h)
+                        cs.saveGraphicsState()
+                        // Ink on a picture is stored in its pixels, top-left origin.
+                        cs.transform(Matrix(1f, 0f, 0f, -1f, 0f, h))
+                        doc.strokesOn(0)
+                            .sortedBy { if (it.isHighlighter) 0 else 1 }
+                            .forEach { DocumentIO.drawInto(cs, it) }
+                        cs.restoreGraphicsState()
+                    }
+                } finally {
+                    DocumentIO.exportingInto = null
+                }
+
+                val tmp = File(target.parentFile, "." + target.name + ".tmp")
+                if (asPdf) {
+                    FileOutputStream(tmp).use { pdf.save(it) }
+                } else {
+                    val rendered = org.apache.pdfbox.rendering.PDFRenderer(pdf)
+                        .renderImage(0, 1f, org.apache.pdfbox.rendering.ImageType.RGB)
+                    require(javax.imageio.ImageIO.write(rendered, "png", tmp)) {
+                        "Could not write a PNG"
+                    }
+                }
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+            }
+            EventLog.info("export", "Wrote ${target.name} (${target.length() / 1024}KB) from a picture")
+            target
+        }
+
     /** A name that is not already taken, so an export never lands on an earlier one. */
-    fun freeTarget(dir: File, stem: String): File {
-        var candidate = File(dir, "$stem.pdf")
+    fun freeTarget(dir: File, stem: String, extension: String = "pdf"): File {
+        var candidate = File(dir, "$stem.$extension")
         var n = 2
         while (candidate.exists()) {
-            candidate = File(dir, "$stem ($n).pdf")
+            candidate = File(dir, "$stem ($n).$extension")
             n++
         }
         return candidate

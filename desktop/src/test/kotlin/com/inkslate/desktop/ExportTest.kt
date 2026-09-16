@@ -220,6 +220,64 @@ class ExportTest {
         assertNotNull(DesktopEmbedder.read(editable))
     }
 
+    /** The pages picked in the pages sheet are the pages in the file, in document order. */
+    @Test
+    fun `exporting picked pages keeps only those pages`() {
+        val dir = temp.newFolder()
+        val source = BlankDocumentFactory.create(
+            dir, BlankDocumentFactory.Spec(name = "Five", pageCount = 5)
+        ).getOrThrow()
+        val ink = InkDocument.create("Five.pdf", "pdf", 5, 0L, "")
+            .withPage(3, listOf(textStroke("Page four")), "test")
+        val out = DocumentExport.freeTarget(dir, "Picked")
+        DocumentExport.exportTo(source, out, ink, listOf(3, 1), flatten = true).getOrThrow()
+
+        Loader.loadPDF(out).use { assertEquals(2, it.numberOfPages) }
+        assertTrue(textOf(out).contains("Page four"))
+    }
+
+    /**
+     * A picture exports with its handwriting on it, at its own size.
+     *
+     * Windows could open and draw on a picture and then had no way to hand it in: Save and Export
+     * both stopped at "Only PDFs can be exported this way".
+     */
+    @Test
+    fun `a picture exports as a picture and as a PDF with the ink on it`() {
+        val dir = temp.newFolder()
+        val photo = File(dir, "photo.png")
+        val white = java.awt.image.BufferedImage(200, 120, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        white.createGraphics().apply { color = java.awt.Color.WHITE; fillRect(0, 0, 200, 120); dispose() }
+        javax.imageio.ImageIO.write(white, "png", photo)
+
+        val line = Stroke(
+            id = "l1",
+            kind = Stroke.Kind.FREEHAND,
+            color = 0xFF000000.toInt(),
+            baseWidth = 8f,
+            brush = BrushType.MARKER,
+            points = listOf(InkPoint(20f, 60f, 1f), InkPoint(180f, 60f, 1f))
+        )
+        val ink = InkDocument.create("photo.png", "png", 1, 0L, "").withPage(0, listOf(line), "test")
+
+        val png = File(dir, "out.png")
+        DocumentExport.exportImage(photo, png, ink, asPdf = false).getOrThrow()
+        val read = javax.imageio.ImageIO.read(png)
+        assertEquals(200, read.width)
+        assertEquals(120, read.height)
+        val middle = read.getRGB(100, 60) and 0xFFFFFF
+        val corner = read.getRGB(5, 5) and 0xFFFFFF
+        assertTrue("the stroke should be drawn across the middle", middle < 0x404040)
+        assertEquals("away from the stroke the picture is untouched", 0xFFFFFF, corner)
+
+        val pdf = File(dir, "out.pdf")
+        DocumentExport.exportImage(photo, pdf, ink, asPdf = true).getOrThrow()
+        Loader.loadPDF(pdf).use {
+            assertEquals(1, it.numberOfPages)
+            assertEquals(200f, it.getPage(0).mediaBox.width, 0.01f)
+        }
+    }
+
     @Test
     fun `an export never lands on an earlier one`() {
         val dir = temp.newFolder()

@@ -45,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -177,6 +178,8 @@ fun EditorScreen(
     var pagesOpen by remember { mutableStateOf(false) }
     var versionsOpen by remember { mutableStateOf(false) }
     var exportOpen by remember { mutableStateOf(false) }
+    /** Pages picked in the pages sheet, carried into the export dialog as its starting choice. */
+    var exportPreset by remember { mutableStateOf<List<Int>?>(null) }
     var cropping by remember { mutableStateOf<Stroke?>(null) }
     var reopenTick by remember { mutableStateOf(0) }
     /** The canvas paper the page was last read again for; see [refreshPageIfGrown]. */
@@ -681,6 +684,73 @@ fun EditorScreen(
                 )
                 EventLog.info("checkpoint", made.fold({ "Kept ${it.name}" }, { "failed: ${it.message}" }))
             }
+        }
+    }
+
+    /**
+     * Build the export the dialog asked for, and put it where it asked.
+     *
+     * Never touches the original. A canvas whose paper has not caught up with the handwriting is
+     * grown on a staged copy rather than in place: exporting is not saving, and while another
+     * device holds the document it is not this one's to rewrite.
+     */
+    fun runExport(request: ExportRequest) {
+        val pdf = DesktopSources.isPdf(file)
+        val extension = if (pdf) "pdf" else request.format.extension
+        val fileName = request.baseName + "." + extension
+        val target = when (request.destination) {
+            ExportDestination.SAVE_AS -> askExportTarget(file, fileName) ?: return
+            ExportDestination.BESIDE ->
+                DocumentExport.freeTarget(file.parentFile ?: File("."), request.baseName, extension)
+        }
+        if (target.canonicalPath == file.canonicalPath) {
+            scope.launch { snackbar.showSnackbar("An export cannot replace the document itself") }
+            return
+        }
+        busy = true
+        scope.launch {
+            val doc = currentInk()
+            val result = withContext(Dispatchers.IO) {
+                if (!pdf) {
+                    return@withContext DocumentExport.exportImage(
+                        file, target, doc, asPdf = request.format == ExportFormat.PDF
+                    )
+                }
+                val canvas = doc.canvas?.takeIf { it.paperIsBehind }
+                if (canvas == null) {
+                    DocumentExport.exportTo(file, target, doc, request.pages, request.flatten)
+                } else {
+                    val staged = File.createTempFile("inkslate-export", ".pdf")
+                    try {
+                        file.copyTo(staged, overwrite = true)
+                        val grown = DocumentPages.growCanvas(staged, canvas).getOrThrow()
+                        DocumentExport.exportTo(
+                            staged, target, doc.copy(canvas = grown), request.pages,
+                            request.flatten, imagesOf = file
+                        )
+                    } catch (t: Throwable) {
+                        Result.failure(t)
+                    } finally {
+                        staged.delete()
+                    }
+                }
+            }
+            busy = false
+            result.fold(
+                onSuccess = { written ->
+                    status = "Exported ${written.name}"
+                    val choice = snackbar.showSnackbar(status, actionLabel = "Show in folder")
+                    if (choice == SnackbarResult.ActionPerformed) {
+                        runCatching {
+                            ProcessBuilder("explorer.exe", "/select,", written.absolutePath).start()
+                        }
+                    }
+                },
+                onFailure = {
+                    status = "Export failed: ${it.message}"
+                    snackbar.showSnackbar(status)
+                }
+            )
         }
     }
 
@@ -1834,25 +1904,12 @@ fun EditorScreen(
             pageCount = source?.pageCount ?: 1,
             currentPage = page,
             isPdf = DesktopSources.isPdf(file),
-            onDismiss = { exportOpen = false },
+            presetPages = exportPreset,
+            onDismiss = { exportOpen = false; exportPreset = null },
             onExport = { request ->
                 exportOpen = false
-                busy = true
-                scope.launch {
-                    val doc = currentInk()
-                    val target = DocumentExport.freeTarget(
-                        file.parentFile ?: File("."), request.name
-                    )
-                    val result = withContext(Dispatchers.IO) {
-                        DocumentExport.exportTo(file, target, doc, request.pages, request.flatten)
-                    }
-                    status = result.fold(
-                        onSuccess = { "Exported ${it.name}" },
-                        onFailure = { "Export failed: ${it.message}" }
-                    )
-                    snackbar.showSnackbar(status)
-                    busy = false
-                }
+                exportPreset = null
+                runExport(request)
             }
         )
     }
@@ -1931,6 +1988,13 @@ fun EditorScreen(
                 onGoToPage = { target ->
                     pagesOpen = false
                     goToPage(target)
+                },
+                onExport = { pages ->
+                    // Through the same dialog as the menu's Export, starting from these pages,
+                    // because where it goes and whether it is flattened are still questions.
+                    pagesOpen = false
+                    exportPreset = pages
+                    exportOpen = true
                 },
                 onDismiss = { pagesOpen = false }
             )

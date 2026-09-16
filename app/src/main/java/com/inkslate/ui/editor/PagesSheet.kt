@@ -26,6 +26,9 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -100,6 +103,13 @@ import kotlinx.coroutines.withContext
  * the arrangement and canvas controls (on Windows those sit in the view menu), holding a page to
  * drag it, and exporting a page.
  *
+ * ## Several pages at once
+ *
+ * Each page has a ring in its corner; ticking it picks that page as well. Once more than one page
+ * is picked, tapping a page ticks or unticks it too, the way a photo gallery behaves, so a stray
+ * tap cannot throw away a selection of fifteen pages. There is still one row of actions: every
+ * button in it acts on whatever is picked.
+ *
  * Structural edits are planned rather than applied. Everything here operates on a list of
  * [PlannedPage], so deleting thirty pages, changing your mind and closing the sheet costs nothing;
  * the document on disk is not touched until Apply, and then in one verified rewrite.
@@ -130,10 +140,11 @@ fun PagesSheet(
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var plan by remember(pageCount) { mutableStateOf(PageArrangement.identity(pageCount)) }
-    // One page in hand, as on Windows. The actions act on it and the arrows carry it with them, so
-    // moving a page five places is five taps on the same button rather than five re-selections.
-    var selected by remember(pageCount) {
-        mutableStateOf(currentPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0)))
+    // The pages in hand, by uid rather than position, as on Windows. Copying or moving them
+    // changes every position, and the selection has to follow the pages that were picked; the
+    // arrows carry them along, so moving a page five places is five taps on the same button.
+    var picked by remember(pageCount) {
+        mutableStateOf(setOf(currentPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0)).toLong()))
     }
     var nextUid by remember(pageCount) { mutableStateOf(pageCount.toLong() + 1000L) }
     var confirmApply by remember { mutableStateOf(false) }
@@ -160,8 +171,15 @@ fun PagesSheet(
     var pointer by remember { mutableStateOf(Offset.Zero) }
 
     val changed = !PageArrangement.isUnchanged(plan, pageCount)
-    val inHand = selected.coerceIn(0, (plan.size - 1).coerceAtLeast(0))
+    val pickedAt = PagePlan.indicesOf(plan, picked)
+    // New pages go after the last picked one, or at the end when nothing is picked.
+    val inHand = pickedAt.lastOrNull() ?: plan.lastIndex
     val inHandPage = plan.getOrNull(inHand)
+    val picking = pickedAt.size > 1
+
+    fun toggle(uid: Long) {
+        picked = if (uid in picked) picked - uid else picked + uid
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -202,7 +220,11 @@ fun PagesSheet(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("Pages", style = MaterialTheme.typography.titleMedium)
-                    val count = "${plan.size} page${if (plan.size == 1) "" else "s"}"
+                    val count = if (picking) {
+                        "${pickedAt.size} of ${plan.size} pages picked"
+                    } else {
+                        "${plan.size} page${if (plan.size == 1) "" else "s"}"
+                    }
                     Text(
                         if (changed) "$count - nothing is written until you apply" else count,
                         style = MaterialTheme.typography.labelSmall,
@@ -284,23 +306,32 @@ fun PagesSheet(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
+                    val earlier = PagePlan.movedAll(plan, picked, -1)
+                    val later = PagePlan.movedAll(plan, picked, 1)
+                    IconButton(onClick = { plan = earlier }, enabled = earlier != plan) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Move earlier")
+                    }
+                    IconButton(onClick = { plan = later }, enabled = later != plan) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, "Move later")
+                    }
                     IconButton(
-                        onClick = { plan = PagePlan.moved(plan, inHand, inHand - 1); selected = inHand - 1 },
-                        enabled = inHand > 0
-                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Move earlier") }
+                        onClick = { plan = PagePlan.turnedAll(plan, picked, -1) },
+                        enabled = pickedAt.isNotEmpty()
+                    ) { Icon(Icons.Default.RotateLeft, "Turn left") }
                     IconButton(
-                        onClick = { plan = PagePlan.moved(plan, inHand, inHand + 1); selected = inHand + 1 },
-                        enabled = inHand < plan.lastIndex
-                    ) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "Move later") }
-                    IconButton(onClick = { plan = PagePlan.turned(plan, inHand, -1) }) {
-                        Icon(Icons.Default.RotateLeft, "Turn left")
-                    }
-                    IconButton(onClick = { plan = PagePlan.turned(plan, inHand, 1) }) {
-                        Icon(Icons.Default.RotateRight, "Turn right")
-                    }
-                    IconButton(onClick = { plan = PagePlan.duplicated(plan, inHand, nextUid++) }) {
-                        Icon(Icons.Default.Layers, "Duplicate")
-                    }
+                        onClick = { plan = PagePlan.turnedAll(plan, picked, 1) },
+                        enabled = pickedAt.isNotEmpty()
+                    ) { Icon(Icons.Default.RotateRight, "Turn right") }
+                    IconButton(
+                        onClick = {
+                            val (copied, copies) = PagePlan.duplicatedAll(plan, picked) { nextUid++ }
+                            plan = copied
+                            // Onto the copies, so a second tap copies the copies rather than
+                            // stacking another set of the originals in between.
+                            picked = copies
+                        },
+                        enabled = pickedAt.isNotEmpty()
+                    ) { Icon(Icons.Default.Layers, "Copy") }
                     // Not a plain white page on one tap, as on Windows: the paper is half of what a
                     // blank page is, so this asks - pattern, both colours, spacing, size, how many.
                     IconButton(onClick = { insertOpen = true }) {
@@ -318,20 +349,41 @@ fun PagesSheet(
                     IconButton(
                         // Exports the document as it is on disk, so an unapplied plan would export
                         // something other than what is on screen. Better impossible than explained.
-                        enabled = !changed && inHandPage != null && !inHandPage.isNew,
-                        onClick = { inHandPage?.let { onExport(listOf(it.source)) } }
-                    ) { Icon(Icons.Default.Share, "Export this page") }
-                    Box(Modifier.weight(1f))
+                        enabled = !changed && pickedAt.isNotEmpty() &&
+                            pickedAt.none { plan[it].isNew },
+                        onClick = { onExport(pickedAt.map { plan[it].source }.sorted()) }
+                    ) { Icon(Icons.Default.Share, "Export") }
+                    val everything = pickedAt.size == plan.size
                     IconButton(
                         onClick = {
-                            plan = PagePlan.removed(plan, inHand)
-                            selected = inHand.coerceAtMost(plan.lastIndex)
-                        },
-                        enabled = plan.size > 1
+                            picked = if (everything) {
+                                setOfNotNull(plan.getOrNull(pickedAt.firstOrNull() ?: 0)?.uid)
+                            } else {
+                                plan.map { it.uid }.toSet()
+                            }
+                        }
                     ) {
                         Icon(
-                            Icons.Default.Delete, "Remove",
-                            tint = if (plan.size > 1) MaterialTheme.colorScheme.error
+                            Icons.Default.SelectAll,
+                            if (everything) "Pick one page" else "Pick every page",
+                            tint = if (everything && plan.size > 1) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Box(Modifier.weight(1f))
+                    val canRemove = pickedAt.isNotEmpty() && pickedAt.size < plan.size
+                    IconButton(
+                        onClick = {
+                            val at = pickedAt.first()
+                            plan = PagePlan.removedAll(plan, picked)
+                            picked = setOf(plan[at.coerceAtMost(plan.lastIndex)].uid)
+                        },
+                        enabled = canRemove
+                    ) {
+                        Icon(
+                            Icons.Default.Delete,
+                            if (picking) "Remove ${pickedAt.size} pages" else "Remove",
+                            tint = if (canRemove) MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                         )
                     }
@@ -364,7 +416,7 @@ fun PagesSheet(
                                 onDragStart = { at ->
                                     pointer = at
                                     dragIndex = indexAt(gridState, at)
-                                    dragIndex?.let { selected = it }
+                                    dragIndex?.let { i -> plan.getOrNull(i)?.let { picked = setOf(it.uid) } }
                                 },
                                 onDrag = { change, amount ->
                                     change.consume()
@@ -374,7 +426,6 @@ fun PagesSheet(
                                     if (to != null && to != from && to in plan.indices) {
                                         plan = PagePlan.moved(plan, from, to)
                                         dragIndex = to
-                                        selected = to
                                     }
                                     // Creep the grid when the finger reaches an edge, so a page
                                     // can be dragged further than one screenful.
@@ -406,7 +457,12 @@ fun PagesSheet(
                         planned = p,
                         position = index,
                         bitmap = key?.let { thumbs[it] },
-                        selected = canEditPages && index == inHand,
+                        selected = canEditPages && p.uid in picked,
+                        tick = if (canEditPages) {
+                            { toggle(p.uid) }
+                        } else {
+                            null
+                        },
                         dragging = dragIndex == index,
                         isCurrent = !p.isNew && p.source == currentPage && !changed,
                         modifier = Modifier.animateItem(),
@@ -416,13 +472,15 @@ fun PagesSheet(
                             // and neither does any page once the order has changed.
                             // A blank page just added has nothing to open, so tapping it again
                             // brings back its paper instead: what was picked is still changeable.
-                            val open = !canEditPages || index == inHand
-                            if (open && canEditPages && p.isNew && !p.isImported) {
+                            val open = !canEditPages || (!picking && p.uid in picked)
+                            if (canEditPages && picking) {
+                                toggle(p.uid)
+                            } else if (open && canEditPages && p.isNew && !p.isImported) {
                                 restyling = p.uid
                             } else if (open) {
                                 if (!changed && !p.isNew) { onGoToPage(p.source); onDismiss() }
                             } else {
-                                selected = index
+                                picked = setOf(p.uid)
                             }
                         }
                     )
@@ -455,7 +513,7 @@ fun PagesSheet(
                     PlannedPage(source = -1, uid = nextUid++, blankWidth = w, blankHeight = h, paper = paper.toSpec())
                 }
                 plan = PagePlan.inserted(plan, inHand + 1, fresh)
-                selected = inHand + 1
+                picked = fresh.map { it.uid }.toSet()
                 lastPaper = paper
             }
         )
@@ -509,10 +567,10 @@ fun PagesSheet(
             documentHeight = defaultPageHeight,
             insertAfter = inHand,
             onDismiss = { importing = null },
-            onImport = { picked ->
+            onImport = { chosen ->
                 importing = null
-                if (picked.isEmpty()) return@ImportPagesDialog
-                val fresh = picked.map { (candidate, pageIndex, fit) ->
+                if (chosen.isEmpty()) return@ImportPagesDialog
+                val fresh = chosen.map { (candidate, pageIndex, fit) ->
                     val w = if (candidate.isImage && fit) defaultPageWidth else candidate.width
                     val h = if (candidate.isImage && fit) defaultPageHeight else candidate.height
                     PlannedPage(
@@ -529,7 +587,7 @@ fun PagesSheet(
                     )
                 }
                 plan = PagePlan.inserted(plan, inHand + 1, fresh)
-                selected = inHand + 1
+                picked = fresh.map { it.uid }.toSet()
             }
         )
     }
@@ -623,6 +681,8 @@ private fun PageTile(
     position: Int,
     bitmap: Bitmap?,
     selected: Boolean,
+    /** Ticks or unticks the page, or null where the corner ring is not worth showing. */
+    tick: (() -> Unit)?,
     dragging: Boolean,
     isCurrent: Boolean,
     modifier: Modifier = Modifier,
@@ -683,6 +743,7 @@ private fun PageTile(
                 )
                 else -> CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
             }
+            if (tick != null) PickTick(selected, tick, Modifier.align(Alignment.TopStart))
             if (dragging) {
                 Icon(
                     Icons.Default.DragIndicator, null,
@@ -704,5 +765,41 @@ private fun PageTile(
             else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
         )
+    }
+}
+
+/**
+ * The ring in a page's corner: picks the page as well as the ones already picked, or unpicks it.
+ *
+ * Big enough to hit with a fingertip, and drawn empty until it is ticked, so the grid says that
+ * pages can be picked together without a sentence saying so.
+ */
+@Composable
+private fun PickTick(ticked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(40.dp)
+            .clickable(onClick = onToggle)
+            .padding(6.dp)
+            .clip(CircleShape)
+            .background(
+                if (ticked) MaterialTheme.colorScheme.primary
+                else Color.White.copy(alpha = 0.85f)
+            )
+            .border(
+                1.5.dp,
+                if (ticked) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outline,
+                CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (ticked) {
+            Icon(
+                Icons.Default.Check, "Picked",
+                Modifier.size(17.dp),
+                tint = MaterialTheme.colorScheme.onPrimary
+            )
+        }
     }
 }

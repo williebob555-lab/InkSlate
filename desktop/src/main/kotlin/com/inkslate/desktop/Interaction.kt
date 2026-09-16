@@ -1,6 +1,11 @@
 package com.inkslate.desktop
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -30,6 +35,44 @@ fun Modifier.secondaryClick(onClick: () -> Unit): Modifier = pointerInput(Unit) 
             if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
                 event.changes.forEach { it.consume() }
                 onClick()
+            }
+        }
+    }
+}
+
+/**
+ * A click that says whether Ctrl or Shift was held, for picking several things out of a grid.
+ *
+ * Fired on release, and only when the pointer has not travelled: a touch that starts on a page and
+ * turns into scrolling the grid is not a choice of that page. A press something inside has already
+ * claimed - the tick in a page's corner - is left to it.
+ */
+fun Modifier.selectClick(onClick: (ctrl: Boolean, shift: Boolean) -> Unit): Modifier = composed {
+    val latest by rememberUpdatedState(onClick)
+    pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) {
+                val down = awaitPointerEvent()
+                if (down.type != PointerEventType.Press || down.buttons.isSecondaryPressed) continue
+                val start = down.changes.firstOrNull()?.position ?: continue
+                if (down.changes.any { it.isConsumed }) continue
+                var travelled = false
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull() ?: break
+                    if ((change.position - start).getDistance() > viewConfiguration.touchSlop) {
+                        travelled = true
+                    }
+                    if (event.type == PointerEventType.Release) {
+                        if (!travelled && !change.isConsumed) {
+                            latest(
+                                event.keyboardModifiers.isCtrlPressed,
+                                event.keyboardModifiers.isShiftPressed
+                            )
+                        }
+                        break
+                    }
+                }
             }
         }
     }

@@ -1,6 +1,12 @@
 package com.inkslate.desktop
 
 import androidx.compose.foundation.Image
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,7 +29,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -76,6 +81,13 @@ import kotlinx.coroutines.withContext
  * Reordering is by arrows rather than by dragging: a drag on a grid needs a drop target and a
  * scroll-while-dragging, and a pair of arrows moves a page exactly one place with no ambiguity
  * about where it landed.
+ *
+ * ## Several pages at once
+ *
+ * A click picks one page. Ctrl-click adds or removes one, Shift-click takes the run from the last
+ * page clicked, and the tick in each page's corner does what Ctrl-click does for a pen or a finger,
+ * which has no Ctrl key. There is one row of actions, not a second set for a selection: every
+ * button in it acts on whatever is picked, one page or twenty.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,13 +99,20 @@ fun PagesSheet(
     thumbnailFor: suspend (Int) -> ImageBitmap?,
     onApply: (List<PlannedPage>) -> Unit,
     onGoToPage: (Int) -> Unit,
+    /** Export these pages of the document as it stands on disk. */
+    onExport: (pages: List<Int>) -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val pageSize = remember(source) { source.pageDim(0) }
     var plan by remember { mutableStateOf(PagePlan.identity(source.pageCount)) }
     var nextUid by remember { mutableStateOf(source.pageCount.toLong() + 1000L) }
-    var selected by remember { mutableStateOf(currentPage) }
+    // Picked pages by uid, not position: copying or moving them changes every position, and the
+    // selection has to stay on the pages that were picked rather than the places they were.
+    val firstPick = currentPage.coerceIn(0, (source.pageCount - 1).coerceAtLeast(0)).toLong()
+    var picked by remember { mutableStateOf(setOf(firstPick)) }
+    // Where a Shift-click runs from.
+    var anchor by remember { mutableStateOf(firstPick) }
 
     val thumbs = remember { mutableStateMapOf<Int, ImageBitmap>() }
     LaunchedEffect(source) {
@@ -107,6 +126,19 @@ fun PagesSheet(
     var confirmApply by remember { mutableStateOf(false) }
 
     val changed = !PagePlan.isUnchanged(plan, source.pageCount)
+    val pickedAt = PagePlan.indicesOf(plan, picked)
+    // New pages go after the last picked one, or at the end when nothing is picked.
+    val insertAfter = pickedAt.lastOrNull() ?: plan.lastIndex
+
+    fun pickOnly(uids: Set<Long>) {
+        picked = uids
+        uids.firstOrNull()?.let { anchor = it }
+    }
+
+    fun toggle(uid: Long) {
+        picked = if (uid in picked) picked - uid else picked + uid
+        anchor = uid
+    }
 
     /**
      * Bring pages in from another file.
@@ -171,13 +203,14 @@ fun PagesSheet(
             candidates = candidates,
             documentWidth = pageSize.width,
             documentHeight = pageSize.height,
-            insertAfter = selected,
+            insertAfter = insertAfter,
             onDismiss = { importing = null },
-            onImport = { picked ->
+            onImport = { chosen ->
                 importing = null
-                val fresh = importedPages(picked, pageSize.width, pageSize.height)
+                val fresh = importedPages(chosen, pageSize.width, pageSize.height)
                     .map { PlannedPage(source = -1, uid = nextUid++, import = it) }
-                plan = PagePlan.inserted(plan, selected + 1, fresh)
+                plan = PagePlan.inserted(plan, insertAfter + 1, fresh)
+                pickOnly(fresh.map { it.uid }.toSet())
             }
         )
     }
@@ -191,13 +224,13 @@ fun PagesSheet(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("Pages", style = MaterialTheme.typography.titleMedium)
+                    val count = if (pickedAt.size > 1) {
+                        "${pickedAt.size} of ${plan.size} pages picked"
+                    } else {
+                        "${plan.size} page${if (plan.size == 1) "" else "s"}"
+                    }
                     Text(
-                        if (changed) {
-                            "${plan.size} page${if (plan.size == 1) "" else "s"} " +
-                                "- nothing is written until you apply"
-                        } else {
-                            "${plan.size} page${if (plan.size == 1) "" else "s"}"
-                        },
+                        if (changed) "$count - nothing is written until you apply" else count,
                         style = MaterialTheme.typography.labelSmall,
                         color = if (changed) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant
@@ -231,58 +264,101 @@ fun PagesSheet(
                 }
             }
 
-            // ---- what can be done to the page in hand ----
+            // ---- what can be done to the picked pages ----
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
+                val earlier = PagePlan.movedAll(plan, picked, -1)
+                val later = PagePlan.movedAll(plan, picked, 1)
+                IconButton(onClick = { plan = earlier }, enabled = earlier != plan) {
+                    Icon(Icons.Default.ArrowBack, "Move earlier")
+                }
+                IconButton(onClick = { plan = later }, enabled = later != plan) {
+                    Icon(Icons.Default.ArrowForward, "Move later")
+                }
                 IconButton(
-                    onClick = { plan = PagePlan.moved(plan, selected, selected - 1); selected-- },
-                    enabled = selected > 0
-                ) { Icon(Icons.Default.ArrowBack, "Move earlier") }
+                    onClick = { plan = PagePlan.turnedAll(plan, picked, -1) },
+                    enabled = pickedAt.isNotEmpty()
+                ) { Icon(Icons.Default.RotateLeft, "Turn left") }
                 IconButton(
-                    onClick = { plan = PagePlan.moved(plan, selected, selected + 1); selected++ },
-                    enabled = selected < plan.lastIndex
-                ) { Icon(Icons.Default.ArrowForward, "Move later") }
-                IconButton(onClick = { plan = PagePlan.turned(plan, selected, -1) }) {
-                    Icon(Icons.Default.RotateLeft, "Turn left")
-                }
-                IconButton(onClick = { plan = PagePlan.turned(plan, selected, 1) }) {
-                    Icon(Icons.Default.RotateRight, "Turn right")
-                }
-                IconButton(onClick = { plan = PagePlan.duplicated(plan, selected, nextUid++) }) {
-                    Icon(Icons.Default.Layers, "Duplicate")
-                }
+                    onClick = { plan = PagePlan.turnedAll(plan, picked, 1) },
+                    enabled = pickedAt.isNotEmpty()
+                ) { Icon(Icons.Default.RotateRight, "Turn right") }
                 IconButton(
                     onClick = {
-                        val dim = source.pageDim(selected.coerceIn(0, source.pageCount - 1))
-                        plan = PagePlan.inserted(
-                            plan, selected + 1,
-                            listOf(
-                                PlannedPage(
-                                    source = -1,
-                                    uid = nextUid++,
-                                    blankWidth = dim.width,
-                                    blankHeight = dim.height,
-                                    paper = PaperSpec()
-                                )
-                            )
+                        val (copied, copies) = PagePlan.duplicatedAll(plan, picked) { nextUid++ }
+                        plan = copied
+                        // Onto the copies, so a second press copies the copies rather than
+                        // stacking another set of the originals in between.
+                        pickOnly(copies)
+                    },
+                    enabled = pickedAt.isNotEmpty()
+                ) { Icon(Icons.Default.Layers, "Copy") }
+                IconButton(
+                    onClick = {
+                        val near = plan.getOrNull(insertAfter)
+                        val dim = if (near != null && near.isNew) {
+                            PageDim(near.blankWidth, near.blankHeight)
+                        } else {
+                            source.pageDim((near?.source ?: 0).coerceIn(0, source.pageCount - 1))
+                        }
+                        val blank = PlannedPage(
+                            source = -1,
+                            uid = nextUid++,
+                            blankWidth = dim.width,
+                            blankHeight = dim.height,
+                            paper = PaperSpec()
                         )
+                        plan = PagePlan.inserted(plan, insertAfter + 1, listOf(blank))
+                        pickOnly(setOf(blank.uid))
                     }
                 ) { Icon(Icons.Default.Add, "Add a blank page after this one") }
                 IconButton(onClick = { pickFilesToImport() }) {
                     Icon(Icons.Default.LibraryAdd, "Add pages from another file")
                 }
-                Box(Modifier.weight(1f))
+                IconButton(
+                    // Exports the document as it is on disk, so an unapplied plan would export
+                    // something other than what is on screen. Better impossible than explained.
+                    enabled = !changed && pickedAt.isNotEmpty() && pickedAt.none { plan[it].isNew },
+                    onClick = { onExport(pickedAt.map { plan[it].source }.sorted()) }
+                ) { Icon(Icons.Default.Share, "Export") }
                 IconButton(
                     onClick = {
-                        plan = PagePlan.removed(plan, selected)
-                        selected = selected.coerceAtMost(plan.lastIndex)
-                    },
-                    enabled = plan.size > 1
+                        if (pickedAt.size == plan.size) {
+                            pickOnly(setOf(plan[pickedAt.firstOrNull() ?: 0].uid))
+                        } else {
+                            picked = plan.map { it.uid }.toSet()
+                        }
+                    }
                 ) {
-                    Icon(Icons.Default.Delete, "Remove", tint = MaterialTheme.colorScheme.error)
+                    Icon(
+                        Icons.Default.SelectAll,
+                        if (pickedAt.size == plan.size) "Pick one page" else "Pick every page",
+                        tint = if (pickedAt.size == plan.size && plan.size > 1) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+                Box(Modifier.weight(1f))
+                val canRemove = pickedAt.isNotEmpty() && pickedAt.size < plan.size
+                IconButton(
+                    onClick = {
+                        val at = pickedAt.first()
+                        plan = PagePlan.removedAll(plan, picked)
+                        pickOnly(setOf(plan[at.coerceAtMost(plan.lastIndex)].uid))
+                    },
+                    enabled = canRemove
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        if (pickedAt.size > 1) "Remove ${pickedAt.size} pages" else "Remove",
+                        tint = if (canRemove) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    )
                 }
             }
 
@@ -294,18 +370,24 @@ fun PagesSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(plan.size) { index ->
-                    val p = plan[index]
+                itemsIndexed(plan, key = { _, p -> p.uid }) { index, p ->
                     PageTile(
                         planned = p,
                         position = index,
                         thumb = if (p.isNew) null else thumbs[p.source],
-                        selected = index == selected,
-                        onClick = { selected = index },
+                        selected = p.uid in picked,
+                        onClick = { ctrl, shift ->
+                            when {
+                                shift -> picked = PagePlan.rangeBetween(plan, anchor, p.uid)
+                                ctrl -> toggle(p.uid)
+                                else -> pickOnly(setOf(p.uid))
+                            }
+                        },
+                        onToggle = { toggle(p.uid) },
                         onDoubleClick = {
                             // Only meaningful for a page that is still where it was; a planned
                             // page has no place in the document to jump to yet.
-                            if (!changed && !p.isNew) onGoToPage(index)
+                            if (!changed && !p.isNew) onGoToPage(p.source)
                         }
                     )
                 }
@@ -320,9 +402,11 @@ private fun PageTile(
     position: Int,
     thumb: ImageBitmap?,
     selected: Boolean,
-    onClick: () -> Unit,
+    onClick: (ctrl: Boolean, shift: Boolean) -> Unit,
+    onToggle: () -> Unit,
     onDoubleClick: () -> Unit
 ) {
+    val open by rememberUpdatedState(onDoubleClick)
     Column(
         Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -330,8 +414,8 @@ private fun PageTile(
                 if (selected) MaterialTheme.colorScheme.primaryContainer
                 else MaterialTheme.colorScheme.surfaceVariant
             )
-            .clickable(onClick = onClick)
-            .secondaryClick(onDoubleClick)
+            .selectClick(onClick)
+            .secondaryClick { open() }
             .padding(6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -369,6 +453,7 @@ private fun PageTile(
                     color = Color(0xFF666666)
                 )
             }
+            PickTick(selected, onToggle, Modifier.align(Alignment.TopStart))
         }
         Text(
             "${position + 1}" + when {
@@ -382,5 +467,41 @@ private fun PageTile(
             else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp)
         )
+    }
+}
+
+/**
+ * The tick in a page's corner: adds it to the pages picked, or takes it out.
+ *
+ * What Ctrl-click does, for a pen or a finger. Drawn as an empty ring until it is ticked, so the
+ * grid says at a glance that pages can be picked together without a sentence saying so.
+ */
+@Composable
+internal fun PickTick(ticked: Boolean, onToggle: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .padding(4.dp)
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(
+                if (ticked) MaterialTheme.colorScheme.primary
+                else Color.White.copy(alpha = 0.85f)
+            )
+            .border(
+                1.5.dp,
+                if (ticked) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outline,
+                CircleShape
+            )
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center
+    ) {
+        if (ticked) {
+            Icon(
+                Icons.Default.Check, "Picked",
+                Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.onPrimary
+            )
+        }
     }
 }

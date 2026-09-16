@@ -76,6 +76,51 @@ class PagePlanTest {
         assertEquals(0, plan[0].quarterTurns)
     }
 
+    // ---- several pages at once -------------------------------------------------
+
+    @Test
+    fun `a bulk copy lands as one run after the last selected page`() {
+        var uid = 100L
+        val (plan, copies) = PagePlan.duplicatedAll(PagePlan.identity(5), setOf(1L, 3L)) { uid++ }
+        assertEquals(listOf(0, 1, 2, 3, 1, 3, 4), plan.map { it.source })
+        assertEquals(setOf(100L, 101L), copies)
+    }
+
+    @Test
+    fun `a bulk remove takes every selected page and nothing else`() {
+        val plan = PagePlan.removedAll(PagePlan.identity(5), setOf(0L, 2L, 4L))
+        assertEquals(listOf(1, 3), plan.map { it.source })
+    }
+
+    @Test
+    fun `removing every page is refused rather than keeping one at random`() {
+        val all = PagePlan.identity(3)
+        assertEquals(all, PagePlan.removedAll(all, setOf(0L, 1L, 2L)))
+    }
+
+    @Test
+    fun `a bulk turn turns only the selection`() {
+        val plan = PagePlan.turnedAll(PagePlan.identity(3), setOf(0L, 2L), 1)
+        assertEquals(listOf(1, 0, 1), plan.map { it.quarterTurns })
+    }
+
+    @Test
+    fun `selected pages move together and stop at the edge`() {
+        val start = PagePlan.identity(5)
+        // 1 and 3 each step earlier past an unselected neighbour
+        assertEquals(listOf(1, 0, 3, 2, 4), PagePlan.movedAll(start, setOf(1L, 3L), -1).map { it.source })
+        // 0 is already first; 1 behind it stays behind it rather than jumping over
+        assertEquals(listOf(0, 1, 3, 2, 4), PagePlan.movedAll(start, setOf(0L, 1L, 3L), -1).map { it.source })
+        // a block moves as a block
+        assertEquals(listOf(0, 3, 1, 2, 4), PagePlan.movedAll(start, setOf(1L, 2L), 1).map { it.source })
+    }
+
+    @Test
+    fun `a range selection covers both ends whichever was clicked first`() {
+        val plan = PagePlan.identity(6)
+        assertEquals(setOf(2L, 3L, 4L), PagePlan.rangeBetween(plan, 4L, 2L))
+    }
+
     // ---- the ink follows -----------------------------------------------------
 
     @Test

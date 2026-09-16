@@ -132,6 +132,86 @@ object PagePlan {
         return plan.toMutableList().also { it.addAll(target, pages) }
     }
 
+    // ---- several pages at once ------------------------------------------------
+    //
+    // A selection is held as uids rather than positions, because positions are exactly what these
+    // operations change: after a bulk copy the third page is somewhere else, and a selection of
+    // indices would silently point at different pages than the ones that were picked.
+
+    /** Positions of the selected pages, in document order. */
+    fun indicesOf(plan: List<PlannedPage>, uids: Set<Long>): List<Int> =
+        plan.indices.filter { plan[it].uid in uids }
+
+    /** Every page from one to the other inclusive, whichever comes first - a shift-click. */
+    fun rangeBetween(plan: List<PlannedPage>, fromUid: Long, toUid: Long): Set<Long> {
+        val a = plan.indexOfFirst { it.uid == fromUid }
+        val b = plan.indexOfFirst { it.uid == toUid }
+        if (a < 0 || b < 0) return setOfNotNull(plan.firstOrNull { it.uid == toUid }?.uid)
+        return (minOf(a, b)..maxOf(a, b)).map { plan[it].uid }.toSet()
+    }
+
+    /**
+     * Take the selected pages out.
+     *
+     * Refused outright when it would leave nothing, rather than quietly keeping one of them: which
+     * page survived would be an accident, and a document with none is not a document.
+     */
+    fun removedAll(plan: List<PlannedPage>, uids: Set<Long>): List<PlannedPage> {
+        val kept = plan.filter { it.uid !in uids }
+        return if (kept.isEmpty()) plan else kept
+    }
+
+    /**
+     * Copy the selected pages, as one run straight after the last of them.
+     *
+     * A block rather than each copy beside its own original: copying pages 2-4 is asking for a
+     * second go at that section, and 2 3 4 2 3 4 is that, where 2 2 3 3 4 4 is not. Returns the
+     * new plan and the uids of the copies, so the selection can move onto what was just made.
+     */
+    fun duplicatedAll(
+        plan: List<PlannedPage>,
+        uids: Set<Long>,
+        nextUid: () -> Long
+    ): Pair<List<PlannedPage>, Set<Long>> {
+        val at = indicesOf(plan, uids)
+        if (at.isEmpty()) return plan to emptySet()
+        val copies = at.map { plan[it].copy(uid = nextUid()) }
+        return inserted(plan, at.last() + 1, copies) to copies.map { it.uid }.toSet()
+    }
+
+    fun turnedAll(plan: List<PlannedPage>, uids: Set<Long>, quarterTurns: Int): List<PlannedPage> =
+        plan.map {
+            if (it.uid in uids) {
+                it.copy(quarterTurns = PageTurn.normalise(it.quarterTurns + quarterTurns))
+            } else {
+                it
+            }
+        }
+
+    /**
+     * Move every selected page one place, earlier ([step] < 0) or later.
+     *
+     * A selected page only swaps with an unselected neighbour, so a run of selected pages moves
+     * as a block and a page already against the end waits there while the rest catch up - the
+     * same thing a list of files does when several are nudged at once.
+     */
+    fun movedAll(plan: List<PlannedPage>, uids: Set<Long>, step: Int): List<PlannedPage> {
+        if (step == 0 || uids.isEmpty()) return plan
+        val out = plan.toMutableList()
+        val order = if (step < 0) out.indices.toList() else out.indices.reversed()
+        val pinned = BooleanArray(out.size)
+        for (i in order) {
+            if (out[i].uid !in uids) continue
+            val j = if (step < 0) i - 1 else i + 1
+            if (j !in out.indices || pinned[j] || out[j].uid in uids) {
+                pinned[i] = true
+                continue
+            }
+            val t = out[i]; out[i] = out[j]; out[j] = t
+        }
+        return out
+    }
+
     // ---- the ink -------------------------------------------------------------
 
     /**
