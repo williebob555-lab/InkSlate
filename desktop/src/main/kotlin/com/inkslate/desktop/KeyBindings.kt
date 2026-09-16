@@ -24,6 +24,7 @@ enum class KeyAction(val label: String) {
     ZOOM_IN("Zoom in"),
     ZOOM_OUT("Zoom out"),
     RESET_ZOOM("Fit the width"),
+    SHAPES("Open the shapes tray, with the last shape in hand"),
     BACK("Close whatever is open")
 }
 

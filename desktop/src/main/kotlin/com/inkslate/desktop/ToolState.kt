@@ -302,6 +302,54 @@ class ToolState {
      */
     var armedStamp: Pair<com.inkslate.core.Stamps.Kind, com.inkslate.core.Stamps.StampOptions>? =
         null
+        private set
+
+    /** A symbol string chosen but not yet placed. */
+    var armedText: String? = null
+        private set
+
+    /** Bumped whenever what is in hand changes, for the tray to recompose on. */
+    var armedTick by mutableStateOf(0)
+        private set
+
+    /** Told when a stroke, rather than the tray, put the item in hand away. */
+    var onPutAway: (() -> Unit)? = null
+
+    val hasArmed: Boolean get() = armedStamp != null || armedText != null
+
+    fun arm(kind: com.inkslate.core.Stamps.Kind, options: com.inkslate.core.Stamps.StampOptions) {
+        armedStamp = kind to com.inkslate.core.Stamps.sanitise(kind, options)
+        armedText = null
+        armedTick++
+    }
+
+    fun armText(text: String) {
+        armedText = text.ifEmpty { null }
+        armedStamp = null
+        armedTick++
+    }
+
+    fun disarm() {
+        if (!hasArmed) return
+        armedStamp = null
+        armedText = null
+        armedTick++
+    }
+
+    /**
+     * Each stamp's own settings, the recent and pinned ones, and the last one in hand.
+     *
+     * Shared in shape with the tablet as `StampShelf`, and kept in the settings file.
+     */
+    var stampShelf by mutableStateOf(
+        com.inkslate.core.StampShelf.decode(DesktopPrefs.get(STAMP_SHELF_KEY))
+    )
+        private set
+
+    fun editStampShelf(block: (com.inkslate.core.StampShelf) -> com.inkslate.core.StampShelf) {
+        stampShelf = block(stampShelf)
+        DesktopPrefs.put(STAMP_SHELF_KEY, stampShelf.encode())
+    }
 
     fun edit(block: (ToolConfig) -> Unit) {
         block(active)
@@ -438,6 +486,8 @@ class ToolState {
         // A tool that cannot be resumed sensibly. Landing in a half-finished capture because that
         // is how the last session ended is a poor way to open a page.
         if (c.tool == Tool.REGION) c.tool = Tool.DRAW
+        // Line, arrow, box and oval are placed from the shapes tray now, not dragged as a pen.
+        if (c.tool.isShape) c.tool = Tool.DRAW
     }
 
     init {
@@ -473,3 +523,5 @@ fun rememberToolState(): ToolState = androidx.compose.runtime.remember { ToolSta
 
 /** The palette the toolbar shows: your own colours first, then the shared set. */
 fun ToolState.swatches(): List<Int> = (customColors + Palette.COLORS).distinct()
+
+private const val STAMP_SHELF_KEY = "stamp_shelf"

@@ -42,7 +42,7 @@ import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Functions
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Image
@@ -106,8 +106,10 @@ class ToolBarActions(
     val canPaste: Boolean = false,
     val onInsertTable: () -> Unit = {},
     val onPickCustomColour: () -> Unit = {},
-    val onInsertSymbol: () -> Unit = {},
-    val onInsertStamp: () -> Unit = {},
+    /** Opens or folds the shapes tray, where the symbols also live. */
+    val onToggleShapes: () -> Unit = {},
+    /** Present only while the selection is one stamp, which can then be changed in place. */
+    val onEditStamp: (() -> Unit)? = null,
     val onToggleRuler: () -> Unit = {},
     val onInsertPicture: () -> Unit = {},
     val onCapture: () -> Unit = {},
@@ -133,6 +135,8 @@ class ToolBarActions(
 fun ToolBar(
     state: ToolState,
     selectionCount: Int,
+    /** The shapes tray is showing, which lights its button. */
+    shapesOpen: Boolean = false,
     actions: ToolBarActions
 ) {
     // A snapshot keyed on the revision counter. Reading the counter as a bare statement is not
@@ -171,6 +175,9 @@ fun ToolBar(
                     )
                     IconButton(onClick = { actions.onRestyleSelection(cfg.color, null) }) {
                         Icon(Icons.Default.BorderColor, "Apply current colour")
+                    }
+                    actions.onEditStamp?.let { edit ->
+                        IconButton(onClick = edit) { Icon(Icons.Default.Tune, "Change this stamp") }
                     }
                     IconButton(onClick = actions.onCopySelection) {
                         Icon(Icons.Default.ContentCopy, "Copy")
@@ -389,10 +396,9 @@ fun ToolBar(
                 ToolButton(Icons.Default.GridOn, "Table", cfg.tool == Tool.TABLE) {
                     change { state.edit { it.tool = Tool.TABLE } }
                 }
-                ToolButton(Icons.Default.Interests, "Shapes", cfg.tool.isShape) {
-                    actions.onInsertStamp()
-                }
-                ToolButton(Icons.Default.Functions, "Symbol", false) { actions.onInsertSymbol() }
+                // Symbols are in the tray as well, so one button covers everything put on the
+                // page rather than drawn on it.
+                ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
                 ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
                     actions.onCapture()
                 }

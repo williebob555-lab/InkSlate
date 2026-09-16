@@ -28,6 +28,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
@@ -120,9 +121,11 @@ class ToolBarActions(
      */
     val onCycleMode: (Int) -> Unit,
     val onSetButtonAction: (StylusButtonAction) -> Unit,
-    val onInsertSymbol: () -> Unit,
     val onEditPressureCurve: () -> Unit,
-    val onInsertStamp: () -> Unit,
+    /** Opens or folds the shapes tray, where the symbols also live. */
+    val onToggleShapes: () -> Unit,
+    /** Present only while the selection is one stamp, which can then be changed in place. */
+    val onEditStamp: (() -> Unit)? = null,
     val onInsertPicture: () -> Unit,
     val onTakePhoto: () -> Unit,
     val onSnapRuler: () -> Unit,
@@ -152,6 +155,8 @@ fun ToolBar(
     /** True when the selection is a single picture, which is the only thing worth cropping. */
     canCrop: Boolean,
     cropping: Boolean,
+    /** The shapes tray is showing, which lights its button. */
+    shapesOpen: Boolean = false,
     actions: ToolBarActions
 ) {
     // A snapshot keyed on the revision counter. Reading the counter as a bare statement was not
@@ -221,6 +226,9 @@ fun ToolBar(
                     )
                     IconButton(onClick = { actions.onRestyleSelection(cfg.color, null) }) {
                         Icon(Icons.Default.BorderColor, "Apply current colour")
+                    }
+                    actions.onEditStamp?.let { edit ->
+                        IconButton(onClick = edit) { Icon(Icons.Default.Tune, "Change this stamp") }
                     }
                     IconButton(onClick = actions.onCopySelection) {
                         Icon(Icons.Default.ContentCopy, "Copy")
@@ -468,15 +476,12 @@ fun ToolBar(
                 ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
                     change { state.edit { it.tool = Tool.REGION } }
                 }
-                ToolButton(Icons.Default.Functions, "Symbol", false) { actions.onInsertSymbol() }
                 ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
                     change { state.rulerVisible = !state.rulerVisible; state.persistNow() }
                 }
-                ToolButton(
-                    Icons.Default.Interests,
-                    "Shapes",
-                    cfg.tool.isShape
-                ) { actions.onInsertStamp() }
+                // Symbols are in the tray as well, so one button covers everything you put on
+                // the page rather than draw on it.
+                ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
                 ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
                 ToolButton(Icons.Default.PhotoCamera, "Photo", false) { actions.onTakePhoto() }
                 if (actions.canPaste) {

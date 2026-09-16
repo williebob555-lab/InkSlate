@@ -1,6 +1,7 @@
 package com.inkslate.core
 
 import com.inkslate.core.Stroke.Kind as StrokeKind
+import kotlinx.serialization.Serializable
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -24,11 +25,20 @@ import kotlin.math.sin
  * and each [Kind] declares which of them it actually responds to, so the picker can show the two
  * or three controls that matter for the stamp in hand rather than a wall of settings that mostly
  * do nothing.
+ *
+ * Every stamp also has its own colour and line weight. They used to come from the pen in hand,
+ * which meant a graph drawn after a red correction came out red, and changing the pen to fix it
+ * changed the handwriting as well.
+ *
+ * Each stroke a stamp makes carries a [StampTag] naming the stamp and its settings, so a stamp
+ * already on the page can be changed - a range widened, a colour fixed - by building it again in
+ * the same place rather than by deleting it and starting over.
  */
 object Stamps {
 
     /** Sections in the picker. Thirty-odd stamps in one undifferentiated grid is a search. */
     enum class Group(val label: String) {
+        SHAPES("Shapes"),
         MATHS("Maths"),
         GRAPHS("Graphs & grids"),
         MARKING("Marking"),
@@ -37,23 +47,63 @@ object Stamps {
     }
 
     /** Which controls a stamp responds to. Anything not listed is left out of its options panel. */
-    enum class Knob { DIVISIONS, LABELS, RANGE, FILLED, VARIANT }
+    enum class Knob {
+        DIVISIONS, LABELS, RANGE, FILLED, VARIANT,
+        /** Where the horizontal axis starts and ends, and the value between ticks. */
+        X_AXIS,
+        /** The same for the vertical axis. */
+        Y_AXIS,
+        /** Tick marks on or off. */
+        TICKS,
+        /** Numbers at the ticks on or off. */
+        TICK_VALUES,
+        /** What the axes are called: x and y, or t and d, or nothing. */
+        AXIS_NAMES,
+        DASH,
+        FILL
+    }
+
+    /** Near-black rather than black, so a stamp sits with handwriting instead of shouting over it. */
+    const val INK = 0xFF1F1F1F.toInt()
+
+    /** The most ticks one axis will draw; beyond this a step is widened rather than obeyed. */
+    const val MAX_TICKS = 100
 
     /**
      * The adjustable part of a stamp.
      *
      * One shared shape rather than a class per stamp: the *meaning* of [divisions] differs - it
-     * is ticks on an axis, sides on a polygon, bars in a staff - but the control is the same
-     * stepper every time, and [Kind.divisionsLabel] is what tells the user which it is here.
+     * is sides on a polygon, bars in a staff - but the control is the same stepper every time,
+     * and [Kind.divisionsLabel] is what tells the user which it is here.
+     *
+     * Serializable because it travels inside the document, on every stroke a stamp makes, and
+     * every field has a default so a build that predates a field reads the rest.
      */
+    @Serializable
     data class StampOptions(
         val divisions: Int = 8,
         val labels: Boolean = true,
+        /** The horizontal range: from, to and the value between ticks. */
         val rangeFrom: Float = -5f,
         val rangeTo: Float = 5f,
+        val step: Float = 1f,
         /** How many parts are shaded, for the fraction stamps. */
         val filled: Int = 0,
-        val variant: Int = 0
+        val variant: Int = 0,
+        val color: Int = INK,
+        /** Line weight in page points. */
+        val weight: Float = 1.5f,
+        /** Width it was last placed at, in page points; 0 until it has been placed. */
+        val size: Float = 0f,
+        val yFrom: Float = -5f,
+        val yTo: Float = 5f,
+        val yStep: Float = 1f,
+        val ticks: Boolean = true,
+        val tickValues: Boolean = true,
+        val xName: String = "x",
+        val yName: String = "y",
+        val dash: DashStyle = DashStyle.SOLID,
+        val fill: FillStyle = FillStyle.NONE
     )
 
     enum class Kind(
@@ -67,26 +117,26 @@ object Stamps {
         val variants: List<String> = emptyList(),
         val defaults: StampOptions = StampOptions()
     ) {
+        // ---- shapes ----
+        // Line, arrow, box and oval are stamps like the rest: placed with a tap, carrying their
+        // own colour and weight, and changed afterwards through the same panel.
+        LINE("Line", Group.SHAPES, 6f, setOf(Knob.DASH)),
+        ARROW("Arrow", Group.SHAPES, 6f, setOf(Knob.DASH)),
+        BOX("Box", Group.SHAPES, 1.4f, setOf(Knob.DASH, Knob.FILL)),
+        OVAL("Oval", Group.SHAPES, 1.4f, setOf(Knob.DASH, Knob.FILL)),
+
         // ---- maths ----
         AXES(
             "Axes", Group.MATHS, 1f,
-            setOf(Knob.DIVISIONS, Knob.LABELS, Knob.VARIANT),
-            divisionsLabel = "Ticks per side", divisionsRange = 1..20,
-            variants = listOf("Four quadrants", "First quadrant"),
-            defaults = StampOptions(divisions = 5)
+            setOf(Knob.X_AXIS, Knob.Y_AXIS, Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES)
         ),
         COORD_GRID(
             "Axes on a grid", Group.MATHS, 1f,
-            setOf(Knob.DIVISIONS, Knob.LABELS, Knob.VARIANT),
-            divisionsLabel = "Squares per side", divisionsRange = 2..20,
-            variants = listOf("Four quadrants", "First quadrant"),
-            defaults = StampOptions(divisions = 5)
+            setOf(Knob.X_AXIS, Knob.Y_AXIS, Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES)
         ),
         NUMBER_LINE(
             "Number line", Group.MATHS, 4.5f,
-            setOf(Knob.DIVISIONS, Knob.LABELS, Knob.RANGE),
-            divisionsLabel = "Intervals", divisionsRange = 2..40,
-            defaults = StampOptions(divisions = 10, rangeFrom = -5f, rangeTo = 5f)
+            setOf(Knob.X_AXIS, Knob.TICKS, Knob.TICK_VALUES)
         ),
         UNIT_CIRCLE(
             "Unit circle", Group.MATHS, 1f,
@@ -158,15 +208,13 @@ object Stamps {
         ),
         BAR_AXES(
             "Chart frame", Group.GRAPHS, 1.2f,
-            setOf(Knob.DIVISIONS, Knob.LABELS),
-            divisionsLabel = "Gridlines", divisionsRange = 2..16,
-            defaults = StampOptions(divisions = 6)
+            setOf(Knob.Y_AXIS, Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES),
+            defaults = StampOptions(yFrom = 0f, yTo = 10f, yStep = 2f, xName = "", yName = "")
         ),
         TIMELINE(
             "Timeline", Group.GRAPHS, 5f,
-            setOf(Knob.DIVISIONS, Knob.LABELS, Knob.RANGE),
-            divisionsLabel = "Marks", divisionsRange = 2..20,
-            defaults = StampOptions(divisions = 6, rangeFrom = 1900f, rangeTo = 2000f)
+            setOf(Knob.X_AXIS, Knob.TICKS, Knob.TICK_VALUES),
+            defaults = StampOptions(rangeFrom = 1900f, rangeTo = 2000f, step = 20f)
         ),
         CLOCK(
             "Clock face", Group.GRAPHS, 1f,
@@ -181,8 +229,14 @@ object Stamps {
         ),
 
         // ---- marking ----
-        CHECK("Tick", Group.MARKING, 1f, emptySet(), defaults = StampOptions(labels = false)),
-        CROSS("Cross", Group.MARKING, 1f, emptySet(), defaults = StampOptions(labels = false)),
+        CHECK(
+            "Tick", Group.MARKING, 1f, emptySet(),
+            defaults = StampOptions(labels = false, color = 0xFF2E7D32.toInt(), weight = 2f)
+        ),
+        CROSS(
+            "Cross", Group.MARKING, 1f, emptySet(),
+            defaults = StampOptions(labels = false, color = 0xFFC62828.toInt(), weight = 2f)
+        ),
         STAR(
             "Star", Group.MARKING, 1f,
             setOf(Knob.DIVISIONS),
@@ -271,8 +325,21 @@ object Stamps {
             LINED -> (2.2f - o.divisions * 0.06f).coerceIn(0.9f, 2f)
             CHECKLIST -> (2.6f - o.divisions * 0.12f).coerceIn(0.9f, 2.4f)
             STAFF -> if (o.variant == 1) 2.8f else 3.2f
+            // A graph is as wide as its ranges are, relative to each other, when both run in
+            // the same units per tick - so -5..5 against 0..10 is square and 0..20 by 0..5 is not.
+            AXES, COORD_GRID -> {
+                val cols = (o.rangeTo - o.rangeFrom) / o.step.coerceAtLeast(1e-6f)
+                val rows = (o.yTo - o.yFrom) / o.yStep.coerceAtLeast(1e-6f)
+                if (cols > 0f && rows > 0f && cols.isFinite() && rows.isFinite()) {
+                    (cols / rows).coerceIn(0.4f, 2.5f)
+                } else {
+                    baseAspect
+                }
+            }
             else -> baseAspect
         }
+
+        val isShape: Boolean get() = group == Group.SHAPES
     }
 
     /** Kept for callers that only need the natural proportions of a stamp's defaults. */
@@ -294,29 +361,92 @@ object Stamps {
             from = kind.defaults.rangeFrom
             to = kind.defaults.rangeTo
         }
+        var yFrom = o.yFrom
+        var yTo = o.yTo
+        if (!yFrom.isFinite() || !yTo.isFinite() || yTo <= yFrom) {
+            yFrom = kind.defaults.yFrom
+            yTo = kind.defaults.yTo
+        }
         return o.copy(
             divisions = divisions,
             variant = variant,
             filled = o.filled.coerceIn(0, divisions),
             rangeFrom = from,
-            rangeTo = to
+            rangeTo = to,
+            step = saneStep(o.step, to - from, kind.defaults.step),
+            yFrom = yFrom,
+            yTo = yTo,
+            yStep = saneStep(o.yStep, yTo - yFrom, kind.defaults.yStep),
+            weight = if (o.weight.isFinite()) o.weight.coerceIn(0.3f, 12f) else kind.defaults.weight,
+            size = if (o.size.isFinite() && o.size > 0f) o.size.coerceIn(8f, 4000f) else 0f,
+            // A name is a label, not a paragraph.
+            xName = o.xName.take(24),
+            yName = o.yName.take(24)
         )
     }
 
     /**
-     * Build a stamp inside [bounds], on [page].
-     * [nextId] mints ids so the result can be dropped straight into the document.
+     * A step that divides [span] into a drawable number of ticks.
+     *
+     * Zero, negative and non-numbers fall back; a step so fine it would draw thousands of ticks is
+     * widened to the most one axis will carry, rather than refused - "0 to 1000 in ones" is a
+     * reasonable thing to type, and a solid black bar is a poor answer to it.
+     */
+    private fun saneStep(step: Float, span: Float, fallback: Float): Float {
+        var s = if (step.isFinite() && step > 0f) step else fallback
+        if (!(s > 0f)) s = 1f
+        if (span / s > MAX_TICKS) s = span / MAX_TICKS
+        return s
+    }
+
+    /**
+     * How wide a label's box is drawn, generously.
+     *
+     * The box only positions the text - it is centred in it - but a box narrower than the text
+     * wraps it, which turned "-4" into a "-" over a "4" and split years in two. Too wide costs
+     * nothing, so this errs well on that side of any real font.
+     */
+    internal fun labelWidth(text: String, size: Float): Float =
+        max(size * 1.6f, size * 1.05f * text.length + 14f)
+
+    /**
+     * The values ticks fall on between [from] and [to], at multiples of [step].
+     *
+     * Multiples rather than counted from [from], so an axis from -3.5 still has a tick at 0 and
+     * the origin of a graph always lands on one.
+     */
+    fun tickValues(from: Float, to: Float, step: Float): List<Float> {
+        if (!(step > 0f) || !(to > from)) return emptyList()
+        val eps = step * 1e-4f
+        val first = kotlin.math.ceil(((from - eps) / step).toDouble()).toLong()
+        val out = ArrayList<Float>()
+        var k = first
+        while (out.size <= MAX_TICKS) {
+            val v = (k * step.toDouble()).toFloat()
+            if (v > to + eps) break
+            out.add(if (kotlin.math.abs(v) < eps) 0f else v)
+            k++
+        }
+        return out
+    }
+
+    /**
+     * Build a stamp inside [bounds], on [page], in its own colour and weight.
+     *
+     * [nextId] mints ids so the result can be dropped straight into the document. [group] tags
+     * every stroke as one stamp so it can be changed later; previews leave it null.
      */
     fun build(
         kind: Kind,
         bounds: Box,
         page: Int,
-        color: Int,
-        width: Float,
         options: StampOptions = kind.defaults,
+        group: String? = null,
         nextId: () -> String
     ): List<Stroke> {
         val o = sanitise(kind, options)
+        val color = o.color
+        val width = o.weight
         val now = System.currentTimeMillis()
         val out = ArrayList<Stroke>()
 
@@ -392,13 +522,26 @@ object Stamps {
          * visibly off their ticks.
          */
         fun label(text: String, cx: Float, top: Float, size: Float) {
-            val boxW = max(size * 1.2f, size * 0.62f * text.length + 6f)
+            val boxW = labelWidth(text, size)
             out.add(
                 Stroke(
                     id = nextId(), kind = StrokeKind.TEXT, color = color, baseWidth = 1f,
                     points = listOf(InkPoint(cx - boxW / 2f, top, 1f)),
                     text = text, textSize = size, boxWidth = boxW,
                     align = TextAlign.CENTER, pageIndex = page, updatedUtc = now
+                )
+            )
+        }
+
+        /** A label whose right edge is at [right], for numbers up the side of an axis. */
+        fun labelRight(text: String, right: Float, top: Float, size: Float) {
+            val boxW = labelWidth(text, size)
+            out.add(
+                Stroke(
+                    id = nextId(), kind = StrokeKind.TEXT, color = color, baseWidth = 1f,
+                    points = listOf(InkPoint(right - boxW, top, 1f)),
+                    text = text, textSize = size, boxWidth = boxW, padding = 1f,
+                    align = TextAlign.RIGHT, pageIndex = page, updatedUtc = now
                 )
             )
         }
@@ -469,72 +612,155 @@ object Stamps {
             }
         }
 
+        /**
+         * How many ticks to step over between numbers, so numbers never overlap.
+         *
+         * Thinned rather than dropped: an axis in ones from -20 to 20 on a small graph reads fine
+         * labelled every fifth tick, and reads as nothing at all with every number jammed in.
+         */
+        fun labelStride(spacing: Float, chars: Int, size: Float): Int {
+            val need = size * 0.62f * chars + size * 0.5f
+            if (spacing <= 0f) return Int.MAX_VALUE
+            val raw = kotlin.math.ceil((need / spacing).toDouble()).toInt().coerceAtLeast(1)
+            // Round up to a stride that reads as counting: 1, 2, 5, 10, 20, 50...
+            var nice = 1
+            val ladder = intArrayOf(1, 2, 5)
+            var scale = 1
+            while (true) {
+                for (m in ladder) {
+                    nice = m * scale
+                    if (nice >= raw) return nice
+                }
+                scale *= 10
+                if (scale > 100_000) return nice
+            }
+        }
+
+        /** Whether value [v] is one of the ticks that gets a number, counted from zero. */
+        fun multipleOfStride(v: Float, step: Float, stride: Int): Boolean {
+            if (stride <= 1) return true
+            val k = kotlin.math.round(v / step).toLong()
+            return k % stride == 0L
+        }
+
         when (kind) {
 
             // ---- maths -------------------------------------------------------
 
+            Kind.LINE -> out.add(
+                Stroke(
+                    id = nextId(), kind = StrokeKind.LINE, color = color, baseWidth = width,
+                    points = listOf(InkPoint(left, cy, width), InkPoint(right, cy, width)),
+                    dash = o.dash, pageIndex = page, updatedUtc = now
+                )
+            )
+
+            Kind.ARROW -> out.add(
+                Stroke(
+                    id = nextId(), kind = StrokeKind.ARROW, color = color, baseWidth = width,
+                    points = listOf(InkPoint(left, cy, width), InkPoint(right, cy, width)),
+                    dash = o.dash, pageIndex = page, updatedUtc = now
+                )
+            )
+
+            Kind.BOX, Kind.OVAL -> out.add(
+                Stroke(
+                    id = nextId(),
+                    kind = if (kind == Kind.BOX) StrokeKind.RECT else StrokeKind.ELLIPSE,
+                    color = color, baseWidth = width,
+                    points = listOf(InkPoint(left, top, width), InkPoint(right, bottom, width)),
+                    dash = o.dash, fill = o.fill, fillColor = color,
+                    pageIndex = page, updatedUtc = now
+                )
+            )
+
             Kind.AXES, Kind.COORD_GRID -> {
-                val firstQuadrant = o.variant == 1
-                val ox = if (firstQuadrant) left + w * 0.10f else cx
-                val oy = if (firstQuadrant) bottom - h * 0.10f else cy
-                val stepX = (right - ox) / o.divisions
-                val stepY = (oy - top) / o.divisions
+                // Positions come from values: where 0 falls between from and to is where an axis
+                // crosses, so a first-quadrant graph, a four-quadrant one and "x from -2 to 10"
+                // are one drawing with different numbers rather than three variants.
+                val xs = o.rangeFrom
+                val xe = o.rangeTo
+                val ys = o.yFrom
+                val ye = o.yTo
+                fun mapX(v: Float) = left + (v - xs) / (xe - xs) * w
+                fun mapY(v: Float) = bottom - (v - ys) / (ye - ys) * h
+                val ox = mapX(0f.coerceIn(xs, xe))
+                val oy = mapY(0f.coerceIn(ys, ye))
+                val xTicks = tickValues(xs, xe, o.step)
+                val yTicks = tickValues(ys, ye, o.yStep)
+                val spacingX = w * o.step / (xe - xs)
+                val spacingY = h * o.yStep / (ye - ys)
 
                 if (kind == Kind.COORD_GRID) {
                     // Gridlines first, so the axes sit on top of them rather than under.
-                    val back = if (firstQuadrant) 0 else o.divisions
-                    for (i in -back..o.divisions) {
-                        line(ox + stepX * i, top, ox + stepX * i, bottom, hair)
-                        line(left, oy - stepY * i, right, oy - stepY * i, hair)
-                    }
+                    xTicks.forEach { v -> line(mapX(v), top, mapX(v), bottom, hair) }
+                    yTicks.forEach { v -> line(left, mapY(v), right, mapY(v), hair) }
                 }
 
-                arrow(if (firstQuadrant) ox else left, oy, right, oy)
-                arrow(ox, if (firstQuadrant) oy else bottom, ox, top)
+                arrow(if (xs < 0f) left else ox, oy, right, oy)
+                arrow(ox, if (ys < 0f) bottom else oy, ox, top)
 
-                val tick = min(stepX, stepY) * 0.2f
-                for (i in 1..o.divisions) {
-                    line(ox + stepX * i, oy - tick, ox + stepX * i, oy + tick, thin)
-                    line(ox - tick, oy - stepY * i, ox + tick, oy - stepY * i, thin)
-                    if (!firstQuadrant) {
-                        line(ox - stepX * i, oy - tick, ox - stepX * i, oy + tick, thin)
-                        line(ox - tick, oy + stepY * i, ox + tick, oy + stepY * i, thin)
+                val tick = (min(w, h) * 0.025f).coerceAtMost(min(spacingX, spacingY) * 0.4f)
+                if (o.ticks) {
+                    xTicks.forEach { v ->
+                        if (v != 0f) line(mapX(v), oy - tick, mapX(v), oy + tick, thin)
+                    }
+                    yTicks.forEach { v ->
+                        if (v != 0f) line(ox - tick, mapY(v), ox + tick, mapY(v), thin)
                     }
                 }
-                if (o.labels) {
-                    labelAt("x", right - textSize * 1.4f, oy + tick + textSize * 0.2f, textSize)
-                    labelAt("y", ox + tick + textSize * 0.2f, top, textSize)
-                    labelAt("O", ox - textSize * 1.1f, oy + tick * 0.6f, textSize)
-                    // Numbers only when the ticks are far enough apart to carry them.
-                    if (stepX > textSize * 1.1f) {
-                        for (i in 1..o.divisions) {
-                            label(i.toString(), ox + stepX * i, oy + tick + 1f, textSize * 0.8f)
-                            if (!firstQuadrant) {
-                                label(
-                                    (-i).toString(), ox - stepX * i, oy + tick + 1f,
-                                    textSize * 0.8f
-                                )
-                            }
+                val valueSize = textSize * 0.72f
+                val below = if (o.ticks) tick else 0f
+                if (o.tickValues) {
+                    val xChars = xTicks.maxOfOrNull { num(it).length } ?: 1
+                    val everyX = labelStride(spacingX, xChars, valueSize)
+                    val everyY = labelStride(spacingY, 2, valueSize)
+                    xTicks.forEach { v ->
+                        if (v != 0f && multipleOfStride(v, o.step, everyX)) {
+                            label(num(v), mapX(v), oy + below + 1f, valueSize)
                         }
                     }
+                    yTicks.forEach { v ->
+                        if (v != 0f && multipleOfStride(v, o.yStep, everyY)) {
+                            labelRight(num(v), ox - below - 2f, mapY(v) - valueSize * 0.68f, valueSize)
+                        }
+                    }
+                    if (xs < 0f && 0f < xe && ys < 0f && 0f < ye) {
+                        labelAt("0", ox - valueSize * 1.2f, oy + below * 0.6f, valueSize)
+                    }
+                }
+                // Beyond the arrowheads, where a textbook puts them: inside the frame they sit on
+                // the gridlines and on whatever gets plotted.
+                if (o.xName.isNotBlank()) {
+                    labelAt(o.xName, right + textSize * 0.3f, oy - textSize * 0.7f, textSize)
+                }
+                if (o.yName.isNotBlank()) {
+                    label(o.yName, ox, top - textSize * 2.1f, textSize)
                 }
             }
 
-            Kind.NUMBER_LINE -> {
+            Kind.NUMBER_LINE, Kind.TIMELINE -> {
                 arrow(left, cy, right, cy)
-                arrow(right, cy, left, cy)
-                val step = w / o.divisions
-                val tick = h * 0.16f
-                val size = min(step * 0.62f, h * 0.24f).coerceAtLeast(4f)
+                if (kind == Kind.NUMBER_LINE) arrow(right, cy, left, cy)
+                // Inset so the first and last ticks sit inside the arrowheads rather than on them.
+                val inset = if (kind == Kind.NUMBER_LINE) w * 0.04f else 0f
+                val l = left + inset
                 val span = o.rangeTo - o.rangeFrom
-                for (i in 0..o.divisions) {
-                    val x = left + step * i
-                    line(x, cy - tick, x, cy + tick, thin)
-                    if (o.labels) {
-                        label(
-                            num(o.rangeFrom + span * i / o.divisions),
-                            x, cy + tick + size * 0.25f, size
-                        )
+                val usable = w - inset * 2f
+                fun mapX(v: Float) = l + (v - o.rangeFrom) / span * usable
+                val ticks = tickValues(o.rangeFrom, o.rangeTo, o.step)
+                val spacing = usable * o.step / span
+                val tick = h * 0.16f
+                val size = min(h * 0.22f, 22f).coerceAtLeast(4f)
+                if (o.ticks) ticks.forEach { v -> line(mapX(v), cy - tick, mapX(v), cy + tick, thin) }
+                if (o.tickValues) {
+                    val chars = ticks.maxOfOrNull { num(it).length } ?: 1
+                    val every = labelStride(spacing, chars, size)
+                    val below = if (o.ticks) tick else 0f
+                    ticks.forEach { v ->
+                        if (multipleOfStride(v, o.step, every)) {
+                            label(num(v), mapX(v), cy + below + size * 0.25f, size)
+                        }
                     }
                 }
             }
@@ -820,34 +1046,26 @@ object Stamps {
             Kind.BAR_AXES -> {
                 val ox = left + w * 0.14f
                 val oy = bottom - h * 0.12f
-                val step = (oy - top) / o.divisions
-                for (i in 1..o.divisions) {
-                    line(ox, oy - step * i, right, oy - step * i, hair)
-                    line(ox - min(w, h) * 0.02f, oy - step * i, ox, oy - step * i, thin)
-                    if (o.labels && step > textSize * 0.9f) {
-                        label(
-                            i.toString(), ox - textSize * 0.9f,
-                            oy - step * i - textSize * 0.6f, textSize * 0.8f
-                        )
+                val ys = o.yFrom
+                val ye = o.yTo
+                fun mapY(v: Float) = oy - (v - ys) / (ye - ys) * (oy - top)
+                val values = tickValues(ys, ye, o.yStep)
+                val spacing = (oy - top) * o.yStep / (ye - ys)
+                val every = labelStride(spacing, 2, textSize * 0.8f)
+                val tick = min(w, h) * 0.02f
+                values.forEach { v ->
+                    val y = mapY(v)
+                    if (v != ys) line(ox, y, right, y, hair)
+                    if (o.ticks) line(ox - tick, y, ox, y, thin)
+                    if (o.tickValues && multipleOfStride(v, o.yStep, every)) {
+                        val s2 = textSize * 0.8f
+                        labelRight(num(v), ox - tick - 2f, y - s2 * 0.68f, s2)
                     }
                 }
                 line(ox, top, ox, oy)
                 line(ox, oy, right, oy)
-            }
-
-            Kind.TIMELINE -> {
-                arrow(left, cy, right, cy)
-                val step = w / o.divisions
-                val tick = h * 0.18f
-                val size = min(step * 0.5f, h * 0.22f).coerceAtLeast(4f)
-                val span = o.rangeTo - o.rangeFrom
-                for (i in 0..o.divisions) {
-                    val x = left + step * i
-                    line(x, cy - tick, x, cy + tick, thin)
-                    if (o.labels) {
-                        label(num(o.rangeFrom + span * i / o.divisions), x, cy + tick + 1f, size)
-                    }
-                }
+                if (o.xName.isNotBlank()) label(o.xName, (ox + right) / 2f, oy + textSize * 0.3f, textSize)
+                if (o.yName.isNotBlank()) labelAt(o.yName, ox - tick, top - textSize * 1.5f, textSize)
             }
 
             Kind.CLOCK -> {
@@ -1140,6 +1358,129 @@ object Stamps {
                 dashed(fl + d, fb - d, fl + d, ft - d)
             }
         }
-        return out
+        if (group == null || out.isEmpty()) return out
+        val extent = reach(out) ?: return out
+        val tag = StampTag(
+            group = group,
+            kind = kind.name,
+            options = o,
+            box = listOf(bounds.left, bounds.top, bounds.right, bounds.bottom),
+            extent = listOf(extent.left, extent.top, extent.right, extent.bottom)
+        )
+        return out.map { it.copy(stamp = tag) }
+    }
+
+    // ---- stamps already on the page -----------------------------------------
+
+    /**
+     * The stamp [strokes] make up, when they are exactly one stamp and nothing else.
+     *
+     * Null for a mixed selection, for strokes from two stamps, and for anything spread over two
+     * pages - a pasted copy of a stamp keeps its group only until it is pasted, see [regroup].
+     */
+    fun stampOf(strokes: Collection<Stroke>): StampTag? {
+        val first = strokes.firstOrNull()?.stamp ?: return null
+        if (Kind.entries.none { it.name == first.kind }) return null
+        val page = strokes.first().pageIndex
+        return first.takeIf {
+            strokes.all { s -> s.stamp?.group == first.group && s.pageIndex == page }
+        }
+    }
+
+    /**
+     * How far a stamp's drawing reaches, leaving its labels out.
+     *
+     * Labels are measured by an estimate of their text, and scaling a stamp changes their type size
+     * without changing that estimate in step - so a reach that included them would drift a little
+     * further from the truth with every resize, and the stamp would creep across the page.
+     */
+    private fun reach(strokes: Collection<Stroke>): Box? {
+        val drawn = strokes.filter { it.kind != StrokeKind.TEXT }.ifEmpty { strokes.toList() }
+        return drawn.map { it.rawBoundsBox() }.reduceOrNull { a, b -> a.union(b) }
+    }
+
+    fun kindOf(tag: StampTag): Kind? = Kind.entries.firstOrNull { it.name == tag.kind }
+
+    /**
+     * Where the stamp's drawing box is now, after it has been moved or resized as strokes.
+     *
+     * The tag remembers both the box the stamp was built into and how far its strokes actually
+     * reached then (labels hang outside the box). Comparing that reach with the strokes' reach
+     * now says how the whole thing has been moved and scaled, and the same change applied to the
+     * box says where to build it again - without every move and resize on two platforms having
+     * to remember to keep the tag up to date.
+     */
+    fun currentBox(tag: StampTag, strokes: Collection<Stroke>): Box? {
+        if (strokes.isEmpty() || tag.box.size != 4 || tag.extent.size != 4) return null
+        val now = reach(strokes) ?: return null
+        val then = Box(tag.extent[0], tag.extent[1], tag.extent[2], tag.extent[3])
+        if (then.width <= 0f || then.height <= 0f) return null
+        val sx = now.width / then.width
+        val sy = now.height / then.height
+        fun x(v: Float) = now.left + (v - then.left) * sx
+        fun y(v: Float) = now.top + (v - then.top) * sy
+        return Box(x(tag.box[0]), y(tag.box[1]), x(tag.box[2]), y(tag.box[3]))
+    }
+
+    /**
+     * The same stamp built again with [options], where it now stands.
+     *
+     * New ids throughout, so this is an ordinary replace as far as undo and sync are concerned.
+     * A line or arrow keeps the direction it was dragged to by restyling its stroke in place
+     * rather than rebuilding it, which would lay it flat again.
+     */
+    fun rebuild(
+        strokes: List<Stroke>,
+        options: StampOptions,
+        nextId: () -> String
+    ): List<Stroke> {
+        val tag = stampOf(strokes) ?: return strokes
+        val kind = kindOf(tag) ?: return strokes
+        val o = sanitise(kind, options)
+        if (kind.isShape) {
+            val now = System.currentTimeMillis()
+            return strokes.map {
+                it.copy(
+                    id = nextId(), color = o.color, fillColor = o.color, baseWidth = o.weight,
+                    points = it.points.map { p -> p.copy(width = o.weight) },
+                    dash = o.dash,
+                    fill = if (kind == Kind.BOX || kind == Kind.OVAL) o.fill else it.fill,
+                    stamp = tag.copy(options = o), updatedUtc = now
+                )
+            }
+        }
+        val box = currentBox(tag, strokes) ?: return strokes
+        return build(kind, box, strokes.first().pageIndex, o, tag.group, nextId)
+    }
+
+    /**
+     * Give pasted or duplicated stamps groups of their own.
+     *
+     * Two copies of one stamp sharing a group would be edited as one stamp spread over both.
+     */
+    fun regroup(strokes: List<Stroke>, newGroup: () -> String): List<Stroke> {
+        val fresh = HashMap<String, String>()
+        return strokes.map { s ->
+            val tag = s.stamp ?: return@map s
+            s.copy(stamp = tag.copy(group = fresh.getOrPut(tag.group, newGroup)))
+        }
     }
 }
+
+/**
+ * What a stroke that belongs to a stamp remembers about it.
+ *
+ * The kind by name rather than as the enum, so a document carrying a stamp a later build added
+ * still opens on this one - it is just not editable here.
+ */
+@Serializable
+data class StampTag(
+    /** Shared by every stroke of one placed stamp. */
+    val group: String,
+    val kind: String,
+    val options: Stamps.StampOptions,
+    /** The box it was built into: left, top, right, bottom. */
+    val box: List<Float>,
+    /** How far its strokes reached when it was built, which the box is measured against. */
+    val extent: List<Float>
+)

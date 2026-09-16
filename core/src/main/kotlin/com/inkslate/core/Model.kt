@@ -262,6 +262,8 @@ data class Stroke(
     val cropTop: Float = 0f,
     val cropRight: Float = 1f,
     val cropBottom: Float = 1f,
+    /** The stamp this stroke is part of, so the stamp can be changed after it is placed. */
+    val stamp: StampTag? = null,
     val pageIndex: Int = 0,
     /** Wall-clock millis of the last edit. Last-writer-wins key when two devices merge. */
     val updatedUtc: Long = 0L

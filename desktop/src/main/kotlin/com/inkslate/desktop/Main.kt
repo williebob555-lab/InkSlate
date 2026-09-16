@@ -111,6 +111,7 @@ private fun ui() = application {
                     KeyAction.ZOOM_IN -> shortcuts.fire(shortcuts.zoomIn)
                     KeyAction.ZOOM_OUT -> shortcuts.fire(shortcuts.zoomOut)
                     KeyAction.RESET_ZOOM -> shortcuts.fire(shortcuts.resetZoom)
+                    KeyAction.SHAPES -> shortcuts.fire(shortcuts.shapes)
                     KeyAction.BACK -> shortcuts.fire(navigation.back)
                     null -> false
                 }
@@ -177,6 +178,7 @@ class Shortcuts {
     var zoomIn: (() -> Unit)? = null
     var zoomOut: (() -> Unit)? = null
     var resetZoom: (() -> Unit)? = null
+    var shapes: (() -> Unit)? = null
 
     /**
      * Run a binding if the screen on top set one, and report whether the key was consumed.

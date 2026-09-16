@@ -247,8 +247,16 @@ fun DocumentCanvas(
     var live by remember { mutableStateOf<List<com.inkslate.core.InkPoint>>(emptyList()) }
     var livePage by remember { mutableStateOf(0) }
     var pending by remember { mutableStateOf<Stroke?>(null) }
-    var pendingStamp by remember { mutableStateOf<List<Stroke>>(emptyList()) }
     var marquee by remember { mutableStateOf<InkBox?>(null) }
+
+    /**
+     * Where the pointer is hovering, while something is in hand to be placed.
+     *
+     * Only written while an item is in hand, so an ordinary mouse move over the page costs no
+     * redraw at all; with one in hand, a faint copy of it follows the pointer, which is the one
+     * thing a mouse can offer that a pen on glass cannot: seeing where it will land before it does.
+     */
+    var hover by remember { mutableStateOf<Offset?>(null) }
 
     /**
      * The pages as they are now, readable from inside a gesture that is already running.
@@ -266,6 +274,19 @@ fun DocumentCanvas(
     /** Which page a document point belongs to: the one under it, or the nearest. */
     fun slotAt(x: Float, y: Float): PageSlot? = pages.value.let { current ->
         current.firstOrNull { it.contains(x, y) } ?: current.minByOrNull { it.distanceSq(x, y) }
+    }
+
+    /** The item in hand as a click at the hover point would place it, if that is on [slot]. */
+    fun ghostFor(slot: PageSlot): List<Stroke> {
+        val at = hover ?: return emptyList()
+        val (kind, o) = tools.armedStamp ?: return emptyList()
+        val doc = viewport.screenToDoc(at)
+        if (slotAt(doc.x, doc.y)?.index != slot.index) return emptyList()
+        val p = slot.toInk(doc.x, doc.y)
+        var n = 0
+        return com.inkslate.core.Stamps.build(
+            kind, placementBox(kind, o, p.x, p.y, slot.width, slot.height), slot.index, o
+        ) { "ghost-${n++}" }.map { it.copy(opacity = 0.35f) }
     }
 
     // ---- rendering the pages -------------------------------------------------
@@ -451,6 +472,21 @@ fun DocumentCanvas(
             // be carried out to the screen and compared with the cursor. See PointerDiagnostics.
             .onGloballyPositioned { PointerDiagnostics.canvasAt(it.positionInWindow()) }
             .pointerInput(Unit) { wheel(viewport) }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull() ?: continue
+                        val wanted = when {
+                            !tools.hasArmed -> null
+                            event.type == PointerEventType.Exit -> null
+                            change.pressed -> null
+                            else -> change.position
+                        }
+                        if (wanted != hover) hover = wanted
+                    }
+                }
+            }
             .pointerInput(tools.bindings) { middleDragPan(viewport, tools) }
             // Deliberately not keyed on the zoom. Changing a key tears the gesture detector down
             // and builds it again, which at one key per frame of a zoom is most of the work of
@@ -513,7 +549,6 @@ fun DocumentCanvas(
                         onLive = { live = it },
                         onPending = { pending = it },
                         onMarquee = { marquee = it },
-                        onPendingStamp = { pendingStamp = it },
                         onStampPlaced = onStampPlaced,
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
@@ -557,8 +592,8 @@ fun DocumentCanvas(
                                 selection = selection,
                                 live = if (livePage == slot.index) live else emptyList(),
                                 pending = pending?.takeIf { it.pageIndex == slot.index },
-                                pendingStamp = pendingStamp.filter { it.pageIndex == slot.index },
                                 marquee = marquee?.takeIf { livePage == slot.index },
+                                ghost = ghostFor(slot),
                                 tools = tools,
                                 textMeasurer = textMeasurer,
                                 pageFilter = pageFilter,
@@ -770,7 +805,8 @@ private fun DrawScope.drawPage(
     selection: Set<String>,
     live: List<com.inkslate.core.InkPoint>,
     pending: Stroke?,
-    pendingStamp: List<Stroke>,
+    /** A faint copy of the item in hand, where a click would put it. */
+    ghost: List<Stroke>,
     marquee: InkBox?,
     tools: ToolState,
     textMeasurer: TextMeasurer,
@@ -865,9 +901,7 @@ private fun DrawScope.drawPage(
             )
         }
         pending?.let { drawStroke(it, cached = false) }
-        pendingStamp.forEach {
-            if (it.kind != Stroke.Kind.TEXT) drawStroke(it, cached = false)
-        }
+        ghost.forEach { if (it.kind != Stroke.Kind.TEXT) drawStroke(it, cached = false) }
 
         marquee?.let { m ->
             drawRect(

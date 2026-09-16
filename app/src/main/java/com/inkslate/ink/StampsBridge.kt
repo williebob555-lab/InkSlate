@@ -16,16 +16,14 @@ fun buildStamp(
     kind: Stamps.Kind,
     bounds: RectF,
     page: Int,
-    color: Int,
-    width: Float,
     options: Stamps.StampOptions = kind.defaults,
+    group: String? = null,
     nextId: () -> String
 ): List<Stroke> = Stamps.build(
     kind,
     Box(bounds.left, bounds.top, bounds.right, bounds.bottom),
     page,
-    color,
-    width,
     options,
+    group,
     nextId
 )

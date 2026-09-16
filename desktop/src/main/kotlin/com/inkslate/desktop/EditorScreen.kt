@@ -173,8 +173,17 @@ fun EditorScreen(
     var editingText by remember { mutableStateOf<Stroke?>(null) }
     var newTextAt by remember { mutableStateOf<Stroke?>(null) }
     var pickingColour by remember { mutableStateOf(false) }
-    var stampsOpen by remember { mutableStateOf(false) }
-    var symbolsOpen by remember { mutableStateOf(false) }
+    // The shapes tray, and what is open off it. See ShapeTray and PageGestures.
+    var trayOpen by remember { mutableStateOf(false) }
+    var traySymbols by remember { mutableStateOf(false) }
+    var libraryOpen by remember { mutableStateOf(false) }
+    /** The kind whose settings are open for the next one placed, or null. */
+    var armedSettings by remember { mutableStateOf<com.inkslate.core.Stamps.Kind?>(null) }
+    /** The stamp on the page whose settings are open, and the strokes it was when they opened. */
+    var placedSettings by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
+    var stampEditBefore by remember { mutableStateOf<List<Stroke>>(emptyList()) }
+    // A symbol clicked after the last string was placed starts a new string.
+    var symbolPlaced by remember { mutableStateOf(false) }
     var pagesOpen by remember { mutableStateOf(false) }
     var versionsOpen by remember { mutableStateOf(false) }
     var exportOpen by remember { mutableStateOf(false) }
@@ -186,7 +195,6 @@ fun EditorScreen(
     var pageReadFor by remember(file) { mutableStateOf<com.inkslate.core.Box?>(null) }
     // Restored once per open, or every recomposition would drag the view back.
     var positionRestored by remember(file) { mutableStateOf(false) }
-    var armedStampLabel by remember { mutableStateOf<String?>(null) }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var controlsOpen by remember { mutableStateOf(false) }
@@ -895,15 +903,67 @@ fun EditorScreen(
         selection = emptySet()
     }
 
+    /** Put a shape or stamp in hand, with its own settings, and move it to the front of the tray. */
+    fun armKind(kind: com.inkslate.core.Stamps.Kind) {
+        tools.editStampShelf { it.used(kind) }
+        tools.arm(kind, tools.stampShelf.optionsFor(kind))
+        traySymbols = false
+    }
+
+    /** Opening the tray puts the last shape back in hand, so "another one of those" is one click. */
+    fun openTray() {
+        trayOpen = true
+        traySymbols = false
+        if (!tools.hasArmed) tools.stampShelf.lastKind?.let(::armKind)
+    }
+
+    fun closeTray() {
+        tools.disarm()
+        trayOpen = false
+        traySymbols = false
+        armedSettings = null
+    }
+
+    /** Close the settings of a stamp on the page, recording everything changed as one undo. */
+    fun endPlacedSettings() {
+        if (placedSettings == null) return
+        placedSettings = null
+        val before = stampEditBefore
+        stampEditBefore = emptyList()
+        // By group, not by selection: this runs when the selection has just moved elsewhere.
+        val first = before.firstOrNull()
+        val group = first?.stamp?.group
+        val after = strokes.filter { it.stamp?.group == group && it.pageIndex == first?.pageIndex }
+        if (before.isNotEmpty() && before != after) {
+            pushOp(Op(before, after))
+            dirty = true
+        }
+    }
+
+    /**
+     * Build the stamp being changed again with [options], where it stands.
+     *
+     * Applied straight to the page without an undo entry each time; closing the settings records
+     * the whole change as one.
+     */
+    fun previewStampEdit(options: com.inkslate.core.Stamps.StampOptions) {
+        val current = strokes.filter { it.id in selection }
+        if (com.inkslate.core.Stamps.stampOf(current) == null) return
+        val rebuilt = com.inkslate.core.Stamps.rebuild(current, options, ::nextId)
+        if (rebuilt === current) return
+        strokes.applyEdit(current, rebuilt)
+        selection = rebuilt.map { it.id }.toSet()
+    }
+
     fun duplicateSelection() {
         val before = selected()
         if (before.isEmpty()) return
         val now = System.currentTimeMillis()
         // Offset a little, or the copy hides exactly on top of the original and looks like
         // nothing happened.
-        val copies = before.map {
-            it.copy(id = nextId(), updatedUtc = now).movedBy(12f, 12f, now)
-        }
+        val copies = com.inkslate.core.Stamps.regroup(
+            before.map { it.copy(id = nextId(), updatedUtc = now).movedBy(12f, 12f, now) }
+        ) { nextId() }
         strokes.addAll(copies)
         pushOp(Op.added(copies))
         selection = copies.map { it.id }.toSet()
@@ -923,9 +983,11 @@ fun EditorScreen(
         }
         val now = System.currentTimeMillis()
         val target = page
-        val pasted = from.map {
-            it.copy(id = nextId(), pageIndex = target, updatedUtc = now).movedBy(16f, 16f, now)
-        }
+        val pasted = com.inkslate.core.Stamps.regroup(
+            from.map {
+                it.copy(id = nextId(), pageIndex = target, updatedUtc = now).movedBy(16f, 16f, now)
+            }
+        ) { nextId() }
         strokes.addAll(pasted)
         pushOp(Op.added(pasted))
         selection = pasted.map { it.id }.toSet()
@@ -1254,12 +1316,22 @@ fun EditorScreen(
     shortcuts.zoomIn = { viewport.zoomBy(1.2f, viewport.centreOfView()) }
     shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
     shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
+    shortcuts.shapes = { if (trayOpen) closeTray() else openTray() }
+    // A stroke put the item in hand away: the tray has done its job and folds out of the way.
+    tools.onPutAway = {
+        trayOpen = false
+        traySymbols = false
+        armedSettings = null
+    }
     navigation.back = {
         // Escape steps back out of one thing at a time, innermost first. Focus mode before the
         // document especially: hitting Escape to get the toolbars back and having the document
         // close instead is the kind of surprise that costs an unsaved minute.
         when {
             immersive -> immersive = false
+            placedSettings != null -> endPlacedSettings()
+            armedSettings != null -> armedSettings = null
+            tools.hasArmed -> closeTray()
             selection.isNotEmpty() -> selection = emptySet()
             else -> leave()
         }
@@ -1505,14 +1577,57 @@ fun EditorScreen(
                         onToggleBookmark = ::toggleBookmark
                     )
                 }
+                if (trayOpen) {
+                    // Read so the tray follows what is in hand, which is not itself Compose state.
+                    @Suppress("UNUSED_VARIABLE") val tick = tools.armedTick
+                    ShapeTray(
+                        shelf = tools.stampShelf,
+                        armed = tools.armedStamp?.first,
+                        armedText = tools.armedText,
+                        symbols = traySymbols,
+                        onArm = ::armKind,
+                        onDisarm = { tools.disarm() },
+                        onOpenLibrary = { libraryOpen = true },
+                        onOpenSettings = {
+                            tools.armedStamp?.first?.let { kind ->
+                                endPlacedSettings()
+                                armedSettings = kind
+                            }
+                        },
+                        onShowSymbols = { traySymbols = it },
+                        onSymbol = { sym ->
+                            val held = tools.armedText
+                            tools.armText(if (held == null || symbolPlaced) sym else held + sym)
+                            symbolPlaced = false
+                        },
+                        onBackspace = {
+                            val held = tools.armedText
+                            if (held != null) {
+                                if (held.codePointCount(0, held.length) <= 1) {
+                                    tools.disarm()
+                                } else {
+                                    tools.armText(held.substring(0, held.offsetByCodePoints(held.length, -1)))
+                                }
+                            }
+                        },
+                        onClose = ::closeTray
+                    )
+                }
+                val shapeTool = remember { mutableStateOf(tools.active.tool) }
                 ToolBar(
                     state = tools,
                     selectionCount = selection.size,
+                    shapesOpen = trayOpen,
                     actions = ToolBarActions(
                         onChanged = {
                             // Leaving the select tool is also leaving the selection; a frame
                             // around something you can no longer move is just clutter.
                             if (tools.active.tool != Tool.SELECT) selection = emptySet()
+                            // Picking another tool puts a shape away; changing the pen does not.
+                            if (tools.active.tool != shapeTool.value) {
+                                shapeTool.value = tools.active.tool
+                                if (tools.hasArmed) closeTray()
+                            }
                         },
                         onUndo = ::undoOnce,
                         onRedo = ::redoOnce,
@@ -1540,9 +1655,15 @@ fun EditorScreen(
                         onPaste = ::paste,
                         canPaste = Clipboard.contents.isNotEmpty(),
                         onPickCustomColour = { pickingColour = true },
-                        onInsertStamp = { stampsOpen = true },
+                        onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                        onEditStamp = com.inkslate.core.Stamps.stampOf(selected())?.let { tag ->
+                            {
+                                armedSettings = null
+                                stampEditBefore = selected()
+                                placedSettings = tag
+                            }
+                        },
                         onToggleRuler = ::toggleRuler,
-                        onInsertSymbol = { symbolsOpen = true },
                         onInsertPicture = ::importPicture,
                         onCapture = { tools.edit { it.tool = com.inkslate.core.Tool.REGION } },
                         onEditPressureCurve = { pressureCurveOpen = true },
@@ -1588,7 +1709,17 @@ fun EditorScreen(
                     onPageChanged = { page = it },
                     strokes = strokes,
                     selection = selection,
-                    onSelection = { selection = it },
+                    onSelection = {
+                        selection = it
+                        // Selecting something else closes the settings of the stamp that was
+                        // being changed, as one undo step.
+                        val group = placedSettings?.group
+                        if (group != null &&
+                            com.inkslate.core.Stamps.stampOf(strokes.filter { s -> s.id in it })?.group != group
+                        ) {
+                            endPlacedSettings()
+                        }
+                    },
                     tools = tools,
                     textMeasurer = textMeasurer,
                     pageFilter = pageFilter,
@@ -1609,7 +1740,7 @@ fun EditorScreen(
                     // A thumb button, by default; whatever the table says otherwise.
                     onUndo = ::undoOnce,
                     onRedo = ::redoOnce,
-                    onStampPlaced = { armedStampLabel = null },
+                    onStampPlaced = { symbolPlaced = true },
                     onDrew = { drawn ->
                         // Growth is free while drawing: the extra room is a rectangle in memory
                         // and the paper outside the page is painted rather than written. It
@@ -1657,6 +1788,43 @@ fun EditorScreen(
                         )
                     }
                 )
+                armedSettings?.let { kind ->
+                    StampSettingsPanel(
+                        kind = kind,
+                        options = tools.stampShelf.optionsFor(kind),
+                        subtitle = "For the next one you place",
+                        editKey = "armed:" + kind.name,
+                        preview = true,
+                        recentColours = tools.customColors,
+                        onChange = { o ->
+                            tools.editStampShelf { it.withOptions(kind, o) }
+                            if (tools.armedStamp?.first == kind) tools.arm(kind, tools.stampShelf.optionsFor(kind))
+                        },
+                        onDone = { armedSettings = null },
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
+                }
+                placedSettings?.let { tag ->
+                    com.inkslate.core.Stamps.kindOf(tag)?.let { kind ->
+                        StampSettingsPanel(
+                            kind = kind,
+                            options = tag.options,
+                            subtitle = "This one, on the page - and the next one you place",
+                            editKey = "placed:" + tag.group,
+                            preview = false,
+                            recentColours = tools.customColors,
+                            onChange = { o ->
+                                previewStampEdit(o)
+                                tools.editStampShelf {
+                                    it.withOptions(kind, o.copy(size = it.optionsFor(kind).size))
+                                }
+                                dirty = true
+                            },
+                            onDone = ::endPlacedSettings,
+                            modifier = Modifier.align(Alignment.BottomCenter)
+                        )
+                    }
+                }
             }
 
             // The app bar is gone in focus mode, so this is the only way back out.
@@ -1765,63 +1933,14 @@ fun EditorScreen(
         )
     }
 
-    if (symbolsOpen) {
-        SymbolPaletteDialog(
-            onDismiss = { symbolsOpen = false },
-            onInsert = { text ->
-                symbolsOpen = false
-                // Placed at the top-left of what is in view, which is where the eye is: a symbol
-                // dropped at the page origin on a document scrolled halfway down is a symbol you
-                // have to go and find.
-                val doc = viewport.screenToDoc(
-                    androidx.compose.ui.geometry.Offset(
-                        viewport.viewSize.width * 0.35f,
-                        viewport.viewSize.height * 0.35f
-                    )
-                )
-                val src = source
-                val dim = src?.pageDim(page)
-                val extents = if (src == null) emptyList() else (0 until src.pageCount).map {
-                    val d = src.pageDim(it)
-                    com.inkslate.core.PageExtent(d.width, d.height)
-                }
-                val origin = com.inkslate.core.PageArranger
-                    .arrange(extents, layout, page)
-                    .getOrNull(page) ?: (0f to 0f)
-                val placed = Stroke(
-                    id = nextId(),
-                    kind = Stroke.Kind.TEXT,
-                    color = tools.active.color,
-                    baseWidth = 1f,
-                    points = listOf(
-                        InkPoint(
-                            (doc.x - origin.first).coerceIn(0f, (dim?.width ?: 612f) - 20f),
-                            (doc.y - origin.second).coerceIn(0f, (dim?.height ?: 792f) - 20f),
-                            1f
-                        )
-                    ),
-                    text = text,
-                    textSize = tools.active.textSize.coerceAtLeast(16f),
-                    pageIndex = page,
-                    updatedUtc = System.currentTimeMillis()
-                )
-                strokes.add(placed)
-                pushOp(Op.added(placed))
-                selection = setOf(placed.id)
-                tools.edit { it.tool = com.inkslate.core.Tool.SELECT }
-            }
-        )
-    }
-
-    if (stampsOpen) {
-        StampPicker(
-            colour = tools.active.color,
-            onDismiss = { stampsOpen = false },
-            onPickShape = { tool -> tools.edit { it.tool = tool } },
-            onPick = { kind, options ->
-                tools.armedStamp = kind to options
-                armedStampLabel = kind.label
-                stampsOpen = false
+    if (libraryOpen) {
+        StampLibrary(
+            shelf = tools.stampShelf,
+            onDismiss = { libraryOpen = false },
+            onTogglePin = { kind -> tools.editStampShelf { it.togglePin(kind) } },
+            onPick = { kind ->
+                libraryOpen = false
+                armKind(kind)
             }
         )
     }

@@ -46,14 +46,18 @@ off and taking the next stable release puts you back on the ordinary channel.
 - Palm rejection on the tablet: once a stylus is on the glass, skin contacts are ignored
 - Separate pen and finger settings, and two more for a stylus barrel button held down
 - Two-finger pan and zoom that never leaves a mark, with momentum scrolling
-- Shape tidying: rough circles, lines and boxes become clean ones
 - A ruler with a protractor readout that ink snaps to
 
 **Objects**
-- Lines, arrows, rectangles, ellipses, and tables with editable cells
+- A shapes tray over the toolbar: pick a shape and every tap places one; start writing and it
+  puts itself away. Line, arrow, box and oval, your pinned and recent stamps, and the symbols
+- Tables with editable cells
 - Text boxes with font, size, colour, alignment, wrapping, background and border
-- A maths symbol palette, about 120 characters, placed as real text
-- Stamps: axes, number line, grid, unit circle, triangle, brace, music staff and more
+- About 120 maths symbols, placed as real text; tap several to build one string
+- Stamps: graphs, number line, grid, unit circle, triangle, brace, music staff and more - each
+  with its own colour and line weight, and graphs with their own ranges, steps, tick marks,
+  numbers and axis names
+- Select a stamp on the page to change its settings in place; resizing one rebuilds it cleanly
 - Region capture: box a figure in the textbook and drop it in as a movable object
 - Marquee and tap selection; move, resize, rotate; cut, copy and paste between documents
 
@@ -69,7 +73,9 @@ off and taking the next stable release puts you back on the ordinary channel.
 - Browses your storage directly, with thumbnails that already show your ink
 - Blank documents: ruled, grid, dot, graph, Cornell, music, isometric, up to whiteboard size
 - Canvas documents that grow as you write past an edge, and stay ordinary PDFs while doing it
-- Export the whole document or a page range; version history, with restore
+- Export the whole document, a page range or the pages picked in the pages view - to wherever
+  you choose - and pictures as PNG or PDF; version history, with restore
+- Pick several pages at once to copy, remove, turn, move or export them
 - Opens documents sent from Gmail, Canvas or Drive
 
 ---

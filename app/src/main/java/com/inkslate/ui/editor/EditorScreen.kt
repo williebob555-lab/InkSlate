@@ -195,7 +195,6 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     /** A change the user chose to leave alone, so it is not raised again. */
     var ignoredStamp by remember { mutableStateOf("") }
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
-    var symbolPaletteOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var searchHits by remember { mutableStateOf<List<SearchHit>>(emptyList()) }
@@ -222,12 +221,24 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     // `dirty` cannot answer this: autosave clears it, and the document is only written on an
     // explicit save or on the way out.
     var unbaked by remember { mutableStateOf(false) }
-    var stampPickerOpen by remember { mutableStateOf(false) }
+    // The shapes tray, and what is open off it. See ShapeTray and DrawingView.Placement.
+    var trayOpen by remember { mutableStateOf(false) }
+    var traySymbols by remember { mutableStateOf(false) }
+    var libraryOpen by remember { mutableStateOf(false) }
+    /** The kind whose settings are open for the next one placed, or null. */
+    var armedSettings by remember { mutableStateOf<com.inkslate.core.Stamps.Kind?>(null) }
+    /** The stamp on the page whose settings are open, or null. */
+    var placedSettings by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
+    var selectedStamp by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
+    // Set just before the tray itself puts an item down, so that is not mistaken for a stroke
+    // putting it away - which folds the tray.
+    var trayDisarming by remember { mutableStateOf(false) }
+    // A symbol tapped after the last string was placed starts a new string.
+    var symbolPlaced by remember { mutableStateOf(false) }
     // Whatever is currently waiting to be placed, mirrored out of the drawing surface so the
     // banner and the toolbar can react to it.
     var armedItem by remember { mutableStateOf<DrawingView.Placement?>(null) }
     var colourPickerOpen by remember { mutableStateOf(false) }
-    var armedSymbol by remember { mutableStateOf<String?>(null) }
     var conflictNotice by remember { mutableStateOf<String?>(null) }
     var exportOpen by remember { mutableStateOf(false) }
     /** Set when the file's rules say to ask what pressing Save should produce. */
@@ -1002,6 +1013,37 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
      * extra copy of a file that has just been written anyway - which is a fair price for one code
      * path instead of three.
      */
+    /** Put a shape or stamp in hand, with its own settings, and move it to the front of the tray. */
+    fun armKind(kind: com.inkslate.core.Stamps.Kind) {
+        tools.editStampShelf { it.used(kind) }
+        drawingView.value?.armStamp(kind, tools.stampOptionsFor(kind))
+        traySymbols = false
+    }
+
+    /** Opening the tray puts the last shape back in hand, so "another one of those" is one tap. */
+    fun openTray() {
+        trayOpen = true
+        traySymbols = false
+        if (armedItem == null) tools.stampShelf.lastKind?.let(::armKind)
+    }
+
+    fun closeTray() {
+        trayDisarming = true
+        if (armedItem !is DrawingView.Placement.ImageItem) drawingView.value?.disarmPlacement()
+        trayDisarming = false
+        trayOpen = false
+        traySymbols = false
+        armedSettings = null
+    }
+
+    /** Close the settings of a stamp on the page, recording everything changed as one undo. */
+    fun endPlacedSettings() {
+        if (placedSettings == null) return
+        placedSettings = null
+        drawingView.value?.endStampEdit()
+        dirty = true; undoTick++
+    }
+
     fun runExport(request: ExportRequest) {
         val d = doc ?: return
         syncPage()
@@ -1594,20 +1636,61 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             }
                         )
                     }
+                    if (trayOpen) {
+                        val placement = armedItem
+                        ShapeTray(
+                            shelf = tools.stampShelf,
+                            armed = (placement as? DrawingView.Placement.StampItem)?.kind,
+                            armedText = (placement as? DrawingView.Placement.TextItem)?.text,
+                            symbols = traySymbols,
+                            onArm = ::armKind,
+                            onDisarm = {
+                                trayDisarming = true
+                                drawingView.value?.disarmPlacement()
+                                trayDisarming = false
+                            },
+                            onOpenLibrary = { libraryOpen = true },
+                            onOpenSettings = {
+                                (placement as? DrawingView.Placement.StampItem)?.let {
+                                    endPlacedSettings()
+                                    armedSettings = it.kind
+                                }
+                            },
+                            onShowSymbols = { traySymbols = it },
+                            onSymbol = { sym ->
+                                val held = (armedItem as? DrawingView.Placement.TextItem)?.text
+                                val text = if (held == null || symbolPlaced) sym else held + sym
+                                symbolPlaced = false
+                                drawingView.value?.armText(text)
+                            },
+                            onBackspace = {
+                                val held = (armedItem as? DrawingView.Placement.TextItem)?.text
+                                if (held != null) {
+                                    val cut = if (held.codePointCount(0, held.length) <= 1) ""
+                                    else held.substring(0, held.offsetByCodePoints(held.length, -1))
+                                    trayDisarming = true
+                                    if (cut.isEmpty()) drawingView.value?.disarmPlacement()
+                                    else drawingView.value?.armText(cut)
+                                    trayDisarming = false
+                                }
+                            },
+                            onClose = ::closeTray
+                        )
+                    }
                     ToolBar(
                         state = tools,
                         selectionCount = selectionCount,
                         canCrop = canCrop,
                         cropping = cropping,
+                        shapesOpen = trayOpen,
                         actions = ToolBarActions(
                             onChanged = {
+                                val before = drawingView.value?.tool
                                 tools.applyTo(drawingView.value)
-                                // choosing any other tool means the symbol is no longer wanted
-                                if (tools.active.tool != Tool.TEXT && armedSymbol != null) {
-                                    armedSymbol = null
+                                // Picking another tool puts a shape away; changing the pen's
+                                // colour or width does not.
+                                if (before != null && before != drawingView.value?.tool) {
                                     drawingView.value?.disarmPlacement()
-                                } else if (armedSymbol != null) {
-                                    drawingView.value?.armText(armedSymbol!!)
                                 }
                             },
                             onUndo = { drawingView.value?.undo(); dirty = true; undoTick++ },
@@ -1654,9 +1737,15 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                 tools.setActionFor(tools.activeMode, action)
                                 tools.applyTo(drawingView.value)
                             },
-                            onInsertSymbol = { symbolPaletteOpen = true },
                             onEditPressureCurve = { pressureCurveOpen = true },
-                            onInsertStamp = { stampPickerOpen = true },
+                            onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                            onEditStamp = selectedStamp?.let { tag ->
+                                {
+                                    armedSettings = null
+                                    drawingView.value?.beginStampEdit()
+                                    placedSettings = tag
+                                }
+                            },
                             onInsertPicture = {
                                 runCatching { picturePicker.launch("image/*") }.onFailure {
                                     scope.launch {
@@ -1808,9 +1897,33 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             view.onSelectionChanged = {
                                 selectionCount = it
                                 canCrop = view.croppableSelection()
+                                val stamp = view.selectedStamp()
+                                selectedStamp = stamp
+                                // Selecting something else closes the settings of the stamp
+                                // that was being changed, as one undo step.
+                                if (placedSettings != null && stamp?.group != placedSettings?.group) {
+                                    endPlacedSettings()
+                                }
+                                if (armedItem != null) symbolPlaced = true
+                            }
+                            view.onStampSized = { kind, width ->
+                                tools.editStampShelf {
+                                    it.withOptions(kind, it.optionsFor(kind).copy(size = width))
+                                }
+                                val held = armedItem as? DrawingView.Placement.StampItem
+                                if (held?.kind == kind) view.armStamp(kind, tools.stampOptionsFor(kind))
                             }
                             view.onCropModeChanged = { cropping = it }
-                            view.onPlacementChanged = { armedItem = it }
+                            view.onPlacementChanged = {
+                                armedItem = it
+                                // Put away by a stroke rather than by the tray: the tray has done
+                                // its job, and folds out of the way of the writing.
+                                if (it == null && !trayDisarming && trayOpen) {
+                                    trayOpen = false
+                                    traySymbols = false
+                                    armedSettings = null
+                                }
+                            }
                             view.onTextRequested = { x, y, existing ->
                                 textPrompt = TextPromptRequest(x, y, existing)
                             }
@@ -1856,7 +1969,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
 
             // Anything waiting to be put on the page says so, and says how. Stamps and symbols
             // both land here, because from the user's side they are the same action.
-            armedItem?.let { item ->
+            (armedItem as? DrawingView.Placement.ImageItem)?.let { item ->
                 Card(
                     modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
                     colors = CardDefaults.cardColors(
@@ -1873,10 +1986,51 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         TextButton(onClick = {
-                            armedSymbol = null
                             drawingView.value?.disarmPlacement()
                         }) { Text("Done") }
                     }
+                }
+            }
+
+            armedSettings?.let { kind ->
+                StampSettingsPanel(
+                    kind = kind,
+                    options = tools.stampOptionsFor(kind),
+                    subtitle = "For the next one you place",
+                    editKey = "armed:" + kind.name,
+                    preview = true,
+                    recentColours = tools.customColors,
+                    onChange = { o ->
+                        tools.editStampShelf { it.withOptions(kind, o) }
+                        if ((armedItem as? DrawingView.Placement.StampItem)?.kind == kind) {
+                            drawingView.value?.armStamp(kind, tools.stampOptionsFor(kind))
+                        }
+                    },
+                    onDone = { armedSettings = null },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+            placedSettings?.let { tag ->
+                val kind = com.inkslate.core.Stamps.kindOf(tag)
+                if (kind != null) {
+                    StampSettingsPanel(
+                        kind = kind,
+                        options = tag.options,
+                        subtitle = "This one, on the page - and the next one you place",
+                        editKey = "placed:" + tag.group,
+                        preview = false,
+                        recentColours = tools.customColors,
+                        onChange = { o ->
+                            drawingView.value?.previewStampEdit(o)
+                            // Keep its size: this is the look being set, not where it stands.
+                            tools.editStampShelf {
+                                it.withOptions(kind, o.copy(size = it.optionsFor(kind).size))
+                            }
+                            dirty = true
+                        },
+                        onDone = ::endPlacedSettings,
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
                 }
             }
 
@@ -2266,24 +2420,14 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         )
     }
 
-    if (stampPickerOpen) {
-        StampPickerDialog(
-            inkColor = tools.active.color,
-            recents = tools.recentStamps,
-            optionsFor = { kind -> tools.stampOptionsFor(kind) },
-            onDismiss = { stampPickerOpen = false },
-            onPick = { kind, options ->
-                stampPickerOpen = false
-                tools.noteStampUsed(kind, options)
-                drawingView.value?.insertStamp(kind, options)
-                dirty = true; undoTick++
-            },
-            // A shape is a tool rather than something to place, so picking one just puts it in
-            // hand and closes the sheet - the next drag on the page draws it.
-            onPickShape = { shape ->
-                stampPickerOpen = false
-                tools.edit { it.tool = shape }
-                tools.applyTo(drawingView.value)
+    if (libraryOpen) {
+        StampLibraryDialog(
+            shelf = tools.stampShelf,
+            onDismiss = { libraryOpen = false },
+            onTogglePin = { kind -> tools.editStampShelf { it.togglePin(kind) } },
+            onPick = { kind ->
+                libraryOpen = false
+                armKind(kind)
             }
         )
     }
@@ -2343,24 +2487,6 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 tools.edit { it.pressureGamma = g; it.pressureMin = m; it.dynamics = d }
                 tools.applyTo(drawingView.value)
                 pressureCurveOpen = false
-            }
-        )
-    }
-
-    if (symbolPaletteOpen) {
-        SymbolPaletteDialog(
-            onDismiss = { symbolPaletteOpen = false },
-            onInsert = { text ->
-                symbolPaletteOpen = false
-                // Arm it rather than placing it: you tap where it goes, as many times as you
-                // need, which is how symbols actually get used in a line of working.
-                armedSymbol = text
-                drawingView.value?.let { view ->
-                    tools.edit { it.tool = Tool.TEXT }
-                    tools.applyTo(view)
-                    // after applyTo, which does not know about armed items
-                    view.armText(text)
-                }
             }
         )
     }

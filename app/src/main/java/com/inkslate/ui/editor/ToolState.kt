@@ -15,6 +15,7 @@ import com.inkslate.ink.DrawingView
 import com.inkslate.ink.FillStyle
 import org.json.JSONArray
 import org.json.JSONObject
+import com.inkslate.core.StampShelf
 import com.inkslate.core.Stamps
 import com.inkslate.core.Tool
 import com.inkslate.core.InputMode
@@ -382,72 +383,21 @@ class ToolState(private val context: Context) {
     // ---- stamps ---------------------------------------------------------------
 
     /**
-     * The options each stamp was last placed with, and which stamps were used recently.
+     * Each stamp's own settings, the recent and pinned ones, and the one in hand last.
      *
      * Remembered per stamp rather than globally: setting a fraction circle to sevenths should not
-     * quietly turn the next grid into a seven-by-seven one, and coming back to a stamp you have
-     * already configured to find it exactly as you left it is most of what makes the options
-     * worth having at all.
+     * quietly turn the next grid into a seven-by-seven one, and a graph set up in blue should come
+     * back in blue whatever colour the pen has been since. Shared with Windows as `StampShelf`.
      */
-    var recentStamps by mutableStateOf(loadRecentStamps())
+    var stampShelf by mutableStateOf(StampShelf.decode(sp.getString(K_SHELF, null)))
         private set
 
-    private val stampOptions = HashMap<Stamps.Kind, Stamps.StampOptions>().also { loadStamps(it) }
+    fun stampOptionsFor(kind: Stamps.Kind): Stamps.StampOptions = stampShelf.optionsFor(kind)
 
-    fun stampOptionsFor(kind: Stamps.Kind): Stamps.StampOptions =
-        stampOptions[kind] ?: kind.defaults
-
-    fun noteStampUsed(kind: Stamps.Kind, options: Stamps.StampOptions) {
-        stampOptions[kind] = options
-        recentStamps = (listOf(kind) + recentStamps).distinct().take(6)
-        storeStamps()
+    fun editStampShelf(block: (StampShelf) -> StampShelf) {
+        stampShelf = block(stampShelf)
+        sp.edit().putString(K_SHELF, stampShelf.encode()).apply()
     }
-
-    private fun loadStamps(into: HashMap<Stamps.Kind, Stamps.StampOptions>) {
-        val raw = sp.getString(K_STAMPS, null) ?: return
-        runCatching {
-            val root = JSONObject(raw)
-            for (key in root.keys()) {
-                val kind = runCatching { Stamps.Kind.valueOf(key) }.getOrNull() ?: continue
-                val o = root.getJSONObject(key)
-                into[kind] = Stamps.sanitise(
-                    kind,
-                    Stamps.StampOptions(
-                        divisions = o.optInt("divisions", kind.defaults.divisions),
-                        labels = o.optBoolean("labels", kind.defaults.labels),
-                        rangeFrom = o.optDouble("from", kind.defaults.rangeFrom.toDouble()).toFloat(),
-                        rangeTo = o.optDouble("to", kind.defaults.rangeTo.toDouble()).toFloat(),
-                        filled = o.optInt("filled", kind.defaults.filled),
-                        variant = o.optInt("variant", kind.defaults.variant)
-                    )
-                )
-            }
-        }
-    }
-
-    private fun storeStamps() {
-        val root = JSONObject()
-        stampOptions.forEach { (kind, o) ->
-            root.put(
-                kind.name,
-                JSONObject().apply {
-                    put("divisions", o.divisions); put("labels", o.labels)
-                    put("from", o.rangeFrom.toDouble()); put("to", o.rangeTo.toDouble())
-                    put("filled", o.filled); put("variant", o.variant)
-                }
-            )
-        }
-        sp.edit()
-            .putString(K_STAMPS, root.toString())
-            .putString(K_STAMP_RECENT, recentStamps.joinToString(",") { it.name })
-            .apply()
-    }
-
-    private fun loadRecentStamps(): List<Stamps.Kind> =
-        (sp.getString(K_STAMP_RECENT, null) ?: "")
-            .split(',')
-            .mapNotNull { name -> runCatching { Stamps.Kind.valueOf(name.trim()) }.getOrNull() }
-            .take(6)
 
     // ---- persistence ---------------------------------------------------------
 
@@ -484,6 +434,8 @@ class ToolState(private val context: Context) {
         into.dynamicWidth = o.optBoolean("dynamicWidth", into.dynamicWidth)
         // never restore into a mode where the pointer appears to do nothing
         if (into.tool == Tool.SELECT) into.tool = Tool.DRAW
+        // Line, arrow, box and oval are placed from the shapes tray now, not dragged as a pen.
+        if (into.tool.isShape) into.tool = Tool.DRAW
     }
 
     private fun persist() {
@@ -588,8 +540,7 @@ class ToolState(private val context: Context) {
         private const val K_BTN_HARDWARE = "button_hardware"
         private const val K_DYNAMIC_HINT = "dynamic_width_hint_seen"
         private const val K_BTN2_SEEN = "button2_seen"
-        private const val K_STAMPS = "stamp_options"
-        private const val K_STAMP_RECENT = "stamp_recent"
+        private const val K_SHELF = "stamp_shelf"
         private const val K_FLING_SCALE = "fling_scale"
         private const val K_ROWS = "rows"
         private const val K_COLS = "cols"

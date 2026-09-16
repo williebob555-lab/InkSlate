@@ -313,12 +313,16 @@ class DrawingView @JvmOverloads constructor(
     /**
      * Something waiting to be put on the page.
      *
-     * Stamps used to land in the middle of the viewport at a size the app chose, leaving the user
-     * to drag and resize afterwards - and armed symbols did nothing at all. Both now work the way
-     * placing an object should: tap where you want it, or drag out the space it should fill.
+     * For a shape, a stamp or a symbol the rule is: **taps place, strokes write**. Every tap puts
+     * one down, centred where it landed, at the size that stamp was last used at, and the item
+     * stays in hand for the next. The first touch that moves is not a placement at all - it is
+     * whatever the pen does, drawn from where it started, and it puts the item away. So placing
+     * five takes five taps, and stopping takes nothing: you start writing. Moving the page with
+     * a pan keeps the item in hand, because that is looking for the next place to put one.
      *
-     * The arming survives placement, so a page of symbols is a series of taps rather than a
-     * series of round trips through a palette.
+     * The handles of what was just placed still work while it is in hand, so it can be sized
+     * before the next tap. A picture is the exception on both counts: it goes down once, and it is
+     * dragged out, because a photograph fills a space you point at rather than a size you reuse.
      */
     sealed interface Placement {
         val label: String
@@ -346,6 +350,20 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private var armedPlacement: Placement? = null
+
+    /** The touch that began over an armed item, held until it is known to be a tap or a stroke. */
+    private var placeDown: MotionEvent? = null
+    private var placeDownIdx = 0
+    private var placeDownStylus = false
+
+    /** A handle of the just-placed item is being dragged while something is still in hand. */
+    private var placementGrab = false
+
+    /** How far a touch may travel and still be a tap that places, rather than a stroke. */
+    private val placeTapSlopPx = 8f * resources.displayMetrics.density
+
+    /** Told the width a stamp was resized to, so the next one comes out at that size. */
+    var onStampSized: ((Stamps.Kind, Float) -> Unit)? = null
 
     /** Rectangle being dragged out for the armed item, in page coordinates. */
     private var placing: RectF? = null
@@ -380,8 +398,65 @@ class DrawingView @JvmOverloads constructor(
         armedPlacement = null
         placing = null
         placeStart = null
+        placeDown?.recycle()
+        placeDown = null
         onPlacementChanged?.invoke(null)
         invalidate()
+    }
+
+    // ---- stamps already on the page -------------------------------------------
+
+    /** The stamp the selection is, when it is exactly one stamp. */
+    fun selectedStamp(): com.inkslate.core.StampTag? = Stamps.stampOf(selectedStrokes())
+
+    private var stampEditBefore: List<Stroke> = emptyList()
+
+    /** Start changing the selected stamp's settings; [endStampEdit] makes it one undo step. */
+    fun beginStampEdit() {
+        stampEditBefore = selectedStrokes()
+    }
+
+    /** The stamp being changed as it is now, found by its group rather than by the selection. */
+    private fun stampBeingEdited(): List<Stroke> {
+        val first = stampEditBefore.firstOrNull() ?: return emptyList()
+        val group = first.stamp?.group ?: return emptyList()
+        return strokes.filter { it.stamp?.group == group && it.pageIndex == first.pageIndex }
+    }
+
+    /** Build the selected stamp again with [options], where it stands. */
+    fun previewStampEdit(options: Stamps.StampOptions) {
+        val current = selectedStrokes()
+        if (Stamps.stampOf(current) == null) return
+        val rebuilt = Stamps.rebuild(current, options) { ids.next() }
+        if (rebuilt === current) return
+        replaceStrokes(current, rebuilt)
+        selection.clear(); rebuilt.forEach { selection.add(it.id) }
+        growCanvasForAll(rebuilt)
+        pageIndexDirty = true
+        invalidate()
+    }
+
+    /**
+     * Record the change as one undo step.
+     *
+     * The stamp is looked up by its group, not taken from the selection: this runs when the
+     * selection has just moved to something else, and the selection would be the wrong strokes.
+     */
+    fun endStampEdit() {
+        val after = stampBeingEdited()
+        val before = stampEditBefore
+        stampEditBefore = emptyList()
+        if (before.isEmpty() || before == after) return
+        pushOp(Op(after, before))
+        changed()
+    }
+
+    /** Swap [old] for [new] in place in the drawing order, so a rebuilt stamp keeps its layer. */
+    private fun replaceStrokes(old: List<Stroke>, new: List<Stroke>) {
+        val gone = old.mapTo(HashSet()) { it.id }
+        val at = strokes.indexOfFirst { it.id in gone }.let { if (it < 0) strokes.size else it }
+        strokes.removeAll { it.id in gone }
+        strokes.addAll(at.coerceAtMost(strokes.size), new)
     }
 
     fun armedPlacement(): Placement? = armedPlacement
@@ -1521,7 +1596,9 @@ class DrawingView @JvmOverloads constructor(
     fun duplicateSelection() {
         if (selection.isEmpty()) return
         val m = Matrix().apply { setTranslate(14f, 14f) }
-        val copies = selectedStrokes().map { it.transformed(m, ids.next()).copy(updatedUtc = now()) }
+        val copies = Stamps.regroup(
+            selectedStrokes().map { it.transformed(m, ids.next()).copy(updatedUtc = now()) }
+        ) { ids.next() }
         strokes.addAll(copies)
         growCanvasForAll(copies)
         pushOp(Op(copies, emptyList()))
@@ -1829,7 +1906,7 @@ class DrawingView @JvmOverloads constructor(
     fun paste(): Int {
         if (InkClipboard.isEmpty) return 0
         val c = viewCenterInPage()
-        val pasted = InkClipboard.paste(ids, c[0], c[1], pageWidthPt, pageHeightPt)
+        val pasted = Stamps.regroup(InkClipboard.paste(ids, c[0], c[1], pageWidthPt, pageHeightPt)) { ids.next() }
         if (pasted.isEmpty()) return 0
         strokes.addAll(pasted)
         growCanvasForAll(pasted)
@@ -2242,7 +2319,8 @@ class DrawingView @JvmOverloads constructor(
 
         // Where the armed stamp or symbol will land, shown while it is being dragged out. Seeing
         // the space it will occupy before letting go is the whole point of dragging to place.
-        placing?.let { r ->
+        // Only a picture is dragged out; everything else goes down on a tap.
+        placing?.takeIf { armedPlacement is Placement.ImageItem }?.let { r ->
             val item = armedPlacement
             val previewAspect = when (item) {
                 is Placement.StampItem -> Stamps.aspectFor(item.kind, item.options)
@@ -2626,13 +2704,28 @@ class DrawingView @JvmOverloads constructor(
             return
         }
 
-        // An armed item takes precedence over the current tool: while something is waiting to be
-        // placed, that is unambiguously what the next touch is for.
+        // An armed item gets first say over the touch, but only first say: see [Placement].
         if (armedPlacement != null) {
             toPage(e.x, e.y)
+            if (armedPlacement is Placement.ImageItem) {
+                placeStart = floatArrayOf(tmpPts[0], tmpPts[1])
+                placing = RectF(tmpPts[0], tmpPts[1], tmpPts[0], tmpPts[1])
+                invalidate()
+                return
+            }
+            // A handle of what was just put down: size it without putting the item away.
+            if (selection.isNotEmpty() && handleAt(e.x, e.y) != Grab.NONE) {
+                placementGrab = true
+                beginSelectGesture(e, doubleTap = false)
+                invalidate()
+                return
+            }
             placeStart = floatArrayOf(tmpPts[0], tmpPts[1])
             placing = RectF(tmpPts[0], tmpPts[1], tmpPts[0], tmpPts[1])
-            invalidate()
+            placeDown?.recycle()
+            placeDown = MotionEvent.obtain(e)
+            placeDownIdx = idx
+            placeDownStylus = isStylus
             return
         }
 
@@ -2689,6 +2782,32 @@ class DrawingView @JvmOverloads constructor(
                 invalidate()
             }
             return
+        }
+
+        if (placementGrab) {
+            updateSelectGesture(e)
+            invalidate()
+            return
+        }
+
+        val down = placeDown
+        if (down != null) {
+            if (hypot(e.x - down.x, e.y - down.y) < placeTapSlopPx) return
+            // It moved, so it was never a placement. It becomes what the pen does, begun where
+            // the touch began - and unless that is moving the page, the item is put away.
+            placeDown = null
+            placeStart = null
+            val held = armedPlacement
+            if (t == Tool.PAN) {
+                armedPlacement = null
+                onDown(down, placeDownIdx, placeDownStylus, t)
+                armedPlacement = held
+            } else {
+                disarmPlacement()
+                clearSelection()
+                onDown(down, placeDownIdx, placeDownStylus, t)
+            }
+            down.recycle()
         }
 
         placeStart?.let { start ->
@@ -2786,17 +2905,18 @@ class DrawingView @JvmOverloads constructor(
         val built: List<Stroke> = when (item) {
             is Placement.StampItem -> {
                 val aspect = Stamps.aspectFor(item.kind, item.options)
-                val bounds = if (dragged) fitAspect(box, aspect, start[0], start[1]) else {
-                    // untouched default: wide enough to be usable, centred on the tap
-                    var w = pageWidthPt * 0.42f
-                    var h = w / aspect
-                    val maxH = pageHeightPt * 0.30f
-                    if (h > maxH) { h = maxH; w = h * aspect }
-                    RectF(start[0] - w / 2f, start[1] - h / 2f, start[0] + w / 2f, start[1] + h / 2f)
+                // The size it was last used at, or a size that suits the page it is going on.
+                var w = if (item.options.size > 0f) item.options.size else when (item.kind) {
+                    Stamps.Kind.LINE, Stamps.Kind.ARROW -> pageWidthPt * 0.2f
+                    Stamps.Kind.BOX, Stamps.Kind.OVAL -> pageWidthPt * 0.16f
+                    Stamps.Kind.CHECK, Stamps.Kind.CROSS, Stamps.Kind.STAR -> pageWidthPt * 0.05f
+                    else -> pageWidthPt * 0.42f
                 }
-                buildStamp(
-                    item.kind, bounds, livePage, color, liveWidth, item.options
-                ) { ids.next() }
+                var h = w / aspect
+                val maxH = pageHeightPt * 0.30f
+                if (item.options.size <= 0f && h > maxH) { h = maxH; w = h * aspect }
+                val bounds = RectF(start[0] - w / 2f, start[1] - h / 2f, start[0] + w / 2f, start[1] + h / 2f)
+                buildStamp(item.kind, bounds, livePage, item.options, ids.next()) { ids.next() }
             }
             is Placement.ImageItem -> {
                 val bounds = if (dragged) fitAspect(box, item.aspect, start[0], start[1]) else {
@@ -2888,7 +3008,19 @@ class DrawingView @JvmOverloads constructor(
             return
         }
 
+        if (placementGrab) {
+            placementGrab = false
+            endSelectGesture(cancelled)
+            drawingPointerId = -1
+            drawingIsStylus = false
+            parent?.requestDisallowInterceptTouchEvent(false)
+            invalidate()
+            return
+        }
+
         if (placeStart != null) {
+            placeDown?.recycle()
+            placeDown = null
             if (cancelled) { placeStart = null; placing = null; invalidate() }
             else finishPlacement()
             drawingPointerId = -1
@@ -3061,6 +3193,9 @@ class DrawingView @JvmOverloads constructor(
         // middle of positioning something is a change of view, not a change of mind.
         placeStart = null
         placing = null
+        placeDown?.recycle()
+        placeDown = null
+        placementGrab = false
 
         // An interrupted drag is a different matter. The strokes have already been moved, and
         // clearing the gesture without putting them back would leave the selection somewhere the
@@ -3530,6 +3665,8 @@ class DrawingView @JvmOverloads constructor(
         selBoundsAtGrab = selectionBoundsLocal() ?: RectF()
         selectionAtGrab = selectedStrokes()
         rememberGrabIndices()
+        grabIsStamp = Stamps.stampOf(selectionAtGrab) != null &&
+            selectionAtGrab.all { it.rotation == 0f }
 
         // a handle grab wins over everything else
         val handle = handleAt(e.x, e.y)
@@ -3578,6 +3715,9 @@ class DrawingView @JvmOverloads constructor(
     }
 
     /** Where each grabbed object sits in [strokes], so a drag does not have to go looking. */
+    /** The selection being dragged is one unrotated stamp; see [updateSelectGesture]. */
+    private var grabIsStamp = false
+
     private fun rememberGrabIndices() {
         val where = HashMap<String, Int>(selectionAtGrab.size * 2)
         strokes.forEachIndexed { i, st -> if (st.id in selection) where[st.id] = i }
@@ -3604,9 +3744,15 @@ class DrawingView @JvmOverloads constructor(
                 var sy = (py - anchorY) / (grabStartPage[1] - anchorY)
                 if (!sx.isFinite() || abs(sx) < 0.04f) sx = 0.04f
                 if (!sy.isFinite() || abs(sy) < 0.04f) sy = 0.04f
-                // uniform scale keeps handwriting from being squashed into unreadable shapes
-                val u = (abs(sx) + abs(sy)) / 2f
-                applyLiveTransform(Matrix().apply { setScale(u, u, anchorX, anchorY) })
+                if (grabIsStamp) {
+                    // A stamp is rebuilt at its new size when it is let go, so it can be made
+                    // wider without being made taller - and its type and lines stay their weight.
+                    applyLiveTransform(Matrix().apply { setScale(abs(sx), abs(sy), anchorX, anchorY) })
+                } else {
+                    // uniform scale keeps handwriting from being squashed into unreadable shapes
+                    val u = (abs(sx) + abs(sy)) / 2f
+                    applyLiveTransform(Matrix().apply { setScale(u, u, anchorX, anchorY) })
+                }
             }
             Grab.ROTATE -> {
                 val cx = selBoundsAtGrab.centerX(); val cy = selBoundsAtGrab.centerY()
@@ -3650,9 +3796,26 @@ class DrawingView @JvmOverloads constructor(
             }
             Grab.MOVE, Grab.TL, Grab.TR, Grab.BL, Grab.BR, Grab.ROTATE -> {
                 if (!cancelled && selectionAtGrab.isNotEmpty()) {
-                    val after = selectedStrokes()
+                    var after = selectedStrokes()
                     val moved = after.zip(selectionAtGrab).any { (a, b) -> a != b }
-                    if (moved) { pushOp(Op(after, selectionAtGrab)); onContentChanged?.invoke() }
+                    val resized = grab != Grab.MOVE && grab != Grab.ROTATE
+                    val tag = if (moved && resized && grabIsStamp) Stamps.stampOf(after) else null
+                    val kind = tag?.let { Stamps.kindOf(it) }
+                    if (tag != null && kind != null && !kind.isShape) {
+                        val rebuilt = Stamps.rebuild(after, tag.options) { ids.next() }
+                        replaceStrokes(after, rebuilt)
+                        selection.clear(); rebuilt.forEach { selection.add(it.id) }
+                        after = rebuilt
+                        pageIndexDirty = true
+                    }
+                    if (moved) {
+                        pushOp(Op(after, selectionAtGrab))
+                        onContentChanged?.invoke()
+                        if (resized && kind != null) {
+                            val width = Stamps.stampOf(after)?.let { Stamps.currentBox(it, after)?.width }
+                            if (width != null) onStampSized?.invoke(kind, width)
+                        }
+                    }
                 }
             }
             Grab.NONE -> Unit

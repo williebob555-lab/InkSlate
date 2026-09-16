@@ -129,7 +129,6 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onLive: (List<InkPoint>) -> Unit,
     onPending: (Stroke?) -> Unit,
     onMarquee: (InkBox?) -> Unit,
-    onPendingStamp: (List<Stroke>) -> Unit,
     onStampPlaced: () -> Unit,
     /** Told the bounds of whatever was just drawn, so a canvas can grow to fit it. */
     onDrew: (InkBox) -> Unit = {},
@@ -218,50 +217,117 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
         }
     }
 
-    val armed = tools.armedStamp
-    when {
-        armed != null -> {
-            // Dragged out like a shape, but keeping the stamp's own proportions: a unit circle
-            // stretched into an ellipse is not a unit circle, and a number line squashed to a
-            // square is unreadable. The drag sets the size; the aspect is the stamp's.
-            val (stampKind, stampOptions) = armed
-            val aspect = com.inkslate.core.Stamps.aspectFor(stampKind, stampOptions)
-            var preview: List<Stroke> = emptyList()
+    /**
+     * Drag one of the selection's handles, and build a stamp again at its new size when let go.
+     *
+     * A stamp rebuilt rather than stretched keeps its type and its lines their weight, and can be
+     * made wider without being made taller. The size it ends at becomes the size the next one of
+     * that stamp is placed at.
+     */
+    suspend fun AwaitPointerEventScope.dragHandle(frame: InkBox, handle: Handle, chosen: List<Stroke>) {
+        var current = chosen
+        dragUntilRelease(down.position) { change, _ ->
+            val n = toPage(change.position)
+            val ax = handle.anchorX(frame)
+            val ay = handle.anchorY(frame)
+            val sx = if (handle.scalesX && abs(frame.width) > 0.01f) {
+                ((n.x - ax) / (handle.x(frame) - ax)).coerceIn(-20f, 20f)
+            } else 1f
+            val sy = if (handle.scalesY && abs(frame.height) > 0.01f) {
+                ((n.y - ay) / (handle.y(frame) - ay)).coerceIn(-20f, 20f)
+            } else 1f
+            if (abs(sx) < 0.02f || abs(sy) < 0.02f) return@dragUntilRelease
+            val now = System.currentTimeMillis()
+            current = chosen.map { it.scaledAbout(ax, ay, sx, sy, now) }
+            strokes.applyEdit(chosen, current)
+        }
+        if (current === chosen) return
+        val tag = com.inkslate.core.Stamps.stampOf(current)
+        val kind = tag?.let { com.inkslate.core.Stamps.kindOf(it) }
+        if (tag != null && kind != null && !kind.isShape && current.all { it.rotation == 0f }) {
+            val rebuilt = com.inkslate.core.Stamps.rebuild(current, tag.options, newId)
+            strokes.applyEdit(current, rebuilt)
+            current = rebuilt
+            onSelection(rebuilt.map { it.id }.toSet())
+            com.inkslate.core.Stamps.stampOf(rebuilt)
+                ?.let { com.inkslate.core.Stamps.currentBox(it, rebuilt) }
+                ?.let { box ->
+                    tools.editStampShelf { it.withOptions(kind, it.optionsFor(kind).copy(size = box.width)) }
+                    if (tools.armedStamp?.first == kind) tools.arm(kind, tools.stampShelf.optionsFor(kind))
+                }
+        }
+        onCommitted(Op(chosen, current))
+    }
 
-            fun boxTo(n: Offset): InkBox {
-                val w = kotlin.math.abs(n.x - px).coerceAtLeast(8f)
-                val h = (w / aspect).coerceAtLeast(6f)
-                val left = if (n.x >= px) px else px - w
-                val top = if (n.y >= py) py else py - h
-                return InkBox(left, top, left + w, top + h)
+    // Something in hand gets first say over the press - but only first say. A press that lets go
+    // where it landed places one; a press that moves is whatever the pen does, and unless that is
+    // moving the page it puts the item away. So placing five is five clicks, and stopping is just
+    // starting to write. The handles of what was just placed still work in between.
+    if (tools.hasArmed) {
+        val chosen = strokes.filter { it.id in selection }
+        val frame = chosen.unionBounds()
+        val handle = frame?.let { handleAt(it, px, py, HANDLE_TOUCH / scale) }
+        if (frame != null && handle != null) {
+            dragHandle(frame, handle, chosen)
+            return
+        }
+
+        var moved = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull() ?: break
+            if ((change.position - down.position).getDistance() > PLACE_SLOP) {
+                moved = true
+                break
             }
+            val held = change.pressed ||
+                event.buttons.isPrimaryPressed ||
+                event.buttons.isSecondaryPressed
+            if (!held) break
+        }
 
-            val end = dragUntilRelease(down.position) { change, _ ->
-                var n = 0
-                preview = com.inkslate.core.Stamps.build(
-                    stampKind, boxTo(toPage(change.position)), index,
-                    cfg.color, cfg.strokeWidth, stampOptions
-                ) { "stamp-preview-${n++}" }
-                onPendingStamp(preview)
+        if (!moved) {
+            val stamp = tools.armedStamp
+            val text = tools.armedText
+            val placed: List<Stroke> = when {
+                stamp != null -> {
+                    val (kind, o) = stamp
+                    com.inkslate.core.Stamps.build(
+                        kind, placementBox(kind, o, px, py, slot.width, slot.height),
+                        index, o, group = newId(), nextId = newId
+                    )
+                }
+                text != null -> {
+                    val size = cfg.textSize.coerceAtLeast(16f) * 1.25f
+                    listOf(
+                        Stroke(
+                            id = newId(), kind = Stroke.Kind.TEXT, color = cfg.color, baseWidth = 1f,
+                            points = listOf(InkPoint(px, py - size / 2f, 1f)),
+                            text = text, textSize = size, pageIndex = index,
+                            updatedUtc = System.currentTimeMillis()
+                        )
+                    )
+                }
+                else -> emptyList()
             }
-            onPendingStamp(emptyList())
-
-            val box = boxTo(toPage(end))
-            // A click with no drag gets a stamp at a sensible default size rather than nothing:
-            // having picked one from the sheet, being given no stamp at all reads as a failure.
-            val placed = com.inkslate.core.Stamps.build(
-                stampKind,
-                if (box.width > 12f) box else InkBox(px, py, px + 180f, py + 180f / aspect),
-                index, cfg.color, cfg.strokeWidth, stampOptions, newId
-            )
             if (placed.isNotEmpty()) {
                 strokes.addAll(placed)
                 onCommitted(Op.added(placed))
+                onSelection(placed.map { it.id }.toSet())
+                placed.map { it.boundsBox() }.reduce { acc, b -> acc.union(b) }.let(onDrew)
+                onStampPlaced()
             }
-            tools.armedStamp = null
-            onStampPlaced()
+            return
         }
 
+        if (inHand != Tool.PAN) {
+            tools.disarm()
+            tools.onPutAway?.invoke()
+            onSelection(emptySet())
+        }
+    }
+
+    when {
         inHand == Tool.PAN -> {
             viewport.stop()
             var last = down.position
@@ -319,23 +385,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             when {
                 grabbed != null -> {
                     val (frame, handle) = grabbed
-                    var current = chosen
-                    dragUntilRelease(down.position) { change, _ ->
-                        val n = toPage(change.position)
-                        val ax = handle.anchorX(frame)
-                        val ay = handle.anchorY(frame)
-                        val sx = if (handle.scalesX && abs(frame.width) > 0.01f) {
-                            ((n.x - ax) / (handle.x(frame) - ax)).coerceIn(-20f, 20f)
-                        } else 1f
-                        val sy = if (handle.scalesY && abs(frame.height) > 0.01f) {
-                            ((n.y - ay) / (handle.y(frame) - ay)).coerceIn(-20f, 20f)
-                        } else 1f
-                        if (abs(sx) < 0.02f || abs(sy) < 0.02f) return@dragUntilRelease
-                        val now = System.currentTimeMillis()
-                        current = chosen.map { it.scaledAbout(ax, ay, sx, sy, now) }
-                        strokes.applyEdit(chosen, current)
-                    }
-                    if (current !== chosen) onCommitted(Op(chosen, current))
+                    dragHandle(frame, handle, chosen)
                 }
 
                 box != null && box.expanded(4f / scale).contains(px, py) -> {
@@ -605,4 +655,32 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             }
         }
     }
+}
+
+/** How far, in screen pixels, a press may travel over an item in hand and still place it. */
+private const val PLACE_SLOP = 6f
+
+/**
+ * Where a click at [x], [y] puts a stamp: centred on it, at the size it was last used at, or at a
+ * size that suits a page [pageWidth] by [pageHeight] when it has not been used yet.
+ */
+internal fun placementBox(
+    kind: com.inkslate.core.Stamps.Kind,
+    o: com.inkslate.core.Stamps.StampOptions,
+    x: Float,
+    y: Float,
+    pageWidth: Float,
+    pageHeight: Float
+): InkBox {
+    val aspect = com.inkslate.core.Stamps.aspectFor(kind, o)
+    var w = if (o.size > 0f) o.size else when (kind) {
+        com.inkslate.core.Stamps.Kind.LINE, com.inkslate.core.Stamps.Kind.ARROW -> pageWidth * 0.2f
+        com.inkslate.core.Stamps.Kind.BOX, com.inkslate.core.Stamps.Kind.OVAL -> pageWidth * 0.16f
+        com.inkslate.core.Stamps.Kind.CHECK, com.inkslate.core.Stamps.Kind.CROSS,
+        com.inkslate.core.Stamps.Kind.STAR -> pageWidth * 0.05f
+        else -> pageWidth * 0.42f
+    }
+    var h = w / aspect
+    if (o.size <= 0f && h > pageHeight * 0.3f) { h = pageHeight * 0.3f; w = h * aspect }
+    return InkBox(x - w / 2f, y - h / 2f, x + w / 2f, y + h / 2f)
 }
