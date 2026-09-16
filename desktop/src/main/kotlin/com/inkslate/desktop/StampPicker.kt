@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.core.Box as InkBox
 import com.inkslate.core.DashStyle
 import com.inkslate.core.FillStyle
+import com.inkslate.core.LineEnd
 import com.inkslate.core.Palette
 import com.inkslate.core.StampShelf
 import com.inkslate.core.Stamps
@@ -332,6 +333,17 @@ private fun SettingsBody(
             kind.variants.forEachIndexed { i, name ->
                 OptionChip(name, options.variant == i) { edit { it.copy(variant = i) } }
             }
+        }
+    }
+    if (Stamps.Knob.ENDS in kind.knobs) {
+        // Each end on its own: an arrow, a double arrow and a dimension line are one line.
+        OptionLabel("Start")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.startEnd == e) { edit { it.copy(startEnd = e) } } }
+        }
+        OptionLabel("End")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.finishEnd == e) { edit { it.copy(finishEnd = e) } } }
         }
     }
     if (Stamps.Knob.DASH in kind.knobs) {

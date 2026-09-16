@@ -65,18 +65,10 @@ fun Stroke.toComposePath(): Path {
             val b = points.last()
             path.moveTo(a.x, a.y)
             path.lineTo(b.x, b.y)
-            if (kind == Stroke.Kind.ARROW) {
-                val size = max(3f, baseWidth * 3.6f)
-                val angle = kotlin.math.atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble())
-                val spread = Math.toRadians(26.0)
-                for (s in listOf(-spread, spread)) {
-                    val ang = angle + Math.PI + s
-                    path.moveTo(b.x, b.y)
-                    path.lineTo(
-                        b.x + (cos(ang) * size).toFloat(),
-                        b.y + (sin(ang) * size).toFloat()
-                    )
-                }
+            // Arrowheads, dots, bars: shared geometry, so the screen and the export agree.
+            for (end in lineEndPaths()) {
+                path.moveTo(end[0].first, end[0].second)
+                for (i in 1 until end.size) path.lineTo(end[i].first, end[i].second)
             }
         }
         Stroke.Kind.RECT, Stroke.Kind.IMAGE -> path.addRect(rectBox().toRect())

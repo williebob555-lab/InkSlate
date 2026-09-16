@@ -60,7 +60,9 @@ object Stamps {
         /** What the axes are called: x and y, or t and d, or nothing. */
         AXIS_NAMES,
         DASH,
-        FILL
+        FILL,
+        /** What each end of a line looks like. */
+        ENDS
     }
 
     /** Near-black rather than black, so a stamp sits with handwriting instead of shouting over it. */
@@ -103,7 +105,9 @@ object Stamps {
         val xName: String = "x",
         val yName: String = "y",
         val dash: DashStyle = DashStyle.SOLID,
-        val fill: FillStyle = FillStyle.NONE
+        val fill: FillStyle = FillStyle.NONE,
+        val startEnd: LineEnd = LineEnd.NONE,
+        val finishEnd: LineEnd = LineEnd.ARROW
     )
 
     enum class Kind(
@@ -118,10 +122,10 @@ object Stamps {
         val defaults: StampOptions = StampOptions()
     ) {
         // ---- shapes ----
-        // Line, arrow, box and oval are stamps like the rest: placed with a tap, carrying their
-        // own colour and weight, and changed afterwards through the same panel.
-        LINE("Line", Group.SHAPES, 6f, setOf(Knob.DASH)),
-        ARROW("Arrow", Group.SHAPES, 6f, setOf(Knob.DASH)),
+        // Line, box and oval are stamps like the rest, carrying their own colour and weight and
+        // changed afterwards through the same panel. There is no separate arrow: an arrow is a
+        // line with an arrow for an end, and either end can be chosen.
+        LINE("Line", Group.SHAPES, 6f, setOf(Knob.ENDS, Knob.DASH)),
         BOX("Box", Group.SHAPES, 1.4f, setOf(Knob.DASH, Knob.FILL)),
         OVAL("Oval", Group.SHAPES, 1.4f, setOf(Knob.DASH, Knob.FILL)),
 
@@ -651,15 +655,8 @@ object Stamps {
                 Stroke(
                     id = nextId(), kind = StrokeKind.LINE, color = color, baseWidth = width,
                     points = listOf(InkPoint(left, cy, width), InkPoint(right, cy, width)),
-                    dash = o.dash, pageIndex = page, updatedUtc = now
-                )
-            )
-
-            Kind.ARROW -> out.add(
-                Stroke(
-                    id = nextId(), kind = StrokeKind.ARROW, color = color, baseWidth = width,
-                    points = listOf(InkPoint(left, cy, width), InkPoint(right, cy, width)),
-                    dash = o.dash, pageIndex = page, updatedUtc = now
+                    dash = o.dash, startEnd = o.startEnd, finishEnd = o.finishEnd,
+                    pageIndex = page, updatedUtc = now
                 )
             )
 
@@ -1370,6 +1367,50 @@ object Stamps {
         return out.map { it.copy(stamp = tag) }
     }
 
+    /**
+     * A line or arrow from one point to another, dragged out rather than tapped.
+     *
+     * Tagged like any placed stamp, so it is restyled through the same panel afterwards.
+     */
+    fun buildLine(
+        kind: Kind,
+        ax: Float, ay: Float, bx: Float, by: Float,
+        page: Int,
+        options: StampOptions = kind.defaults,
+        group: String? = null,
+        nextId: () -> String
+    ): List<Stroke> {
+        require(kind == Kind.LINE) { "Only lines are dragged out" }
+        val o = sanitise(kind, options)
+        val stroke = Stroke(
+            id = nextId(),
+            kind = StrokeKind.LINE,
+            color = o.color, baseWidth = o.weight,
+            points = listOf(InkPoint(ax, ay, o.weight), InkPoint(bx, by, o.weight)),
+            dash = o.dash, startEnd = o.startEnd, finishEnd = o.finishEnd,
+            pageIndex = page, updatedUtc = System.currentTimeMillis()
+        )
+        if (group == null) return listOf(stroke)
+        val reach = stroke.rawBoundsBox()
+        val corners = listOf(reach.left, reach.top, reach.right, reach.bottom)
+        return listOf(stroke.copy(stamp = StampTag(group, kind.name, o, corners, corners)))
+    }
+
+    /** Whether [kind] is drawn by dragging from one end to the other when it is in hand. */
+    fun isDragged(kind: Kind) = kind == Kind.LINE
+
+    /** A lone, unrotated line or arrow, which gets a handle on each end instead of a frame. */
+    fun endsOf(selection: Collection<Stroke>): Stroke? = selection.singleOrNull()?.takeIf {
+        (it.kind == StrokeKind.LINE || it.kind == StrokeKind.ARROW) &&
+            it.rotation == 0f && it.points.size == 2
+    }
+
+    /** [line] with end [index] (0 or 1) moved to [x], [y]. */
+    fun withEnd(line: Stroke, index: Int, x: Float, y: Float): Stroke = line.copy(
+        points = line.points.mapIndexed { i, p -> if (i == index) p.copy(x = x, y = y) else p },
+        updatedUtc = System.currentTimeMillis()
+    )
+
     // ---- stamps already on the page -----------------------------------------
 
     /**
@@ -1445,6 +1486,11 @@ object Stamps {
                     points = it.points.map { p -> p.copy(width = o.weight) },
                     dash = o.dash,
                     fill = if (kind == Kind.BOX || kind == Kind.OVAL) o.fill else it.fill,
+                    // A line's ends are its own now, so an old arrow restyled becomes a line
+                    // with the ends that were chosen.
+                    kind = if (kind == Kind.LINE) StrokeKind.LINE else it.kind,
+                    startEnd = if (kind == Kind.LINE) o.startEnd else it.startEnd,
+                    finishEnd = if (kind == Kind.LINE) o.finishEnd else it.finishEnd,
                     stamp = tag.copy(options = o), updatedUtc = now
                 )
             }

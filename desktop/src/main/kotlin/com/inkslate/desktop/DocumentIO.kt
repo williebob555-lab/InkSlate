@@ -335,6 +335,13 @@ object DocumentIO {
                 val c = s.points.last()
                 cs.setLineWidth(max(0.3f, s.baseWidth))
                 cs.moveTo(a.x, a.y); cs.lineTo(c.x, c.y); cs.stroke()
+                // The ends were never written here, so an arrow exported from Windows came out
+                // as a plain line.
+                for (end in s.lineEndPaths()) {
+                    cs.moveTo(end[0].first, end[0].second)
+                    for (i in 1 until end.size) cs.lineTo(end[i].first, end[i].second)
+                    cs.stroke()
+                }
             }
             Stroke.Kind.IMAGE -> drawEmbeddedImage(cs, s)
             Stroke.Kind.RECT, Stroke.Kind.TABLE -> {

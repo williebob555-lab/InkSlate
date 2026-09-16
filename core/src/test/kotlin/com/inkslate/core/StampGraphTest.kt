@@ -119,16 +119,51 @@ class StampGraphTest {
 
     @Test
     fun `a line keeps its direction when restyled`() {
-        val placed = build(Stamps.Kind.ARROW, Stamps.Kind.ARROW.defaults, group = "g")
+        val placed = build(Stamps.Kind.LINE, Stamps.Kind.LINE.defaults, group = "g")
         val turned = placed.map { s ->
             s.copy(points = listOf(InkPoint(0f, 0f, 1.5f), InkPoint(80f, 90f, 1.5f)))
         }
         var n = 0
         val blue = 0xFF1565C0.toInt()
-        val restyled = Stamps.rebuild(turned, Stamps.StampOptions(color = blue, dash = DashStyle.DASHED)) { "r${n++}" }
+        val restyled = Stamps.rebuild(
+            turned, Stamps.StampOptions(color = blue, dash = DashStyle.DASHED, startEnd = LineEnd.DOT)
+        ) { "r${n++}" }
         assertEquals(90f, restyled.single().points.last().y, 0.01f)
+        assertEquals(LineEnd.DOT, restyled.single().startEnd)
         assertEquals(blue, restyled.single().color)
         assertEquals(DashStyle.DASHED, restyled.single().dash)
+    }
+
+    @Test
+    fun `a dragged arrow runs where it was dragged and can be restyled`() {
+        var n = 0
+        val arrow = Stamps.buildLine(Stamps.Kind.LINE, 10f, 20f, 110f, 70f, 0, Stamps.StampOptions(color = 0xFF16A34A.toInt()), "g") { "a${n++}" }
+        val s = arrow.single()
+        assertEquals(LineEnd.ARROW, s.finishEnd)
+        assertEquals(110f, s.points[1].x, 0.01f)
+        assertEquals(0xFF16A34A.toInt(), s.color)
+        assertNotNull(Stamps.stampOf(arrow))
+        val moved = Stamps.withEnd(s, 1, 40f, 90f)
+        assertEquals(listOf(10f to 20f, 40f to 90f), moved.points.map { it.x to it.y })
+        assertNotNull(Stamps.endsOf(listOf(moved)))
+    }
+
+    @Test
+    fun `each end of a line is drawn as chosen, and an old arrow keeps its head`() {
+        fun line(start: LineEnd, finish: LineEnd, kind: Stroke.Kind = Stroke.Kind.LINE) = Stroke(
+            id = "l", kind = kind, color = 0, baseWidth = 2f,
+            points = listOf(InkPoint(0f, 0f, 2f), InkPoint(100f, 0f, 2f)),
+            startEnd = start, finishEnd = finish
+        )
+        assertTrue(line(LineEnd.NONE, LineEnd.NONE).lineEndPaths().isEmpty())
+        // a bar at each end: two short strokes across the line, one at each point
+        val bars = line(LineEnd.BAR, LineEnd.BAR).lineEndPaths()
+        assertEquals(2, bars.size)
+        assertEquals(setOf(0, 100), bars.map { Math.round(it.first().first) }.toSet())
+        // an arrow from before ends existed still has its head
+        assertEquals(1, line(LineEnd.NONE, LineEnd.NONE, Stroke.Kind.ARROW).lineEndPaths().size)
+        // ends widen the bounds, so a dot at the edge is not culled off screen
+        assertTrue(line(LineEnd.DOT, LineEnd.NONE).rawBoundsBox().left < line(LineEnd.NONE, LineEnd.NONE).rawBoundsBox().left)
     }
 
     @Test

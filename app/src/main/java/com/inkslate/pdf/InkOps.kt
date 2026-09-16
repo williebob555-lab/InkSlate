@@ -161,15 +161,10 @@ internal object InkOps {
         val b = s.points.last()
         out.num(max(0.05f, s.baseWidth)).op("w")
         out.num(a.x).num(a.y).op("m").num(b.x).num(b.y).op("l").op("S")
-        if (s.kind != StrokeKind.ARROW) return
-        val size = max(3f, s.baseWidth * 3.6f)
-        val angle = Math.atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble())
-        val spread = Math.toRadians(26.0)
-        for (side in listOf(-spread, spread)) {
-            val ang = angle + Math.PI + side
-            out.num(b.x).num(b.y).op("m")
-            out.num(b.x + (cos(ang) * size).toFloat())
-                .num(b.y + (sin(ang) * size).toFloat()).op("l").op("S")
+        for (end in s.lineEndPaths()) {
+            out.num(end[0].first).num(end[0].second).op("m")
+            for (i in 1 until end.size) out.num(end[i].first).num(end[i].second).op("l")
+            out.op("S")
         }
     }
 

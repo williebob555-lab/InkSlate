@@ -190,6 +190,17 @@ enum class BrushType(
     fun maxFactorAt(dynamics: Float): Float = (1f + (maxFactor - 1f) * dynamics).coerceAtLeast(0.02f)
 }
 
+/**
+ * What the end of a line looks like.
+ *
+ * Each end of a line is chosen on its own, so an arrow, a double-headed arrow, a line ending in a
+ * dot and a dimension line with bars are one shape with different ends rather than four tools.
+ */
+@Serializable
+enum class LineEnd(val label: String) {
+    NONE("None"), ARROW("Arrow"), TRIANGLE("Triangle"), DOT("Dot"), BAR("Bar")
+}
+
 @Serializable
 enum class DashStyle(val label: String, val pattern: FloatArray?) {
     SOLID("Solid", null),
@@ -264,6 +275,9 @@ data class Stroke(
     val cropBottom: Float = 1f,
     /** The stamp this stroke is part of, so the stamp can be changed after it is placed. */
     val stamp: StampTag? = null,
+    /** How a line's first and last points end. An [Kind.ARROW] always has an arrow at its last. */
+    val startEnd: LineEnd = LineEnd.NONE,
+    val finishEnd: LineEnd = LineEnd.NONE,
     val pageIndex: Int = 0,
     /** Wall-clock millis of the last edit. Last-writer-wins key when two devices merge. */
     val updatedUtc: Long = 0L
@@ -292,6 +306,75 @@ data class Stroke(
         // picture was lost rather than cropped.
         if (r - l < 1 || b - t < 1) return null
         return intArrayOf(l, t, r, b)
+    }
+
+    /** The end drawn at the last point, counting the arrow an [Kind.ARROW] has always had. */
+    val effectiveFinishEnd: LineEnd
+        get() = if (kind == Kind.ARROW && finishEnd == LineEnd.NONE) LineEnd.ARROW else finishEnd
+
+    val hasLineEnds: Boolean
+        get() = (kind == Kind.LINE || kind == Kind.ARROW) &&
+            (startEnd != LineEnd.NONE || effectiveFinishEnd != LineEnd.NONE)
+
+    /** How far an end reaches from its point: the size the arrowhead has always been. */
+    fun lineEndSize(): Float = max(8f, baseWidth * 3.6f)
+
+    /**
+     * The ends of a line as open polylines, in the stroke's own coordinates.
+     *
+     * One shared shape for every renderer - the screen on both platforms and both PDF writers -
+     * so an end cannot look one way on the tablet and another in the exported file. Everything is
+     * stroked, never filled: a dot is a ring small enough, with a second inside it, to read solid.
+     */
+    fun lineEndPaths(): List<List<Pair<Float, Float>>> {
+        if (!hasLineEnds || points.size < 2) return emptyList()
+        val a = points.first()
+        val b = points.last()
+        val out = ArrayList<List<Pair<Float, Float>>>()
+        fun end(style: LineEnd, tipX: Float, tipY: Float, fromX: Float, fromY: Float) {
+            if (style == LineEnd.NONE) return
+            val size = lineEndSize()
+            val angle = kotlin.math.atan2((tipY - fromY).toDouble(), (tipX - fromX).toDouble())
+            fun at(offset: Double, length: Float) = (tipX + (cos(angle + Math.PI + offset) * length).toFloat()) to
+                (tipY + (sin(angle + Math.PI + offset) * length).toFloat())
+            when (style) {
+                LineEnd.ARROW -> {
+                    val spread = Math.toRadians(26.0)
+                    out.add(listOf(at(-spread, size), tipX to tipY, at(spread, size)))
+                }
+                LineEnd.TRIANGLE -> {
+                    val spread = Math.toRadians(22.0)
+                    val l = at(-spread, size)
+                    val r = at(spread, size)
+                    // Nested outlines, each smaller, so the head reads as solid without a fill.
+                    for (k in 0 until 3) {
+                        val f = 1f - k * 0.3f
+                        fun toward(p: Pair<Float, Float>) =
+                            (tipX + (p.first - tipX) * f) to (tipY + (p.second - tipY) * f)
+                        out.add(listOf(tipX to tipY, toward(l), toward(r), tipX to tipY))
+                    }
+                }
+                LineEnd.DOT -> {
+                    val radius = max(3.2f, baseWidth * 1.6f)
+                    for (r in listOf(radius, radius * 0.5f)) {
+                        out.add((0..16).map { i ->
+                            val t = 2.0 * Math.PI * i / 16
+                            (tipX + (cos(t) * r).toFloat()) to (tipY + (sin(t) * r).toFloat())
+                        })
+                    }
+                }
+                LineEnd.BAR -> {
+                    val half = size * 0.6f
+                    val nx = (-sin(angle) * half).toFloat()
+                    val ny = (cos(angle) * half).toFloat()
+                    out.add(listOf((tipX + nx) to (tipY + ny), (tipX - nx) to (tipY - ny)))
+                }
+                LineEnd.NONE -> Unit
+            }
+        }
+        end(startEnd, a.x, a.y, b.x, b.y)
+        end(effectiveFinishEnd, b.x, b.y, a.x, a.y)
+        return out
     }
 
     val isHighlighter: Boolean get() = kind == Kind.FREEHAND && brush.isHighlighter
@@ -339,7 +422,12 @@ data class Stroke(
         // A little more than half the width: a broad nib's corners reach slightly past the
         // nominal half-width, and bounds that clip a stroke short make it vanish at the edge of
         // the viewport rather than merely look wrong.
-        val pad = if (kind == Kind.TABLE || kind == Kind.IMAGE) 0f else maxW * 0.6f + 1f
+        val pad = when {
+            kind == Kind.TABLE || kind == Kind.IMAGE -> 0f
+            // An end reaches past the point it is drawn at.
+            hasLineEnds -> maxW * 0.6f + 1f + lineEndSize()
+            else -> maxW * 0.6f + 1f
+        }
         return Box(minX - pad, minY - pad, maxX + pad, maxY + pad)
     }
 

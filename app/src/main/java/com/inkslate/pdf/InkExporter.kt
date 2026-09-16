@@ -604,16 +604,10 @@ object InkExporter {
         val a = s.points.first(); val b = s.points.last()
         cs.setLineWidth(max(0.05f, s.baseWidth))
         cs.moveTo(a.x, a.y); cs.lineTo(b.x, b.y); cs.stroke()
-        if (s.kind == StrokeKind.ARROW) {
-            val size = max(3f, s.baseWidth * 3.6f)
-            val angle = Math.atan2((b.y - a.y).toDouble(), (b.x - a.x).toDouble())
-            val spread = Math.toRadians(26.0)
-            for (side in listOf(-spread, spread)) {
-                val ang = angle + Math.PI + side
-                cs.moveTo(b.x, b.y)
-                cs.lineTo(b.x + (cos(ang) * size).toFloat(), b.y + (sin(ang) * size).toFloat())
-                cs.stroke()
-            }
+        for (end in s.lineEndPaths()) {
+            cs.moveTo(end[0].first, end[0].second)
+            for (i in 1 until end.size) cs.lineTo(end[i].first, end[i].second)
+            cs.stroke()
         }
     }
 

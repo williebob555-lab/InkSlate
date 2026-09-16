@@ -99,8 +99,10 @@ fun Stroke.toPath(): Path {
         StrokeKind.LINE, StrokeKind.ARROW -> {
             val a = points.first(); val b = points.last()
             path.moveTo(a.x, a.y); path.lineTo(b.x, b.y)
-            if (kind == StrokeKind.ARROW) {
-                appendArrowHead(path, a.x, a.y, b.x, b.y, max(3f, baseWidth * 3.6f))
+            // Arrowheads, dots, bars: shared geometry, so the screen and the export agree.
+            for (end in lineEndPaths()) {
+                path.moveTo(end[0].first, end[0].second)
+                for (i in 1 until end.size) path.lineTo(end[i].first, end[i].second)
             }
         }
         StrokeKind.RECT -> path.addRect(rectOf(), Path.Direction.CW)

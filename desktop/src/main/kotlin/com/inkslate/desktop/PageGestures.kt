@@ -259,12 +259,47 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
         onCommitted(Op(chosen, current))
     }
 
+    /**
+     * Drag one end of a lone line to a new spot; Shift keeps it to fifteen degrees from the other.
+     *
+     * A frame around a diagonal line is mostly empty space, and aiming a line is moving its ends.
+     */
+    suspend fun AwaitPointerEventScope.dragEnd(line: Stroke, index: Int) {
+        var current = line
+        val fixed = line.points[1 - index]
+        dragUntilRelease(down.position) { change, modifiers ->
+            val n = toPage(change.position)
+            val (x, y) = if (modifiers.isShiftPressed || tools.snapShapes) {
+                Stroke.snapShape(Stroke.Kind.LINE, fixed.x, fixed.y, n.x, n.y)
+            } else {
+                n.x to n.y
+            }
+            val next = com.inkslate.core.Stamps.withEnd(line, index, x, y)
+            strokes.applyEdit(listOf(current), listOf(next))
+            current = next
+        }
+        if (current !== line) onCommitted(Op(listOf(line), listOf(current)))
+    }
+
+    /** Which end of a lone selected line is under the press, if one is. */
+    fun endUnderPress(chosen: List<Stroke>): Pair<Stroke, Int>? {
+        val line = com.inkslate.core.Stamps.endsOf(chosen) ?: return null
+        val reach = HANDLE_TOUCH * 1.4f / scale
+        return (0..1).firstOrNull { i ->
+            kotlin.math.hypot(line.points[i].x - px, line.points[i].y - py) <= reach
+        }?.let { line to it }
+    }
+
     // Something in hand gets first say over the press - but only first say. A press that lets go
     // where it landed places one; a press that moves is whatever the pen does, and unless that is
     // moving the page it puts the item away. So placing five is five clicks, and stopping is just
     // starting to write. The handles of what was just placed still work in between.
     if (tools.hasArmed) {
         val chosen = strokes.filter { it.id in selection }
+        endUnderPress(chosen)?.let { (line, i) ->
+            dragEnd(line, i)
+            return
+        }
         val frame = chosen.unionBounds()
         val handle = frame?.let { handleAt(it, px, py, HANDLE_TOUCH / scale) }
         if (frame != null && handle != null) {
@@ -284,6 +319,42 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 event.buttons.isPrimaryPressed ||
                 event.buttons.isSecondaryPressed
             if (!held) break
+        }
+
+        // A line in hand is the one shape a drag draws: from where the press landed to where it
+        // lets go, and it stays in hand for the next. Moving the page and erasing still do that.
+        val lineKind = tools.armedStamp?.first?.takeIf { com.inkslate.core.Stamps.isDragged(it) }
+        if (moved && lineKind != null && inHand != Tool.PAN && inHand != Tool.ERASER) {
+            val o = tools.armedStamp!!.second
+            var endX = px
+            var endY = py
+            dragUntilRelease(down.position) { change, modifiers ->
+                val n = toPage(change.position)
+                val (x, y) = if (modifiers.isShiftPressed || tools.snapShapes) {
+                    Stroke.snapShape(Stroke.Kind.LINE, px, py, n.x, n.y)
+                } else {
+                    n.x to n.y
+                }
+                endX = x
+                endY = y
+                onPending(
+                    com.inkslate.core.Stamps.buildLine(lineKind, px, py, x, y, index, o) { "live" }.first()
+                )
+            }
+            onPending(null)
+            val length = kotlin.math.hypot(endX - px, endY - py)
+            if (length > 2f) {
+                val built = com.inkslate.core.Stamps.buildLine(
+                    lineKind, px, py, endX, endY, index, o, group = newId(), nextId = newId
+                )
+                strokes.addAll(built)
+                onCommitted(Op.added(built))
+                onSelection(built.map { it.id }.toSet())
+                built.first().boundsBox().let(onDrew)
+                tools.editStampShelf { it.withOptions(lineKind, it.optionsFor(lineKind).copy(size = length)) }
+                tools.arm(lineKind, tools.stampShelf.optionsFor(lineKind))
+            }
+            return
         }
 
         if (!moved) {
@@ -320,7 +391,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             return
         }
 
-        if (inHand != Tool.PAN) {
+        if (inHand != Tool.PAN && !(lineKind != null && inHand == Tool.ERASER)) {
             tools.disarm()
             tools.onPutAway?.invoke()
             onSelection(emptySet())
@@ -378,11 +449,15 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
         inHand == Tool.SELECT -> {
             val chosen = strokes.filter { it.id in selection }
             val box = chosen.unionBounds()
+            val end = endUnderPress(chosen)
             // The frame and the handle being dragged travel together, so having one is having both.
-            val grabbed = box?.let { b ->
+            // A lone line has ends instead of a frame, so it has no frame handles.
+            val grabbed = box?.takeIf { com.inkslate.core.Stamps.endsOf(chosen) == null }?.let { b ->
                 handleAt(b, px, py, HANDLE_TOUCH / scale)?.let { b to it }
             }
             when {
+                end != null -> dragEnd(end.first, end.second)
+
                 grabbed != null -> {
                     val (frame, handle) = grabbed
                     dragHandle(frame, handle, chosen)
@@ -674,7 +749,7 @@ internal fun placementBox(
 ): InkBox {
     val aspect = com.inkslate.core.Stamps.aspectFor(kind, o)
     var w = if (o.size > 0f) o.size else when (kind) {
-        com.inkslate.core.Stamps.Kind.LINE, com.inkslate.core.Stamps.Kind.ARROW -> pageWidth * 0.2f
+        com.inkslate.core.Stamps.Kind.LINE -> pageWidth * 0.2f
         com.inkslate.core.Stamps.Kind.BOX, com.inkslate.core.Stamps.Kind.OVAL -> pageWidth * 0.16f
         com.inkslate.core.Stamps.Kind.CHECK, com.inkslate.core.Stamps.Kind.CROSS,
         com.inkslate.core.Stamps.Kind.STAR -> pageWidth * 0.05f

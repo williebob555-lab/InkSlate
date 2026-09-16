@@ -38,7 +38,7 @@ import com.inkslate.core.MathSymbols
 import com.inkslate.core.StampShelf
 import com.inkslate.core.Stamps
 
-private val SHAPES = listOf(Stamps.Kind.LINE, Stamps.Kind.ARROW, Stamps.Kind.BOX, Stamps.Kind.OVAL)
+private val SHAPES = listOf(Stamps.Kind.LINE, Stamps.Kind.BOX, Stamps.Kind.OVAL)
 
 /**
  * The shapes tray: one row over the toolbar, in place of the dialog that used to cover the page.

@@ -359,6 +359,15 @@ class DrawingView @JvmOverloads constructor(
     /** A handle of the just-placed item is being dragged while something is still in hand. */
     private var placementGrab = false
 
+    /**
+     * A line being dragged out while the line is in hand: start x, y, end x, y, in page space.
+     *
+     * A line is the one shape where a drag means the shape rather than writing - the user asked
+     * for lines they draw, not lines they tap down and then aim - so it stays in hand until
+     * another tool is picked or the tray is closed.
+     */
+    private var lineDrag: FloatArray? = null
+
     /** How far a touch may travel and still be a tap that places, rather than a stroke. */
     private val placeTapSlopPx = 8f * resources.displayMetrics.density
 
@@ -1107,7 +1116,7 @@ class DrawingView @JvmOverloads constructor(
     private var lastTapY = 0f
 
     // selection interaction
-    private enum class Grab { NONE, MOVE, TL, TR, BL, BR, ROTATE, MARQUEE }
+    private enum class Grab { NONE, MOVE, TL, TR, BL, BR, ROTATE, MARQUEE, END0, END1 }
     private var grab = Grab.NONE
     private var marquee: RectF? = null
     private var grabStartPage = floatArrayOf(0f, 0f)
@@ -2319,6 +2328,18 @@ class DrawingView @JvmOverloads constructor(
 
         // Where the armed stamp or symbol will land, shown while it is being dragged out. Seeing
         // the space it will occupy before letting go is the whole point of dragging to place.
+        lineDrag?.let { d ->
+            (armedPlacement as? Placement.StampItem)?.let { item ->
+                val live = Stamps.buildLine(item.kind, d[0], d[1], d[2], d[3], livePage, item.options) { LIVE_ID }
+                val o = originOf(livePage)
+                val save = canvas.save()
+                canvas.concat(pageToView)
+                canvas.translate(o[0], o[1])
+                live.forEach { StrokeRasteriser.draw(canvas, it) }
+                canvas.restoreToCount(save)
+            }
+        }
+
         // Only a picture is dragged out; everything else goes down on a tap.
         placing?.takeIf { armedPlacement is Placement.ImageItem }?.let { r ->
             val item = armedPlacement
@@ -2459,8 +2480,29 @@ class DrawingView @JvmOverloads constructor(
 
 
     /** Selection frame and handles are drawn in view space so they stay a constant size. */
+    /** The ends of a lone selected line, in view coordinates, or null when that is not the selection. */
+    private fun lineEndsInView(): FloatArray? {
+        val line = Stamps.endsOf(selectedStrokes()) ?: return null
+        val o = originOf(line.pageIndex)
+        val pts = floatArrayOf(
+            line.points[0].x + o[0], line.points[0].y + o[1],
+            line.points[1].x + o[0], line.points[1].y + o[1]
+        )
+        pageToView.mapPoints(pts)
+        return pts
+    }
+
     private fun drawSelectionChrome(canvas: Canvas) {
         if (selection.isEmpty()) return
+        // A lone line gets a handle on each end and no frame: a frame around a diagonal line is
+        // mostly empty space, and aiming a line is moving its ends.
+        lineEndsInView()?.let { ends ->
+            for (i in 0..1) {
+                canvas.drawCircle(ends[i * 2], ends[i * 2 + 1], handleRadiusPx, handleFill)
+                canvas.drawCircle(ends[i * 2], ends[i * 2 + 1], handleRadiusPx, handleEdge)
+            }
+            return
+        }
         val b = selectionBounds() ?: return
         val v = RectF(b); pageToView.mapRect(v)
         canvas.drawRect(v, selFrame)
@@ -2784,6 +2826,19 @@ class DrawingView @JvmOverloads constructor(
             return
         }
 
+        lineDrag?.let { d ->
+            toPage(e.x, e.y)
+            var x = tmpPts[0]
+            var y = tmpPts[1]
+            if (snapShapes) {
+                val snapped = com.inkslate.core.Stroke.snapShape(StrokeKind.LINE, d[0], d[1], x, y)
+                x = snapped.first; y = snapped.second
+            }
+            d[2] = x; d[3] = y
+            invalidate()
+            return
+        }
+
         if (placementGrab) {
             updateSelectGesture(e)
             invalidate()
@@ -2796,9 +2851,19 @@ class DrawingView @JvmOverloads constructor(
             // It moved, so it was never a placement. It becomes what the pen does, begun where
             // the touch began - and unless that is moving the page, the item is put away.
             placeDown = null
-            placeStart = null
             val held = armedPlacement
-            if (t == Tool.PAN) {
+            val lineKind = (held as? Placement.StampItem)?.kind?.takeIf { Stamps.isDragged(it) }
+            if (lineKind != null && t != Tool.PAN && t != Tool.ERASER) {
+                val from = placeStart ?: floatArrayOf(0f, 0f)
+                placeStart = null
+                placing = null
+                lineDrag = floatArrayOf(from[0], from[1], from[0], from[1])
+                down.recycle()
+                onMove(e, isStylus, t)
+                return
+            }
+            placeStart = null
+            if (t == Tool.PAN || (lineKind != null && t == Tool.ERASER)) {
                 armedPlacement = null
                 onDown(down, placeDownIdx, placeDownStylus, t)
                 armedPlacement = held
@@ -2907,7 +2972,7 @@ class DrawingView @JvmOverloads constructor(
                 val aspect = Stamps.aspectFor(item.kind, item.options)
                 // The size it was last used at, or a size that suits the page it is going on.
                 var w = if (item.options.size > 0f) item.options.size else when (item.kind) {
-                    Stamps.Kind.LINE, Stamps.Kind.ARROW -> pageWidthPt * 0.2f
+                    Stamps.Kind.LINE -> pageWidthPt * 0.2f
                     Stamps.Kind.BOX, Stamps.Kind.OVAL -> pageWidthPt * 0.16f
                     Stamps.Kind.CHECK, Stamps.Kind.CROSS, Stamps.Kind.STAR -> pageWidthPt * 0.05f
                     else -> pageWidthPt * 0.42f
@@ -3003,6 +3068,29 @@ class DrawingView @JvmOverloads constructor(
             // can be adjusted over several drags before anything is decided.
             cropGrab = 0
             drawingPointerId = -1
+            parent?.requestDisallowInterceptTouchEvent(false)
+            invalidate()
+            return
+        }
+
+        lineDrag?.let { d ->
+            lineDrag = null
+            val item = armedPlacement as? Placement.StampItem
+            val length = hypot(d[2] - d[0], d[3] - d[1])
+            if (!cancelled && item != null && length > placeSlopPt) {
+                val built = Stamps.buildLine(
+                    item.kind, d[0], d[1], d[2], d[3], livePage, item.options, ids.next()
+                ) { ids.next() }
+                strokes.addAll(built)
+                growCanvasForAll(built)
+                pushOp(Op(built, emptyList()))
+                selection.clear(); built.forEach { selection.add(it.id) }
+                onSelectionChanged?.invoke(selection.size)
+                changed()
+                onStampSized?.invoke(item.kind, length)
+            }
+            drawingPointerId = -1
+            drawingIsStylus = false
             parent?.requestDisallowInterceptTouchEvent(false)
             invalidate()
             return
@@ -3196,6 +3284,7 @@ class DrawingView @JvmOverloads constructor(
         placeDown?.recycle()
         placeDown = null
         placementGrab = false
+        lineDrag = null
 
         // An interrupted drag is a different matter. The strokes have already been moved, and
         // clearing the gesture without putting them back would leave the selection somewhere the
@@ -3754,6 +3843,21 @@ class DrawingView @JvmOverloads constructor(
                     applyLiveTransform(Matrix().apply { setScale(u, u, anchorX, anchorY) })
                 }
             }
+            Grab.END0, Grab.END1 -> {
+                val orig = selectionAtGrab.singleOrNull() ?: return
+                val i = grabIndices.getOrElse(0) { -1 }
+                if (i !in strokes.indices || strokes[i].id != orig.id) return
+                val moving = if (grab == Grab.END0) 0 else 1
+                val fixed = orig.points[1 - moving]
+                var x = px
+                var y = py
+                if (snapShapes) {
+                    val snapped = com.inkslate.core.Stroke.snapShape(StrokeKind.LINE, fixed.x, fixed.y, x, y)
+                    x = snapped.first; y = snapped.second
+                }
+                strokes[i] = Stamps.withEnd(orig, moving, x, y)
+                pageIndexDirty = true
+            }
             Grab.ROTATE -> {
                 val cx = selBoundsAtGrab.centerX(); val cy = selBoundsAtGrab.centerY()
                 val a0 = atan2(grabStartPage[1] - cy, grabStartPage[0] - cx)
@@ -3794,11 +3898,11 @@ class DrawingView @JvmOverloads constructor(
                 }
                 marquee = null
             }
-            Grab.MOVE, Grab.TL, Grab.TR, Grab.BL, Grab.BR, Grab.ROTATE -> {
+            Grab.MOVE, Grab.TL, Grab.TR, Grab.BL, Grab.BR, Grab.ROTATE, Grab.END0, Grab.END1 -> {
                 if (!cancelled && selectionAtGrab.isNotEmpty()) {
                     var after = selectedStrokes()
                     val moved = after.zip(selectionAtGrab).any { (a, b) -> a != b }
-                    val resized = grab != Grab.MOVE && grab != Grab.ROTATE
+                    val resized = grab == Grab.TL || grab == Grab.TR || grab == Grab.BL || grab == Grab.BR
                     val tag = if (moved && resized && grabIsStamp) Stamps.stampOf(after) else null
                     val kind = tag?.let { Stamps.kindOf(it) }
                     if (tag != null && kind != null && !kind.isShape) {
@@ -3825,6 +3929,14 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun handleAt(vx: Float, vy: Float): Grab {
+        lineEndsInView()?.let { ends ->
+            val r = handleRadiusPx * 1.8f
+            return when {
+                hypot(vx - ends[0], vy - ends[1]) <= r -> Grab.END0
+                hypot(vx - ends[2], vy - ends[3]) <= r -> Grab.END1
+                else -> Grab.NONE
+            }
+        }
         val b = selectionBounds() ?: return Grab.NONE
         val v = RectF(b); pageToView.mapRect(v)
         val r = handleRadiusPx * 1.5f

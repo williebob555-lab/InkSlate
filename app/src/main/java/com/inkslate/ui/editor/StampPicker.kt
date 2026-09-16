@@ -56,6 +56,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.inkslate.core.DashStyle
 import com.inkslate.core.FillStyle
+import com.inkslate.core.LineEnd
 import com.inkslate.core.Palette
 import com.inkslate.core.StampShelf
 import com.inkslate.core.Stamps
@@ -386,6 +387,17 @@ private fun StampSettingsBody(
         }
     }
 
+    if (Stamps.Knob.ENDS in kind.knobs) {
+        // Each end on its own: an arrow, a double arrow and a dimension line are one line.
+        Heading("Start")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.startEnd == e) { edit { it.copy(startEnd = e) } } }
+        }
+        Heading("End")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.finishEnd == e) { edit { it.copy(finishEnd = e) } } }
+        }
+    }
     if (Stamps.Knob.DASH in kind.knobs) {
         Heading("Line")
         OptionWrapRow {

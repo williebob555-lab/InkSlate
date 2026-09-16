@@ -917,7 +917,18 @@ private fun DrawScope.drawPage(
             )
         }
 
-        strokes.filter { it.id in selection }.unionBounds()?.let { drawSelection(it, scale) }
+        val selected = strokes.filter { it.id in selection }
+        val line = com.inkslate.core.Stamps.endsOf(selected)
+        if (line != null) {
+            // A lone line gets a handle on each end, not a frame.
+            val r = HANDLE_DRAW / scale
+            for (p in line.points) {
+                drawCircle(Color.White, r, Offset(p.x, p.y))
+                drawCircle(Color(0xFF3B82F6), r, Offset(p.x, p.y), style = DrawStroke(1.4f / scale))
+            }
+        } else {
+            selected.unionBounds()?.let { drawSelection(it, scale) }
+        }
         RenderStats.addInk(System.nanoTime() - inkAt)
     }
     }
