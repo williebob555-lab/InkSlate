@@ -73,6 +73,7 @@ fun NavigationSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).imePadding()) {
+            PanelTop("Go to", onDismiss, "Pages, bookmarks and contents")
 
             // ---- jump to page, always visible ----
             Row(

@@ -64,6 +64,7 @@ fun SearchSheet(
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().heightIn(max = 560.dp).imePadding()) {
+            PanelTop("Find", onDismiss, "Search the text of this document")
 
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
