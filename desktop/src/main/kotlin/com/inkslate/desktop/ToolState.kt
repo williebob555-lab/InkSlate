@@ -225,6 +225,20 @@ class ToolState {
         }
     private val pressureState = mutableStateOf(DesktopPrefs.get(K_PRESSURE)?.toBoolean() ?: true)
 
+    /**
+     * Select by drawing a ring round things rather than by boxing them.
+     *
+     * The same drag doing the same job: a box is the wrong shape for one line of working among
+     * five, or an answer written at an angle.
+     */
+    var lassoSelect: Boolean
+        get() = lassoState.value
+        set(value) {
+            lassoState.value = value
+            DesktopPrefs.put(K_LASSO, value.toString())
+        }
+    private val lassoState = mutableStateOf(DesktopPrefs.get(K_LASSO)?.toBoolean() ?: false)
+
     /** Shapes snap to square, circle and fifteen degrees without having to hold shift. */
     var snapShapes: Boolean
         get() = snapShapesState.value
@@ -502,6 +516,7 @@ class ToolState {
         const val K_AUTO_SWITCH = "tool_auto_switch"
         const val K_PRESSURE = "tool_pressure"
         const val K_SNAP_SHAPES = "tool_snap_shapes"
+        const val K_LASSO = "tool_lasso_select"
         const val K_SNAP_TEXT = "tool_snap_highlighter"
         const val K_CROP = "tool_crop_margins"
         const val K_FLING = "tool_fling"

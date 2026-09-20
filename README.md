@@ -66,7 +66,7 @@ off and taking the next stable release puts you back on the ordinary channel.
   speed. Axes carry units and write their numbers in the size that suits them - 0.004 s reads as
   4 ms. Change any number and it redraws in place
 - Region capture: box a figure in the textbook and drop it in as a movable object
-- Marquee and tap selection; move, resize, rotate; cut, copy and paste between documents
+- Marquee, lasso and tap selection; move, resize, rotate; cut, copy and paste between documents
 
 **Reading**
 - Vertical, horizontal, grid, two-page spread or single-page layouts

@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -95,11 +98,7 @@ fun StampLibrary(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
-            Text(
-                "Shapes & stamps",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 20.dp, bottom = 8.dp)
-            )
+            PanelTop("Shapes & stamps", onDismiss, "Click one to put it in hand")
             HorizontalDivider()
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 Stamps.Group.entries.forEach { group ->
@@ -244,6 +243,8 @@ fun StampSettingsPanel(
     recentColours: List<Int>,
     onChange: (Stamps.StampOptions) -> Unit,
     onDone: () -> Unit,
+    /** Down the side of the window rather than across the foot of the page. */
+    side: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // Which colour is being picked from the full picker: where it starts, and where it goes.
@@ -257,29 +258,20 @@ fun StampSettingsPanel(
     }
 
     Surface(
-        modifier.widthIn(max = 560.dp).fillMaxWidth(),
-        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
+        modifier.then(
+            if (side) Modifier.fillMaxHeight().width(420.dp)
+            else Modifier.widthIn(max = 560.dp).fillMaxWidth()
+        ),
+        shape = if (side) RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
+        else RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
         tonalElevation = 6.dp,
         shadowElevation = 8.dp
     ) {
-        Column(Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(kind.label, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                TextButton(onClick = onDone) { Text("Done") }
-            }
+        Column(Modifier.fillMaxSize()) {
+            PanelTop(kind.label, onDone, subtitle)
             Column(
                 Modifier
-                    .heightIn(max = 520.dp)
+                    .then(if (side) Modifier.weight(1f) else Modifier.heightIn(max = 520.dp))
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 18.dp)
                     .padding(bottom = 14.dp)
@@ -335,119 +327,6 @@ private fun SettingsBody(
         valueRange = 0.5f..8f
     )
     ScaleSlider("Opacity", options.opacity, 0.1f..1f) { v -> edit { it.copy(opacity = v) } }
-
-    if (Stamps.Knob.VARIANT in kind.knobs && kind.variants.isNotEmpty()) {
-        OptionLabel("Style")
-        OptionWrapRow {
-            kind.variants.forEachIndexed { i, name ->
-                OptionChip(name, options.variant == i) { edit { it.copy(variant = i) } }
-            }
-        }
-    }
-    if (Stamps.Knob.ENDS in kind.knobs) {
-        // Each end on its own: an arrow, a double arrow and a dimension line are one line.
-        OptionLabel("Start")
-        OptionWrapRow {
-            LineEnd.entries.forEach { e -> OptionChip(e.label, options.startEnd == e) { edit { it.copy(startEnd = e) } } }
-        }
-        OptionLabel("End")
-        OptionWrapRow {
-            LineEnd.entries.forEach { e -> OptionChip(e.label, options.finishEnd == e) { edit { it.copy(finishEnd = e) } } }
-        }
-        if (options.startEnd != LineEnd.NONE || options.finishEnd != LineEnd.NONE) {
-            ScaleSlider("End size", options.endScale, 0.3f..4f) { v -> edit { it.copy(endScale = v) } }
-        }
-    }
-    if (Stamps.Knob.DASH in kind.knobs) {
-        OptionLabel("Line")
-        OptionWrapRow {
-            DashStyle.entries.forEach { d -> OptionChip(d.label, options.dash == d) { edit { it.copy(dash = d) } } }
-        }
-    }
-    if (Stamps.Knob.FILL in kind.knobs) {
-        OptionLabel("Fill")
-        OptionWrapRow {
-            FillStyle.entries.forEach { f -> OptionChip(f.label, options.fill == f) { edit { it.copy(fill = f) } } }
-        }
-    }
-    if (Stamps.Knob.DIVISIONS in kind.knobs) {
-        OptionLabel("${kind.divisionsLabel}: ${options.divisions}")
-        Slider(
-            value = options.divisions.toFloat().coerceIn(kind.divisionsRange.first.toFloat(), kind.divisionsRange.last.toFloat()),
-            onValueChange = { v -> edit { it.copy(divisions = v.roundToInt()) } },
-            valueRange = kind.divisionsRange.first.toFloat()..kind.divisionsRange.last.toFloat()
-        )
-    }
-    if (Stamps.Knob.FILLED in kind.knobs) {
-        OptionLabel("Shaded: ${options.filled} of ${options.divisions}")
-        Slider(
-            value = options.filled.toFloat(),
-            onValueChange = { v -> edit { it.copy(filled = v.roundToInt()) } },
-            valueRange = 0f..options.divisions.toFloat().coerceAtLeast(1f)
-        )
-    }
-
-    val graph = kind == Stamps.Kind.AXES || kind == Stamps.Kind.COORD_GRID
-    if (graph) {
-        OptionLabel("Start from")
-        OptionWrapRow {
-            OptionChip("Four quadrants", options.rangeFrom < 0f && options.yFrom < 0f) {
-                edit { it.copy(rangeFrom = -5f, rangeTo = 5f, step = 1f, yFrom = -5f, yTo = 5f, yStep = 1f) }
-            }
-            OptionChip("First quadrant", options.rangeFrom == 0f && options.yFrom == 0f) {
-                edit { it.copy(rangeFrom = 0f, rangeTo = 10f, step = 1f, yFrom = 0f, yTo = 10f, yStep = 1f) }
-            }
-        }
-    }
-    if (Stamps.Knob.X_AXIS in kind.knobs) {
-        RangeFields(
-            if (graph) "Horizontal axis" else "Values", kind.name + ":x",
-            options.rangeFrom, options.rangeTo, options.step,
-            { v -> edit { it.copy(rangeFrom = v) } },
-            { v -> edit { it.copy(rangeTo = v) } },
-            { v -> edit { it.copy(step = v) } }
-        )
-    }
-    if (Stamps.Knob.Y_AXIS in kind.knobs) {
-        RangeFields(
-            "Vertical axis", kind.name + ":y",
-            options.yFrom, options.yTo, options.yStep,
-            { v -> edit { it.copy(yFrom = v) } },
-            { v -> edit { it.copy(yTo = v) } },
-            { v -> edit { it.copy(yStep = v) } }
-        )
-    }
-    if (Stamps.Knob.TICKS in kind.knobs) {
-        SwitchRow("Tick marks", options.ticks) { v -> edit { it.copy(ticks = v) } }
-    }
-    if (Stamps.Knob.TICK_VALUES in kind.knobs) {
-        SwitchRow("Numbers at the ticks", options.tickValues) { v -> edit { it.copy(tickValues = v) } }
-    }
-    if (Stamps.Knob.AXIS_NAMES in kind.knobs) {
-        OptionLabel("Axis names")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedTextField(
-                value = options.xName,
-                onValueChange = { v -> edit { it.copy(xName = v.take(24)) } },
-                label = { Text(if (graph) "Across" else "Along the bottom") },
-                placeholder = { Text("None") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-            OutlinedTextField(
-                value = options.yName,
-                onValueChange = { v -> edit { it.copy(yName = v.take(24)) } },
-                label = { Text(if (graph) "Up" else "Up the side") },
-                placeholder = { Text("None") },
-                singleLine = true,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-    if (Stamps.Knob.LABELS in kind.knobs) {
-        SwitchRow("Labels", options.labels) { v -> edit { it.copy(labels = v) } }
-    }
-
 
     if (Stamps.Knob.EQUATION in kind.knobs) {
         Section("The equation")
@@ -591,6 +470,120 @@ private fun SettingsBody(
             }
         }
     }
+
+
+    if (Stamps.Knob.VARIANT in kind.knobs && kind.variants.isNotEmpty()) {
+        OptionLabel("Style")
+        OptionWrapRow {
+            kind.variants.forEachIndexed { i, name ->
+                OptionChip(name, options.variant == i) { edit { it.copy(variant = i) } }
+            }
+        }
+    }
+    if (Stamps.Knob.ENDS in kind.knobs) {
+        // Each end on its own: an arrow, a double arrow and a dimension line are one line.
+        OptionLabel("Start")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.startEnd == e) { edit { it.copy(startEnd = e) } } }
+        }
+        OptionLabel("End")
+        OptionWrapRow {
+            LineEnd.entries.forEach { e -> OptionChip(e.label, options.finishEnd == e) { edit { it.copy(finishEnd = e) } } }
+        }
+        if (options.startEnd != LineEnd.NONE || options.finishEnd != LineEnd.NONE) {
+            ScaleSlider("End size", options.endScale, 0.3f..4f) { v -> edit { it.copy(endScale = v) } }
+        }
+    }
+    if (Stamps.Knob.DASH in kind.knobs) {
+        OptionLabel("Line")
+        OptionWrapRow {
+            DashStyle.entries.forEach { d -> OptionChip(d.label, options.dash == d) { edit { it.copy(dash = d) } } }
+        }
+    }
+    if (Stamps.Knob.FILL in kind.knobs) {
+        OptionLabel("Fill")
+        OptionWrapRow {
+            FillStyle.entries.forEach { f -> OptionChip(f.label, options.fill == f) { edit { it.copy(fill = f) } } }
+        }
+    }
+    if (Stamps.Knob.DIVISIONS in kind.knobs) {
+        OptionLabel("${kind.divisionsLabel}: ${options.divisions}")
+        Slider(
+            value = options.divisions.toFloat().coerceIn(kind.divisionsRange.first.toFloat(), kind.divisionsRange.last.toFloat()),
+            onValueChange = { v -> edit { it.copy(divisions = v.roundToInt()) } },
+            valueRange = kind.divisionsRange.first.toFloat()..kind.divisionsRange.last.toFloat()
+        )
+    }
+    if (Stamps.Knob.FILLED in kind.knobs) {
+        OptionLabel("Shaded: ${options.filled} of ${options.divisions}")
+        Slider(
+            value = options.filled.toFloat(),
+            onValueChange = { v -> edit { it.copy(filled = v.roundToInt()) } },
+            valueRange = 0f..options.divisions.toFloat().coerceAtLeast(1f)
+        )
+    }
+
+    val graph = kind == Stamps.Kind.AXES || kind == Stamps.Kind.COORD_GRID
+    if (graph) {
+        OptionLabel("Start from")
+        OptionWrapRow {
+            OptionChip("Four quadrants", options.rangeFrom < 0f && options.yFrom < 0f) {
+                edit { it.copy(rangeFrom = -5f, rangeTo = 5f, step = 1f, yFrom = -5f, yTo = 5f, yStep = 1f) }
+            }
+            OptionChip("First quadrant", options.rangeFrom == 0f && options.yFrom == 0f) {
+                edit { it.copy(rangeFrom = 0f, rangeTo = 10f, step = 1f, yFrom = 0f, yTo = 10f, yStep = 1f) }
+            }
+        }
+    }
+    if (Stamps.Knob.X_AXIS in kind.knobs) {
+        RangeFields(
+            if (graph) "Horizontal axis" else "Values", kind.name + ":x",
+            options.rangeFrom, options.rangeTo, options.step,
+            { v -> edit { it.copy(rangeFrom = v) } },
+            { v -> edit { it.copy(rangeTo = v) } },
+            { v -> edit { it.copy(step = v) } }
+        )
+    }
+    if (Stamps.Knob.Y_AXIS in kind.knobs) {
+        RangeFields(
+            "Vertical axis", kind.name + ":y",
+            options.yFrom, options.yTo, options.yStep,
+            { v -> edit { it.copy(yFrom = v) } },
+            { v -> edit { it.copy(yTo = v) } },
+            { v -> edit { it.copy(yStep = v) } }
+        )
+    }
+    if (Stamps.Knob.TICKS in kind.knobs) {
+        SwitchRow("Tick marks", options.ticks) { v -> edit { it.copy(ticks = v) } }
+    }
+    if (Stamps.Knob.TICK_VALUES in kind.knobs) {
+        SwitchRow("Numbers at the ticks", options.tickValues) { v -> edit { it.copy(tickValues = v) } }
+    }
+    if (Stamps.Knob.AXIS_NAMES in kind.knobs) {
+        OptionLabel("Axis names")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedTextField(
+                value = options.xName,
+                onValueChange = { v -> edit { it.copy(xName = v.take(24)) } },
+                label = { Text(if (graph) "Across" else "Along the bottom") },
+                placeholder = { Text("None") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = options.yName,
+                onValueChange = { v -> edit { it.copy(yName = v.take(24)) } },
+                label = { Text(if (graph) "Up" else "Up the side") },
+                placeholder = { Text("None") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+    if (Stamps.Knob.LABELS in kind.knobs) {
+        SwitchRow("Labels", options.labels) { v -> edit { it.copy(labels = v) } }
+    }
+
 
     if (Stamps.Knob.X_AXIS in kind.knobs || Stamps.Knob.Y_AXIS in kind.knobs) {
         Section("Units")

@@ -33,6 +33,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,7 +79,25 @@ fun ShapeTray(
         tonalElevation = 2.dp
     ) {
         Row(
-            Modifier.fillMaxWidth().height(60.dp).padding(start = 4.dp, end = 2.dp),
+            Modifier
+                .fillMaxWidth()
+                .height(60.dp)
+                // Dragged down, like every other panel, rather than only closed by its cross.
+                .pointerInput(Unit) {
+                    var travelled = 0f
+                    detectVerticalDragGestures(
+                        onDragStart = { travelled = 0f },
+                        onDragCancel = { travelled = 0f },
+                        onDragEnd = {
+                            if (travelled > 60f) onClose()
+                            travelled = 0f
+                        }
+                    ) { change, amount ->
+                        travelled += amount
+                        change.consume()
+                    }
+                }
+                .padding(start = 4.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (symbols) {

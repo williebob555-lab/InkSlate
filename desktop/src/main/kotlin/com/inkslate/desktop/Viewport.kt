@@ -50,6 +50,9 @@ class Viewport {
     // ---- moving --------------------------------------------------------------
 
     /** Move by a distance in screen pixels, which is what every input device speaks. */
+    /** True for a canvas, which needs room past its content to grow into. */
+    var growable: Boolean = false
+
     fun panBy(dxPx: Float, dyPx: Float) {
         offset = clamp(Offset(offset.x - dxPx / scale, offset.y - dyPx / scale))
     }
@@ -163,19 +166,40 @@ class Viewport {
     /**
      * Keep the document within reach.
      *
-     * Not a hard clamp to the content box: half a screen of slack in every direction is what
-     * makes it possible to draw comfortably in a margin, and to write past the edge of a canvas
-     * that is about to grow to meet it. Without any limit at all a stray throw sends the document
-     * somewhere it takes a minute to find again.
+     * The edge of the document is the end of the journey: it can be brought to the edge of the
+     * window and no further, whichever way it is moved - the pan tool, a drag, a wheel, a throw -
+     * and a page smaller than the window stays where it is put rather than springing back to the
+     * middle. A canvas is the exception and keeps a margin past what is on it: that empty room is
+     * where it grows when something is written near its edge.
      */
     private fun clamp(candidate: Offset): Offset {
         if (viewSize.width <= 0f || viewSize.height <= 0f) return candidate
-        val slackX = viewSize.width / scale * 0.5f
-        val slackY = viewSize.height / scale * 0.5f
-        val minX = content.left - slackX
-        val maxX = max(minX, content.right - viewSize.width / scale + slackX)
-        val minY = content.top - slackY
-        val maxY = max(minY, content.bottom - viewSize.height / scale + slackY)
+        val slackX = if (growable) viewSize.width / scale * 0.5f else 0f
+        val slackY = if (growable) viewSize.height / scale * 0.5f else 0f
+        val acrossView = viewSize.width / scale
+        val downView = viewSize.height / scale
+
+        val minX: Float
+        val maxX: Float
+        if (content.width >= acrossView) {
+            minX = content.left - slackX
+            maxX = max(minX, content.right - acrossView + slackX)
+        } else {
+            // Smaller than the window: anywhere that keeps all of it on screen.
+            minX = content.right - acrossView - slackX
+            maxX = max(minX, content.left + slackX)
+        }
+
+        val minY: Float
+        val maxY: Float
+        if (content.height >= downView) {
+            minY = content.top - slackY
+            maxY = max(minY, content.bottom - downView + slackY)
+        } else {
+            minY = content.bottom - downView - slackY
+            maxY = max(minY, content.top + slackY)
+        }
+
         return Offset(candidate.x.coerceIn(minX, maxX), candidate.y.coerceIn(minY, maxY))
     }
 

@@ -550,6 +550,24 @@ fun ToolBar(
                         ) { v -> change { state.edit { it.textSize = v } } }
                     }
 
+                    if (cfg.tool == Tool.SELECT) {
+                        // The same drag, doing the same job, in whichever shape suits what is
+                        // being picked up - so it belongs here rather than in a second tool.
+                        Label("Select by")
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            item {
+                                Chip("Box", !state.lassoSelect) {
+                                    change { state.lassoSelect = false; state.persistNow() }
+                                }
+                            }
+                            item {
+                                Chip("Lasso", state.lassoSelect) {
+                                    change { state.lassoSelect = true; state.persistNow() }
+                                }
+                            }
+                        }
+                    }
+
                     if (cfg.tool.isShape) {
                         Label("Line style")
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

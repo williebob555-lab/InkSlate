@@ -218,24 +218,16 @@ fun PagesSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(Modifier.fillMaxWidth().heightIn(max = 640.dp)) {
 
-            Row(
-                Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+            val count = if (pickedAt.size > 1) {
+                "${pickedAt.size} of ${plan.size} pages picked"
+            } else {
+                "${plan.size} page${if (plan.size == 1) "" else "s"}"
+            }
+            PanelTop(
+                "Pages",
+                onDismiss,
+                if (changed) "$count - nothing is written until you apply" else count
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Pages", style = MaterialTheme.typography.titleMedium)
-                    val count = if (pickedAt.size > 1) {
-                        "${pickedAt.size} of ${plan.size} pages picked"
-                    } else {
-                        "${plan.size} page${if (plan.size == 1) "" else "s"}"
-                    }
-                    Text(
-                        if (changed) "$count - nothing is written until you apply" else count,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (changed) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
                 if (changed) {
                     TextButton(onClick = { plan = PagePlan.identity(source.pageCount) }) {
                         Text("Undo all")

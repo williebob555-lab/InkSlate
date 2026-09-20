@@ -129,6 +129,8 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onLive: (List<InkPoint>) -> Unit,
     onPending: (Stroke?) -> Unit,
     onMarquee: (InkBox?) -> Unit,
+    /** The ring being drawn, in the page's own coordinates, or null when there is none. */
+    onLasso: (List<Float>?) -> Unit = {},
     onStampPlaced: () -> Unit,
     /** Told the bounds of whatever was just drawn, so a canvas can grow to fit it. */
     onDrew: (InkBox) -> Unit = {},
@@ -475,16 +477,38 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 }
 
                 else -> {
-                    // A tap picks the topmost thing under it; a drag boxes.
+                    // A tap picks the topmost thing under it; a drag boxes, or draws a ring.
                     var dragged = false
+                    val ring = ArrayList<Float>()
+                    if (tools.lassoSelect) { ring.add(px); ring.add(py) }
                     val end = dragUntilRelease(down.position) { change, _ ->
                         dragged = dragged || (change.position - down.position).getDistance() > 6f
-                        if (dragged) {
-                            val n = toPage(change.position)
+                        if (!dragged) return@dragUntilRelease
+                        val n = toPage(change.position)
+                        if (tools.lassoSelect) {
+                            // Only where it has moved: a ring is a path, and a hundred points on
+                            // one spot is a hundred to test everything against for nothing.
+                            val lastX = ring[ring.size - 2]
+                            val lastY = ring[ring.size - 1]
+                            if (kotlin.math.hypot(n.x - lastX, n.y - lastY) > 2f / scale) {
+                                ring.add(n.x); ring.add(n.y)
+                                onLasso(ring.toList())
+                            }
+                        } else {
                             onMarquee(InkBox.of(px, py, n.x, n.y))
                         }
                     }
-                    if (dragged) {
+                    if (dragged && tools.lassoSelect) {
+                        onSelection(
+                            if (ring.size >= 6) {
+                                strokes.filter {
+                                    it.pageIndex == index && com.inkslate.core.Lasso.catches(it, ring)
+                                }.map { it.id }.toSet()
+                            } else {
+                                emptySet()
+                            }
+                        )
+                    } else if (dragged) {
                         val n = toPage(end)
                         val area = InkBox.of(px, py, n.x, n.y)
                         onSelection(
@@ -498,6 +522,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                         onSelection(hit?.let { setOf(it.id) } ?: emptySet())
                     }
                     onMarquee(null)
+                    onLasso(null)
                 }
             }
         }

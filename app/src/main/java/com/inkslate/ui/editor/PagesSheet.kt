@@ -214,24 +214,16 @@ fun PagesSheet(
         Column(Modifier.fillMaxWidth().heightIn(max = maxHeight)) {
 
             // ---- header ----
-            Row(
-                Modifier.fillMaxWidth().padding(start = 20.dp, end = 12.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
+            val count = if (picking) {
+                "${pickedAt.size} of ${plan.size} pages picked"
+            } else {
+                "${plan.size} page${if (plan.size == 1) "" else "s"}"
+            }
+            PanelTop(
+                "Pages",
+                onDismiss,
+                if (changed) "$count - nothing is written until you apply" else count
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Pages", style = MaterialTheme.typography.titleMedium)
-                    val count = if (picking) {
-                        "${pickedAt.size} of ${plan.size} pages picked"
-                    } else {
-                        "${plan.size} page${if (plan.size == 1) "" else "s"}"
-                    }
-                    Text(
-                        if (changed) "$count - nothing is written until you apply" else count,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (changed) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
                 if (changed) {
                     TextButton(onClick = { plan = PageArrangement.identity(pageCount) }) {
                         Text("Undo all")

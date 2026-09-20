@@ -1,5 +1,6 @@
 package com.inkslate.ink
 
+import com.inkslate.core.Lasso
 import com.inkslate.core.Stamps
 import com.inkslate.core.Stroke.Kind as StrokeKind
 import android.annotation.SuppressLint
@@ -309,6 +310,16 @@ class DrawingView @JvmOverloads constructor(
 
     var pressureEnabled: Boolean = true
     var snapShapes: Boolean = false
+
+    /**
+     * Select by drawing a ring round things rather than by boxing them.
+     *
+     * A box is the wrong shape for most of what gets selected on a marked-up page - one line of
+     * working among five, an answer written at an angle - so the same drag can draw a ring
+     * instead. Which it does is a setting rather than a second tool, because it is the same
+     * gesture doing the same job.
+     */
+    var lassoSelect: Boolean = false
 
     /**
      * Something waiting to be put on the page.
@@ -1080,7 +1091,6 @@ class DrawingView @JvmOverloads constructor(
     private val scroller = android.widget.OverScroller(context)
     private var velocityTracker: android.view.VelocityTracker? = null
     /** Whether the current pan came from a two-finger gesture rather than the Pan tool. */
-    private var loosePanning = false
 
     private var lastFlingX = 0
     private var lastFlingY = 0
@@ -1119,6 +1129,9 @@ class DrawingView @JvmOverloads constructor(
     private enum class Grab { NONE, MOVE, TL, TR, BL, BR, ROTATE, MARQUEE, END0, END1 }
     private var grab = Grab.NONE
     private var marquee: RectF? = null
+
+    /** The ring being drawn, as x, y pairs in the page's own coordinates. */
+    private var lasso: ArrayList<Float>? = null
     private var grabStartPage = floatArrayOf(0f, 0f)
     private var selectionAtGrab: List<Stroke> = emptyList()
 
@@ -2325,6 +2338,22 @@ class DrawingView @JvmOverloads constructor(
             val v = RectF(r); v.offset(o[0], o[1]); pageToView.mapRect(v)
             canvas.drawRect(v, selFrame)
         }
+        lasso?.let { ring ->
+            if (ring.size >= 4) {
+                val o = originOf(livePage)
+                val path = android.graphics.Path()
+                val point = FloatArray(2)
+                for (i in ring.indices step 2) {
+                    point[0] = ring[i] + o[0]
+                    point[1] = ring[i + 1] + o[1]
+                    pageToView.mapPoints(point)
+                    if (i == 0) path.moveTo(point[0], point[1]) else path.lineTo(point[0], point[1])
+                }
+                // Closed as it is drawn, because that is what it will mean when it is let go.
+                path.close()
+                canvas.drawPath(path, selFrame)
+            }
+        }
 
         // Where the armed stamp or symbol will land, shown while it is being dragged out. Seeing
         // the space it will occupy before letting go is the whole point of dragging to place.
@@ -2909,7 +2938,6 @@ class DrawingView @JvmOverloads constructor(
             t == Tool.PAN -> {
                 pageToView.postTranslate(e.x - lastX, e.y - lastY)
                 lastX = e.x; lastY = e.y
-                loosePanning = false
                 scheduleDetail()
                 clampTranslation(); syncInverse(); reportVisiblePages()
                 onTransformChanged?.invoke()
@@ -3774,7 +3802,12 @@ class DrawingView @JvmOverloads constructor(
         if (hit == null) {
             clearSelection()
             grab = Grab.MARQUEE
-            marquee = RectF(grabStartPage[0], grabStartPage[1], grabStartPage[0], grabStartPage[1])
+            if (lassoSelect) {
+                lasso = arrayListOf(grabStartPage[0], grabStartPage[1])
+                marquee = null
+            } else {
+                marquee = RectF(grabStartPage[0], grabStartPage[1], grabStartPage[0], grabStartPage[1])
+            }
             return
         }
 
@@ -3817,7 +3850,14 @@ class DrawingView @JvmOverloads constructor(
         toPage(e.x, e.y)
         val px = tmpPts[0]; val py = tmpPts[1]
         when (grab) {
-            Grab.MARQUEE -> marquee = RectF(
+            Grab.MARQUEE -> if (lasso != null) {
+                val ring = lasso!!
+                // Only when it has moved: a ring is a path, and a hundred points on one spot is
+                // a hundred points to test everything against for nothing.
+                val lastX = ring[ring.size - 2]
+                val lastY = ring[ring.size - 1]
+                if (hypot(px - lastX, py - lastY) > 2f) { ring.add(px); ring.add(py) }
+            } else marquee = RectF(
                 min(grabStartPage[0], px), min(grabStartPage[1], py),
                 max(grabStartPage[0], px), max(grabStartPage[1], py)
             )
@@ -3896,7 +3936,16 @@ class DrawingView @JvmOverloads constructor(
                         .forEach { selection.add(it.id) }
                     onSelectionChanged?.invoke(selection.size)
                 }
+                lasso?.let { ring ->
+                    if (!cancelled && ring.size >= 6) {
+                        selection.clear()
+                        strokes.filter { it.pageIndex == livePage && Lasso.catches(it, ring) }
+                            .forEach { selection.add(it.id) }
+                        onSelectionChanged?.invoke(selection.size)
+                    }
+                }
                 marquee = null
+                lasso = null
             }
             Grab.MOVE, Grab.TL, Grab.TR, Grab.BL, Grab.BR, Grab.ROTATE, Grab.END0, Grab.END1 -> {
                 if (!cancelled && selectionAtGrab.isNotEmpty()) {
@@ -3987,9 +4036,8 @@ class DrawingView @JvmOverloads constructor(
                     pageToView.postScale(factor, factor, fx, fy)
                 }
                 lastFocusX = fx; lastFocusY = fy; lastSpan = span
-                loosePanning = true
                 scheduleDetail()
-                clampTranslation(loose = true); syncInverse(); invalidate()
+                clampTranslation(); syncInverse(); invalidate()
                 onTransformChanged?.invoke(); reportVisiblePages()
         scheduleDetail()
             }
@@ -3997,48 +4045,45 @@ class DrawingView @JvmOverloads constructor(
         }
     }
 
-    /** Keep the page on screen so it can never be flung off into the void. */
     /**
-     * Keep the viewport somewhere sensible.
+     * Keep the page where it can be worked on.
      *
-     * Two behaviours, because they are wanted in different situations:
+     * One rule for every way of moving it - the pan tool, two fingers, a fling - because two rules
+     * meant the same drag stopped somewhere different depending on which was moving it, and the
+     * stricter of the two pulled the page back under the hand and re-centred it, which reads as
+     * the page fighting whoever is moving it.
      *
-     * - **Loose** (two-finger pan and zoom): the page moves freely and may sit with space on any
-     *   side. Working near a margin means putting the edge of the page where your hand is, and
-     *   snapping it flush against a screen edge fights that.
-     * - **Strict** (the Pan tool, page jumps, layout changes): the page is held against the
-     *   viewport and centred when it is smaller, which is what you want when deliberately
-     *   scrolling through a document.
-     *
-     * Both keep the document reachable; neither can leave it lost off screen.
+     * The edge of the document is the end of the journey: it can be brought to the edge of the
+     * screen and no further, and a page smaller than the screen stays where it is put rather than
+     * springing back to the middle. A canvas is the exception and keeps a margin past what is on
+     * it - that empty room is where it grows when something is written near its edge, and without
+     * it a whiteboard could never be extended.
      */
-    private fun clampTranslation(loose: Boolean = false) {
+    private fun clampTranslation() {
         if (slots.isEmpty()) return
         val r = RectF(reachBounds())
         pageToView.mapRect(r)
-        var dx = 0f
-        var dy = 0f
+        val margin = if (canvas != null) min(width, height) * CANVAS_MARGIN_FRACTION else 0f
 
-        if (loose) {
-            val keepX = min(r.width(), min(width, height) * KEEP_VISIBLE_FRACTION)
-            val keepY = min(r.height(), min(width, height) * KEEP_VISIBLE_FRACTION)
-            if (r.right < keepX) dx = keepX - r.right
-            else if (r.left > width - keepX) dx = (width - keepX) - r.left
-            if (r.bottom < keepY) dy = keepY - r.bottom
-            else if (r.top > height - keepY) dy = (height - keepY) - r.top
-        } else {
-            if (r.width() <= width) dx = (width - r.width()) / 2f - r.left
-            else {
-                if (r.left > 0) dx = -r.left
-                if (r.right < width) dx = width - r.right
+        fun delta(lo: Float, hi: Float, size: Float): Float =
+            if (hi - lo > size) {
+                // Larger than the screen: never a gap between the document and an edge.
+                when {
+                    lo > margin -> margin - lo
+                    hi < size - margin -> (size - margin) - hi
+                    else -> 0f
+                }
+            } else {
+                // Smaller than the screen: it stays on screen, wherever it was put.
+                when {
+                    lo < -margin -> -margin - lo
+                    hi > size + margin -> size + margin - hi
+                    else -> 0f
+                }
             }
-            if (r.height() <= height) dy = (height - r.height()) / 2f - r.top
-            else {
-                if (r.top > 0) dy = -r.top
-                if (r.bottom < height) dy = height - r.bottom
-            }
-        }
 
+        val dx = delta(r.left, r.right, width.toFloat())
+        val dy = delta(r.top, r.bottom, height.toFloat())
         if (abs(dx) > 0.01f || abs(dy) > 0.01f) pageToView.postTranslate(dx, dy)
     }
 
@@ -4055,8 +4100,7 @@ class DrawingView @JvmOverloads constructor(
 
         val before = FloatArray(9).also { pageToView.getValues(it) }
         pageToView.postTranslate(dx, dy)
-        // a fling continues under the rules of the gesture that threw it
-        clampTranslation(loose = loosePanning)
+        clampTranslation()
         val after = FloatArray(9).also { pageToView.getValues(it) }
 
         // Clamping brings the fling to a hard stop at the edge of the document. Without this the
@@ -4241,7 +4285,8 @@ class DrawingView @JvmOverloads constructor(
          * Low enough to allow generous margins on any side, high enough that the page cannot be
          * pushed almost entirely off screen.
          */
-        const val KEEP_VISIBLE_FRACTION = 0.22f
+        /** How far past a canvas's own content it can be panned, so it has room to grow. */
+        const val CANVAS_MARGIN_FRACTION = 0.35f
 
         /** Wait after the view stops moving before rendering a sharp tile. */
         const val DETAIL_SETTLE_MS = 220L

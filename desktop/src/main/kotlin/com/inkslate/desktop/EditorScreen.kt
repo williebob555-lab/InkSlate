@@ -1805,7 +1805,7 @@ fun EditorScreen(
                             if (tools.armedStamp?.first == kind) tools.arm(kind, tools.stampShelf.optionsFor(kind))
                         },
                         onDone = { armedSettings = null },
-                        modifier = Modifier.align(Alignment.BottomCenter)
+                        modifier = Modifier.align(Alignment.CenterEnd)
                     )
                 }
                 placedSettings?.let { tag ->
@@ -1825,7 +1825,7 @@ fun EditorScreen(
                                 dirty = true
                             },
                             onDone = ::endPlacedSettings,
-                            modifier = Modifier.align(Alignment.BottomCenter)
+                            modifier = Modifier.align(Alignment.CenterEnd)
                         )
                     }
                 }

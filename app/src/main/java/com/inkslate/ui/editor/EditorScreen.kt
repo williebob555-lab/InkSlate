@@ -1681,6 +1681,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             onClose = ::closeTray
                         )
                     }
+                    // On a narrow screen the panel needs the room more than the pen does; it is
+                    // one tap to close, and the tray above it still switches shape.
+                    val panelOpen = armedSettings != null || placedSettings != null
+                    if (!panelOpen || LocalConfiguration.current.screenWidthDp >= 840) {
                     ToolBar(
                         state = tools,
                         selectionCount = selectionCount,
@@ -1778,6 +1782,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             onCancelCrop = { drawingView.value?.cancelCrop() }
                         )
                     )
+                    }
                 }
             }
         }
@@ -1996,6 +2001,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                 }
             }
 
+            // Down the side where there is room for it. A settings panel across the foot of the
+            // page was squeezed between the tray, the selection bar and the toolbar, all of which
+            // kept their space while the panel - the thing actually being worked in - lost its.
+            val sidePanel = LocalConfiguration.current.screenWidthDp >= 840
             armedSettings?.let { kind ->
                 StampSettingsPanel(
                     kind = kind,
@@ -2011,7 +2020,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                         }
                     },
                     onDone = { armedSettings = null },
-                    modifier = Modifier.align(Alignment.BottomCenter)
+                    side = sidePanel,
+                    modifier = Modifier.align(
+                        if (sidePanel) Alignment.CenterEnd else Alignment.BottomCenter
+                    )
                 )
             }
             placedSettings?.let { tag ->
@@ -2033,7 +2045,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                             dirty = true
                         },
                         onDone = ::endPlacedSettings,
-                        modifier = Modifier.align(Alignment.BottomCenter)
+                        side = sidePanel,
+                        modifier = Modifier.align(
+                            if (sidePanel) Alignment.CenterEnd else Alignment.BottomCenter
+                        )
                     )
                 }
             }

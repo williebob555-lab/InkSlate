@@ -866,9 +866,45 @@ object Stamps {
          * at the text width here - guessing is what used to leave the digits of a number line
          * visibly off their ticks.
          */
+        /**
+         * What has already been written or drawn, so the next label can keep off it.
+         *
+         * A stamp used to place every label at the position its geometry suggested and hope: the
+         * one that says where a ball lands was written straight over the arrowhead and the name of
+         * the axis, because nothing knew the other two were there.
+         */
+        val taken = ArrayList<Box>()
+
+        fun claim(box: Box) { taken.add(box) }
+
+        // The box a label is *drawn* in is deliberately generous so nothing wraps; what it
+        // actually covers is narrower, and using the generous one to decide what overlaps what
+        // makes a graph look far more crowded than it is.
+        fun inkedWidth(text: String, size: Float): Float = size * 0.62f * text.length + size * 0.3f
+
+        fun textBox(text: String, left: Float, top: Float, size: Float): Box =
+            Box(left, top, left + inkedWidth(text, size), top + size * 1.3f)
+
+        fun collides(box: Box): Boolean = taken.any { it.intersects(box) }
+
+        /** How much of [b] lands on [a], as an area, for choosing the least bad spot. */
+        fun overlapArea(a: Box, b: Box): Float {
+            val across = min(a.right, b.right) - max(a.left, b.left)
+            val down = min(a.bottom, b.bottom) - max(a.top, b.top)
+            return if (across <= 0f || down <= 0f) 0f else across * down
+        }
+
+        /** How much of [b] hangs outside the stamp's own box, which is where nobody looks. */
+        fun outsideArea(b: Box): Float {
+            val inside = overlapArea(bounds, b)
+            return (b.width * b.height - inside).coerceAtLeast(0f)
+        }
+
         fun label(text: String, cx: Float, top: Float, size: Float) {
             trace?.add(Feature.TEXT)
             val boxW = labelWidth(text, size)
+            val inked = inkedWidth(text, size)
+            claim(Box(cx - inked / 2f, top, cx + inked / 2f, top + size * 1.3f))
             out.add(
                 Stroke(
                     id = nextId(), kind = StrokeKind.TEXT, color = textColor, baseWidth = 1f,
@@ -883,6 +919,7 @@ object Stamps {
         fun labelRight(text: String, right: Float, top: Float, size: Float) {
             trace?.add(Feature.TEXT)
             val boxW = labelWidth(text, size)
+            claim(Box(right - inkedWidth(text, size), top, right, top + size * 1.3f))
             out.add(
                 Stroke(
                     id = nextId(), kind = StrokeKind.TEXT, color = textColor, baseWidth = 1f,
@@ -897,6 +934,7 @@ object Stamps {
         /** A label whose top-left corner is where you put it. */
         fun labelAt(text: String, x: Float, y: Float, size: Float) {
             trace?.add(Feature.TEXT)
+            claim(textBox(text, x, y, size))
             out.add(
                 Stroke(
                     id = nextId(), kind = StrokeKind.TEXT, color = textColor, baseWidth = 1f,
@@ -967,6 +1005,49 @@ object Stamps {
         fun value(v: Float): String {
             trace?.add(Feature.VALUES)
             return num(v) + o.valueSuffix
+        }
+
+        /**
+         * A label near a point, placed where it does not land on anything already drawn.
+         *
+         * Tried above the point first, because that is where a reader looks for it, then below,
+         * then out to either side, then further out. Whatever is drawn first - the axes, their
+         * numbers, their names, the labels of earlier points - is what it keeps off; if every
+         * position collides it goes above anyway rather than being dropped, because a label in an
+         * awkward place is still worth more than a point nobody can identify.
+         */
+        fun labelNear(text: String, x: Float, y: Float, size: Float, clearance: Float) {
+            if (text.isBlank()) return
+            val boxW = inkedWidth(text, size)
+            val boxH = size * 1.3f
+            val gap = clearance + size * 0.35f
+            val candidates = listOf(
+                (x - boxW / 2f) to (y - gap - boxH),
+                (x - boxW / 2f) to (y + gap),
+                (x + gap) to (y - boxH / 2f),
+                (x - gap - boxW) to (y - boxH / 2f),
+                (x + gap * 0.6f) to (y - gap - boxH),
+                (x - gap * 0.6f - boxW) to (y - gap - boxH),
+                (x + gap * 0.6f) to (y + gap),
+                (x - gap * 0.6f - boxW) to (y + gap),
+                (x - boxW / 2f) to (y - gap * 2.2f - boxH),
+                (x - boxW / 2f) to (y + gap * 2.2f)
+            )
+            // Scored rather than "the first that fits": a long label on a small graph fits
+            // nowhere at all, and taking the first clear position then threw it across the page,
+            // away from the point it names. The least covered position that stays nearest the
+            // point wins, and an earlier candidate wins a tie - so the reading order above, below,
+            // beside is kept whenever it can be.
+            var best = candidates.first()
+            var bestScore = Float.MAX_VALUE
+            candidates.forEachIndexed { index, (left, top) ->
+                val box = Box(left, top, left + boxW, top + boxH)
+                val covered = taken.sumOf { overlapArea(it, box).toDouble() }.toFloat()
+                val outside = outsideArea(box)
+                val score = covered * 2f + outside + index * boxH * 0.05f
+                if (score < bestScore) { bestScore = score; best = left to top }
+            }
+            labelAt(text, best.first, best.second, size)
         }
 
         /**
@@ -1096,6 +1177,11 @@ object Stamps {
                 label(yTitle, ox, top - textSize * 2.1f, textSize)
             }
             
+            // The axes, their arrowheads and the band their numbers sit in are all things a
+            // label placed later has to keep off.
+            val band = max(2f, width * 1.5f)
+            claim(Box(left, oy - band, right + textSize * 1.2f, oy + band))
+            claim(Box(ox - band, top - textSize * 1.2f, ox + band, bottom))
             return ::mapX to ::mapY
         }
 
@@ -1206,6 +1292,20 @@ object Stamps {
                 }
                 curve.runs.forEach { drawRun(it, curveInk, curveWidth, o.curveDash) }
 
+                // The line itself is something a label should keep off, so a few points along it
+                // are claimed - enough to know where it runs, few enough to stay cheap.
+                curve.runs.forEach { run ->
+                    val stride = (run.size / 40).coerceAtLeast(1)
+                    var i = 0
+                    while (i < run.size) {
+                        val px = mapX(run[i].x.toFloat())
+                        val py = mapY(run[i].y.toFloat())
+                        val r = curveWidth * 1.5f
+                        claim(Box(px - r, py - r, px + r, py + r))
+                        i += stride
+                    }
+                }
+
                 // A decaying wave inside the envelope it decays under, which is the picture a
                 // signals course draws on the board.
                 if (kind == Kind.SINE && o.damping != 0f && o.showEnvelope) {
@@ -1279,11 +1379,7 @@ object Stamps {
                             point.kind.label + " (" + unitValue(point.x.toFloat(), xScale, o.xUnit) +
                                 ", " + unitValue(point.y.toFloat(), yScale, o.yUnit) + ")"
                     }
-                    if (written.isNotBlank()) {
-                        // Above the point, or below it when the point is near the top edge.
-                        val above = py - top > poiSize * 2.2f
-                        label(written, px, if (above) py - poiSize * 2.1f else py + markSize + 2f, poiSize)
-                    }
+                    labelNear(written, px, py, poiSize, markSize)
                 }
 
                 // ---- velocity, and what it is made of ----

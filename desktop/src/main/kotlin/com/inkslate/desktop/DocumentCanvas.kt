@@ -229,6 +229,7 @@ fun DocumentCanvas(
         )
     }
     viewport.content = bounds
+    viewport.growable = canvas != null
 
     // The piece of each page that has been rendered, and how big a picture it was rendered into.
     val rasters = remember(source) { mutableStateMapOf<Int, PageTile>() }
@@ -248,6 +249,8 @@ fun DocumentCanvas(
     var livePage by remember { mutableStateOf(0) }
     var pending by remember { mutableStateOf<Stroke?>(null) }
     var marquee by remember { mutableStateOf<InkBox?>(null) }
+    /** The ring being drawn for a lasso selection, in the live page's own coordinates. */
+    var lasso by remember { mutableStateOf<List<Float>?>(null) }
 
     /**
      * Where the pointer is hovering, while something is in hand to be placed.
@@ -549,6 +552,7 @@ fun DocumentCanvas(
                         onLive = { live = it },
                         onPending = { pending = it },
                         onMarquee = { marquee = it },
+                        onLasso = { lasso = it },
                         onStampPlaced = onStampPlaced,
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
@@ -593,6 +597,7 @@ fun DocumentCanvas(
                                 live = if (livePage == slot.index) live else emptyList(),
                                 pending = pending?.takeIf { it.pageIndex == slot.index },
                                 marquee = marquee?.takeIf { livePage == slot.index },
+                                lasso = lasso?.takeIf { livePage == slot.index },
                                 ghost = ghostFor(slot),
                                 tools = tools,
                                 textMeasurer = textMeasurer,
@@ -808,6 +813,8 @@ private fun DrawScope.drawPage(
     /** A faint copy of the item in hand, where a click would put it. */
     ghost: List<Stroke>,
     marquee: InkBox?,
+    /** The ring being drawn for a lasso selection, in this page's own coordinates. */
+    lasso: List<Float>?,
     tools: ToolState,
     textMeasurer: TextMeasurer,
     pageFilter: PageFilter,
@@ -902,6 +909,26 @@ private fun DrawScope.drawPage(
         }
         pending?.let { drawStroke(it, cached = false) }
         ghost.forEach { if (it.kind != Stroke.Kind.TEXT) drawStroke(it, cached = false) }
+
+        lasso?.let { ring ->
+            if (ring.size >= 4) {
+                val path = androidx.compose.ui.graphics.Path()
+                path.moveTo(ring[0], ring[1])
+                for (i in 2 until ring.size step 2) path.lineTo(ring[i], ring[i + 1])
+                // Closed as it is drawn, because that is what it will mean when it is let go.
+                path.close()
+                drawPath(
+                    path,
+                    color = Color(0xFF3B82F6),
+                    style = DrawStroke(
+                        width = 1.4f / scale,
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(6f / scale, 4f / scale), 0f
+                        )
+                    )
+                )
+            }
+        }
 
         marquee?.let { m ->
             drawRect(
