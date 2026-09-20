@@ -150,7 +150,16 @@ private fun LibraryTile(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(Modifier.size(100.dp).clip(RoundedCornerShape(6.dp)).background(PAPER)) {
-            StampPreview(kind, options, Modifier.size(100.dp))
+            // Numbers and names are noise at this size; the shape is what tells one stamp
+            // from another in a grid of them.
+            StampPreview(
+                kind,
+                options.copy(
+                    tickValues = false, xName = "", yName = "",
+                    markerLabels = PoiLabel.NONE, labels = false
+                ),
+                Modifier.size(100.dp)
+            )
             if (!kind.isShape) {
                 Icon(
                     if (pinned) Icons.Default.PushPin else Icons.Outlined.PushPin,

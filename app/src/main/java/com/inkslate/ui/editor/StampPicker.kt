@@ -173,7 +173,16 @@ private fun LibraryTile(
                 .clip(RoundedCornerShape(6.dp))
                 .background(PAPER)
         ) {
-            StampPreview(kind, options, Modifier.fillMaxWidth().aspectRatio(1f))
+            // Numbers and names are noise at this size; the shape is what tells one stamp
+            // from another in a grid of them.
+            StampPreview(
+                kind,
+                options.copy(
+                    tickValues = false, xName = "", yName = "",
+                    markerLabels = PoiLabel.NONE, labels = false
+                ),
+                Modifier.fillMaxWidth().aspectRatio(1f)
+            )
             // The group shapes have nothing to pin: all four are always in the tray.
             if (!kind.isShape) {
                 Icon(

@@ -368,8 +368,9 @@ object Stamps {
                 Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES
             ),
             defaults = StampOptions(
-                rangeFrom = 0f, rangeTo = 12.5664f, step = 1.5708f, expression = "",
-                xName = "x", yName = "y"
+                // A signals default: one second of a 1 Hz wave, in seconds and volts.
+                rangeFrom = 0f, rangeTo = 1f, step = 0.25f, expression = "",
+                xName = "t", yName = "x(t)", xUnit = "s", markerLabels = PoiLabel.NONE
             )
         ),
         PROJECTILE(
@@ -380,8 +381,8 @@ object Stamps {
             ),
             defaults = StampOptions(
                 rangeFrom = 0f, rangeTo = 45f, step = 5f, yFrom = 0f, yTo = 12f, yStep = 2f,
-                expression = "", xName = "x (m)", yName = "y (m)",
-                markZeros = false, markMin = false, markerLabels = PoiLabel.NAME_AND_COORDINATES
+                expression = "", xName = "x", yName = "y", xUnit = "m", yUnit = "m",
+                markMin = false, markerLabels = PoiLabel.NAME_AND_COORDINATES
             )
         ),
 
