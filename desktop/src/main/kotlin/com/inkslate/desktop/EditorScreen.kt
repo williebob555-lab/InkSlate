@@ -1588,6 +1588,10 @@ fun EditorScreen(
                         onArm = ::armKind,
                         onDisarm = { tools.disarm() },
                         onOpenLibrary = { libraryOpen = true },
+                        onSettingsFor = { kind ->
+                            endPlacedSettings()
+                            armedSettings = kind
+                        },
                         onOpenSettings = {
                             tools.armedStamp?.first?.let { kind ->
                                 endPlacedSettings()
@@ -1938,6 +1942,12 @@ fun EditorScreen(
             shelf = tools.stampShelf,
             onDismiss = { libraryOpen = false },
             onTogglePin = { kind -> tools.editStampShelf { it.togglePin(kind) } },
+            onSettings = { kind ->
+                libraryOpen = false
+                armKind(kind)
+                endPlacedSettings()
+                armedSettings = kind
+            },
             onPick = { kind ->
                 libraryOpen = false
                 armKind(kind)

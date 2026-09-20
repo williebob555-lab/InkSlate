@@ -1650,6 +1650,10 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
                                 trayDisarming = false
                             },
                             onOpenLibrary = { libraryOpen = true },
+                            onSettingsFor = { kind ->
+                                endPlacedSettings()
+                                armedSettings = kind
+                            },
                             onOpenSettings = {
                                 (placement as? DrawingView.Placement.StampItem)?.let {
                                     endPlacedSettings()
@@ -2425,6 +2429,12 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             shelf = tools.stampShelf,
             onDismiss = { libraryOpen = false },
             onTogglePin = { kind -> tools.editStampShelf { it.togglePin(kind) } },
+            onSettings = { kind ->
+                libraryOpen = false
+                armKind(kind)
+                endPlacedSettings()
+                armedSettings = kind
+            },
             onPick = { kind ->
                 libraryOpen = false
                 armKind(kind)

@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.Icon
@@ -82,6 +83,8 @@ fun StampLibraryDialog(
     shelf: StampShelf,
     onDismiss: () -> Unit,
     onTogglePin: (Stamps.Kind) -> Unit,
+    /** Open a stamp's settings without leaving the library. */
+    onSettings: (Stamps.Kind) -> Unit,
     onPick: (Stamps.Kind) -> Unit
 ) {
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -129,6 +132,7 @@ fun StampLibraryDialog(
                                     options = shelf.optionsFor(k),
                                     pinned = shelf.isPinned(k),
                                     onPin = { onTogglePin(k) },
+                                    onSettings = { onSettings(k) },
                                     onClick = { onPick(k) }
                                 )
                             }
@@ -146,6 +150,7 @@ private fun LibraryTile(
     options: Stamps.StampOptions,
     pinned: Boolean,
     onPin: () -> Unit,
+    onSettings: () -> Unit,
     onClick: () -> Unit
 ) {
     Column(
@@ -179,6 +184,17 @@ private fun LibraryTile(
                     tint = if (pinned) MaterialTheme.colorScheme.primary else Color(0xFF9AA0A6)
                 )
             }
+            Icon(
+                Icons.Default.Tune,
+                "Settings for " + kind.label,
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(if (kind.isShape) 26.dp else 26.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onSettings)
+                    .padding(5.dp),
+                tint = Color(0xFF6B7280)
+            )
         }
         Text(
             kind.label,

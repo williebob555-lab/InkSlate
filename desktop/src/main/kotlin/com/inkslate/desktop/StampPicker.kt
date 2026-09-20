@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -83,6 +84,8 @@ fun StampLibrary(
     shelf: StampShelf,
     onDismiss: () -> Unit,
     onTogglePin: (Stamps.Kind) -> Unit,
+    /** Open a stamp's settings without leaving the library. */
+    onSettings: (Stamps.Kind) -> Unit,
     onPick: (Stamps.Kind) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -111,9 +114,10 @@ fun StampLibrary(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         kinds.forEach { k ->
-                            LibraryTile(k, shelf.optionsFor(k), shelf.isPinned(k), { onTogglePin(k) }) {
-                                onPick(k)
-                            }
+                            LibraryTile(
+                                k, shelf.optionsFor(k), shelf.isPinned(k),
+                                { onTogglePin(k) }, { onSettings(k) }
+                            ) { onPick(k) }
                         }
                     }
                 }
@@ -129,6 +133,7 @@ private fun LibraryTile(
     options: Stamps.StampOptions,
     pinned: Boolean,
     onPin: () -> Unit,
+    onSettings: () -> Unit,
     onClick: () -> Unit
 ) {
     Column(
@@ -155,6 +160,17 @@ private fun LibraryTile(
                     tint = if (pinned) MaterialTheme.colorScheme.primary else Color(0xFF9AA0A6)
                 )
             }
+            Icon(
+                Icons.Default.Tune,
+                "Settings for " + kind.label,
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(if (kind.isShape) 26.dp else 26.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onSettings)
+                    .padding(5.dp),
+                tint = Color(0xFF6B7280)
+            )
         }
         Text(
             kind.label,

@@ -3,6 +3,7 @@ package com.inkslate.ui.editor
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -28,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +52,7 @@ private val SHAPES = listOf(Stamps.Kind.LINE, Stamps.Kind.BOX, Stamps.Kind.OVAL)
  * The symbols live here too, on a second row reached by the sigma: they follow the same rule, and
  * tapping several in a row builds one string, which is how "x₁²" gets made.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ShapeTray(
     shelf: StampShelf,
@@ -59,6 +62,8 @@ fun ShapeTray(
     symbols: Boolean,
     onArm: (Stamps.Kind) -> Unit,
     onDisarm: () -> Unit,
+    /** Open one stamp's settings straight from its tile. */
+    onSettingsFor: (Stamps.Kind) -> Unit,
     onOpenLibrary: () -> Unit,
     onOpenSettings: () -> Unit,
     onShowSymbols: (Boolean) -> Unit,
@@ -128,13 +133,17 @@ fun ShapeTray(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     items(SHAPES, key = { it.name }) { k ->
-                        TrayTile(k, shelf.optionsFor(k), armed == k) { if (armed == k) onDisarm() else onArm(k) }
+                        TrayTile(k, shelf.optionsFor(k), armed == k, { onSettingsFor(k) }) {
+                            if (armed == k) onDisarm() else onArm(k)
+                        }
                     }
                     item(key = "divider") {
                         Box(Modifier.width(1.dp).height(36.dp).background(MaterialTheme.colorScheme.outlineVariant))
                     }
                     items(shelf.trayKinds(), key = { it.name }) { k ->
-                        TrayTile(k, shelf.optionsFor(k), armed == k) { if (armed == k) onDisarm() else onArm(k) }
+                        TrayTile(k, shelf.optionsFor(k), armed == k, { onSettingsFor(k) }) {
+                            if (armed == k) onDisarm() else onArm(k)
+                        }
                     }
                     item(key = "all") {
                         IconButton(onClick = onOpenLibrary) { Icon(Icons.Default.Apps, "All shapes and stamps") }
@@ -144,17 +153,31 @@ fun ShapeTray(
                     }
                 }
             }
-            IconButton(onClick = onOpenSettings, enabled = armed != null) {
-                Icon(Icons.Default.Tune, "Settings for this shape")
+            // A labelled button, not a lone icon: this is the way into everything a stamp
+            // can be set to, and an unlabelled slider glyph is a guess.
+            TextButton(onClick = onOpenSettings, enabled = armed != null) {
+                Icon(Icons.Default.Tune, null, Modifier.size(18.dp))
+                Text("  Settings")
             }
             IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close the tray") }
         }
     }
 }
 
-/** One shape in the tray, drawn as itself rather than as an icon of itself. */
+/**
+ * One shape in the tray, drawn as itself rather than as an icon of itself.
+ *
+ * [onSettings] is the second way into its settings, for anyone who reaches for the thing itself
+ * rather than for a button at the end of the row.
+ */
 @Composable
-private fun TrayTile(kind: Stamps.Kind, options: Stamps.StampOptions, lit: Boolean, onClick: () -> Unit) {
+private fun TrayTile(
+    kind: Stamps.Kind,
+    options: Stamps.StampOptions,
+    lit: Boolean,
+    onSettings: () -> Unit,
+    onClick: () -> Unit
+) {
     Box(
         Modifier
             .size(48.dp)
@@ -165,7 +188,7 @@ private fun TrayTile(kind: Stamps.Kind, options: Stamps.StampOptions, lit: Boole
                 if (lit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
                 RoundedCornerShape(10.dp)
             )
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onSettings),
         contentAlignment = Alignment.Center
     ) {
         // Previewed without labels: at this size numbers are noise, and the outline is what
