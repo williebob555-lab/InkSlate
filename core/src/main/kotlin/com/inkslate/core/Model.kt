@@ -201,6 +201,55 @@ enum class LineEnd(val label: String) {
     NONE("None"), ARROW("Arrow"), TRIANGLE("Triangle"), DOT("Dot"), BAR("Bar")
 }
 
+/**
+ * How big the numbers on an axis are written, against the unit they are in.
+ *
+ * [AUTO] picks one from the range itself, so an axis running to four thousandths of a second is
+ * labelled 1, 2, 3, 4 with "ms" on the axis rather than 0.001, 0.002 with "s" - which is what
+ * anybody would write by hand, and what makes a signals plot readable.
+ */
+@Serializable
+enum class SiPrefix(val label: String, val symbol: String, val factor: Double) {
+    AUTO("Automatic", "", 1.0),
+    PICO("pico (p)", "p", 1e-12),
+    NANO("nano (n)", "n", 1e-9),
+    MICRO("micro (\u00b5)", "\u00b5", 1e-6),
+    MILLI("milli (m)", "m", 1e-3),
+    NONE("none", "", 1.0),
+    KILO("kilo (k)", "k", 1e3),
+    MEGA("mega (M)", "M", 1e6),
+    GIGA("giga (G)", "G", 1e9);
+
+    companion object {
+        /** The prefix a number of this size is most readable in: 1 up to 1000 of the unit. */
+        fun forSize(largest: Double): SiPrefix {
+            val v = kotlin.math.abs(largest)
+            if (!v.isFinite() || v == 0.0) return NONE
+            return entries
+                .filter { it != AUTO }
+                .sortedBy { it.factor }
+                .lastOrNull { v / it.factor >= 1.0 } ?: PICO
+        }
+    }
+}
+
+/** How a marked point on a curve is drawn. */
+@Serializable
+enum class MarkerShape(val label: String) {
+    RING("Ring"), DOT("Dot"), CROSS("Cross"), SQUARE("Square"), DIAMOND("Diamond"), TICK("Tick")
+}
+
+/** What a marked point says about itself. */
+@Serializable
+enum class PoiLabel(val label: String) {
+    NONE("Nothing"),
+    COORDINATES("Both numbers"),
+    X_ONLY("Across"),
+    Y_ONLY("Up"),
+    NAME("What it is"),
+    NAME_AND_COORDINATES("What it is, and where")
+}
+
 @Serializable
 enum class DashStyle(val label: String, val pattern: FloatArray?) {
     SOLID("Solid", null),

@@ -58,6 +58,13 @@ off and taking the next stable release puts you back on the ordinary channel.
   with its own colour and line weight, and graphs with their own ranges, steps, tick marks,
   numbers and axis names
 - Select a stamp on the page to change its settings in place; resizing one rebuilds it cleanly
+- Graphs that work something out before they draw it: type an equation (`x^2-4`, `2sin(3x)`), a
+  sinusoid in signals terms (amplitude, ω or f or T, phase, DC offset, e^(-αt) envelope), or a
+  projectile from a position, a velocity - as a speed and angle or as components - and an
+  acceleration. Maximums, minimums, zeros, the apex and the landing are marked and labelled, and
+  the settings panel lists what it works out: period, frequency, range, time of flight, impact
+  speed. Axes carry units and write their numbers in the size that suits them - 0.004 s reads as
+  4 ms. Change any number and it redraws in place
 - Region capture: box a figure in the textbook and drop it in as a movable object
 - Marquee and tap selection; move, resize, rotate; cut, copy and paste between documents
 

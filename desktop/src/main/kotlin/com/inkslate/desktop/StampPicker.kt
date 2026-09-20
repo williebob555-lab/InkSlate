@@ -59,6 +59,10 @@ import com.inkslate.core.FillStyle
 import com.inkslate.core.LineEnd
 import com.inkslate.core.Palette
 import com.inkslate.core.StampShelf
+import com.inkslate.core.Expr
+import com.inkslate.core.MarkerShape
+import com.inkslate.core.PoiLabel
+import com.inkslate.core.SiPrefix
 import com.inkslate.core.Stamps
 import com.inkslate.core.TextFont
 import com.inkslate.core.Stroke
@@ -435,6 +439,183 @@ private fun SettingsBody(
         SwitchRow("Labels", options.labels) { v -> edit { it.copy(labels = v) } }
     }
 
+
+    if (Stamps.Knob.EQUATION in kind.knobs) {
+        Section("The equation")
+        OutlinedTextField(
+            value = options.expression,
+            onValueChange = { v -> edit { it.copy(expression = v.take(120)) } },
+            label = { Text("y =") },
+            placeholder = { Text("sin(x)") },
+            singleLine = true,
+            isError = !Expr.parse(options.expression, options.degrees).ok,
+            supportingText = {
+                val parsed = Expr.parse(options.expression, options.degrees)
+                Text(
+                    parsed.error
+                        ?: "x is the variable. 2x, x^2, sqrt(x), sin/cos/tan, ln, log, pi, e.",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OptionWrapRow {
+            OptionChip("Radians", !options.degrees) { edit { it.copy(degrees = false) } }
+            OptionChip("Degrees", options.degrees) { edit { it.copy(degrees = true) } }
+        }
+    }
+
+    if (Stamps.Knob.WAVE in kind.knobs) {
+        Section("The wave")
+        OptionLabel("A\u00b7sin(\u03c9t + \u03c6) + C, or cosine")
+        OptionWrapRow {
+            OptionChip("Sine", !options.cosine) { edit { it.copy(cosine = false) } }
+            OptionChip("Cosine", options.cosine) { edit { it.copy(cosine = true) } }
+        }
+        NumberField("Amplitude A", options.amplitude) { v -> edit { it.copy(amplitude = v) } }
+        OptionLabel("Frequency, given as")
+        OptionWrapRow {
+            Stamps.WaveIn.entries.forEach { w ->
+                OptionChip(w.label, options.waveIn == w) { edit { it.copy(waveIn = w) } }
+            }
+        }
+        val twoPi = (2.0 * Math.PI).toFloat()
+        when (options.waveIn) {
+            Stamps.WaveIn.OMEGA -> NumberField("\u03c9 (rad/s)", options.omega) { v ->
+                edit { it.copy(omega = v) }
+            }
+            Stamps.WaveIn.FREQUENCY -> NumberField("f (Hz)", Stamps.frequencyOf(options)) { v ->
+                edit { it.copy(omega = v * twoPi) }
+            }
+            Stamps.WaveIn.PERIOD -> NumberField("T (s)", Stamps.periodOf(options)) { v ->
+                if (v != 0f) edit { it.copy(omega = twoPi / v) }
+            }
+        }
+        NumberField(
+            if (options.phaseInDegrees) "Phase \u03c6 (\u00b0)" else "Phase \u03c6 (rad)",
+            options.phase
+        ) { v -> edit { it.copy(phase = v) } }
+        OptionWrapRow {
+            OptionChip("Radians", !options.phaseInDegrees) { edit { it.copy(phaseInDegrees = false) } }
+            OptionChip("Degrees", options.phaseInDegrees) { edit { it.copy(phaseInDegrees = true) } }
+        }
+        NumberField("DC offset C", options.offset) { v -> edit { it.copy(offset = v) } }
+        NumberField("Decay \u03b1 in e^(-\u03b1t)", options.damping) { v -> edit { it.copy(damping = v) } }
+        if (options.damping != 0f) {
+            SwitchRow("Draw the envelope", options.showEnvelope) { v -> edit { it.copy(showEnvelope = v) } }
+        }
+    }
+
+    if (Stamps.Knob.THROW in kind.knobs) {
+        Section("The throw")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NumberField("Starts at x", options.startX, Modifier.weight(1f)) { v -> edit { it.copy(startX = v) } }
+            NumberField("Height", options.startHeight, Modifier.weight(1f)) { v -> edit { it.copy(startHeight = v) } }
+        }
+        OptionLabel("Velocity, given as")
+        OptionWrapRow {
+            Stamps.VelocityIn.entries.forEach { m ->
+                OptionChip(m.label, options.velocityIn == m) { edit { it.copy(velocityIn = m) } }
+            }
+        }
+        if (options.velocityIn == Stamps.VelocityIn.SPEED_ANGLE) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField("Speed (m/s)", options.speed, Modifier.weight(1f)) { v -> edit { it.copy(speed = v) } }
+                NumberField("Angle (\u00b0)", options.launchAngle, Modifier.weight(1f)) { v -> edit { it.copy(launchAngle = v) } }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NumberField("vx (m/s)", options.velocityX, Modifier.weight(1f)) { v -> edit { it.copy(velocityX = v) } }
+                NumberField("vy (m/s)", options.velocityY, Modifier.weight(1f)) { v -> edit { it.copy(velocityY = v) } }
+            }
+        }
+        OptionLabel("Acceleration")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            NumberField("Gravity down", options.gravity, Modifier.weight(1f)) { v -> edit { it.copy(gravity = v) } }
+            NumberField("Along x", options.accelX, Modifier.weight(1f)) { v -> edit { it.copy(accelX = v) } }
+        }
+        NumberField("Stop after (s), 0 until it lands", options.stopAfter) { v -> edit { it.copy(stopAfter = v) } }
+        OptionLabel("Velocity arrows: " + options.velocityArrows)
+        Slider(
+            value = options.velocityArrows.toFloat(),
+            onValueChange = { v -> edit { it.copy(velocityArrows = v.roundToInt()) } },
+            valueRange = 0f..12f,
+            steps = 11
+        )
+        if (options.velocityArrows > 0) {
+            SwitchRow("Split each into components", options.componentArrows) { v ->
+                edit { it.copy(componentArrows = v) }
+            }
+        }
+    }
+
+    if (Stamps.Knob.POI in kind.knobs) {
+        Section("Points of interest")
+        OptionWrapRow {
+            val thrown = kind == Stamps.Kind.PROJECTILE
+            OptionChip(if (thrown) "Highest point" else "Maximums", options.markMax) {
+                edit { it.copy(markMax = !it.markMax) }
+            }
+            if (!thrown) OptionChip("Minimums", options.markMin) { edit { it.copy(markMin = !it.markMin) } }
+            OptionChip(if (thrown) "Where it lands" else "Zeros", options.markZeros) {
+                edit { it.copy(markZeros = !it.markZeros) }
+            }
+            OptionChip(if (thrown) "Where it starts" else "Crosses y", options.markIntercept) {
+                edit { it.copy(markIntercept = !it.markIntercept) }
+            }
+        }
+        OptionLabel("Marked with")
+        OptionWrapRow {
+            MarkerShape.entries.forEach { m ->
+                OptionChip(m.label, options.markerShape == m) { edit { it.copy(markerShape = m) } }
+            }
+        }
+        ScaleSlider("Marker size", options.markerScale, 0.3f..3f) { v -> edit { it.copy(markerScale = v) } }
+        OptionLabel("Marker colour")
+        ColourRow(options.markerColor, true, recentColours, { c -> edit { it.copy(markerColor = c) } }) {
+            onCustomColour(options.markerColor) { c -> edit { it.copy(markerColor = c) } }
+        }
+        OptionLabel("Each one says")
+        OptionWrapRow {
+            PoiLabel.entries.forEach { l ->
+                OptionChip(l.label, options.markerLabels == l) { edit { it.copy(markerLabels = l) } }
+            }
+        }
+    }
+
+    if (Stamps.Knob.X_AXIS in kind.knobs || Stamps.Knob.Y_AXIS in kind.knobs) {
+        Section("Units")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = options.xUnit,
+                onValueChange = { v -> edit { it.copy(xUnit = v.take(8)) } },
+                label = { Text("Across") },
+                placeholder = { Text("s, m, Hz") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+            OutlinedTextField(
+                value = options.yUnit,
+                onValueChange = { v -> edit { it.copy(yUnit = v.take(8)) } },
+                label = { Text("Up") },
+                placeholder = { Text("V, m") },
+                singleLine = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        OptionLabel("Numbers written in")
+        OptionWrapRow {
+            SiPrefix.entries.forEach { pfx ->
+                OptionChip("x: " + pfx.label, options.xPrefix == pfx) { edit { it.copy(xPrefix = pfx) } }
+            }
+        }
+        OptionWrapRow {
+            SiPrefix.entries.forEach { pfx ->
+                OptionChip("y: " + pfx.label, options.yPrefix == pfx) { edit { it.copy(yPrefix = pfx) } }
+            }
+        }
+    }
+
     val parts = remember(kind, options) { Stamps.features(kind, Stamps.sanitise(kind, options)) }
     val hasTicks = Stamps.Knob.TICKS in kind.knobs
 
@@ -507,7 +688,84 @@ private fun SettingsBody(
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
         )
     }
+
+    if (Stamps.Feature.CURVE in parts) {
+        Section("The curve")
+        OptionLabel("Colour")
+        ColourRow(options.curveColor, true, recentColours, { c -> edit { it.copy(curveColor = c) } }) {
+            onCustomColour(options.curveColor) { c -> edit { it.copy(curveColor = c) } }
+        }
+        ScaleSlider("Weight", options.curveWeight, 0.3f..5f) { v -> edit { it.copy(curveWeight = v) } }
+        OptionLabel("Line")
+        OptionWrapRow {
+            DashStyle.entries.forEach { d ->
+                OptionChip(d.label, options.curveDash == d) { edit { it.copy(curveDash = d) } }
+            }
+        }
+        OptionLabel("Smoothness: " + options.smoothness + " points")
+        Slider(
+            value = options.smoothness.toFloat(),
+            onValueChange = { v -> edit { it.copy(smoothness = v.roundToInt()) } },
+            valueRange = 40f..800f
+        )
+        SwitchRow("Draw the axes", options.showAxes) { v -> edit { it.copy(showAxes = v) } }
+        SwitchRow("Fit the axes to it", options.fitAxes) { v -> edit { it.copy(fitAxes = v) } }
+    }
+
+    if (Stamps.Feature.VECTORS in parts) {
+        Section("Velocity arrows")
+        OptionLabel("Colour")
+        ColourRow(options.vectorColor, true, recentColours, { c -> edit { it.copy(vectorColor = c) } }) {
+            onCustomColour(options.vectorColor) { c -> edit { it.copy(vectorColor = c) } }
+        }
+        ScaleSlider("Length", options.vectorScale, 0.2f..3f) { v -> edit { it.copy(vectorScale = v) } }
+    }
+
+    // What the graph works out, in the units it is drawn in. A graph that can say where its
+    // maximum is saves reading it off the picture, which is where the marks get lost.
+    val readout = remember(kind, options) { Stamps.inspect(kind, Stamps.sanitise(kind, options)) }
+    if (readout.isNotEmpty()) {
+        Section("What it works out")
+        readout.forEach { (name, value) ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 1.dp)) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(value, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
 }
+/**
+ * A number, typed.
+ *
+ * Kept as text while it is being typed so a half-written "-" or "0." is not thrown away between
+ * keystrokes; the value only reaches the stamp once it parses as a number.
+ */
+@Composable
+private fun NumberField(
+    label: String,
+    value: Float,
+    modifier: Modifier = Modifier,
+    onChange: (Float) -> Unit
+) {
+    var text by remember(label) { mutableStateOf(trimNumber(value)) }
+    if (text.toFloatOrNull() != null && text.toFloatOrNull() != value) text = trimNumber(value)
+    OutlinedTextField(
+        value = text,
+        onValueChange = { v ->
+            text = v.filter { it.isDigit() || it == '.' || it == '-' }.take(12)
+            text.toFloatOrNull()?.let(onChange)
+        },
+        label = { Text(label) },
+        singleLine = true,
+        modifier = modifier.padding(top = 6.dp)
+    )
+}
+
 
 /** A heading that starts a group of settings for one part of the stamp. */
 @Composable

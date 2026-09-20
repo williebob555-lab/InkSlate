@@ -39,6 +39,7 @@ object Stamps {
     /** Sections in the picker. Thirty-odd stamps in one undifferentiated grid is a search. */
     enum class Group(val label: String) {
         SHAPES("Shapes"),
+        PLOTS("Graphs of equations"),
         MATHS("Maths"),
         GRAPHS("Graphs & grids"),
         MARKING("Marking"),
@@ -62,7 +63,15 @@ object Stamps {
         DASH,
         FILL,
         /** What each end of a line looks like. */
-        ENDS
+        ENDS,
+        /** An equation, typed. */
+        EQUATION,
+        /** A sine's amplitude, period, phase and offset, as numbers rather than as an equation. */
+        WAVE,
+        /** How hard and at what angle something was thrown. */
+        THROW,
+        /** Which points on the curve are marked, and how. */
+        POI
     }
 
     /** Near-black rather than black, so a stamp sits with handwriting instead of shouting over it. */
@@ -137,11 +146,189 @@ object Stamps {
         val valueScale: Float = 1f,
         val valueSuffix: String = "",
         /** The whole stamp. */
-        val opacity: Float = 1f
+        val opacity: Float = 1f,
+
+        // ---- graphs of equations -------------------------------------------------------
+        /** What to draw, in the notation homework is written in. See [Expr]. */
+        val expression: String = "sin(x)",
+        val degrees: Boolean = false,
+        /**
+         * A sinusoid in the terms a signals course uses.
+         *
+         * Held as angular frequency, because that is the one the maths is written in; the panel
+         * lets it be typed as omega, as a frequency or as a period, and the other two follow.
+         */
+        val amplitude: Float = 1f,
+        /** Angular frequency in radians per second. */
+        val omega: Float = 6.2832f,
+        /** Which of omega, frequency and period the panel is editing. */
+        val waveIn: WaveIn = WaveIn.OMEGA,
+        /** Phase, in radians unless [phaseInDegrees]. A lead is positive. */
+        val phase: Float = 0f,
+        val phaseInDegrees: Boolean = false,
+        /** The DC term the wave sits on. */
+        val offset: Float = 0f,
+        /** Cosine rather than sine, which is the same wave a quarter turn along. */
+        val cosine: Boolean = false,
+        /** Decay of an e^(-at) envelope, in per-second. Zero for a wave that does not decay. */
+        val damping: Float = 0f,
+        val showEnvelope: Boolean = true,
+        /**
+         * A thrown object, in the mix a question gives: a position, a velocity and an
+         * acceleration. The velocity can be typed as a speed and an angle or as its components,
+         * because both turn up, and the two are the same numbers either way round.
+         */
+        val startX: Float = 0f,
+        val startHeight: Float = 0f,
+        val velocityIn: VelocityIn = VelocityIn.SPEED_ANGLE,
+        val speed: Float = 20f,
+        val launchAngle: Float = 45f,
+        val velocityX: Float = 14.14f,
+        val velocityY: Float = 14.14f,
+        /** Gravity, as a positive number pulling down. */
+        val gravity: Float = 9.81f,
+        /** Any acceleration along the ground - a thrust, a slope, a drag term a question gives. */
+        val accelX: Float = 0f,
+        /** Stop after this many seconds rather than at the ground. 0 means "until it lands". */
+        val stopAfter: Float = 0f,
+        /** Velocity arrows along the path, and whether each is split into its components. */
+        val velocityArrows: Int = 0,
+        val componentArrows: Boolean = false,
+        val vectorColor: Int = 0,
+        val vectorScale: Float = 1f,
+        /** Dots along the arc at equal times, which is what shows it speeding up. 0 for none. */
+        val timeMarks: Int = 0,
+        /** Axes with the curve, or the curve on its own to lay over a graph already drawn. */
+        val showAxes: Boolean = true,
+        /** Let the curve decide the axes, rather than the axes cropping the curve. */
+        val fitAxes: Boolean = true,
+        /** The plotted line itself. */
+        val curveColor: Int = 0,
+        val curveWeight: Float = 1.6f,
+        val curveDash: DashStyle = DashStyle.SOLID,
+        val smoothness: Int = 240,
+        /** Which points are marked. */
+        val markMax: Boolean = true,
+        val markMin: Boolean = true,
+        val markZeros: Boolean = true,
+        val markIntercept: Boolean = false,
+        val markerShape: MarkerShape = MarkerShape.RING,
+        val markerScale: Float = 1f,
+        val markerColor: Int = 0,
+        val markerLabels: PoiLabel = PoiLabel.COORDINATES,
+        /** How many decimals a number is written to, here and on the axes. */
+        val decimals: Int = 2,
+
+        // ---- units -----------------------------------------------------------------------
+        /** The unit each axis is in - "s", "V", "Hz", "m". Blank for a plain number. */
+        val xUnit: String = "",
+        val yUnit: String = "",
+        /** How large the numbers on each axis are written; automatic reads it off the range. */
+        val xPrefix: SiPrefix = SiPrefix.AUTO,
+        val yPrefix: SiPrefix = SiPrefix.AUTO
     )
 
+    /** Which way round a velocity is given. */
+    @Serializable
+    enum class VelocityIn(val label: String) {
+        SPEED_ANGLE("Speed and angle"),
+        COMPONENTS("Components")
+    }
+
+    /** Which way round a sinusoid's frequency is given. */
+    @Serializable
+    enum class WaveIn(val label: String) {
+        OMEGA("Angular frequency \u03c9"),
+        FREQUENCY("Frequency f"),
+        PERIOD("Period T")
+    }
+
+    /**
+     * A range rounded out to numbers somebody would choose, and the step between its ticks.
+     *
+     * Fitted axes otherwise come out reading 0.7183 to 2.9962 in steps of 0.2779, which is
+     * arithmetically correct and unreadable.
+     */
+    fun niceRange(low: Float, high: Float, keepZero: Boolean): Triple<Float, Float, Float> {
+        var lo = min(low, high)
+        var hi = max(low, high)
+        if (keepZero) { lo = min(lo, 0f); hi = max(hi, 0f) }
+        if (hi - lo < 1e-9f) { lo -= 1f; hi += 1f }
+        val pad = (hi - lo) * 0.08f
+        lo -= pad; hi += pad
+        val step = niceStep((hi - lo) / 6f)
+        val start = kotlin.math.floor(lo / step) * step
+        val end = kotlin.math.ceil(hi / step) * step
+        return Triple(start, end, step)
+    }
+
+    /** 1, 2, 5, 10, 20, 50... the steps people count in. */
+    fun niceStep(rough: Float): Float {
+        if (!(rough > 0f) || !rough.isFinite()) return 1f
+        val power = Math.pow(10.0, kotlin.math.floor(kotlin.math.log10(rough.toDouble()))).toFloat()
+        val scaled = rough / power
+        val nice = when {
+            scaled <= 1f -> 1f
+            scaled <= 2f -> 2f
+            scaled <= 5f -> 5f
+            else -> 10f
+        }
+        return nice * power
+    }
+
+    /** How big the numbers on an axis are written, and the prefix that then applies. */
+    fun unitScale(prefix: SiPrefix, largest: Float): SiPrefix =
+        if (prefix == SiPrefix.AUTO) SiPrefix.forSize(largest.toDouble()) else prefix
+
+    /** An axis title with its unit on it: "t" in seconds shown in thousandths reads "t (ms)". */
+    fun axisName(name: String, unit: String, scale: SiPrefix): String = when {
+        unit.isBlank() -> name
+        name.isBlank() -> "(" + scale.symbol + unit + ")"
+        else -> name + " (" + scale.symbol + unit + ")"
+    }
+
+    /** The flight [o] describes, whichever way its velocity was typed in. */
+    fun flightOf(o: StampOptions): Plots.Flight {
+        val stop = o.stopAfter.takeIf { it > 0f }?.toDouble()
+        return if (o.velocityIn == VelocityIn.COMPONENTS) {
+            Plots.Flight(
+                startX = o.startX.toDouble(), startY = o.startHeight.toDouble(),
+                vx = o.velocityX.toDouble(), vy = o.velocityY.toDouble(),
+                ax = o.accelX.toDouble(), ay = -kotlin.math.abs(o.gravity.toDouble()),
+                stopAfter = stop
+            )
+        } else {
+            Plots.Flight.fromSpeedAngle(
+                speed = o.speed.toDouble(), angleDegrees = o.launchAngle.toDouble(),
+                gravity = o.gravity.toDouble(), startHeight = o.startHeight.toDouble(),
+                startX = o.startX.toDouble(), accelX = o.accelX.toDouble(), stopAfter = stop
+            )
+        }
+    }
+
+    /** The value of a sinusoid at [t], from the options as a signals course would give them. */
+    fun waveAt(o: StampOptions, t: Double): Double {
+        val phase = if (o.phaseInDegrees) o.phase * Math.PI / 180.0 else o.phase.toDouble()
+        val angle = o.omega.toDouble() * t + phase
+        val wave = if (o.cosine) kotlin.math.cos(angle) else kotlin.math.sin(angle)
+        val envelope = if (o.damping != 0f) kotlin.math.exp(-o.damping.toDouble() * t) else 1.0
+        return o.offset + o.amplitude * envelope * wave
+    }
+
+    /** The envelope a damped sinusoid sits inside, above and below its offset. */
+    fun envelopeAt(o: StampOptions, t: Double): Double =
+        kotlin.math.abs(o.amplitude.toDouble()) *
+            (if (o.damping != 0f) kotlin.math.exp(-o.damping.toDouble() * t) else 1.0)
+
+    /** Frequency in hertz, from the angular frequency. */
+    fun frequencyOf(o: StampOptions): Float = (o.omega / (2f * Math.PI.toFloat()))
+
+    /** Period in seconds, from the angular frequency. */
+    fun periodOf(o: StampOptions): Float =
+        if (o.omega != 0f) (2f * Math.PI.toFloat() / o.omega) else Float.POSITIVE_INFINITY
+
     /** The separate parts a stamp is drawn with, each of which has its own settings. */
-    enum class Feature { TEXT, VALUES, DETAIL, FINE, FILL, ARROWS }
+    enum class Feature { TEXT, VALUES, DETAIL, FINE, FILL, ARROWS, CURVE, MARKERS, VECTORS }
 
     enum class Kind(
         val label: String,
@@ -161,6 +348,42 @@ object Stamps {
         LINE("Line", Group.SHAPES, 6f, setOf(Knob.ENDS, Knob.DASH)),
         BOX("Box", Group.SHAPES, 1.4f, setOf(Knob.DASH, Knob.FILL)),
         OVAL("Oval", Group.SHAPES, 1.4f, setOf(Knob.DASH, Knob.FILL)),
+
+        // ---- graphs of equations ----
+        // Smart in what they work out, ordinary in what they draw: every one of these comes out
+        // as the same strokes anything else does, so a curve can be moved, erased in part,
+        // restyled, exported and synced like a drawn one - and changed again afterwards.
+        PLOT(
+            "Equation graph", Group.PLOTS, 1.3f,
+            setOf(
+                Knob.EQUATION, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
+                Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES
+            ),
+            defaults = StampOptions(rangeFrom = -6.2832f, rangeTo = 6.2832f, step = 1.5708f)
+        ),
+        SINE(
+            "Sine wave", Group.PLOTS, 1.8f,
+            setOf(
+                Knob.WAVE, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
+                Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES
+            ),
+            defaults = StampOptions(
+                rangeFrom = 0f, rangeTo = 12.5664f, step = 1.5708f, expression = "",
+                xName = "x", yName = "y"
+            )
+        ),
+        PROJECTILE(
+            "Projectile arc", Group.PLOTS, 1.6f,
+            setOf(
+                Knob.THROW, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
+                Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES
+            ),
+            defaults = StampOptions(
+                rangeFrom = 0f, rangeTo = 45f, step = 5f, yFrom = 0f, yTo = 12f, yStep = 2f,
+                expression = "", xName = "x (m)", yName = "y (m)",
+                markZeros = false, markMin = false, markerLabels = PoiLabel.NAME_AND_COORDINATES
+            )
+        ),
 
         // ---- maths ----
         AXES(
@@ -426,7 +649,32 @@ object Stamps {
             textScale = scale(o.textScale, 0.3f, 4f),
             valueScale = scale(o.valueScale, 0.3f, 4f),
             valueSuffix = o.valueSuffix.take(8),
-            opacity = scale(o.opacity, 0.05f, 1f)
+            opacity = scale(o.opacity, 0.05f, 1f),
+            expression = o.expression.take(120),
+            amplitude = if (o.amplitude.isFinite()) o.amplitude.coerceIn(-1000f, 1000f) else 1f,
+            phase = if (o.phase.isFinite()) o.phase else 0f,
+            offset = if (o.offset.isFinite()) o.offset else 0f,
+            speed = if (o.speed.isFinite()) o.speed.coerceIn(0f, 1e5f) else 20f,
+            launchAngle = if (o.launchAngle.isFinite()) o.launchAngle.coerceIn(-89f, 89f) else 45f,
+            // Earth by default, but the Moon and a physics question that invents one are fair.
+            gravity = if (o.gravity.isFinite() && o.gravity > 0f) o.gravity.coerceIn(0.01f, 1000f) else 9.81f,
+            startHeight = if (o.startHeight.isFinite()) o.startHeight.coerceIn(0f, 1e5f) else 0f,
+            timeMarks = o.timeMarks.coerceIn(0, 60),
+            curveWeight = scale(o.curveWeight, 0.2f, 6f),
+            smoothness = o.smoothness.coerceIn(20, 2000),
+            markerScale = scale(o.markerScale, 0.2f, 5f),
+            decimals = o.decimals.coerceIn(0, 6),
+            omega = if (o.omega.isFinite() && o.omega != 0f) o.omega.coerceIn(-1e7f, 1e7f) else 6.2832f,
+            damping = if (o.damping.isFinite()) o.damping.coerceIn(-100f, 100f) else 0f,
+            xUnit = o.xUnit.take(8),
+            yUnit = o.yUnit.take(8),
+            velocityArrows = o.velocityArrows.coerceIn(0, 40),
+            vectorScale = scale(o.vectorScale, 0.2f, 5f),
+            stopAfter = if (o.stopAfter.isFinite()) o.stopAfter.coerceIn(0f, 1e4f) else 0f,
+            accelX = if (o.accelX.isFinite()) o.accelX.coerceIn(-1e4f, 1e4f) else 0f,
+            startX = if (o.startX.isFinite()) o.startX.coerceIn(-1e5f, 1e5f) else 0f,
+            velocityX = if (o.velocityX.isFinite()) o.velocityX.coerceIn(-1e5f, 1e5f) else 0f,
+            velocityY = if (o.velocityY.isFinite()) o.velocityY.coerceIn(-1e5f, 1e5f) else 0f
         )
     }
 
@@ -704,11 +952,13 @@ object Stamps {
 
         /** Trim trailing zeros so an axis reads "2" and "2.5" rather than "2.0" and "2.50". */
         fun num(v: Float): String {
-            val rounded = (v * 100f).roundToInt() / 100f
-            return if (kotlin.math.abs(rounded - rounded.roundToInt()) < 0.005f) {
+            val places = o.decimals
+            val factor = Math.pow(10.0, places.toDouble()).toFloat()
+            val rounded = (v * factor).roundToInt() / factor
+            return if (kotlin.math.abs(rounded - rounded.roundToInt()) < 0.5f / factor) {
                 rounded.roundToInt().toString()
             } else {
-                ("%.2f".format(rounded)).trimEnd('0').trimEnd('.')
+                ("%.${places}f".format(rounded)).trimEnd('0').trimEnd('.')
             }
         }
 
@@ -716,6 +966,23 @@ object Stamps {
         fun value(v: Float): String {
             trace?.add(Feature.VALUES)
             return num(v) + o.valueSuffix
+        }
+
+        /**
+         * A number as it is written on an axis: in the size the unit is shown at, and with
+         * whatever was asked to follow it.
+         */
+        fun axisValue(v: Float, scale: SiPrefix): String {
+            trace?.add(Feature.VALUES)
+            val shown = if (scale.factor != 1.0) (v / scale.factor).toFloat() else v
+            return num(shown) + o.valueSuffix
+        }
+
+        /** The same number for a marked point, with its unit spelled out after it. */
+        fun unitValue(v: Float, scale: SiPrefix, unit: String): String {
+            val shown = if (scale.factor != 1.0) (v / scale.factor).toFloat() else v
+            val tail = if (unit.isBlank()) o.valueSuffix else " " + scale.symbol + unit
+            return num(shown) + tail
         }
 
         /**
@@ -749,6 +1016,88 @@ object Stamps {
             return k % stride == 0L
         }
 
+        /**
+         * The axes themselves: one piece, drawn for a bare graph and for a plotted curve alike.
+         *
+         * Returns where a value lands on the page, so whatever is drawn on top of the axes -
+         * a curve, a marked point, a velocity arrow - is placed by the same arithmetic that
+         * placed the ticks, and cannot drift from them.
+         */
+        fun drawFrame(
+            xs: Float, xe: Float, stepX: Float,
+            ys: Float, ye: Float, stepY: Float,
+            grid: Boolean,
+            axes: Boolean = true
+        ): Pair<(Float) -> Float, (Float) -> Float> {
+            fun mapX(v: Float) = left + (v - xs) / (xe - xs) * w
+            fun mapY(v: Float) = bottom - (v - ys) / (ye - ys) * h
+            if (!axes) return ::mapX to ::mapY
+            // How big the numbers are written, and what unit they are then in.
+            val xScale = unitScale(o.xPrefix, max(kotlin.math.abs(xs), kotlin.math.abs(xe)))
+            val yScale = unitScale(o.yPrefix, max(kotlin.math.abs(ys), kotlin.math.abs(ye)))
+
+            // Positions come from values: where 0 falls between from and to is where an axis
+            // crosses, so a first-quadrant graph, a four-quadrant one and "x from -2 to 10"
+            // are one drawing with different numbers rather than three variants.
+            val ox = mapX(0f.coerceIn(xs, xe))
+            val oy = mapY(0f.coerceIn(ys, ye))
+            val xTicks = tickValues(xs, xe, stepX)
+            val yTicks = tickValues(ys, ye, stepY)
+            val spacingX = w * stepX / (xe - xs)
+            val spacingY = h * stepY / (ye - ys)
+
+            if (grid) {
+                // Gridlines first, so the axes sit on top of them rather than under.
+                xTicks.forEach { v -> line(mapX(v), top, mapX(v), bottom, hair) }
+                yTicks.forEach { v -> line(left, mapY(v), right, mapY(v), hair) }
+            }
+
+            arrow(if (xs < 0f) left else ox, oy, right, oy)
+            arrow(ox, if (ys < 0f) bottom else oy, ox, top)
+
+            val tick = (min(w, h) * 0.025f).coerceAtMost(min(spacingX, spacingY) * 0.4f) * o.tickLength
+            if (o.ticks) {
+                xTicks.forEach { v ->
+                    if (v != 0f) line(mapX(v), oy - tick, mapX(v), oy + tick, thin)
+                }
+                yTicks.forEach { v ->
+                    if (v != 0f) line(ox - tick, mapY(v), ox + tick, mapY(v), thin)
+                }
+            }
+            val valueSize = textSize * 0.72f * o.valueScale
+            val below = if (o.ticks) tick else 0f
+            if (o.tickValues) {
+                val xChars = xTicks.maxOfOrNull { axisValue(it, xScale).length } ?: 1
+                val everyX = labelStride(spacingX, xChars, valueSize)
+                val everyY = labelStride(spacingY, 2, valueSize)
+                xTicks.forEach { v ->
+                    if (v != 0f && multipleOfStride(v, stepX, everyX)) {
+                        label(axisValue(v, xScale), mapX(v), oy + below + 1f, valueSize)
+                    }
+                }
+                yTicks.forEach { v ->
+                    if (v != 0f && multipleOfStride(v, stepY, everyY)) {
+                        labelRight(axisValue(v, yScale), ox - below - 2f, mapY(v) - valueSize * 0.68f, valueSize)
+                    }
+                }
+                if (xs < 0f && 0f < xe && ys < 0f && 0f < ye) {
+                    labelAt("0", ox - valueSize * 1.2f, oy + below * 0.6f, valueSize)
+                }
+            }
+            // Beyond the arrowheads, where a textbook puts them: inside the frame they sit on
+            // the gridlines and on whatever gets plotted.
+            val xTitle = axisName(o.xName, o.xUnit, xScale)
+            val yTitle = axisName(o.yName, o.yUnit, yScale)
+            if (xTitle.isNotBlank()) {
+                labelAt(xTitle, right + textSize * 0.3f, oy - textSize * 0.7f, textSize)
+            }
+            if (yTitle.isNotBlank()) {
+                label(yTitle, ox, top - textSize * 2.1f, textSize)
+            }
+            
+            return ::mapX to ::mapY
+        }
+
         when (kind) {
 
             // ---- maths -------------------------------------------------------
@@ -773,68 +1122,215 @@ object Stamps {
                 )
             )
 
-            Kind.AXES, Kind.COORD_GRID -> {
-                // Positions come from values: where 0 falls between from and to is where an axis
-                // crosses, so a first-quadrant graph, a four-quadrant one and "x from -2 to 10"
-                // are one drawing with different numbers rather than three variants.
-                val xs = o.rangeFrom
-                val xe = o.rangeTo
-                val ys = o.yFrom
-                val ye = o.yTo
-                fun mapX(v: Float) = left + (v - xs) / (xe - xs) * w
-                fun mapY(v: Float) = bottom - (v - ys) / (ye - ys) * h
-                val ox = mapX(0f.coerceIn(xs, xe))
-                val oy = mapY(0f.coerceIn(ys, ye))
-                val xTicks = tickValues(xs, xe, o.step)
-                val yTicks = tickValues(ys, ye, o.yStep)
-                val spacingX = w * o.step / (xe - xs)
-                val spacingY = h * o.yStep / (ye - ys)
+            Kind.AXES, Kind.COORD_GRID ->
+                drawFrame(
+                    o.rangeFrom, o.rangeTo, o.step, o.yFrom, o.yTo, o.yStep,
+                    grid = kind == Kind.COORD_GRID
+                )
 
-                if (kind == Kind.COORD_GRID) {
-                    // Gridlines first, so the axes sit on top of them rather than under.
-                    xTicks.forEach { v -> line(mapX(v), top, mapX(v), bottom, hair) }
-                    yTicks.forEach { v -> line(left, mapY(v), right, mapY(v), hair) }
+            Kind.PLOT, Kind.SINE, Kind.PROJECTILE -> {
+                val flight = flightOf(o)
+                val equation = if (kind == Kind.PLOT) Expr.parse(o.expression, o.degrees) else null
+
+                /** What the curve is, in the graph's own units. */
+                val fn: (Double) -> Double = when (kind) {
+                    Kind.PLOT -> { v -> equation?.at(v) ?: Double.NaN }
+                    Kind.SINE -> { v -> waveAt(o, v) }
+                    else -> { v -> flight.heightAt(v) }
                 }
 
-                arrow(if (xs < 0f) left else ox, oy, right, oy)
-                arrow(ox, if (ys < 0f) bottom else oy, ox, top)
+                // Across: what was asked for, or - for a throw that is allowed to decide - from
+                // where it leaves to where it lands.
+                var xs = o.rangeFrom
+                var xe = o.rangeTo
+                if (kind == Kind.PROJECTILE && o.fitAxes) {
+                    xs = min(o.startX, flight.landing.x.toFloat())
+                    xe = max(o.startX, flight.landing.x.toFloat())
+                    val pad = max(1e-6f, (xe - xs) * 0.06f)
+                    xs -= pad; xe += pad
+                }
+                if (!(xe > xs)) { xe = xs + 1f }
 
-                val tick = (min(w, h) * 0.025f).coerceAtMost(min(spacingX, spacingY) * 0.4f) * o.tickLength
-                if (o.ticks) {
-                    xTicks.forEach { v ->
-                        if (v != 0f) line(mapX(v), oy - tick, mapX(v), oy + tick, thin)
+                // Up: fitted to what the curve actually does, unless the numbers were given.
+                var ys = o.yFrom
+                var ye = o.yTo
+                var stepX = o.step
+                var stepY = o.yStep
+                if (o.fitAxes) {
+                    val rough = Plots.sample(xs.toDouble(), xe.toDouble(), 160) { fn(it) }
+                        .points.map { it.y }.filter { it.isFinite() }.sorted()
+                    if (rough.isNotEmpty()) {
+                        // The middle of the values rather than the extremes, so one asymptote
+                        // does not squash the rest of the curve into a flat line.
+                        val low = rough[(rough.size * 0.02f).toInt().coerceIn(0, rough.lastIndex)]
+                        val high = rough[(rough.size * 0.98f).toInt().coerceIn(0, rough.lastIndex)]
+                        val fitted = niceRange(low.toFloat(), high.toFloat(), keepZero = kind == Kind.PROJECTILE)
+                        ys = fitted.first; ye = fitted.second; stepY = fitted.third
+                        // Nothing goes below the ground in a throw, so the axis should not
+                        // either: an empty band under the arc reads as a hole to fall into.
+                        if (kind == Kind.PROJECTILE && low >= -1e-9) ys = 0f
                     }
-                    yTicks.forEach { v ->
-                        if (v != 0f) line(ox - tick, mapY(v), ox + tick, mapY(v), thin)
+                    // Only the step across is chosen here. The range across is the question -
+                    // "from 0 to 40 ms" - and rounding it outwards answers a different one.
+                    stepX = niceStep((xe - xs) / 6f)
+                }
+                if (!(ye > ys)) { ye = ys + 1f }
+
+                val (mapX, mapY) = drawFrame(xs, xe, stepX, ys, ye, stepY, grid = false, axes = o.showAxes)
+
+                /** A run of samples as one stroke, in the curve's own colour and weight. */
+                fun drawRun(points: List<Plots.Point>, tint: Int, weight: Float, style: DashStyle) {
+                    if (points.size < 2) return
+                    trace?.add(Feature.CURVE)
+                    out.add(
+                        Stroke(
+                            id = nextId(), kind = StrokeKind.FREEHAND, color = tint,
+                            baseWidth = weight,
+                            brush = BrushType.MARKER,
+                            points = points.map {
+                                InkPoint(mapX(it.x.toFloat()), mapY(it.y.toFloat()), weight)
+                            },
+                            dash = style, pageIndex = page, updatedUtc = now
+                        )
+                    )
+                }
+
+                val curveInk = if (o.curveColor != 0) o.curveColor else color
+                val curveWidth = width * o.curveWeight
+                val clip = ys.toDouble()..ye.toDouble()
+                val curve = if (kind == Kind.PROJECTILE) {
+                    flight.arc(o.smoothness)
+                } else {
+                    Plots.sample(xs.toDouble(), xe.toDouble(), o.smoothness, clip) { fn(it) }
+                }
+                curve.runs.forEach { drawRun(it, curveInk, curveWidth, o.curveDash) }
+
+                // A decaying wave inside the envelope it decays under, which is the picture a
+                // signals course draws on the board.
+                if (kind == Kind.SINE && o.damping != 0f && o.showEnvelope) {
+                    for (sign in listOf(1f, -1f)) {
+                        val run = Plots.sample(xs.toDouble(), xe.toDouble(), 120, clip) { t ->
+                            o.offset + sign * envelopeAt(o, t)
+                        }
+                        run.runs.forEach { drawRun(it, gridColor, hair * o.gridWeight, DashStyle.DASHED) }
                     }
                 }
-                val valueSize = textSize * 0.72f * o.valueScale
-                val below = if (o.ticks) tick else 0f
-                if (o.tickValues) {
-                    val xChars = xTicks.maxOfOrNull { num(it).length + o.valueSuffix.length } ?: 1
-                    val everyX = labelStride(spacingX, xChars, valueSize)
-                    val everyY = labelStride(spacingY, 2, valueSize)
-                    xTicks.forEach { v ->
-                        if (v != 0f && multipleOfStride(v, o.step, everyX)) {
-                            label(value(v), mapX(v), oy + below + 1f, valueSize)
+
+                // ---- the points worth pointing at ----
+                val poi = ArrayList<Plots.Poi>()
+                if (kind == Kind.PROJECTILE) {
+                    if (o.markMax) poi.add(Plots.Poi(Plots.PoiKind.APEX, flight.apex.x, flight.apex.y))
+                    if (o.markZeros) poi.add(Plots.Poi(Plots.PoiKind.LANDING, flight.landing.x, flight.landing.y))
+                    if (o.markIntercept) poi.add(Plots.Poi(Plots.PoiKind.START, flight.startX, flight.startY))
+                } else {
+                    poi.addAll(
+                        Plots.pointsOfInterest(
+                            curve, maxima = o.markMax, minima = o.markMin,
+                            zeros = o.markZeros, yIntercept = o.markIntercept, f = fn
+                        )
+                    )
+                }
+
+                val markInk = if (o.markerColor != 0) o.markerColor else curveInk
+                val markSize = (min(w, h) * 0.015f).coerceAtLeast(2f) * o.markerScale
+                fun marker(px: Float, py: Float) {
+                    trace?.add(Feature.MARKERS)
+                    val r = markSize
+                    when (o.markerShape) {
+                        MarkerShape.RING -> oval(px - r, py - r, px + r, py + r, thin, FillStyle.NONE)
+                        MarkerShape.DOT -> for (k in 0 until 3) {
+                            val rr = r * (1f - k * 0.3f)
+                            oval(px - rr, py - rr, px + rr, py + rr, thin)
+                        }
+                        MarkerShape.SQUARE -> box(px - r, py - r, px + r, py + r, thin)
+                        MarkerShape.CROSS -> {
+                            line(px - r, py - r, px + r, py + r, thin)
+                            line(px - r, py + r, px + r, py - r, thin)
+                        }
+                        MarkerShape.DIAMOND -> poly(
+                            listOf(
+                                floatArrayOf(px, py - r), floatArrayOf(px + r, py),
+                                floatArrayOf(px, py + r), floatArrayOf(px - r, py)
+                            ),
+                            thin, closed = true
+                        )
+                        MarkerShape.TICK -> line(px, py - r * 1.4f, px, py + r * 1.4f, thin)
+                    }
+                }
+
+                val xScale = unitScale(o.xPrefix, max(kotlin.math.abs(xs), kotlin.math.abs(xe)))
+                val yScale = unitScale(o.yPrefix, max(kotlin.math.abs(ys), kotlin.math.abs(ye)))
+                val poiSize = textSize * 0.68f * o.valueScale
+                for (point in poi) {
+                    val px = mapX(point.x.toFloat())
+                    val py = mapY(point.y.toFloat())
+                    if (!px.isFinite() || !py.isFinite()) continue
+                    marker(px, py)
+                    val written = when (o.markerLabels) {
+                        PoiLabel.NONE -> ""
+                        PoiLabel.X_ONLY -> unitValue(point.x.toFloat(), xScale, o.xUnit)
+                        PoiLabel.Y_ONLY -> unitValue(point.y.toFloat(), yScale, o.yUnit)
+                        PoiLabel.NAME -> point.kind.label
+                        PoiLabel.COORDINATES ->
+                            "(" + unitValue(point.x.toFloat(), xScale, o.xUnit) + ", " +
+                                unitValue(point.y.toFloat(), yScale, o.yUnit) + ")"
+                        PoiLabel.NAME_AND_COORDINATES ->
+                            point.kind.label + " (" + unitValue(point.x.toFloat(), xScale, o.xUnit) +
+                                ", " + unitValue(point.y.toFloat(), yScale, o.yUnit) + ")"
+                    }
+                    if (written.isNotBlank()) {
+                        // Above the point, or below it when the point is near the top edge.
+                        val above = py - top > poiSize * 2.2f
+                        label(written, px, if (above) py - poiSize * 2.1f else py + markSize + 2f, poiSize)
+                    }
+                }
+
+                // ---- velocity, and what it is made of ----
+                if (kind == Kind.PROJECTILE && o.velocityArrows > 0) {
+                    val vectorInk = if (o.vectorColor != 0) o.vectorColor else detailColor
+                    // Scaled so the fastest arrow is a sensible fraction of the graph, whatever
+                    // units the question is in - an arrow in metres per second on an axis in
+                    // metres has no natural length of its own.
+                    val times = listOf(0.0) + flight.marks(o.velocityArrows + 1)
+                    val fastest = times.maxOf { flight.speedAt(it) }.coerceAtLeast(1e-6)
+                    val reach = min(w, h) * 0.18f * o.vectorScale
+                    for (t in times) {
+                        trace?.add(Feature.VECTORS)
+                        val at = flight.at(t)
+                        val v = flight.velocityAt(t)
+                        val px = mapX(at.x.toFloat())
+                        val py = mapY(at.y.toFloat())
+                        val fx = (v.x / fastest).toFloat() * reach
+                        val fy = (v.y / fastest).toFloat() * reach
+                        out.add(
+                            Stroke(
+                                id = nextId(), kind = StrokeKind.LINE, color = vectorInk,
+                                baseWidth = thin * o.detailWeight,
+                                points = listOf(
+                                    InkPoint(px, py, thin), InkPoint(px + fx, py - fy, thin)
+                                ),
+                                finishEnd = LineEnd.ARROW, endScale = o.endScale,
+                                pageIndex = page, updatedUtc = now
+                            )
+                        )
+                        if (o.componentArrows) {
+                            for (piece in listOf(fx to 0f, 0f to fy)) {
+                                out.add(
+                                    Stroke(
+                                        id = nextId(), kind = StrokeKind.LINE, color = vectorInk,
+                                        baseWidth = hair * o.gridWeight,
+                                        points = listOf(
+                                            InkPoint(px, py, hair),
+                                            InkPoint(px + piece.first, py - piece.second, hair)
+                                        ),
+                                        dash = DashStyle.DASHED, finishEnd = LineEnd.ARROW,
+                                        endScale = o.endScale * 0.7f,
+                                        pageIndex = page, updatedUtc = now
+                                    )
+                                )
+                            }
                         }
                     }
-                    yTicks.forEach { v ->
-                        if (v != 0f && multipleOfStride(v, o.yStep, everyY)) {
-                            labelRight(value(v), ox - below - 2f, mapY(v) - valueSize * 0.68f, valueSize)
-                        }
-                    }
-                    if (xs < 0f && 0f < xe && ys < 0f && 0f < ye) {
-                        labelAt("0", ox - valueSize * 1.2f, oy + below * 0.6f, valueSize)
-                    }
-                }
-                // Beyond the arrowheads, where a textbook puts them: inside the frame they sit on
-                // the gridlines and on whatever gets plotted.
-                if (o.xName.isNotBlank()) {
-                    labelAt(o.xName, right + textSize * 0.3f, oy - textSize * 0.7f, textSize)
-                }
-                if (o.yName.isNotBlank()) {
-                    label(o.yName, ox, top - textSize * 2.1f, textSize)
                 }
             }
 
@@ -1515,6 +2011,94 @@ object Stamps {
         points = line.points.mapIndexed { i, p -> if (i == index) p.copy(x = x, y = y) else p },
         updatedUtc = System.currentTimeMillis()
     )
+
+    /**
+     * What the app can say about a plotted stamp: the numbers behind the picture.
+     *
+     * A graph is worth more when it can also tell you where its maximum is, what its period
+     * works out to, or how long the ball is in the air - those are the answers the question
+     * actually asks for, and reading them off a drawing is how they get got wrong. Shown as a
+     * list beside the settings, in the units the graph is drawn in.
+     */
+    fun inspect(kind: Kind, options: StampOptions): List<Pair<String, String>> {
+        val o = sanitise(kind, options)
+        if (kind !in setOf(Kind.PLOT, Kind.SINE, Kind.PROJECTILE)) return emptyList()
+        val rows = ArrayList<Pair<String, String>>()
+
+        fun show(v: Double, unit: String = "", places: Int = o.decimals): String {
+            if (!v.isFinite()) return "-"
+            val text = "%.${places}f".format(v).trimEnd('0').trimEnd('.')
+            return if (unit.isBlank()) text else "$text $unit"
+        }
+
+        when (kind) {
+            Kind.SINE -> {
+                val f = frequencyOf(o)
+                val t = periodOf(o)
+                rows.add("Amplitude" to show(o.amplitude.toDouble(), o.yUnit))
+                rows.add("ω" to show(o.omega.toDouble(), "rad/s"))
+                rows.add("f" to show(f.toDouble(), "Hz"))
+                rows.add("T" to show(t.toDouble(), "s"))
+                val degrees = if (o.phaseInDegrees) o.phase.toDouble() else o.phase * 180.0 / Math.PI
+                val radians = if (o.phaseInDegrees) o.phase * Math.PI / 180.0 else o.phase.toDouble()
+                rows.add("Phase φ" to show(radians, "rad") + "  (" + show(degrees, "°") + ")")
+                if (o.offset != 0f) rows.add("DC offset" to show(o.offset.toDouble(), o.yUnit))
+                if (o.damping != 0f) {
+                    rows.add("Decay α" to show(o.damping.toDouble(), "1/s"))
+                    rows.add("Time constant τ" to show(1.0 / o.damping, "s"))
+                }
+                rows.add("Form" to (if (o.cosine) "A·cos(ωt + φ) + C" else "A·sin(ωt + φ) + C"))
+            }
+
+            Kind.PROJECTILE -> {
+                val flight = flightOf(o)
+                rows.add("Starts at" to "(" + show(flight.startX, o.xUnit) + ", " + show(flight.startY, o.yUnit) + ")")
+                rows.add("Launch speed" to show(flight.speed, "m/s"))
+                rows.add("Launch angle" to show(flight.angleDegrees, "°"))
+                rows.add("Velocity" to "(" + show(flight.vx, "m/s") + ", " + show(flight.vy, "m/s") + ")")
+                rows.add("Acceleration" to "(" + show(flight.ax, "m/s²") + ", " + show(flight.ay, "m/s²") + ")")
+                rows.add("Time of flight" to show(flight.timeOfFlight, "s"))
+                rows.add("Highest point" to "(" + show(flight.apex.x, o.xUnit.ifBlank { "m" }) + ", " + show(flight.apex.y, o.yUnit.ifBlank { "m" }) + ")")
+                rows.add("Time to the top" to show(flight.timeToApex, "s"))
+                rows.add("Range" to show(flight.range, o.xUnit.ifBlank { "m" }))
+                rows.add("Lands at" to show(flight.landing.x, o.xUnit.ifBlank { "m" }))
+                rows.add("Speed on landing" to show(flight.impactSpeed, "m/s"))
+                rows.add("Angle on landing" to show(flight.impactAngleDegrees, "°"))
+            }
+
+            else -> {
+                val equation = Expr.parse(o.expression, o.degrees)
+                if (!equation.ok) {
+                    rows.add("Equation" to (equation.error ?: "That could not be read"))
+                    return rows
+                }
+                val curve = Plots.sample(
+                    o.rangeFrom.toDouble(), o.rangeTo.toDouble(), o.smoothness
+                ) { equation.at(it) }
+                val poi = Plots.pointsOfInterest(
+                    curve, maxima = true, minima = true, zeros = true, yIntercept = true
+                ) { equation.at(it) }
+                if (poi.isEmpty()) rows.add("Between these x values" to "no turning points or zeros")
+                for (p in poi.take(12)) {
+                    rows.add(p.kind.label to "(" + show(p.x, o.xUnit) + ", " + show(p.y, o.yUnit) + ")")
+                }
+            }
+        }
+
+        if (kind != Kind.PLOT) {
+            // The same points the graph marks, listed with the numbers behind them.
+            val fn: (Double) -> Double =
+                if (kind == Kind.SINE) { t -> waveAt(o, t) } else { x -> flightOf(o).heightAt(x) }
+            val curve = Plots.sample(o.rangeFrom.toDouble(), o.rangeTo.toDouble(), o.smoothness) { fn(it) }
+            val poi = Plots.pointsOfInterest(
+                curve, maxima = o.markMax, minima = o.markMin, zeros = o.markZeros, f = fn
+            )
+            for (p in poi.take(10)) {
+                rows.add(p.kind.label to "(" + show(p.x, o.xUnit) + ", " + show(p.y, o.yUnit) + ")")
+            }
+        }
+        return rows
+    }
 
     // ---- stamps already on the page -----------------------------------------
 
