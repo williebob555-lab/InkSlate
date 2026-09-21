@@ -258,6 +258,17 @@ class DiscreteStampTest {
     }
 
     @Test
+    fun `a mark at each angle is drawn when it is asked for`() {
+        fun dots(on: Boolean) = build(
+            Stamps.Kind.UNIT_CIRCLE,
+            Stamps.Kind.UNIT_CIRCLE.defaults.copy(angleStep = 4, angleDots = on, labels = false)
+        ).count { it.kind == Stroke.Kind.ELLIPSE }
+        // The circle itself is one; eight angles bring eight more.
+        assertEquals(1, dots(on = false))
+        assertEquals(9, dots(on = true))
+    }
+
+    @Test
     fun `a marked angle draws its legs and can be asked not to`() {
         fun fine(legs: Boolean) = build(
             Stamps.Kind.UNIT_CIRCLE,

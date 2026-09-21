@@ -19,8 +19,16 @@ on:
 
 # Only the newest test build matters, so a push that lands while one is building cancels it
 # rather than racing it to the same tag.
+#
+# A push that is *not* asking for a build gets a group of its own instead. Every push starts this
+# workflow - the jobs below are what the `[build]` marker gates - so one shared group meant a
+# commit that only touched tests reached in and cancelled a build half way through, and the
+# release it would have published went out with one of its two installers missing.
 concurrency:
-  group: test-build
+  group: >-
+    ${{ (github.event_name == 'workflow_dispatch' ||
+    contains(github.event.head_commit.message, '[build]'))
+    && 'test-build' || format('test-build-{0}', github.sha) }}
   cancel-in-progress: true
 
 permissions:
