@@ -68,6 +68,10 @@ object Stamps {
         EQUATION,
         /** A sine's amplitude, period, phase and offset, as numbers rather than as an equation. */
         WAVE,
+        /** A continuous signal turned into samples in time, and rounded to a bit depth. */
+        SAMPLING,
+        /** Which angles a circle is marked at, and which one is called out. */
+        ANGLES,
         /** How hard and at what angle something was thrown. */
         THROW,
         /** Which points on the curve are marked, and how. */
@@ -79,6 +83,17 @@ object Stamps {
 
     /** The most ticks one axis will draw; beyond this a step is widened rather than obeyed. */
     const val MAX_TICKS = 100
+
+    /**
+     * The most samples a discrete signal will draw.
+     *
+     * A sampling interval is a typed number, and one typed a thousand times too small should draw
+     * a crowded graph rather than a hundred thousand strokes.
+     */
+    const val MAX_SAMPLES = 400
+
+    /** The bit depths a quantised signal is drawn at. */
+    val QUANT_BITS: IntRange = 1..12
 
     /**
      * The adjustable part of a stamp.
@@ -173,6 +188,24 @@ object Stamps {
         /** Decay of an e^(-at) envelope, in per-second. Zero for a wave that does not decay. */
         val damping: Float = 0f,
         val showEnvelope: Boolean = true,
+
+        // ---- the same signal, in discrete time -----------------------------------------
+        /**
+         * The sampling interval Ts, in the graph's own units across. Zero draws it continuous.
+         *
+         * Given as an interval rather than a rate because that is what a question gives - "sampled
+         * every 0.1 s" - and the rate, the Nyquist frequency and whether it aliases all follow from
+         * it and are reported rather than typed.
+         */
+        val sampleEvery: Float = 0f,
+        val discreteStyle: DiscreteStyle = DiscreteStyle.STEMS,
+        /** The underlying signal behind its samples, which is the picture that shows aliasing. */
+        val showContinuous: Boolean = true,
+        /** Rounding each sample to a finite number of levels. Off is infinite bit depth. */
+        val quantize: Boolean = false,
+        val quantBits: Int = 3,
+        /** The levels themselves, drawn across, so what the rounding did is visible. */
+        val showLevels: Boolean = true,
         /**
          * A thrown object, in the mix a question gives: a position, a velocity and an
          * acceleration. The velocity can be typed as a speed and an angle or as its components,
@@ -218,6 +251,22 @@ object Stamps {
         val markerLabels: PoiLabel = PoiLabel.COORDINATES,
         /** How many decimals a number is written to, here and on the axes. */
         val decimals: Int = 2,
+
+        // ---- a circle's angles -----------------------------------------------------------
+        /**
+         * Angles every pi over this: 6 marks every 30 degrees, 4 every 45.
+         *
+         * It is the denominator rather than a count of spokes because that is how the angles are
+         * named - the chart is there to say pi/6, not "spoke 1 of 12".
+         */
+        val angleStep: Int = 6,
+        val angleLabels: AngleLabel = AngleLabel.RADIANS,
+        /** One angle called out in degrees, with its legs and its exact values. Below 0: none. */
+        val markAngle: Float = -1f,
+        /** The right triangle under the called-out angle: cos along the axis, sin up to the point. */
+        val angleLegs: Boolean = true,
+        /** A mark where each angle meets the circle. */
+        val angleDots: Boolean = false,
 
         // ---- units -----------------------------------------------------------------------
         /** The unit each axis is in - "s", "V", "Hz", "m". Blank for a plain number. */
@@ -315,6 +364,34 @@ object Stamps {
         return o.offset + o.amplitude * envelope * wave
     }
 
+    /** How often a sampled signal is sampled, in hertz when its axis is in seconds. */
+    fun rateOf(o: StampOptions): Float = if (o.sampleEvery > 0f) 1f / o.sampleEvery else 0f
+
+    /**
+     * The frequency a sinusoid above the Nyquist limit is *seen* at once it has been sampled.
+     *
+     * The point of drawing samples at all: a 900 Hz tone sampled at 1 kHz does not look like a
+     * 900 Hz tone, it looks like a 100 Hz one, and that is the answer to the question.
+     */
+    fun aliasOf(o: StampOptions): Float {
+        val fs = rateOf(o)
+        if (fs <= 0f) return 0f
+        val f = frequencyOf(o)
+        return kotlin.math.abs(f - fs * kotlin.math.round(f / fs))
+    }
+
+    /** Whether the sampling rate is too low for the wave, so the drawn samples fold it down. */
+    fun aliases(o: StampOptions): Boolean {
+        val fs = rateOf(o)
+        return fs > 0f && kotlin.math.abs(frequencyOf(o)) > fs / 2f + 1e-6f
+    }
+
+    /** The full scale a quantised signal is rounded within: the wave's own swing about its offset. */
+    fun quantFullScale(o: StampOptions): Pair<Float, Float> {
+        val a = kotlin.math.abs(o.amplitude)
+        return (o.offset - a) to (o.offset + a)
+    }
+
     /** The envelope a damped sinusoid sits inside, above and below its offset. */
     fun envelopeAt(o: StampOptions, t: Double): Double =
         kotlin.math.abs(o.amplitude.toDouble()) *
@@ -326,6 +403,8 @@ object Stamps {
     /** Period in seconds, from the angular frequency. */
     fun periodOf(o: StampOptions): Float =
         if (o.omega != 0f) (2f * Math.PI.toFloat() / o.omega) else Float.POSITIVE_INFINITY
+
+    private val featureCache = HashMap<Pair<Kind, StampOptions>, Set<Feature>>()
 
     /** The separate parts a stamp is drawn with, each of which has its own settings. */
     enum class Feature { TEXT, VALUES, DETAIL, FINE, FILL, ARROWS, CURVE, MARKERS, VECTORS }
@@ -356,7 +435,7 @@ object Stamps {
         PLOT(
             "Equation graph", Group.PLOTS, 1.3f,
             setOf(
-                Knob.EQUATION, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
+                Knob.EQUATION, Knob.SAMPLING, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
                 Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES
             ),
             defaults = StampOptions(rangeFrom = -6.2832f, rangeTo = 6.2832f, step = 1.5708f)
@@ -364,7 +443,7 @@ object Stamps {
         SINE(
             "Sine wave", Group.PLOTS, 1.8f,
             setOf(
-                Knob.WAVE, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
+                Knob.WAVE, Knob.SAMPLING, Knob.POI, Knob.X_AXIS, Knob.Y_AXIS,
                 Knob.TICKS, Knob.TICK_VALUES, Knob.AXIS_NAMES
             ),
             defaults = StampOptions(
@@ -401,9 +480,9 @@ object Stamps {
         ),
         UNIT_CIRCLE(
             "Unit circle", Group.MATHS, 1f,
-            setOf(Knob.DIVISIONS, Knob.LABELS),
+            setOf(Knob.ANGLES, Knob.LABELS),
             divisionsLabel = "Spokes", divisionsRange = 0..24,
-            defaults = StampOptions(divisions = 12)
+            defaults = StampOptions(divisions = 12, angleStep = 6)
         ),
         PIE(
             "Fraction circle", Group.MATHS, 1f,
@@ -675,7 +754,12 @@ object Stamps {
             accelX = if (o.accelX.isFinite()) o.accelX.coerceIn(-1e4f, 1e4f) else 0f,
             startX = if (o.startX.isFinite()) o.startX.coerceIn(-1e5f, 1e5f) else 0f,
             velocityX = if (o.velocityX.isFinite()) o.velocityX.coerceIn(-1e5f, 1e5f) else 0f,
-            velocityY = if (o.velocityY.isFinite()) o.velocityY.coerceIn(-1e5f, 1e5f) else 0f
+            velocityY = if (o.velocityY.isFinite()) o.velocityY.coerceIn(-1e5f, 1e5f) else 0f,
+            sampleEvery =
+                if (o.sampleEvery.isFinite() && o.sampleEvery > 0f) o.sampleEvery.coerceIn(1e-9f, 1e6f) else 0f,
+            quantBits = o.quantBits.coerceIn(QUANT_BITS.first, QUANT_BITS.last),
+            angleStep = o.angleStep.coerceIn(1, 36),
+            markAngle = if (o.markAngle.isFinite() && o.markAngle >= 0f) o.markAngle % 360f else -1f
         )
     }
 
@@ -687,9 +771,16 @@ object Stamps {
      * what building it draws.
      */
     fun features(kind: Kind, options: StampOptions = kind.defaults): Set<Feature> {
+        // Worked out by drawing the stamp, so it cannot drift from what drawing it produces - and
+        // remembered, because a settings panel asks this on every keystroke and every slider step,
+        // and drawing a thirty-two square grid to find out that it has gridlines is wasteful.
+        val key = kind to options
+        featureCache[key]?.let { return it }
         val found = HashSet<Feature>()
         var n = 0
         buildTraced(kind, Box(0f, 0f, 240f, 240f / kind.aspect(sanitise(kind, options))), 0, options, null, found) { "f${n++}" }
+        if (featureCache.size > 64) featureCache.clear()
+        featureCache[key] = found
         return found
     }
 
@@ -1290,7 +1381,12 @@ object Stamps {
                 } else {
                     Plots.sample(xs.toDouble(), xe.toDouble(), o.smoothness, clip) { fn(it) }
                 }
-                curve.runs.forEach { drawRun(it, curveInk, curveWidth, o.curveDash) }
+                // A sampled signal draws the line behind its samples only if asked: sometimes the
+                // wave is the point and sometimes only the samples of it are.
+                val sampled = kind != Kind.PROJECTILE && o.sampleEvery > 0f
+                if (!sampled || o.showContinuous) {
+                    curve.runs.forEach { drawRun(it, curveInk, curveWidth, o.curveDash) }
+                }
 
                 // The line itself is something a label should keep off, so a few points along it
                 // are claimed - enough to know where it runs, few enough to stay cheap.
@@ -1361,6 +1457,98 @@ object Stamps {
 
                 val xScale = unitScale(o.xPrefix, max(kotlin.math.abs(xs), kotlin.math.abs(xe)))
                 val yScale = unitScale(o.yPrefix, max(kotlin.math.abs(ys), kotlin.math.abs(ye)))
+                // ---- the signal in discrete time ----
+                if (sampled) {
+                    val ts = o.sampleEvery.toDouble()
+                    val levels = 1 shl o.quantBits.coerceIn(QUANT_BITS.first, QUANT_BITS.last)
+                    // Rounded within the signal's own full scale rather than within whatever the
+                    // axes came out at, so the step size is a property of the depth chosen and not
+                    // of how the graph happened to be fitted.
+                    val fullScale = if (kind == Kind.SINE) quantFullScale(o) else ys to ye
+                    val qLo = fullScale.first.toDouble()
+                    val qStep = (fullScale.second - fullScale.first).toDouble() / levels
+                    val quantising = o.quantize && qStep > 0.0
+
+                    /** A value rounded to the nearest level a finite depth can hold. */
+                    fun held(v: Double): Double {
+                        if (!quantising || !v.isFinite()) return v
+                        val bin = kotlin.math.floor((v - qLo) / qStep).coerceIn(0.0, (levels - 1).toDouble())
+                        return qLo + (bin + 0.5) * qStep
+                    }
+
+                    if (quantising && o.showLevels) {
+                        for (k in 0..levels) {
+                            val at = qLo + qStep * k
+                            if (at < ys - 1e-6 || at > ye + 1e-6) continue
+                            trace?.add(Feature.FINE)
+                            val ly = mapY(at.toFloat())
+                            out.add(
+                                Stroke(
+                                    id = nextId(), kind = StrokeKind.LINE, color = gridColor,
+                                    baseWidth = hair * o.gridWeight,
+                                    points = listOf(
+                                        InkPoint(mapX(xs), ly, hair), InkPoint(mapX(xe), ly, hair)
+                                    ),
+                                    dash = if (o.gridDash == DashStyle.SOLID) DashStyle.DOTTED else o.gridDash,
+                                    pageIndex = page, updatedUtc = now
+                                )
+                            )
+                        }
+                    }
+
+                    // Stems stand on zero where zero is on the graph, and on the floor of it
+                    // where it is not - a stem hanging off the bottom of the axes is not a stem.
+                    val baseline = mapY(0f.coerceIn(ys, ye))
+                    val stemInk = if (o.detailColor != 0) o.detailColor else curveInk
+                    // The slack is on the index rather than on the value: an interval of 0.1
+                    // held as a float divides one second into 9.99999985 of them, and a sample
+                    // exactly on the end of the range should not be lost to that.
+                    val firstIndex = kotlin.math.ceil(xs.toDouble() / ts - 1e-6).toLong()
+                    val lastIndex = kotlin.math.floor(xe.toDouble() / ts + 1e-6).toLong()
+                    val count = (lastIndex - firstIndex + 1).coerceIn(0L, MAX_SAMPLES.toLong()).toInt()
+                    val points = ArrayList<FloatArray>(count)
+                    for (i in 0 until count) {
+                        val at = (firstIndex + i) * ts
+                        val raw = fn(at)
+                        if (!raw.isFinite()) continue
+                        val value = held(raw)
+                        if (value < ys - 1e-6 || value > ye + 1e-6) continue
+                        val px = mapX(at.toFloat())
+                        val py = mapY(value.toFloat())
+                        if (!px.isFinite() || !py.isFinite()) continue
+                        if (o.discreteStyle == DiscreteStyle.STEMS) {
+                            trace?.add(Feature.DETAIL)
+                            line(px, baseline, px, py, thin * o.detailWeight, stemInk)
+                        }
+                        points.add(floatArrayOf(px, py))
+                        marker(px, py)
+                    }
+                    // Held between samples: the staircase a reconstruction actually produces.
+                    if (o.discreteStyle == DiscreteStyle.STEPS && points.size >= 2) {
+                        val stair = ArrayList<FloatArray>(points.size * 4)
+                        points.forEachIndexed { i, at ->
+                            // Every corner twice: a freehand mark is drawn as a curve through the
+                            // midpoints of what it is given, and a staircase drawn that way comes
+                            // out as a wobble. Doubled, each control point lands on its own
+                            // segment and the curve between them is straight.
+                            stair.add(at); stair.add(at)
+                            if (i < points.lastIndex) {
+                                val corner = floatArrayOf(points[i + 1][0], at[1])
+                                stair.add(corner); stair.add(corner)
+                            }
+                        }
+                        trace?.add(Feature.CURVE)
+                        out.add(
+                            Stroke(
+                                id = nextId(), kind = StrokeKind.FREEHAND, color = stemInk,
+                                baseWidth = curveWidth * 0.9f, brush = BrushType.MARKER,
+                                points = stair.map { InkPoint(it[0], it[1], curveWidth) },
+                                pageIndex = page, updatedUtc = now
+                            )
+                        )
+                    }
+                }
+
                 val poiSize = textSize * 0.68f * o.valueScale
                 for (point in poi) {
                     val px = mapX(point.x.toFloat())
@@ -1458,26 +1646,132 @@ object Stamps {
             }
 
             Kind.UNIT_CIRCLE -> {
-                val r = min(w, h) / 2f
+                val step = o.angleStep.coerceIn(1, 36)
+                val small = textSize * 0.72f
+                val marked = Angles.anglesFor(step)
+
+                /** Where an angle, in degrees anticlockwise from the right, lands at radius [rad]. */
+                fun onCircle(deg: Double, rad: Float): FloatArray {
+                    val a = Math.toRadians(deg)
+                    return floatArrayOf(cx + (cos(a) * rad).toFloat(), cy - (sin(a) * rad).toFloat())
+                }
+
+                /** The exact pair at an angle where there is one, and the worked-out pair where there is not. */
+                fun coordinatesAt(deg: Double): String {
+                    val exact = Angles.exactPair(deg)
+                    if (exact != null) return "(" + exact.first + ", " + exact.second + ")"
+                    val a = Math.toRadians(deg)
+                    return "(" + num(cos(a).toFloat()) + ", " + num(sin(a).toFloat()) + ")"
+                }
+
+                /** How an angle is written, in whichever of its forms was asked for. */
+                fun angleText(deg: Double): String {
+                    val radians = Angles.asPi(deg, step)
+                    val degrees = num(deg.toFloat()) + "\u00b0"
+                    return when (o.angleLabels) {
+                        AngleLabel.NONE -> ""
+                        AngleLabel.RADIANS -> radians
+                        AngleLabel.DEGREES -> degrees
+                        AngleLabel.BOTH -> "$radians = $degrees"
+                        AngleLabel.COORDINATES -> coordinatesAt(deg)
+                        AngleLabel.RADIANS_AND_COORDINATES -> radians + "  " + coordinatesAt(deg)
+                    }
+                }
+
+                val writing = o.labels && o.angleLabels != AngleLabel.NONE
+                // A ring of coordinates is four times the writing a ring of radians is, and at one
+                // size the circle it went round would have to shrink to nothing to fit it.
+                val ringSize = when (o.angleLabels) {
+                    AngleLabel.RADIANS, AngleLabel.DEGREES, AngleLabel.NONE -> small
+                    else -> small * 0.82f
+                }
+
+                // The circle is made small enough that its ring of labels fits inside the box it
+                // was placed in. A stamp whose writing hangs outside itself cannot be put beside
+                // anything: it would be dragged to fit, and the writing would land on the margin.
+                // The worst case is the label at zero, which reaches 1.16r plus its whole width.
+                val span = min(w, h) / 2f
+                val widest = if (writing) marked.maxOf { inkedWidth(angleText(it), ringSize) } else 0f
+                val r = ((span - widest) / 1.16f).coerceIn(span * 0.5f, span)
+
                 oval(cx - r, cy - r, cx + r, cy + r)
                 arrow(cx - r * 1.14f, cy, cx + r * 1.14f, cy, thin)
                 arrow(cx, cy + r * 1.14f, cx, cy - r * 1.14f, thin)
-                for (i in 0 until o.divisions) {
-                    // Skip the spokes that would lie exactly on an axis; the axes are already there.
-                    val a = 2.0 * PI * i / o.divisions
-                    if (o.divisions % 4 == 0 && i % (o.divisions / 4) == 0) continue
-                    line(
-                        cx, cy,
-                        cx + (cos(a) * r).toFloat(), cy - (sin(a) * r).toFloat(),
-                        hair
-                    )
+
+                // The circle is drawn, so a label should keep off it rather than sit across it.
+                for (i in 0 until 48) {
+                    val at = onCircle(i * 360.0 / 48, r)
+                    claim(Box(at[0] - thin, at[1] - thin, at[0] + thin, at[1] + thin))
                 }
-                if (o.labels) {
+
+                /**
+                 * A label pushed clear of the circle along the angle it belongs to.
+                 *
+                 * Scoring candidate positions - which is what everything else here does - reads
+                 * "outside the stamp's own box" as a cost, and a circle's labels all belong
+                 * outside it, so scoring put half of them inside the rim instead. A ring of labels
+                 * has an obvious right answer, so it is computed rather than searched for: the box
+                 * is slid out along its own angle until its corner clears the circle.
+                 */
+                fun labelOutside(text: String, deg: Double, size: Float, push: Float = 0f) {
+                    if (text.isBlank()) return
+                    val a = Math.toRadians(deg)
+                    val boxW = inkedWidth(text, size)
+                    val boxH = size * 1.3f
+                    val clear = r * 1.16f + push +
+                        0.5f * (kotlin.math.abs(cos(a)).toFloat() * boxW +
+                            kotlin.math.abs(sin(a)).toFloat() * boxH)
+                    val px = cx + (cos(a) * clear).toFloat()
+                    val py = cy - (sin(a) * clear).toFloat()
+                    labelAt(text, px - boxW / 2f, py - boxH / 2f, size)
+                }
+
+                for (deg in marked) {
+                    val at = onCircle(deg, r)
+                    // The spokes that would lie along an axis are left out; the axes are there.
+                    if (kotlin.math.abs(deg % 90.0) > 0.001) line(cx, cy, at[0], at[1], hair)
+                    if (o.angleDots) {
+                        trace?.add(Feature.MARKERS)
+                        val d = max(1.2f, thin * 1.4f)
+                        oval(at[0] - d, at[1] - d, at[0] + d, at[1] + d, thin, FillStyle.SOLID)
+                    }
+                    if (writing) labelOutside(angleText(deg), deg, ringSize)
+                }
+
+                // Where the circle crosses the axes, but only when the angles are not written
+                // there already - otherwise every quarter turn is labelled twice, on top of itself.
+                if (o.labels && o.angleLabels == AngleLabel.NONE) {
                     val s = textSize * 0.85f
                     label("1", cx + r, cy + r * 0.06f + s * 0.2f, s)
                     label("-1", cx - r, cy + r * 0.06f + s * 0.2f, s)
                     label("1", cx + r * 0.10f + s, cy - r - s * 1.1f, s)
                     label("-1", cx + r * 0.10f + s, cy + r - s * 0.1f, s)
+                }
+
+                // ---- one angle, worked through ----
+                if (o.markAngle >= 0f) {
+                    val deg = o.markAngle.toDouble()
+                    val at = onCircle(deg, r)
+                    trace?.add(Feature.DETAIL)
+                    line(cx, cy, at[0], at[1], width * o.detailWeight, detailColor)
+                    if (o.angleLegs) {
+                        trace?.add(Feature.FINE)
+                        line(at[0], at[1], at[0], cy, hair * o.gridWeight, gridColor)
+                        line(at[0], cy, cx, cy, hair * o.gridWeight, gridColor)
+                    }
+                    // The angle itself, as an arc swept up from the right-hand axis.
+                    val sweep = r * 0.24f
+                    poly(arcPoints(cx, cy, sweep, sweep, 0f, -o.markAngle, 24), thin)
+                    if (o.labels) {
+                        // Beside the point itself rather than out past the ring: pushed out
+                        // there it is the widest thing on the stamp, and the circle would have to
+                        // shrink by more than the label is worth to make room for it.
+                        labelNear(coordinatesAt(deg), at[0], at[1], textSize * 0.8f, thin * 3f)
+                        // Named rather than spelled out: the angle is written round the rim
+                        // already, and a second copy of it inside the circle reads as a spoke.
+                        val mid = onCircle(deg / 2, sweep * 1.45f)
+                        labelNear("\u03b8", mid[0], mid[1], small, thin)
+                    }
                 }
             }
 
@@ -2119,13 +2413,98 @@ object Stamps {
      */
     fun inspect(kind: Kind, options: StampOptions): List<Pair<String, String>> {
         val o = sanitise(kind, options)
-        if (kind !in setOf(Kind.PLOT, Kind.SINE, Kind.PROJECTILE)) return emptyList()
+        if (kind !in setOf(Kind.PLOT, Kind.SINE, Kind.PROJECTILE, Kind.UNIT_CIRCLE)) return emptyList()
         val rows = ArrayList<Pair<String, String>>()
 
         fun show(v: Double, unit: String = "", places: Int = o.decimals): String {
             if (!v.isFinite()) return "-"
             val text = "%.${places}f".format(v).trimEnd('0').trimEnd('.')
-            return if (unit.isBlank()) text else "$text $unit"
+            // A degree sign goes against its number; every other unit is a space away from it.
+            return when {
+                unit.isBlank() -> text
+                unit == "\u00b0" -> text + unit
+                else -> "$text $unit"
+            }
+        }
+
+        /** What sampling does to this signal: the rate, the limit it implies, and whether it folds. */
+        fun samplingRows() {
+            if (o.sampleEvery <= 0f) return
+            val fs = rateOf(o)
+            rows.add("Sampling interval Ts" to show(o.sampleEvery.toDouble(), o.xUnit.ifBlank { "s" }))
+            rows.add("Sampling rate fs" to show(fs.toDouble(), "Hz"))
+            rows.add("Nyquist limit" to show(fs / 2.0, "Hz"))
+            val across = ((o.rangeTo - o.rangeFrom) / o.sampleEvery).toDouble()
+            rows.add(
+                "Samples drawn" to
+                    kotlin.math.floor(across + 1).toInt().coerceIn(0, MAX_SAMPLES).toString()
+            )
+            if (kind == Kind.SINE) {
+                rows.add("Samples per period" to show(periodOf(o) / o.sampleEvery.toDouble(), places = 2))
+                // Normalised angular frequency: the one a difference equation is written in.
+                rows.add("\u03a9 = \u03c9Ts" to show(o.omega * o.sampleEvery.toDouble(), "rad/sample"))
+                rows.add(
+                    "Aliasing" to if (aliases(o)) {
+                        "yes - it reads as " + show(aliasOf(o).toDouble(), "Hz")
+                    } else {
+                        "no, fs is above Nyquist"
+                    }
+                )
+            }
+            if (o.quantize) {
+                val levels = 1 shl o.quantBits
+                val scale = if (kind == Kind.SINE) quantFullScale(o) else o.yFrom to o.yTo
+                rows.add("Bit depth" to (o.quantBits.toString() + " bit, " + levels + " levels"))
+                rows.add(
+                    "Full scale" to
+                        (show(scale.first.toDouble(), o.yUnit) + " to " + show(scale.second.toDouble(), o.yUnit))
+                )
+                rows.add("Step \u0394" to show((scale.second - scale.first).toDouble() / levels, o.yUnit))
+                // The textbook figure, which is the one a question asks to compare against.
+                rows.add("SQNR" to show(6.02 * o.quantBits + 1.76, "dB", places = 1))
+            }
+        }
+
+        if (kind == Kind.UNIT_CIRCLE) {
+            val degreeSign = "\u00b0"
+            rows.add(
+                "Marked every" to (Angles.asPi(180.0 / o.angleStep, o.angleStep) +
+                    "  (" + show(180.0 / o.angleStep, degreeSign, places = 1) + ")")
+            )
+            rows.add("Angles marked" to Angles.anglesFor(o.angleStep).size.toString())
+            if (o.markAngle >= 0f) {
+                val deg = o.markAngle.toDouble()
+                val radians = Math.toRadians(deg)
+                val exact = Angles.exactPair(deg)
+                fun both(value: String?, worked: Double): String =
+                    if (value != null) value + "  = " + show(worked) else show(worked)
+                rows.add(
+                    "Angle \u03b8" to (Angles.asPi(deg, o.angleStep) +
+                        "  (" + show(deg, degreeSign, places = 1) + ")")
+                )
+                rows.add("In radians" to show(radians, "rad"))
+                rows.add("cos \u03b8" to both(exact?.first, cos(radians)))
+                rows.add("sin \u03b8" to both(exact?.second, sin(radians)))
+                rows.add(
+                    "tan \u03b8" to
+                        if (kotlin.math.abs(cos(radians)) < 1e-9) "undefined" else show(kotlin.math.tan(radians))
+                )
+                val turned = ((deg % 360.0) + 360.0) % 360.0
+                rows.add(
+                    "Quadrant" to if (kotlin.math.abs(turned % 90.0) < 1e-9) {
+                        "on an axis"
+                    } else {
+                        ((turned / 90.0).toInt() + 1).coerceIn(1, 4).toString()
+                    }
+                )
+                val within = ((deg % 180.0) + 180.0) % 180.0
+                val reference = if (within > 90.0) 180.0 - within else within
+                rows.add(
+                    "Reference angle" to (Angles.asPi(reference, o.angleStep) +
+                        "  (" + show(reference, degreeSign, places = 1) + ")")
+                )
+            }
+            return rows
         }
 
         when (kind) {
@@ -2145,6 +2524,7 @@ object Stamps {
                     rows.add("Time constant τ" to show(1.0 / o.damping, "s"))
                 }
                 rows.add("Form" to (if (o.cosine) "A·cos(ωt + φ) + C" else "A·sin(ωt + φ) + C"))
+                samplingRows()
             }
 
             Kind.PROJECTILE -> {
@@ -2181,6 +2561,8 @@ object Stamps {
                 }
             }
         }
+
+        if (kind == Kind.PLOT) samplingRows()
 
         if (kind != Kind.PLOT) {
             // The same points the graph marks, listed with the numbers behind them.

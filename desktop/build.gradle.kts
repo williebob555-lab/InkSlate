@@ -32,6 +32,12 @@ tasks.withType<Test>().configureEach {
     environment("LOCALAPPDATA", sandbox.absolutePath)
     systemProperty("user.home", sandbox.absolutePath)
 
+    // Where to save pictures of what a stamp draws, for a look at it without a tablet in hand.
+    System.getProperty("inkslate.looks")?.let {
+        systemProperty("inkslate.looks", it)
+        outputs.upToDateWhen { false }
+    }
+
     System.getProperty("inkslate.pdfs")?.let {
         systemProperty("inkslate.pdfs", it)
         // The documents behind it can change without anything here changing, and a sweep that

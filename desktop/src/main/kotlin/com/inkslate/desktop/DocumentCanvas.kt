@@ -251,6 +251,8 @@ fun DocumentCanvas(
     var marquee by remember { mutableStateOf<InkBox?>(null) }
     /** The ring being drawn for a lasso selection, in the live page's own coordinates. */
     var lasso by remember { mutableStateOf<List<Float>?>(null) }
+    /** A stamp being dragged out to its size, drawn where it will land. */
+    var pendingStamp by remember { mutableStateOf<List<Stroke>>(emptyList()) }
 
     /**
      * Where the pointer is hovering, while something is in hand to be placed.
@@ -553,6 +555,7 @@ fun DocumentCanvas(
                         onPending = { pending = it },
                         onMarquee = { marquee = it },
                         onLasso = { lasso = it },
+                        onPendingStamp = { pendingStamp = it },
                         onStampPlaced = onStampPlaced,
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
@@ -598,6 +601,7 @@ fun DocumentCanvas(
                                 pending = pending?.takeIf { it.pageIndex == slot.index },
                                 marquee = marquee?.takeIf { livePage == slot.index },
                                 lasso = lasso?.takeIf { livePage == slot.index },
+                                pendingStamp = pendingStamp.filter { it.pageIndex == slot.index },
                                 ghost = ghostFor(slot),
                                 tools = tools,
                                 textMeasurer = textMeasurer,
@@ -815,6 +819,8 @@ private fun DrawScope.drawPage(
     marquee: InkBox?,
     /** The ring being drawn for a lasso selection, in this page's own coordinates. */
     lasso: List<Float>?,
+    /** A stamp being dragged out to its size. */
+    pendingStamp: List<Stroke>,
     tools: ToolState,
     textMeasurer: TextMeasurer,
     pageFilter: PageFilter,
@@ -909,6 +915,10 @@ private fun DrawScope.drawPage(
         }
         pending?.let { drawStroke(it, cached = false) }
         ghost.forEach { if (it.kind != Stroke.Kind.TEXT) drawStroke(it, cached = false) }
+        pendingStamp.forEach {
+            if (it.kind == Stroke.Kind.TEXT) drawTextStroke(it, textMeasurer)
+            else drawStroke(it, cached = false)
+        }
 
         lasso?.let { ring ->
             if (ring.size >= 4) {

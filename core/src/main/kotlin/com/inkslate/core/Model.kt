@@ -233,6 +233,28 @@ enum class SiPrefix(val label: String, val symbol: String, val factor: Double) {
     }
 }
 
+/**
+ * How a sampled signal is drawn.
+ *
+ * Stems are what a signals course draws: a line up from the axis to each sample with a dot on top,
+ * so the samples are plainly points in time rather than a curve that happens to be dotted.
+ */
+@Serializable
+enum class DiscreteStyle(val label: String) {
+    STEMS("Stems"), DOTS("Dots only"), STEPS("Held (zero order)")
+}
+
+/** How a unit circle's angles are written. */
+@Serializable
+enum class AngleLabel(val label: String) {
+    NONE("Nothing"),
+    RADIANS("Radians"),
+    DEGREES("Degrees"),
+    BOTH("Both"),
+    COORDINATES("Coordinates"),
+    RADIANS_AND_COORDINATES("Radians and coordinates")
+}
+
 /** How a marked point on a curve is drawn. */
 @Serializable
 enum class MarkerShape(val label: String) {

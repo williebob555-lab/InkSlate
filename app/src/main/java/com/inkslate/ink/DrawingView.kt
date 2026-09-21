@@ -2369,8 +2369,8 @@ class DrawingView @JvmOverloads constructor(
             }
         }
 
-        // Only a picture is dragged out; everything else goes down on a tap.
-        placing?.takeIf { armedPlacement is Placement.ImageItem }?.let { r ->
+        // What is in hand, and the space it will fill, while it is being dragged out.
+        placing?.takeIf { it.width() > placeSlopPt || it.height() > placeSlopPt }?.let { r ->
             val item = armedPlacement
             val previewAspect = when (item) {
                 is Placement.StampItem -> Stamps.aspectFor(item.kind, item.options)
@@ -2882,7 +2882,8 @@ class DrawingView @JvmOverloads constructor(
             placeDown = null
             val held = armedPlacement
             val lineKind = (held as? Placement.StampItem)?.kind?.takeIf { Stamps.isDragged(it) }
-            if (lineKind != null && t != Tool.PAN && t != Tool.ERASER) {
+            val drags = t != Tool.PAN && t != Tool.ERASER
+            if (lineKind != null && drags) {
                 val from = placeStart ?: floatArrayOf(0f, 0f)
                 placeStart = null
                 placing = null
@@ -2891,8 +2892,15 @@ class DrawingView @JvmOverloads constructor(
                 onMove(e, isStylus, t)
                 return
             }
+            // Anything else in hand is dragged out to the size it should be, which is the thing
+            // a tap cannot say. It stays in hand either way; writing means putting it down first.
+            if (held != null && drags) {
+                down.recycle()
+                onMove(e, isStylus, t)
+                return
+            }
             placeStart = null
-            if (t == Tool.PAN || (lineKind != null && t == Tool.ERASER)) {
+            if (t == Tool.PAN || (held != null && t == Tool.ERASER)) {
                 armedPlacement = null
                 onDown(down, placeDownIdx, placeDownStylus, t)
                 armedPlacement = held
@@ -2913,6 +2921,7 @@ class DrawingView @JvmOverloads constructor(
             invalidate()
             return
         }
+
 
         if (rulerGrab != 0) {
             toDoc(e.x, e.y)
@@ -3008,7 +3017,11 @@ class DrawingView @JvmOverloads constructor(
                 var h = w / aspect
                 val maxH = pageHeightPt * 0.30f
                 if (item.options.size <= 0f && h > maxH) { h = maxH; w = h * aspect }
-                val bounds = RectF(start[0] - w / 2f, start[1] - h / 2f, start[0] + w / 2f, start[1] + h / 2f)
+                val bounds =
+                    if (dragged) fitAspect(box, aspect, start[0], start[1])
+                    else RectF(start[0] - w / 2f, start[1] - h / 2f, start[0] + w / 2f, start[1] + h / 2f)
+                // A size dragged out is the size that stamp is wanted at from now on.
+                if (dragged) onStampSized?.invoke(item.kind, bounds.width())
                 buildStamp(item.kind, bounds, livePage, item.options, ids.next()) { ids.next() }
             }
             is Placement.ImageItem -> {

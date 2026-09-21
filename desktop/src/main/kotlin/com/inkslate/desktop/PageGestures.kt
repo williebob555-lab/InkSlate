@@ -131,6 +131,8 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
     onMarquee: (InkBox?) -> Unit,
     /** The ring being drawn, in the page's own coordinates, or null when there is none. */
     onLasso: (List<Float>?) -> Unit = {},
+    /** The stamp being dragged out, drawn where it will land. */
+    onPendingStamp: (List<Stroke>) -> Unit = {},
     onStampPlaced: () -> Unit,
     /** Told the bounds of whatever was just drawn, so a canvas can grow to fit it. */
     onDrew: (InkBox) -> Unit = {},
@@ -355,6 +357,46 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 built.first().boundsBox().let(onDrew)
                 tools.editStampShelf { it.withOptions(lineKind, it.optionsFor(lineKind).copy(size = length)) }
                 tools.arm(lineKind, tools.stampShelf.optionsFor(lineKind))
+            }
+            return
+        }
+
+        // Anything else in hand is dragged out to the size it should be, which is the thing a
+        // click cannot say. It stays in hand either way; writing means putting it down first.
+        val draggedStamp = tools.armedStamp
+        if (moved && draggedStamp != null && lineKind == null &&
+            inHand != Tool.PAN && inHand != Tool.ERASER
+        ) {
+            val (kind, o) = draggedStamp
+            val aspect = com.inkslate.core.Stamps.aspectFor(kind, o)
+            fun boxTo(n: Offset): InkBox {
+                val across = kotlin.math.abs(n.x - px).coerceAtLeast(8f)
+                val down = (across / aspect).coerceAtLeast(6f)
+                val left = if (n.x >= px) px else px - across
+                val top = if (n.y >= py) py else py - down
+                return InkBox(left, top, left + across, top + down)
+            }
+            var box = boxTo(Offset(px, py))
+            val end = dragUntilRelease(down.position) { change, _ ->
+                box = boxTo(toPage(change.position))
+                var n = 0
+                onPendingStamp(
+                    com.inkslate.core.Stamps.build(kind, box, index, o) { "pending-${n++}" }
+                )
+            }
+            onPendingStamp(emptyList())
+            box = boxTo(toPage(end))
+            if (box.width > 8f) {
+                val placed = com.inkslate.core.Stamps.build(
+                    kind, box, index, o, group = newId(), nextId = newId
+                )
+                strokes.addAll(placed)
+                onCommitted(Op.added(placed))
+                onSelection(placed.map { it.id }.toSet())
+                box.let(onDrew)
+                // A size dragged out is the size that stamp is wanted at from now on.
+                tools.editStampShelf { it.withOptions(kind, it.optionsFor(kind).copy(size = box.width)) }
+                tools.arm(kind, tools.stampShelf.optionsFor(kind))
             }
             return
         }

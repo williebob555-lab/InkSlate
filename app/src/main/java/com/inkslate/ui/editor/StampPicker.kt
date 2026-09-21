@@ -41,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,6 +67,9 @@ import com.inkslate.core.Expr
 import com.inkslate.core.MarkerShape
 import com.inkslate.core.PoiLabel
 import com.inkslate.core.SiPrefix
+import com.inkslate.core.AngleLabel
+import com.inkslate.core.Angles
+import com.inkslate.core.DiscreteStyle
 import com.inkslate.core.Stamps
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import com.inkslate.core.TextFont
@@ -296,6 +300,15 @@ fun StampSettingsPanel(
     var draft by remember(kind, editKey) { mutableStateOf(options) }
     fun edit(block: (Stamps.StampOptions) -> Stamps.StampOptions) {
         draft = block(draft)
+    }
+
+    // Applied once the numbers stop moving rather than on every step of a slider.
+    //
+    // Changing a stamp rebuilds it - and a stamp already on the page is rebuilt *in* the page,
+    // which reshapes the document and throws away its cached geometry. Doing that thirty times a
+    // second while a slider is dragged is what made a high spoke count feel like treacle.
+    LaunchedEffect(draft) {
+        kotlinx.coroutines.delay(90)
         onChange(Stamps.sanitise(kind, draft))
     }
 
@@ -435,6 +448,54 @@ private fun StampSettingsBody(
         }
     }
 
+    if (Stamps.Knob.SAMPLING in kind.knobs) {
+        Section("Sampled in time")
+        val sampling = options.sampleEvery > 0f
+        SwitchRow("Take samples of it", sampling) { on ->
+            edit {
+                // Starting from sixteen samples a period, which is enough to read as the wave it
+                // came from - a first guess to move away from rather than a number to type blind.
+                val suggested = if (kind == Stamps.Kind.SINE) {
+                    Stamps.periodOf(it) / 16f
+                } else {
+                    (it.rangeTo - it.rangeFrom) / 20f
+                }
+                it.copy(sampleEvery = if (on) kotlin.math.abs(suggested) else 0f)
+            }
+        }
+        if (sampling) {
+            NumberField("Every Ts", options.sampleEvery) { v -> edit { it.copy(sampleEvery = v) } }
+            NumberField("Or a rate fs (Hz)", Stamps.rateOf(options)) { v ->
+                if (v > 0f) edit { it.copy(sampleEvery = 1f / v) }
+            }
+            Heading("Drawn as")
+            OptionWrapRow {
+                DiscreteStyle.entries.forEach { style ->
+                    OptionChip(style.label, options.discreteStyle == style) {
+                        edit { it.copy(discreteStyle = style) }
+                    }
+                }
+            }
+            SwitchRow("Keep the signal behind them", options.showContinuous) { v ->
+                edit { it.copy(showContinuous = v) }
+            }
+            SwitchRow("Round to a bit depth", options.quantize) { v -> edit { it.copy(quantize = v) } }
+            if (options.quantize) {
+                Heading(
+                    "Bit depth: " + options.quantBits + " bit, " +
+                        (1 shl options.quantBits) + " levels"
+                )
+                Slider(
+                    value = options.quantBits.toFloat(),
+                    onValueChange = { v -> edit { it.copy(quantBits = v.roundToInt()) } },
+                    valueRange = Stamps.QUANT_BITS.first.toFloat()..Stamps.QUANT_BITS.last.toFloat(),
+                    steps = Stamps.QUANT_BITS.last - Stamps.QUANT_BITS.first - 1
+                )
+                SwitchRow("Draw the levels", options.showLevels) { v -> edit { it.copy(showLevels = v) } }
+            }
+        }
+    }
+
     if (Stamps.Knob.THROW in kind.knobs) {
         Section("The throw")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -545,6 +606,53 @@ private fun StampSettingsBody(
             FillStyle.entries.forEach { f ->
                 OptionChip(f.label, options.fill == f) { edit { it.copy(fill = f) } }
             }
+        }
+    }
+
+    if (Stamps.Knob.ANGLES in kind.knobs) {
+        Section("Angles")
+        Heading("One every")
+        OptionWrapRow {
+            Angles.COMMON_STEPS.forEach { step ->
+                OptionChip("\u03c0/$step", options.angleStep == step) {
+                    edit { it.copy(angleStep = step) }
+                }
+            }
+        }
+        Heading("Written as")
+        OptionWrapRow {
+            AngleLabel.entries.forEach { how ->
+                OptionChip(how.label, options.angleLabels == how) { edit { it.copy(angleLabels = how) } }
+            }
+        }
+        SwitchRow("A mark at each angle", options.angleDots) { v -> edit { it.copy(angleDots = v) } }
+
+        // One angle drawn out in full: the radius to it, its legs, and where it lands. Chosen
+        // with a slider along the angles the circle is already marked at, because working through
+        // a question is a matter of going round them one at a time.
+        val around = Angles.anglesFor(options.angleStep)
+        val chosen = around.indexOfFirst {
+            kotlin.math.abs(it - options.markAngle.toDouble()) < 0.01
+        }
+        SwitchRow("Work one angle out", options.markAngle >= 0f) { on ->
+            edit { it.copy(markAngle = if (on) 0f else -1f) }
+        }
+        if (options.markAngle >= 0f) {
+            Heading(
+                "\u03b8 = " + Angles.asPi(options.markAngle.toDouble(), options.angleStep) +
+                    "  (" + options.markAngle.roundToInt() + "\u00b0)"
+            )
+            Slider(
+                value = (if (chosen >= 0) chosen else 0).toFloat(),
+                onValueChange = { v ->
+                    val at = around.getOrNull(v.roundToInt()) ?: 0.0
+                    edit { it.copy(markAngle = at.toFloat()) }
+                },
+                valueRange = 0f..(around.size - 1).coerceAtLeast(1).toFloat(),
+                steps = (around.size - 2).coerceAtLeast(0)
+            )
+            NumberField("Or in degrees", options.markAngle) { v -> edit { it.copy(markAngle = v) } }
+            SwitchRow("Draw cos and sin as legs", options.angleLegs) { v -> edit { it.copy(angleLegs = v) } }
         }
     }
 
