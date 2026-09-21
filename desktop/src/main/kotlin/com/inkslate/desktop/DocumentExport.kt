@@ -203,7 +203,10 @@ object DocumentExport {
 
         // Flattening deliberately omits the editable copy: that mode exists to produce something
         // that cannot be edited again, and carrying the strokes along would undo the point of it.
-        if (!flatten && DesktopEmbedder.supports(target)) DesktopEmbedder.write(target, doc)
+        // It has to be taken out rather than merely not added: the export is built from a copy of
+        // the document, and the document carries one.
+        if (flatten) DesktopEmbedder.strip(target)
+        else if (DesktopEmbedder.supports(target)) DesktopEmbedder.write(target, doc)
         target
     }
 
@@ -307,14 +310,46 @@ object DocumentExport {
                         cs.restoreGraphicsState()
                     }
 
+                    // One annotation for the page, not one per mark.
+                    //
+                    // A page of handwriting is a thousand marks, and a thousand annotations means
+                    // a thousand appearance streams: the tablet measured 865 of them at 2525ms
+                    // against 281ms for three, and the same page here was taking a second and a
+                    // half to write every few seconds while the pen was moving. The cost is per
+                    // stream rather than per byte, so the marks all go into one stream. What is
+                    // lost is selecting a single mark inside Acrobat, which nothing here needs.
                     InkFormat.ANNOTATIONS -> {
                         val annots = (page.cosObject.getDictionaryObject(COSName.ANNOTS)
                             as? COSArray) ?: COSArray().also {
                             page.cosObject.setItem(COSName.ANNOTS, it)
                         }
-                        ordered.forEach { s ->
-                            buildAnnotation(pdf, s, toUser)?.let { annots.add(it) }
+                        val box = page.cropBox ?: page.mediaBox
+                        val appearance = PDAppearanceStream(pdf).apply {
+                            bBox = box
+                            resources = PDResources()
                         }
+                        PDPageContentStream(pdf, appearance).use { cs ->
+                            cs.saveGraphicsState()
+                            cs.transform(toUser)
+                            ordered.forEach { DocumentIO.drawInto(cs, it) }
+                            cs.restoreGraphicsState()
+                        }
+                        annots.add(
+                            COSDictionary().apply {
+                                setItem(COSName.TYPE, COSName.getPDFName("Annot"))
+                                setItem(COSName.SUBTYPE, COSName.getPDFName("Stamp"))
+                                setItem(COSName.RECT, box.cosObject)
+                                setInt(COSName.F, 4)
+                                setItem(COSName.T, COSString(ANNOT_TAG))
+                                setItem(COSName.getPDFName(ANNOT_KEY), COSString(ANNOT_TAG))
+                                setItem(
+                                    COSName.AP,
+                                    PDAppearanceDictionary().apply {
+                                        setNormalAppearance(appearance)
+                                    }.cosObject
+                                )
+                            }
+                        )
                     }
                 }
             }

@@ -116,6 +116,35 @@ object DesktopEmbedder {
         throw (lastError ?: IllegalStateException("Could not write into ${file.name}"))
     }
 
+    /**
+     * Take our attachment back out of a PDF.
+     *
+     * A flattened export is meant to be a picture of the work and nothing else, but it is built
+     * from a copy of the document - which carries the editable handwriting as an attached file.
+     * A submission portal that scans attachments, or refuses a PDF that has any, then rejects a
+     * file whose visible content was perfectly fine. It is also half the size of it.
+     */
+    fun strip(file: File): Result<Unit> = runCatching {
+        if (!supports(file) || !file.extension.equals("pdf", ignoreCase = true)) return@runCatching
+        Loader.loadPDF(file).use { pdf ->
+            val catalog = pdf.documentCatalog
+            val names = catalog.names ?: return@runCatching
+            val existing = names.embeddedFiles?.names?.toMutableMap() ?: return@runCatching
+            if (existing.remove(NAME) == null) return@runCatching
+            names.embeddedFiles =
+                if (existing.isEmpty()) null
+                else PDEmbeddedFilesNameTreeNode().apply { this.names = existing }
+            // Nothing left to show a paperclip for.
+            if (existing.isEmpty()) catalog.cosObject.removeItem(COSName.getPDFName("PageMode"))
+            val tmp = File(file.parentFile, "." + file.name + ".strip")
+            java.io.FileOutputStream(tmp).use { pdf.save(it) }
+            if (!tmp.renameTo(file)) {
+                tmp.copyTo(file, overwrite = true)
+                tmp.delete()
+            }
+        }
+    }
+
     private fun writeToPdf(
         file: File,
         payload: ByteArray,

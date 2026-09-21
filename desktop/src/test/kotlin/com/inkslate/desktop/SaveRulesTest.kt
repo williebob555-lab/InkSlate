@@ -62,14 +62,31 @@ class SaveRulesTest {
     // ---- the two formats -----------------------------------------------------
 
     @Test
-    fun `annotations mode writes one annotation per mark`() {
+    fun `annotations mode writes one annotation for the page, not one per mark`() {
         val source = blankPdf()
         val result = DocumentExport.save(
             source, inkWith(3),
             SaveSettings(mode = SaveMode.OVERWRITE, inkFormat = InkFormat.ANNOTATIONS)
         )
         assertTrue(result is SaveResult.Written)
-        assertEquals(3, annotationCount(source))
+        // The cost of an annotation is its appearance stream, and that cost is per stream rather
+        // than per byte: a page of handwriting written one mark at a time took over a second to
+        // save, which is what made drawing on a marked-up page stutter.
+        assertEquals(1, annotationCount(source))
+        assertEquals(3, DesktopEmbedder.read(source)!!.totalStrokes)
+    }
+
+    /** Every mark still reaches the page, however few annotations carry them. */
+    @Test
+    fun `a hundred marks still come out on the page`() {
+        val source = blankPdf()
+        DocumentExport.save(
+            source, inkWith(100),
+            SaveSettings(mode = SaveMode.OVERWRITE, inkFormat = InkFormat.ANNOTATIONS)
+        )
+        assertEquals(1, annotationCount(source))
+        assertEquals(100, DesktopEmbedder.read(source)!!.totalStrokes)
+        DesktopSources.open(source)!!.use { assertNotNull(it.render(0, 200)) }
     }
 
     @Test
@@ -94,7 +111,7 @@ class SaveRulesTest {
         val settings = SaveSettings(mode = SaveMode.OVERWRITE, inkFormat = InkFormat.ANNOTATIONS)
         DocumentExport.save(source, inkWith(3), settings)
         DocumentExport.save(source, inkWith(3), settings)
-        assertEquals(3, annotationCount(source))
+        assertEquals(1, annotationCount(source))
     }
 
     /** Either way, the handwriting rides along inside the file so it can be edited again. */

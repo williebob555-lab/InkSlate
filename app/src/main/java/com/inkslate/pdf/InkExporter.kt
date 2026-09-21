@@ -173,7 +173,10 @@ object InkExporter {
                             ?.setNeedToBeUpdated(true)
                     }
                 }
-                embed?.let { com.inkslate.data.InkEmbedder.attachPayload(pdf, it) }
+                // Taken out rather than merely not added: an export is built from a copy of the
+                // document, and the document carries one.
+                if (embed != null) com.inkslate.data.InkEmbedder.attachPayload(pdf, embed)
+                else if (!appendOnly) com.inkslate.data.InkEmbedder.detachPayload(pdf)
                 builtAt = System.currentTimeMillis()
 
                 if (appendOnly) {
@@ -318,6 +321,9 @@ object InkExporter {
             for (i in pdf.numberOfPages - 1 downTo 0) {
                 if (i !in wanted) pdf.removePage(i)
             }
+            // A page range is a copy to hand in, so the editable copy the document carries does
+            // not travel with it.
+            com.inkslate.data.InkEmbedder.detachPayload(pdf)
             writeAtomically(target) { pdf.save(it) }
         }
     }

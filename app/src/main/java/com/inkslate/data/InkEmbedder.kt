@@ -459,6 +459,27 @@ object InkEmbedder {
         }
     }.getOrElse { "could not be read back: ${it.javaClass.simpleName}: ${it.message}" }
 
+    /**
+     * Take the handwriting back out of an already-loaded document's embedded-file tree.
+     *
+     * A flattened export is meant to be a picture of the work and nothing else, but it is built
+     * from a copy of the document - which carries the editable handwriting as an attached file.
+     * A submission portal that scans attachments, or refuses a PDF that has any, then rejects a
+     * file whose visible content was perfectly fine.
+     */
+    fun detachPayload(pdf: PDDocument) {
+        val catalog = pdf.documentCatalog ?: return
+        val names = catalog.names ?: return
+        val existing = names.embeddedFiles?.names?.toMutableMap() ?: return
+        if (existing.remove(NAME) == null) return
+        names.embeddedFiles =
+            if (existing.isEmpty()) null
+            else PDEmbeddedFilesNameTreeNode().apply { this.names = existing }
+        if (existing.isEmpty()) {
+            catalog.cosObject.removeItem(COSName.getPDFName("PageMode"))
+        }
+    }
+
     /** Put the handwriting into an already-loaded document's embedded-file tree. */
     fun attachPayload(pdf: PDDocument, payload: ByteArray) {
         val catalog = pdf.documentCatalog

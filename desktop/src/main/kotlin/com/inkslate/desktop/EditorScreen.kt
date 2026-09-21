@@ -403,7 +403,7 @@ fun EditorScreen(
     /**
      * Tell the link that a write of this document has just finished, and what went into it.
      */
-    suspend fun linkWritten(written: InkDocument) {
+    suspend fun linkWritten(written: InkDocument, tookMs: Long = 0L) {
         val session = link ?: return
         val now = System.currentTimeMillis()
         val rev = withContext(Dispatchers.IO) { FileRevision.of(file) }
@@ -411,7 +411,7 @@ fun EditorScreen(
             session.writeFailed(now)
             return
         }
-        session.written(rev, written, now)
+        session.written(rev, written, now, tookMs)
         DesktopPeers.hub.wrote(written.docId, session.lastWrite)
         linkStatus = session.status(now)
     }
@@ -526,12 +526,15 @@ fun EditorScreen(
         }
         val rules = prefs.effectiveFor(file.absolutePath)
             .copy(mode = SaveMode.OVERWRITE, backupOnOverwrite = false, confirmOverwrite = false)
+        // Timed, so the link knows what writing this document costs and can leave a gap to match.
+        val startedAt = System.currentTimeMillis()
         val result = withContext(Dispatchers.IO) { DocumentExport.save(file, doc, rules) }
+        val tookMs = System.currentTimeMillis() - startedAt
         val wrote = result is SaveResult.Written
         if (wrote) {
             diskStamp = DocumentIO.stampOf(file)
             writtenInk = doc
-            linkWritten(doc)
+            linkWritten(doc, tookMs)
             DesktopPeers.announceWrote(file)
             refreshPageIfGrown()
             // Only settled if nothing arrived while it was being written: the write covered the
@@ -626,7 +629,8 @@ fun EditorScreen(
             if (current !== ink) ink = current
             val now = System.currentTimeMillis()
             val free = !saving && !busy
-            val idle = free && now - lastEditAt >= IDLE_BEFORE_WRITE_MS
+            // How long a pause counts as one depends on what a write of this document costs.
+            val idle = free && now - lastEditAt >= session.idleNeededMs()
             if (session.tick(now, ink, idle)) {
                 if (!free || !writeThrough()) session.writeFailed(System.currentTimeMillis())
             }

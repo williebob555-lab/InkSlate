@@ -699,7 +699,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
      * What the write held is what the save recorded as saved - the snapshot the write was built
      * from - not whatever is on screen now, which may already hold the next stroke.
      */
-    suspend fun linkWritten(d: OpenDocument) {
+    suspend fun linkWritten(d: OpenDocument, tookMs: Long = 0L) {
         val written = d.savedInk ?: return
         d.diskInk = written
         val session = link ?: return
@@ -739,14 +739,17 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             return WriteOutcome.NOTHING
         }
         writeState = WriteState.SAVING
+        // Timed, so the link knows what writing this document costs and can leave a gap to match.
+        val startedAt = System.currentTimeMillis()
         val ok = writingDocument {
             withContext(Dispatchers.IO) {
                 repo.saveWorkingQuietly(d)
                 repo.export(d, rules.copy(backupOnOverwrite = false), recordHistory = false)
             }
         }
+        val tookMs = System.currentTimeMillis() - startedAt
         if (ok is SaveResult.Written) {
-            linkWritten(d)
+            linkWritten(d, tookMs)
             // Only settled if nothing arrived while it was being written. The write covered the
             // document as it was when it started, not as it is now.
             if (d.ink === d.savedInk) {
@@ -779,7 +782,8 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
             syncPage()
             val now = System.currentTimeMillis()
             val free = !writesFrozen && selfWrites == 0 && !leaving
-            val idle = free && now - lastEditAt >= IDLE_BEFORE_WRITE_MS
+            // How long a pause counts as one depends on what a write of this document costs.
+            val idle = free && now - lastEditAt >= session.idleNeededMs()
             if (session.tick(now, d.ink, idle)) {
                 if (!free || writeThrough() != WriteOutcome.WRITTEN) {
                     session.writeFailed(System.currentTimeMillis())

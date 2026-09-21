@@ -133,6 +133,16 @@ class DocumentSync(
 
     private var writing = false
     private var lastWriteAt = Long.MIN_VALUE / 2
+
+    /**
+     * How long the last write of this document actually took.
+     *
+     * A save is not free, and on a heavily marked document it is not cheap either: a three page
+     * problem set with two and a half thousand marks took over a second to write. Writing one of
+     * those every couple of seconds, as a small document can afford to, leaves the pen stuttering
+     * through every stroke - which reads as the app freezing as soon as anything is drawn.
+     */
+    private var lastWriteCostMs = 0L
     private var saveRequested = false
     /** When this device started waiting for its disk to catch up, or 0. */
     private var waitSince = 0L
@@ -356,7 +366,7 @@ class DocumentSync(
             if (undecided(now)) return false
             if (partitionedAt != 0L && now - partitionedAt < PARTITION_GRACE_MS) return false
             if (!caughtUp(now)) return false
-            if (!saveRequested && (!idle || now - lastWriteAt < MIN_WRITE_INTERVAL_MS)) return false
+            if (!saveRequested && (!idle || now - lastWriteAt < writeInterval())) return false
             // Writing without anyone to agree with. Recorded as a lease of its own, so that meeting
             // another device later starts from "this one wrote last" rather than from nothing.
             if (lease?.holder != me) {
@@ -387,10 +397,31 @@ class DocumentSync(
         return true
     }
 
+    /**
+     * How long to leave between writes, from what the last one cost.
+     *
+     * Eight times the cost, so writing never takes more than an eighth of the time - a document
+     * that writes in fifty milliseconds still saves every couple of seconds, and one that takes a
+     * second and a half is left alone for twelve. Capped, because a document nobody can save
+     * quickly still has to be saved.
+     */
+    fun writeInterval(): Long =
+        (lastWriteCostMs * 8).coerceIn(MIN_WRITE_INTERVAL_MS, MAX_WRITE_INTERVAL_MS)
+
+    /**
+     * How long the pen has to have been still before a write, from what the last one cost.
+     *
+     * A cheap write can go in any gap between strokes. An expensive one waits for a real pause,
+     * because interrupting a line of working is what the stutter actually is.
+     */
+    fun idleNeededMs(): Long =
+        (lastWriteCostMs * 2).coerceIn(IDLE_BEFORE_WRITE_MS, MAX_IDLE_BEFORE_WRITE_MS)
+
     /** The write [tick] asked for is done. [file] is the file as it now is, [ink] what went in it. */
-    fun written(file: FileRevision, ink: InkDocument, now: Long) {
+    fun written(file: FileRevision, ink: InkDocument, now: Long, tookMs: Long = 0L) {
         writing = false
         lastWriteAt = now
+        if (tookMs > 0L) lastWriteCostMs = tookMs
         saveRequested = false
         val record = WriteRecord((latest?.seq ?: 0L) + 1, me, file)
         absorb(record)
@@ -764,6 +795,15 @@ class DocumentSync(
 
         /** The least time between two writes nobody asked for. */
         const val MIN_WRITE_INTERVAL_MS = 2_000L
+
+        /** However slow a document is to write, it is still written this often while it is dirty. */
+        const val MAX_WRITE_INTERVAL_MS = 20_000L
+
+        /** The pause after the last mark before a write is worth starting. */
+        const val IDLE_BEFORE_WRITE_MS = 1_200L
+
+        /** However slow the write, a pause this long is taken as the moment for it. */
+        const val MAX_IDLE_BEFORE_WRITE_MS = 4_000L
 
         private const val KNOWN_LIMIT = 64
 

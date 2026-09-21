@@ -278,6 +278,33 @@ class ExportTest {
         }
     }
 
+    /**
+     * A flattened export carries no attachment, even though it is built from a document that does.
+     *
+     * The handwriting was being carried into a submission as an attached file: half the size of
+     * the PDF, and exactly the sort of thing a portal refuses or a scanner flags.
+     */
+    @Test
+    fun `a flattened export has no attachment, not even the one its source carried`() {
+        val dir = temp.newFolder()
+        val source = BlankDocumentFactory.create(dir, BlankDocumentFactory.Spec(name = "Work"))
+            .getOrThrow()
+        val doc = docWith(textStroke("Answer"))
+        // Saving is what puts the editable copy inside the document in the first place.
+        DesktopEmbedder.write(source, doc).getOrThrow()
+        assertNotNull(DesktopEmbedder.read(source))
+
+        val flat = DocumentExport.freeTarget(dir, "Handed in")
+        DocumentExport.exportTo(source, flat, doc, null, flatten = true).getOrThrow()
+        assertNull("a flattened export must not carry the handwriting", DesktopEmbedder.read(flat))
+        assertTrue("the work itself is still on the page", textOf(flat).contains("Answer"))
+
+        // The editable form still does, which is what makes a copy openable again.
+        val editable = DocumentExport.freeTarget(dir, "Editable copy")
+        DocumentExport.exportTo(source, editable, doc, null, flatten = false).getOrThrow()
+        assertNotNull(DesktopEmbedder.read(editable))
+    }
+
     @Test
     fun `an export never lands on an earlier one`() {
         val dir = temp.newFolder()
