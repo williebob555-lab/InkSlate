@@ -55,6 +55,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -119,7 +120,22 @@ import com.inkslate.core.Tool
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditorScreen(file: File, onClose: () -> Unit) {
+fun EditorScreen(
+    file: File,
+    onClose: () -> Unit,
+    /**
+     * Whether this is the pane the back gesture belongs to right now.
+     *
+     * Split view can show two of these at once, and Android's back dispatcher runs whichever
+     * [BackHandler] was composed most recently - without this, that would always be the second
+     * pane, regardless of which document the last touch actually landed on.
+     */
+    focused: Boolean = true,
+    /** Flipped from outside - a tab's own close button - to ask this document to close itself. */
+    closeRequested: State<Boolean> = remember { mutableStateOf(false) },
+    /** Kept up to date with focus mode, so the tab strip can hide itself along with everything else. */
+    immersiveState: androidx.compose.runtime.MutableState<Boolean> = remember { mutableStateOf(false) }
+) {
     val context = LocalContext.current
     val repo = remember { DocumentRepo(context) }
     val fileRepo = remember { FileRepo(context) }
@@ -265,6 +281,7 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
     val tools = rememberToolState(context)
     val drawingView = remember { mutableStateOf<DrawingView?>(null) }
     val immersive = rememberImmersive()
+    androidx.compose.runtime.SideEffect { immersiveState.value = immersive.isFullscreen }
     val canUndo = remember(undoTick) { drawingView.value?.canUndo() == true }
     val canRedo = remember(undoTick) { drawingView.value?.canRedo() == true }
     val canPaste = remember(undoTick) { drawingView.value?.canPaste() == true }
@@ -1433,7 +1450,13 @@ fun EditorScreen(file: File, onClose: () -> Unit) {
         }
     }
 
-    BackHandler(enabled = true) { leave() }
+    BackHandler(enabled = focused) { leave() }
+
+    // A tab's close button reaches in from outside exactly the way the back gesture does from
+    // inside.
+    LaunchedEffect(closeRequested.value) {
+        if (closeRequested.value) leave()
+    }
 
     // ---- UI ------------------------------------------------------------------
 

@@ -57,7 +57,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -139,7 +141,19 @@ fun EditorScreen(
     file: File,
     shortcuts: Shortcuts,
     navigation: NavigationHooks,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    /**
+     * Whether this is the pane the keyboard belongs to right now.
+     *
+     * Two of these can be on screen at once in split view, and only one of them may claim
+     * Ctrl+S/Ctrl+Z/Escape and the rest - otherwise whichever pane composed last would always win,
+     * regardless of which one the marks are actually going on.
+     */
+    focused: Boolean = true,
+    /** Flipped from outside - a tab's own close button - to ask this document to close itself. */
+    closeRequested: State<Boolean> = remember { mutableStateOf(false) },
+    /** Kept up to date with focus mode, so the tab strip can hide itself along with everything else. */
+    immersiveState: MutableState<Boolean> = remember { mutableStateOf(false) }
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -236,6 +250,7 @@ fun EditorScreen(
     SideEffect {
         viewport.flingEnabled = tools.flingEnabled
         viewport.flingScale = tools.flingScale
+        immersiveState.value = immersive
     }
 
     /**
@@ -1304,41 +1319,52 @@ fun EditorScreen(
     }
 
     // Hand the window's key handler something to call. Re-assigned on each composition so the
-    // captured lambdas always see current state rather than the state at first composition.
-    shortcuts.save = { save() }
-    shortcuts.undo = ::undoOnce
-    shortcuts.redo = ::redoOnce
-    shortcuts.close = ::leave
-    shortcuts.copy = { copySelection() }
-    shortcuts.cut = { if (copySelection() > 0) deleteSelection() }
-    shortcuts.paste = ::paste
-    shortcuts.delete = ::deleteSelection
-    shortcuts.selectAll = {
-        selection = strokes.filter { it.pageIndex == page }.map { it.id }.toSet()
-        tools.edit { it.tool = Tool.SELECT }
+    // captured lambdas always see current state rather than the state at first composition. Only
+    // the focused pane may do this - in split view the other one is still on screen, but the
+    // keyboard follows whichever document was clicked or tapped last.
+    if (focused) {
+        shortcuts.save = { save() }
+        shortcuts.undo = ::undoOnce
+        shortcuts.redo = ::redoOnce
+        shortcuts.close = ::leave
+        shortcuts.copy = { copySelection() }
+        shortcuts.cut = { if (copySelection() > 0) deleteSelection() }
+        shortcuts.paste = ::paste
+        shortcuts.delete = ::deleteSelection
+        shortcuts.selectAll = {
+            selection = strokes.filter { it.pageIndex == page }.map { it.id }.toSet()
+            tools.edit { it.tool = Tool.SELECT }
+        }
+        shortcuts.zoomIn = { viewport.zoomBy(1.2f, viewport.centreOfView()) }
+        shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
+        shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
+        shortcuts.shapes = { if (trayOpen) closeTray() else openTray() }
+        navigation.back = {
+            // Escape steps back out of one thing at a time, innermost first. Focus mode before the
+            // document especially: hitting Escape to get the toolbars back and having the document
+            // close instead is the kind of surprise that costs an unsaved minute.
+            when {
+                immersive -> immersive = false
+                placedSettings != null -> endPlacedSettings()
+                armedSettings != null -> armedSettings = null
+                tools.hasArmed -> closeTray()
+                selection.isNotEmpty() -> selection = emptySet()
+                else -> leave()
+            }
+        }
     }
-    shortcuts.zoomIn = { viewport.zoomBy(1.2f, viewport.centreOfView()) }
-    shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
-    shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
-    shortcuts.shapes = { if (trayOpen) closeTray() else openTray() }
     // A stroke put the item in hand away: the tray has done its job and folds out of the way.
+    // Every pane keeps this regardless of focus - it is about that pane's own tray, not the
+    // keyboard.
     tools.onPutAway = {
         trayOpen = false
         traySymbols = false
         armedSettings = null
     }
-    navigation.back = {
-        // Escape steps back out of one thing at a time, innermost first. Focus mode before the
-        // document especially: hitting Escape to get the toolbars back and having the document
-        // close instead is the kind of surprise that costs an unsaved minute.
-        when {
-            immersive -> immersive = false
-            placedSettings != null -> endPlacedSettings()
-            armedSettings != null -> armedSettings = null
-            tools.hasArmed -> closeTray()
-            selection.isNotEmpty() -> selection = emptySet()
-            else -> leave()
-        }
+
+    // A tab's close button reaches in from outside exactly the way Ctrl+W does from inside.
+    LaunchedEffect(closeRequested.value) {
+        if (closeRequested.value) leave()
     }
 
     // ---- layout --------------------------------------------------------------

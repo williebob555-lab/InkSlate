@@ -77,6 +77,11 @@ off and taking the next stable release puts you back on the ordinary channel.
 - Automatic trimming of a scanned page's margins
 
 **Files**
+- Every open document is a tab across the top, switched between instantly - nothing is reloaded,
+  so the undo history and scroll position are exactly where you left them
+- Two documents open side by side at once - drag the divider to resize, right-click (long-press
+  on Android) a tab for "Open to the side," and draw or write into either half without switching
+  focus first. On Android this needs a tablet-sized screen; tabs alone work everywhere
 - Browses your storage directly, with thumbnails that already show your ink
 - Blank documents: ruled, grid, dot, graph, Cornell, music, isometric, up to whiteboard size
 - Canvas documents that grow as you write past an edge, and stay ordinary PDFs while doing it
@@ -173,7 +178,8 @@ The same four screens and the same tools, with the differences a mouse and a key
 
 **Keyboard, on Windows:** Ctrl+S saves, Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) undo and redo,
 Ctrl+C/X/V and Delete act on the selection, Ctrl+A selects the page, Ctrl+= / Ctrl+- / Ctrl+0
-zoom, Escape steps back, and Ctrl+W closes the document.
+zoom, Escape steps back, and Ctrl+W closes whichever open tab you clicked or typed into last -
+the other one, if you have two open side by side, is untouched.
 
 ---
 
