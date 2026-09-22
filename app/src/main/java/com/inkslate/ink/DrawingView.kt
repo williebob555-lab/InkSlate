@@ -22,6 +22,7 @@ import com.inkslate.data.StrokeIdGen
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.hypot
 import kotlin.math.pow
@@ -1091,6 +1092,9 @@ class DrawingView @JvmOverloads constructor(
     private val scroller = android.widget.OverScroller(context)
     private var velocityTracker: android.view.VelocityTracker? = null
     /** Whether the current pan came from a two-finger gesture rather than the Pan tool. */
+
+    /** Whether the fling in flight was thrown by the Pan tool rather than by two fingers. */
+    private var flingFromPanTool = false
 
     private var lastFlingX = 0
     private var lastFlingY = 0
@@ -2620,7 +2624,7 @@ class DrawingView @JvmOverloads constructor(
                     gesturing = false
                     if (action == MotionEvent.ACTION_UP) {
                         val (vx, vy) = releaseVelocity()
-                        startFling(vx, vy)
+                        startFling(vx, vy, fromPanTool = false)
                     }
                     // This branch is how a pinch ends, and it bypasses onUp entirely. Without
                     // clearing here, the eraser ring stays on screen with nothing touching the
@@ -2945,10 +2949,11 @@ class DrawingView @JvmOverloads constructor(
 
         when {
             t == Tool.PAN -> {
+                val before = reachOnScreen()
                 pageToView.postTranslate(e.x - lastX, e.y - lastY)
                 lastX = e.x; lastY = e.y
                 scheduleDetail()
-                clampTranslation(); syncInverse(); reportVisiblePages()
+                clampTranslation(heldFrom = before); syncInverse(); reportVisiblePages()
                 onTransformChanged?.invoke()
                 invalidate()
                 return
@@ -3170,7 +3175,7 @@ class DrawingView @JvmOverloads constructor(
         if (t == Tool.PAN) {
             if (!cancelled) {
                 val (vx, vy) = releaseVelocity()
-                startFling(vx, vy)
+                startFling(vx, vy, fromPanTool = true)
             }
             drawingPointerId = -1
             drawingIsStylus = false
@@ -4061,44 +4066,63 @@ class DrawingView @JvmOverloads constructor(
     /**
      * Keep the page where it can be worked on.
      *
-     * One rule for every way of moving it - the pan tool, two fingers, a fling - because two rules
-     * meant the same drag stopped somewhere different depending on which was moving it, and the
-     * stricter of the two pulled the page back under the hand and re-centred it, which reads as
-     * the page fighting whoever is moving it.
+     * Two fingers move it freely: it can go off any edge, so the margin of a page can be brought
+     * to wherever the hand is, and all that is kept is a strip of it on screen so it can never be
+     * lost. Nothing springs back and nothing is re-centred.
      *
-     * The edge of the document is the end of the journey: it can be brought to the edge of the
-     * screen and no further, and a page smaller than the screen stays where it is put rather than
-     * springing back to the middle. A canvas is the exception and keeps a margin past what is on
-     * it - that empty room is where it grows when something is written near its edge, and without
-     * it a whiteboard could never be extended.
+     * The Pan tool, given [heldFrom] (where the document was before this move), goes no further
+     * off the page than it already is: the edge of the document stops it, unless two fingers had
+     * already taken it past the edge, in which case it stays out there and can only come back.
+     * A canvas keeps a margin past its content either way - that room is where it grows.
      */
-    private fun clampTranslation() {
+    private fun clampTranslation(heldFrom: RectF? = null) {
         if (slots.isEmpty()) return
-        val r = RectF(reachBounds())
-        pageToView.mapRect(r)
-        val margin = if (canvas != null) min(width, height) * CANVAS_MARGIN_FRACTION else 0f
+        val r = reachOnScreen()
+        val w = width.toFloat()
+        val h = height.toFloat()
 
-        fun delta(lo: Float, hi: Float, size: Float): Float =
-            if (hi - lo > size) {
-                // Larger than the screen: never a gap between the document and an edge.
-                when {
+        val dx: Float
+        val dy: Float
+        if (heldFrom == null) {
+            val keep = min(width, height) * KEEP_VISIBLE_FRACTION
+            fun loose(lo: Float, hi: Float, size: Float): Float {
+                val strip = min(hi - lo, keep)
+                return when {
+                    hi < strip -> strip - hi
+                    lo > size - strip -> (size - strip) - lo
+                    else -> 0f
+                }
+            }
+            dx = loose(r.left, r.right, w)
+            dy = loose(r.top, r.bottom, h)
+        } else {
+            val margin = if (canvas != null) min(width, height) * CANVAS_MARGIN_FRACTION else 0f
+            // How far the document would have to move to stop at its edge; zero when it is in.
+            fun edge(lo: Float, hi: Float, size: Float): Float =
+                if (hi - lo > size) when {
                     lo > margin -> margin - lo
                     hi < size - margin -> (size - margin) - hi
                     else -> 0f
-                }
-            } else {
-                // Smaller than the screen: it stays on screen, wherever it was put.
-                when {
+                } else when {
                     lo < -margin -> -margin - lo
                     hi > size + margin -> size + margin - hi
                     else -> 0f
                 }
+            // Past the edge before as well: hold it there, or let it come back, never further.
+            fun held(was: Float, now: Float): Float = when {
+                abs(now) < 0.01f -> 0f
+                abs(was) >= 0.01f && sign(was) == sign(now) ->
+                    if (abs(now) > abs(was)) now - was else 0f
+                else -> now
             }
-
-        val dx = delta(r.left, r.right, width.toFloat())
-        val dy = delta(r.top, r.bottom, height.toFloat())
+            dx = held(edge(heldFrom.left, heldFrom.right, w), edge(r.left, r.right, w))
+            dy = held(edge(heldFrom.top, heldFrom.bottom, h), edge(r.top, r.bottom, h))
+        }
         if (abs(dx) > 0.01f || abs(dy) > 0.01f) pageToView.postTranslate(dx, dy)
     }
+
+    /** Everything that can be reached, in screen pixels. */
+    private fun reachOnScreen(): RectF = RectF(reachBounds()).also { pageToView.mapRect(it) }
 
     override fun computeScroll() {
         if (!scroller.computeScrollOffset()) return
@@ -4112,8 +4136,9 @@ class DrawingView @JvmOverloads constructor(
         }
 
         val before = FloatArray(9).also { pageToView.getValues(it) }
+        val reachBefore = if (flingFromPanTool) reachOnScreen() else null
         pageToView.postTranslate(dx, dy)
-        clampTranslation()
+        clampTranslation(heldFrom = reachBefore)
         val after = FloatArray(9).also { pageToView.getValues(it) }
 
         // Clamping brings the fling to a hard stop at the edge of the document. Without this the
@@ -4136,10 +4161,12 @@ class DrawingView @JvmOverloads constructor(
     }
 
     /** Launch momentum from a release velocity, in pixels per second. */
-    private fun startFling(vx: Float, vy: Float) {
+    private fun startFling(vx: Float, vy: Float, fromPanTool: Boolean) {
         if (!flingEnabled) return
         val speed = hypot(vx, vy)
         if (speed < minFlingVelocity) return
+        // A throw carries on under the rule of the gesture that threw it.
+        flingFromPanTool = fromPanTool
         lastFlingX = 0
         lastFlingY = 0
         val span = 1_000_000
@@ -4294,10 +4321,11 @@ class DrawingView @JvmOverloads constructor(
 
         /**
          * Fraction of the smaller viewport dimension that must stay covered by the document
-         * while panning loosely.
-         * Low enough to allow generous margins on any side, high enough that the page cannot be
-         * pushed almost entirely off screen.
+         * while panning with two fingers. Low enough to push the page well off any edge, high
+         * enough that it cannot be lost off screen altogether.
          */
+        const val KEEP_VISIBLE_FRACTION = 0.22f
+
         /** How far past a canvas's own content it can be panned, so it has room to grow. */
         const val CANVAS_MARGIN_FRACTION = 0.35f
 

@@ -448,7 +448,7 @@ fun DocumentCanvas(
             if (origin != null) {
                 val about = Offset(centreX - origin.x, centreY - origin.y)
                 viewport.stop()
-                viewport.panBy(dx, dy)
+                viewport.panBy(dx, dy, freely = true)
                 viewport.zoomBy(zoom, about)
             }
         }
@@ -1133,7 +1133,8 @@ private suspend fun AwaitPointerEventScope.wheelLoop(viewport: Viewport) {
                 viewport.stop()
                 viewport.panBy(
                     -sideways * Viewport.PAN_PER_NOTCH,
-                    -notches * Viewport.PAN_PER_NOTCH
+                    -notches * Viewport.PAN_PER_NOTCH,
+                    freely = true
                 )
             }
 

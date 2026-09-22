@@ -65,4 +65,44 @@ class ViewportTest {
         assertEquals(before.x, after.x, 0.5f)
         assertEquals(before.y, after.y, 0.5f)
     }
+
+    // A 612pt page in an 800px window at 1x: it fits across, so with the pan tool it can sit
+    // anywhere from flush left (offset 0) to flush right (offset -188), and no further.
+
+    @Test
+    fun `the pan tool stops at the edge of the page`() {
+        val vp = viewport()
+        vp.panBy(500f, 0f)
+        assertEquals(-188f, vp.offset.x, 0.01f)
+    }
+
+    @Test
+    fun `two fingers take the page past the edge and nothing pulls it back`() {
+        val vp = viewport()
+        vp.panBy(500f, 0f, freely = true)
+        assertEquals(-500f, vp.offset.x, 0.01f)
+        // A zoom afterwards leaves it out there too.
+        vp.zoomBy(1f, vp.centreOfView())
+        assertEquals(-500f, vp.offset.x, 0.01f)
+    }
+
+    @Test
+    fun `the pan tool goes no further off than two fingers left it, but can come back`() {
+        val vp = viewport()
+        vp.panBy(500f, 0f, freely = true)
+        vp.panBy(100f, 0f)
+        assertEquals("held where the fingers left it", -500f, vp.offset.x, 0.01f)
+        vp.panBy(-100f, 0f)
+        assertEquals("free to come back toward the page", -400f, vp.offset.x, 0.01f)
+        vp.panBy(50f, 0f)
+        assertEquals("and no further out than it now is", -400f, vp.offset.x, 0.01f)
+    }
+
+    @Test
+    fun `two fingers cannot lose the page entirely`() {
+        val vp = viewport()
+        vp.panBy(5000f, 0f, freely = true)
+        val keep = 600f * Viewport.KEEP_VISIBLE_FRACTION
+        assertEquals("a strip of it stays in the window", -(800f - keep), vp.offset.x, 0.01f)
+    }
 }

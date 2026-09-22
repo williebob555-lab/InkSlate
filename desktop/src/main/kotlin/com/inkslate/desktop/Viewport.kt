@@ -53,8 +53,14 @@ class Viewport {
     /** True for a canvas, which needs room past its content to grow into. */
     var growable: Boolean = false
 
-    fun panBy(dxPx: Float, dyPx: Float) {
-        offset = clamp(Offset(offset.x - dxPx / scale, offset.y - dyPx / scale))
+    /**
+     * [freely] for two fingers, on the glass or a trackpad: the page can go off any edge. Anything
+     * else - the pan tool, the middle button, a throw - goes no further off the page than it
+     * already is; see [clamp].
+     */
+    fun panBy(dxPx: Float, dyPx: Float, freely: Boolean = false) {
+        val next = Offset(offset.x - dxPx / scale, offset.y - dyPx / scale)
+        offset = if (freely) clamp(next) else clamp(next, heldFrom = offset)
     }
 
     fun panTo(x: Float, y: Float) {
@@ -166,14 +172,27 @@ class Viewport {
     /**
      * Keep the document within reach.
      *
-     * The edge of the document is the end of the journey: it can be brought to the edge of the
-     * window and no further, whichever way it is moved - the pan tool, a drag, a wheel, a throw -
-     * and a page smaller than the window stays where it is put rather than springing back to the
-     * middle. A canvas is the exception and keeps a margin past what is on it: that empty room is
-     * where it grows when something is written near its edge.
+     * Without [heldFrom] - two fingers, a zoom, a jump - the page can go off any edge, and all that
+     * is kept is a strip of it in the window so it cannot be lost. Nothing springs back.
+     *
+     * With it - the pan tool, the middle button, a throw - the edge of the document is the stop,
+     * unless two fingers had already taken it past the edge: then it stays where it is and can
+     * only come back, never go further. A page smaller than the window stays where it is put, and
+     * a canvas keeps a margin past its content, which is where it grows.
      */
-    private fun clamp(candidate: Offset): Offset {
+    private fun clamp(candidate: Offset, heldFrom: Offset? = null): Offset {
         if (viewSize.width <= 0f || viewSize.height <= 0f) return candidate
+        if (heldFrom == null) {
+            val keep = min(viewSize.width, viewSize.height) * KEEP_VISIBLE_FRACTION / scale
+            val stripX = min(content.width, keep)
+            val stripY = min(content.height, keep)
+            val loX = content.left - viewSize.width / scale + stripX
+            val loY = content.top - viewSize.height / scale + stripY
+            return Offset(
+                candidate.x.coerceIn(loX, max(loX, content.right - stripX)),
+                candidate.y.coerceIn(loY, max(loY, content.bottom - stripY))
+            )
+        }
         val slackX = if (growable) viewSize.width / scale * 0.5f else 0f
         val slackY = if (growable) viewSize.height / scale * 0.5f else 0f
         val acrossView = viewSize.width / scale
@@ -200,10 +219,18 @@ class Viewport {
             maxY = max(minY, content.top + slackY)
         }
 
-        return Offset(candidate.x.coerceIn(minX, maxX), candidate.y.coerceIn(minY, maxY))
+        // Wherever it already was counts as inside, so the stop is the edge or there, whichever is
+        // further out.
+        return Offset(
+            candidate.x.coerceIn(min(minX, heldFrom.x), max(maxX, heldFrom.x)),
+            candidate.y.coerceIn(min(minY, heldFrom.y), max(maxY, heldFrom.y))
+        )
     }
 
     companion object {
+        /** Share of the window's smaller side the document keeps covering under two fingers. */
+        const val KEEP_VISIBLE_FRACTION = 0.22f
+
         const val MIN_SCALE = 0.08f
         const val MAX_SCALE = 32f
 
