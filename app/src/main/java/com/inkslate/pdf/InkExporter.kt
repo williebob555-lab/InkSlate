@@ -143,19 +143,33 @@ object InkExporter {
             try {
                 val pdf = loaded
                 pageCount = pdf.numberOfPages
-                for (pageIndex in 0 until pdf.numberOfPages) {
-                    if (rebuild != null && pageIndex !in rebuild) continue
-                    val page = pdf.getPage(pageIndex)
+                // Walked rather than indexed: getPage descends the page tree from the top every
+                // time, and every page is looked at now, not only the ones being rebuilt.
+                var pageIndex = -1
+                var healed = 0
+                for (page in pdf.pages) {
+                    pageIndex++
                     val strokes = doc.strokesOn(pageIndex)
+                    val signature = doc.pageSignature(pageIndex)
+                    if (rebuild != null && pageIndex !in rebuild) {
+                        // The file is asked, not the record of what was last written to it.
+                        // That record said pages were current when they were not, and a page of
+                        // homework went out blank to every other reader - its marks safe in the
+                        // embedded copy, so the app showed them, and nothing else did.
+                        if (format != InkFormat.ANNOTATIONS ||
+                            carriesCurrentInk(page, strokes.isNotEmpty(), signature)
+                        ) continue
+                        healed++
+                    }
 
                     // Clear our previous annotations from every page being rebuilt, not only the
                     // ones that end up with strokes on them. Overwriting the same file twice
                     // used to leave two copies of the ink stacked on top of each other, and
                     // erasing something never removed the copy already written into the file.
-                    if (format == InkFormat.ANNOTATIONS) {
-                        (page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray)
-                            ?.let { removeOurAnnotations(it) }
-                    }
+                    // Flattening too: an export flattens onto the document as it is on disk,
+                    // whose annotations may hold marks that have since been erased.
+                    (page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray)
+                        ?.let { removeOurAnnotations(it) }
                     if (appendOnly) page.cosObject.setNeedToBeUpdated(true)
 
                     if (strokes.isEmpty()) continue
@@ -166,7 +180,7 @@ object InkExporter {
                         // produced a 3438KB file; writing three took 281ms and produced 2249KB.
                         // The cost is per stream, not per byte, and it buys only the ability to
                         // select one mark at a time in Acrobat.
-                        InkFormat.ANNOTATIONS -> annotatePageGrouped(pdf, page, strokes)
+                        InkFormat.ANNOTATIONS -> annotatePageGrouped(pdf, page, strokes, signature)
                     }
                     if (appendOnly) {
                         (page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray)
@@ -201,7 +215,8 @@ object InkExporter {
                         "load ${loadedAt - startedAt}ms, " +
                         "build ${builtAt - loadedAt}ms, " +
                         "write ${System.currentTimeMillis() - builtAt}ms" +
-                        (if (inPlace) " (appended in place)" else "")
+                        (if (inPlace) " (appended in place)" else "") +
+                        (if (healed > 0) "; $healed page(s) were out of date in the file" else "")
                 )
             } finally {
                 // The session keeps its document open on purpose; anything else is done with it.
@@ -308,8 +323,12 @@ object InkExporter {
 
             for (pageIndex in keep) {
                 val strokes = doc.strokesOn(pageIndex)
-                if (strokes.isEmpty()) continue
                 val page = pdf.getPage(pageIndex)
+                // What the document carries from its last save goes first, on every page kept:
+                // it may show marks erased since, and flattening on top would bring them back.
+                (page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray)
+                    ?.let { removeOurAnnotations(it) }
+                if (strokes.isEmpty()) continue
                 when (format) {
                     InkFormat.FLATTENED -> flattenOntoPage(pdf, page, strokes)
                     InkFormat.ANNOTATIONS -> annotatePage(pdf, page, strokes)
@@ -360,7 +379,13 @@ object InkExporter {
      * for every stroke on the page. Whether that price is worth paying is a question about how
      * long a save takes on the actual device, which is what [SaveBenchmark] is for.
      */
-    internal fun annotatePageGrouped(pdf: PDDocument, page: PDPage, strokes: List<Stroke>) {
+    internal fun annotatePageGrouped(
+        pdf: PDDocument,
+        page: PDPage,
+        strokes: List<Stroke>,
+        /** What [InkDocument.pageSignature] said of the ink drawn here; see [carriesCurrentInk]. */
+        signature: Long? = null
+    ) {
         val annots = page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray
             ?: COSArray().also { page.cosObject.setItem(COSName.ANNOTS, it) }
         removeOurAnnotations(annots)
@@ -396,12 +421,37 @@ object InkExporter {
                 setInt(COSName.F, 4)
                 setItem(COSName.T, COSString(ANNOT_TAG))
                 setItem(COSName.getPDFName(ANNOT_KEY), COSString(ANNOT_TAG))
+                signature?.let { setItem(COSName.getPDFName(SIG_KEY), COSString(it.toString())) }
                 setItem(
                     COSName.AP,
                     PDAppearanceDictionary().apply { setNormalAppearance(ap) }.cosObject
                 )
             }
         )
+    }
+
+    /**
+     * Whether [page] already shows exactly the ink whose signature is [signature]: one annotation
+     * of ours stamped with it, or none of ours at all when the page has no ink.
+     *
+     * An annotation from before the stamp existed, or from the per-mark format, does not count as
+     * current, so a document written by an older build is redrawn once and is right from then on.
+     */
+    internal fun carriesCurrentInk(page: PDPage, hasInk: Boolean, signature: Long): Boolean {
+        val annots = page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray
+        var ours = 0
+        var stamped = false
+        for (i in 0 until (annots?.size() ?: 0)) {
+            val dict = annots!!.getObject(i) as? COSDictionary ?: continue
+            val mine = (dict.getDictionaryObject(COSName.getPDFName(ANNOT_KEY)) as? COSString)
+                ?.string == ANNOT_TAG ||
+                (dict.getDictionaryObject(COSName.T) as? COSString)?.string == ANNOT_TAG
+            if (!mine) continue
+            ours++
+            stamped = (dict.getDictionaryObject(COSName.getPDFName(SIG_KEY)) as? COSString)
+                ?.string == signature.toString()
+        }
+        return if (hasInk) ours == 1 && stamped else ours == 0
     }
 
     /**
@@ -972,4 +1022,6 @@ object InkExporter {
     /** Identifies annotations written by this app, so a rewrite replaces rather than duplicates. */
     private const val ANNOT_TAG = "InkSlate"
     private const val ANNOT_KEY = "InkSlateObject"
+    /** The page signature the annotation was drawn from. The laptop writes the same key. */
+    private const val SIG_KEY = "InkSlateSig"
 }

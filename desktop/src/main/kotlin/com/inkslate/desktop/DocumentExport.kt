@@ -342,6 +342,12 @@ object DocumentExport {
                                 setInt(COSName.F, 4)
                                 setItem(COSName.T, COSString(ANNOT_TAG))
                                 setItem(COSName.getPDFName(ANNOT_KEY), COSString(ANNOT_TAG))
+                                // What the ink drawn here was, so the tablet can tell from the
+                                // file whether this page is current. The same key it writes.
+                                setItem(
+                                    COSName.getPDFName("InkSlateSig"),
+                                    COSString(doc.pageSignature(index).toString())
+                                )
                                 setItem(
                                     COSName.AP,
                                     PDAppearanceDictionary().apply {

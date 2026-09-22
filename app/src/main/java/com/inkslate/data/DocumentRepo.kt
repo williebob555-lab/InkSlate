@@ -21,17 +21,7 @@ import java.io.File
  * obvious alternative - comparing the strokes - is a pass over every point of every stroke, which
  * is the same order of work as building the page and so would pay for nothing.
  */
-internal fun pageSignature(ink: InkDocument, page: Int): Long {
-    var hash = 1125899906842597L
-    var count = 0
-    var newest = 0L
-    for (s in ink.strokesOn(page)) {
-        hash = hash * 31 + s.id.hashCode()
-        if (s.updatedUtc > newest) newest = s.updatedUtc
-        count++
-    }
-    return hash * 31 + count * 1000003L + newest
-}
+internal fun pageSignature(ink: InkDocument, page: Int): Long = ink.pageSignature(page)
 
 internal fun pageSignatures(ink: InkDocument, pageCount: Int): Map<Int, Long> =
     (0 until pageCount).associateWith { pageSignature(ink, it) }

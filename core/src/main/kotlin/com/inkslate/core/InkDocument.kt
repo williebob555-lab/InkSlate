@@ -116,6 +116,26 @@ data class InkDocument(
 
     fun strokesOn(page: Int): List<Stroke> = pages[page.toString()].orEmpty()
 
+    /**
+     * A cheap fingerprint of one page's marks: which ones, how many, and the newest change.
+     *
+     * Written into the page's annotation by both builds, so a save can tell from the file itself
+     * whether a page's drawing is current, rather than from a record of what it thinks it wrote -
+     * a record that went wrong and left pages of homework blank to every other reader while the
+     * embedded copy, and so the app, still had all of it.
+     */
+    fun pageSignature(page: Int): Long {
+        var hash = 1125899906842597L
+        var count = 0
+        var newest = 0L
+        for (s in strokesOn(page)) {
+            hash = hash * 31 + s.id.hashCode()
+            if (s.updatedUtc > newest) newest = s.updatedUtc
+            count++
+        }
+        return hash * 31 + count * 1000003L + newest
+    }
+
     fun allStrokeIds(): List<String> = pages.values.flatten().map { it.id }
 
     val totalStrokes: Int get() = pages.values.sumOf { it.size }
