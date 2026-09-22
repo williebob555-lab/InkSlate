@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -354,7 +355,7 @@ fun AppRoot(
                                     }
                                 }
                             } else {
-                                Box(Modifier.fillMaxSize()) {
+                                Box(Modifier.fillMaxSize().clipToBounds()) {
                                     HostPane(primaryTab.host, primaryTab.host.viewOrFirst(p.view), true)
                                 }
                             }
@@ -453,6 +454,9 @@ private fun PaneFrame(
             .observeFocus(onFocus)
             .border(2.dp, if (focused) MaterialTheme.colorScheme.primary else Color.Transparent)
             .padding(2.dp)
+            // Each half draws inside itself and nowhere else - a page pushed off one edge of its
+            // half goes out of sight, not across the divider onto the other document.
+            .clipToBounds()
     ) { content() }
 }
 

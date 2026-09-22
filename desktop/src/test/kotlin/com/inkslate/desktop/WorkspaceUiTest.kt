@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.rightClick
+import androidx.compose.ui.test.ScrollWheel
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.DesktopComposeUiTest
 import org.junit.Assert.assertEquals
@@ -55,6 +56,12 @@ class WorkspaceUiTest {
         settle()
         val image = onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage()
         ImageIO.write(image, "png", File(shots, "$name.png"))
+    }
+
+    /** One pixel of the screen, as ARGB. */
+    private fun DesktopComposeUiTest.pixel(x: Int, y: Int): Int {
+        settle(2)
+        return onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage().getRGB(x, y)
     }
 
     private fun DesktopComposeUiTest.count(description: String): Int =
@@ -128,6 +135,30 @@ class WorkspaceUiTest {
             assertEquals("one app bar for the workspace, not one per document", 1, count("Save into the document"))
             assertEquals("one set of tools for the workspace", 1, count("Ruler"))
             assertEquals("one page bar for the workspace", 1, count("Next page"))
+
+            // Push the right document hard to the left, and then up. Two fingers are allowed to
+            // take a page off its own edge, but it must never be drawn anywhere else: not over the
+            // left half, and not over the bars above it. Whichever half is drawn last would
+            // otherwise paint straight across the other.
+            val leftHalf = pixel(720, 450)
+            val appBar = pixel(1000, 60)
+            onRoot().performMouseInput {
+                moveTo(Offset(1200f, 450f))
+                repeat(40) { scroll(4f, ScrollWheel.Horizontal) }
+            }
+            settle(30)
+            shot("4a-right-pushed-left")
+            assertEquals("the right document drew into the left half", leftHalf, pixel(720, 450))
+            onRoot().performMouseInput {
+                moveTo(Offset(1200f, 450f))
+                // A trackpad: a touch sideways first, so the wheel after it reads as two fingers.
+                scroll(0.5f, ScrollWheel.Horizontal)
+                repeat(40) { scroll(4f, ScrollWheel.Vertical) }
+            }
+            settle(30)
+            shot("4a-right-pushed-up")
+            assertEquals("the right document drew over the app bar", appBar, pixel(1000, 60))
+            assertEquals("the right document drew into the left half", leftHalf, pixel(720, 450))
 
             // The ruler goes on the document the tools are under - Alpha, on the right - and only
             // that one. Moving to Beta lifts it.

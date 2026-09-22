@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -473,6 +474,10 @@ fun DocumentCanvas(
     Box(
         modifier
             .fillMaxSize()
+            // Nothing drawn outside the canvas's own rectangle. Filling the whole window, the
+            // window's edge did this; in one half of a split, a page panned towards the divider
+            // was drawn straight on over the other document, and over the bars above it.
+            .clipToBounds()
             .background(Color(0xFF14171B))
             .onSizeChanged { viewport.viewSize = Size(it.width.toFloat(), it.height.toFloat()) }
             // Where the drawing surface sits in the window, which is what lets a pointer reading
