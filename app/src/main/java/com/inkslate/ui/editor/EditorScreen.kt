@@ -124,36 +124,38 @@ fun EditorScreen(
     file: File,
     onClose: () -> Unit,
     /**
-     * Whether this is the pane the back gesture belongs to right now.
-     *
-     * Split view can show two of these at once, and Android's back dispatcher runs whichever
-     * [BackHandler] was composed most recently - without this, that would always be the second
-     * pane, regardless of which document the last touch actually landed on.
+     * Where this document meets the workspace. The editor lays nothing out itself: it hands its
+     * bars and its views to the host, and the workspace puts them where they go - once, for the
+     * document last touched, rather than a whole screen's worth per document.
      */
-    focused: Boolean = true,
+    host: com.inkslate.ui.DocumentHost,
+    /**
+     * Whether this is the document the back gesture belongs to right now.
+     *
+     * Split view can show two documents at once, and Android's back dispatcher runs whichever
+     * [BackHandler] was composed most recently - without this, that would always be whichever
+     * document happened to be composed last, regardless of where the last touch landed.
+     */
+    focused: Boolean,
     /** Flipped from outside - a tab's own close button - to ask this document to close itself. */
-    closeRequested: State<Boolean> = remember { mutableStateOf(false) },
-    /** Kept up to date with focus mode, so the tab strip can hide itself along with everything else. */
-    immersiveState: androidx.compose.runtime.MutableState<Boolean> = remember { mutableStateOf(false) }
+    closeRequested: State<Boolean>
 ) {
     val context = LocalContext.current
     val repo = remember { DocumentRepo(context) }
     val fileRepo = remember { FileRepo(context) }
     val prefs = remember { SavePrefs(context) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
+    val snackbar = host.snackbar
 
     var doc by remember { mutableStateOf<OpenDocument?>(null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var page by remember { mutableStateOf(0) }
+    // The page is the view's, not the document's: a document shown in both halves of a split has
+    // two. Everything here that asks which page this is means the view last touched.
+    var page: Int by host::activePage
     var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var pageDims by remember { mutableStateOf<List<PageDim?>>(emptyList()) }
     var renderFailed by remember { mutableStateOf(false) }
     var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
-    var wantedPages by remember { mutableStateOf(listOf(0)) }
-    // Bumped when the surface reports a visible page still lacking a bitmap. Without it, an
-    // identical page list would not re-emit and the retry would never reach the loader.
-    var renderNonce by remember { mutableStateOf(0) }
     var strokesLoaded by remember { mutableStateOf(false) }
     var positionRestored by remember { mutableStateOf(false) }
     /**
@@ -237,12 +239,16 @@ fun EditorScreen(
     // `dirty` cannot answer this: autosave clears it, and the document is only written on an
     // explicit save or on the way out.
     var unbaked by remember { mutableStateOf(false) }
-    // The shapes tray, and what is open off it. See ShapeTray and DrawingView.Placement.
-    var trayOpen by remember { mutableStateOf(false) }
-    var traySymbols by remember { mutableStateOf(false) }
-    var libraryOpen by remember { mutableStateOf(false) }
+    // The workspace's one set of tools; see LocalToolState. Declared ahead of everything that
+    // delegates to it.
+    val tools = rememberToolState(context)
+    // The shapes tray, and what is open off it. See ShapeTray and DrawingView.Placement. The
+    // workspace's, not this document's: it belongs to the one bar of tools under every document.
+    var trayOpen by tools::trayOpen
+    var traySymbols by tools::traySymbols
+    var libraryOpen by tools::libraryOpen
     /** The kind whose settings are open for the next one placed, or null. */
-    var armedSettings by remember { mutableStateOf<com.inkslate.core.Stamps.Kind?>(null) }
+    var armedSettings by tools::armedSettings
     /** The stamp on the page whose settings are open, or null. */
     var placedSettings by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
     var selectedStamp by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
@@ -250,10 +256,13 @@ fun EditorScreen(
     // putting it away - which folds the tray.
     var trayDisarming by remember { mutableStateOf(false) }
     // A symbol tapped after the last string was placed starts a new string.
-    var symbolPlaced by remember { mutableStateOf(false) }
+    var symbolPlaced by tools::symbolPlaced
     // Whatever is currently waiting to be placed, mirrored out of the drawing surface so the
     // banner and the toolbar can react to it.
     var armedItem by remember { mutableStateOf<DrawingView.Placement?>(null) }
+    // The last thing in hand, kept when leaving a pane puts it down, so arriving in another pane
+    // picks up the same thing rather than whatever the tray last had.
+    var heldPlacement by remember { mutableStateOf<DrawingView.Placement?>(null) }
     var colourPickerOpen by remember { mutableStateOf(false) }
     var conflictNotice by remember { mutableStateOf<String?>(null) }
     var exportOpen by remember { mutableStateOf(false) }
@@ -278,13 +287,20 @@ fun EditorScreen(
     var bookmarks by remember { mutableStateOf<List<InkBookmark>>(emptyList()) }
     val readingPosition = remember { ReadingPosition(context) }
 
-    val tools = rememberToolState(context)
-    val drawingView = remember { mutableStateOf<DrawingView?>(null) }
-    val immersive = rememberImmersive()
-    androidx.compose.runtime.SideEffect { immersiveState.value = immersive.isFullscreen }
-    val canUndo = remember(undoTick) { drawingView.value?.canUndo() == true }
-    val canRedo = remember(undoTick) { drawingView.value?.canRedo() == true }
-    val canPaste = remember(undoTick) { drawingView.value?.canPaste() == true }
+    /**
+     * The document's marks and their history, shared by every view of it. Held here rather than
+     * in a drawing surface because a surface only exists while its view is on screen, and a mark
+     * arriving from another device for a document in a background tab still has to land.
+     */
+    val model = remember { com.inkslate.ink.InkModel(StrokeIdGen(DeviceId.get(context))) }
+    // The surface of the view last touched. See ActiveSurface.
+    val drawingView = remember(host) { com.inkslate.ui.ActiveSurface(host) }
+    // Focus mode hides the system bars, which belong to the whole screen - so it is the
+    // workspace's, like the bars above and below the pages that it also puts away.
+    val immersive = host.immersive
+    val canUndo = remember(undoTick) { model.canUndo() }
+    val canRedo = remember(undoTick) { model.canRedo() }
+    val canPaste = remember(undoTick) { !com.inkslate.ink.InkClipboard.isEmpty }
 
     // Render roughly two device-widths across: sharp at normal zoom without allocating a bitmap
     // proportional to how far someone might pinch in.
@@ -382,13 +398,18 @@ fun EditorScreen(
     }
 
     // A canvas is one page by definition, so the arrangement options do not apply to it.
-    LaunchedEffect(doc, drawingView.value) {
+    LaunchedEffect(doc) {
         val d = doc ?: return@LaunchedEffect
-        val view = drawingView.value ?: return@LaunchedEffect
-        view.canvas = d.ink.canvas
-        if (d.ink.canvas != null && layout != PageLayout.SINGLE) {
-            layout = PageLayout.SINGLE
-            view.setLayout(PageLayout.SINGLE)
+        if (d.ink.canvas != null && layout != PageLayout.SINGLE) layout = PageLayout.SINGLE
+    }
+
+    // The marks go into the document's model as soon as the document is read, whether or not
+    // any view of it is on screen yet.
+    LaunchedEffect(doc) {
+        val d = doc ?: return@LaunchedEffect
+        if (!strokesLoaded) {
+            model.setStrokes(d.allStrokes())
+            strokesLoaded = true
         }
     }
 
@@ -478,9 +499,11 @@ fun EditorScreen(
      * cannot leak into the rest of the system.
      */
     val hostView = androidx.compose.ui.platform.LocalView.current
-    DisposableEffect(tools.keepScreenOn) {
-        hostView.keepScreenOn = tools.keepScreenOn
-        onDispose { hostView.keepScreenOn = false }
+    // Held by the document being worked in only. The flag is the whole window's, and with every
+    // open tab setting it, closing any one of them cleared it for the rest.
+    DisposableEffect(tools.keepScreenOn, focused) {
+        if (focused) hostView.keepScreenOn = tools.keepScreenOn
+        onDispose { if (focused) hostView.keepScreenOn = false }
     }
 
     DisposableEffect(doc) {
@@ -520,102 +543,114 @@ fun EditorScreen(
         }
     }
 
-    // Declare the pages to the surface as soon as their geometry is known. Bitmaps follow
-    // lazily; the surface asks for whichever pages are actually on screen.
-    // Keyed on the view as well as the data. Without that, an effect that ran before the
-    // AndroidView existed simply did nothing and was never retried, leaving a document with no
-    // pages at all - a permanently blank white screen that no amount of scrolling recovers.
-    LaunchedEffect(doc, pageDims, layout, drawingView.value) {
-        val d = doc ?: return@LaunchedEffect
-        if (pageDims.isEmpty()) return@LaunchedEffect
-        val view = drawingView.value ?: return@LaunchedEffect
-        view.setLayout(layout)
-        view.setPages(pageDims.map { (it ?: PageDim(612f, 792f)).let { p -> p.width to p.height } },
-            resetView = true)
+    // Declare the pages to each surface as soon as their geometry is known, and render what each
+    // one shows. Per view, because two views of one document look at different pages - and each
+    // surface holds pictures of only the pages it is showing.
+    for (slot in host.views) {
+        androidx.compose.runtime.key(slot.index) {
+            // Keyed on the surface as well as the data. Without that, an effect that ran before the
+            // surface existed simply did nothing and was never retried, leaving a document with no
+            // pages at all - a permanently blank white screen that no amount of scrolling recovers.
+            // A surface is made again each time its view comes back on screen, so this is also
+            // where it picks up where it was looking.
+            LaunchedEffect(doc, pageDims, layout, slot.view) {
+                val d = doc ?: return@LaunchedEffect
+                if (pageDims.isEmpty()) return@LaunchedEffect
+                val view = slot.view ?: return@LaunchedEffect
+                view.canvas = d.ink.canvas
+                view.setLayout(layout)
+                view.setPages(
+                    pageDims.map { (it ?: PageDim(612f, 792f)).let { p -> p.width to p.height } },
+                    resetView = true
+                )
 
-        // Put the camera back, now that there is something to put it back onto. The camera
-        // restores zoom and scroll together and knows nothing about pages, which is what makes it
-        // work on a canvas as well as on a chapter; the page is the fallback for documents saved
-        // before the camera was recorded.
-        if (!positionRestored) {
-            positionRestored = true
-            val restored = pendingCamera?.let { view.restoreCamera(it) } == true
-            if (!restored && pendingPage in 1 until d.pageCount) view.goToPage(pendingPage)
-            if (restored || pendingPage > 0) {
+                // Put the camera back, now that there is something to put it back onto. The camera
+                // restores zoom and scroll together and knows nothing about pages, which is what
+                // makes it work on a canvas as well as on a chapter; the page is the fallback for
+                // documents saved before the camera was recorded.
+                if (slot.index == 0 && !positionRestored) {
+                    positionRestored = true
+                    val restored = pendingCamera?.let { view.restoreCamera(it) } == true
+                    if (!restored && pendingPage in 1 until d.pageCount) view.goToPage(pendingPage)
+                    if (restored || pendingPage > 0) {
+                        EventLog.info(
+                            "open",
+                            "Resumed ${d.file.name} at " +
+                                (if (restored) "the saved view" else "page ${pendingPage + 1}")
+                        )
+                    }
+                    pendingCamera = null
+                    pendingPage = -1
+                } else {
+                    slot.savedCamera?.let { view.restoreCamera(it) }
+                    slot.savedCamera = null
+                }
                 EventLog.info(
                     "open",
-                    "Resumed ${d.file.name} at " +
-                        (if (restored) "the saved view" else "page ${pendingPage + 1}")
+                    "Declared ${pageDims.size} page(s) for ${d.file.name}, layout ${layout.name}"
                 )
-            }
-            pendingCamera = null
-            pendingPage = -1
-        }
-
-        if (!strokesLoaded) {
-            view.setStrokes(d.allStrokes())
-            strokesLoaded = true
-        }
-        EventLog.info(
-            "open",
-            "Declared ${pageDims.size} page(s) for ${d.file.name}, layout ${layout.name}"
-        )
-        wantedPages = listOf(view.currentPage)
-    }
-
-    // Render what is visible, and keep doing so.
-    //
-    // The previous version remembered which pages it had *asked* for and never asked twice. A
-    // render that failed - which on a long textbook eventually happens under memory pressure -
-    // left that page marked as requested with no bitmap, so it could never be retried and stayed
-    // blank forever. Whether a page has a bitmap is now the only state consulted, which makes
-    // this self-healing: anything missing, for any reason, is simply rendered again.
-    LaunchedEffect(doc, renderWidthPx) {
-        val d = doc ?: return@LaunchedEffect
-        EventLog.info("open", "Render loop started for ${d.file.name} at ${renderWidthPx}px")
-        // The view is part of what this observes. Reading it inside the collector would not
-        // re-trigger anything, so an emission that arrived before the view was ready used to be
-        // lost - which is why content only appeared once a pan or zoom changed wantedPages.
-        snapshotFlow { Triple(drawingView.value, wantedPages, renderNonce) }
-            .collectLatest { (view, pages, _) ->
-                view ?: return@collectLatest
-
-            for (index in pages) {
-                if (index !in 0 until d.pageCount) continue
-                if (view.hasBitmap(index)) continue
-
-                val result = withContext(Dispatchers.IO) {
-                    runCatching { d.source.renderPage(index, renderWidthPx) }
-                }
-                val bmp = result.getOrNull()
-                if (bmp == null) {
-                    result.exceptionOrNull()?.let {
-                        CrashLog.note(context, "renderPage($index)", it)
-                        EventLog.error("render", "Page ${index + 1} failed: ${it.message}")
-                    }
-                    // Free everything that is not on screen and try this page once more. Running
-                    // out of memory is the usual cause, and it is recoverable.
-                    view.retainBitmaps(pages, 0L)
-                    val retry = withContext(Dispatchers.IO) {
-                        runCatching { d.source.renderPage(index, renderWidthPx / 2) }.getOrNull()
-                    }
-                    view.setPageBitmap(index, retry)
-                    if (retry == null) {
-                        EventLog.error("render", "Page ${index + 1} still blank after retry")
-                        if (index == view.currentPage) renderFailed = true
-                    } else {
-                        EventLog.warn("render", "Page ${index + 1} rendered at reduced resolution")
-                    }
-                } else {
-                    view.setPageBitmap(index, bmp)
-                    if (index == view.currentPage) renderFailed = false
-                }
+                slot.wantedPages = listOf(view.currentPage)
             }
 
-            // Hold a margin of pages around the viewport, bounded by memory rather than by a
-            // page count, so scrolling back a page does not force a re-render.
-            view.retainBitmaps(pages, bitmapBudgetBytes)
-            RenderStats.pagesResident = view.residentPageCount()
+            // Render what is visible, and keep doing so.
+            //
+            // The previous version remembered which pages it had *asked* for and never asked
+            // twice. A render that failed - which on a long textbook eventually happens under
+            // memory pressure - left that page marked as requested with no bitmap, so it could
+            // never be retried and stayed blank forever. Whether a page has a bitmap is now the
+            // only state consulted, which makes this self-healing: anything missing, for any
+            // reason, is simply rendered again.
+            LaunchedEffect(doc, renderWidthPx, slot) {
+                val d = doc ?: return@LaunchedEffect
+                EventLog.info("open", "Render loop started for ${d.file.name} at ${renderWidthPx}px")
+                // The surface is part of what this observes. Reading it inside the collector would
+                // not re-trigger anything, so an emission that arrived before the surface was
+                // ready used to be lost.
+                snapshotFlow { Triple(slot.view, slot.wantedPages, slot.renderNonce) }
+                    .collectLatest { (view, pages, _) ->
+                        view ?: return@collectLatest
+                        // Two views on screen share the memory one used to have to itself.
+                        val budget = bitmapBudgetBytes / host.views.count { it.view != null }.coerceAtLeast(1)
+
+                        for (index in pages) {
+                            if (index !in 0 until d.pageCount) continue
+                            if (view.hasBitmap(index)) continue
+
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { d.source.renderPage(index, renderWidthPx) }
+                            }
+                            val bmp = result.getOrNull()
+                            if (bmp == null) {
+                                result.exceptionOrNull()?.let {
+                                    CrashLog.note(context, "renderPage($index)", it)
+                                    EventLog.error("render", "Page ${index + 1} failed: ${it.message}")
+                                }
+                                // Free everything that is not on screen and try this page once
+                                // more. Running out of memory is the usual cause, and it is
+                                // recoverable.
+                                view.retainBitmaps(pages, 0L)
+                                val retry = withContext(Dispatchers.IO) {
+                                    runCatching { d.source.renderPage(index, renderWidthPx / 2) }.getOrNull()
+                                }
+                                view.setPageBitmap(index, retry)
+                                if (retry == null) {
+                                    EventLog.error("render", "Page ${index + 1} still blank after retry")
+                                    if (index == view.currentPage) renderFailed = true
+                                } else {
+                                    EventLog.warn("render", "Page ${index + 1} rendered at reduced resolution")
+                                }
+                            } else {
+                                view.setPageBitmap(index, bmp)
+                                if (index == view.currentPage) renderFailed = false
+                            }
+                        }
+
+                        // Hold a margin of pages around the viewport, bounded by memory rather than
+                        // by a page count, so scrolling back a page does not force a re-render.
+                        view.retainBitmaps(pages, budget)
+                        RenderStats.pagesResident = host.views.sumOf { it.view?.residentPageCount() ?: 0 }
+                    }
+            }
         }
     }
 
@@ -632,30 +667,27 @@ fun EditorScreen(
             val d = doc ?: continue
             if (!dirty) continue
             if (!strokesLoaded) continue
-            drawingView.value?.let {
-                d.updateAll(it.strokesSnapshot(), callerHoldsWholeDocument = true)
-            }
+            d.updateAll(model.snapshot(), callerHoldsWholeDocument = true)
             val ok = withContext(Dispatchers.IO) { repo.saveWorking(d) }
             if (ok) { dirty = false; unbaked = true }
         }
     }
 
     /**
-     * Push the on-screen strokes into the document. Cheap; safe to call often.
+     * Push the marks into the document. Cheap; safe to call often.
      *
-     * Never before the strokes have been handed to the view. Until then it is empty for a
-     * perfectly ordinary reason, and writing that back deletes the document.
+     * Never before the document's marks have been handed to the model. Until then it is empty for
+     * a perfectly ordinary reason, and writing that back deletes the document.
      */
     fun syncPage() {
         val d = doc ?: return
-        val view = drawingView.value ?: return
         if (!strokesLoaded) return
         // While the pages are being rearranged, the view still holds the old pages' strokes and
         // the document is about to hold the new ones. Pushing one into the other would put every
         // mark on the page it used to be on.
         if (restructuring) return
         val before = d.ink
-        d.updateAll(view.strokesSnapshot(), callerHoldsWholeDocument = true)
+        d.updateAll(model.snapshot(), callerHoldsWholeDocument = true)
         // Whatever this turned up is the same thing closing asks about, so the indicator has to
         // hear about it too. Otherwise the bar can read "saved" while leaving still has work to
         // do - which is exactly the state that makes the label worth nothing.
@@ -842,8 +874,8 @@ fun EditorScreen(
         if (next === d.ink) return
         val canvasBefore = d.ink.canvas
         d.ink = next
-        drawingView.value?.setStrokes(d.allStrokes())
-        if (next.canvas != canvasBefore) drawingView.value?.canvas = next.canvas
+        model.setStrokes(d.allStrokes())
+        if (next.canvas != canvasBefore) host.views.forEach { it.view?.canvas = next.canvas }
         bookmarks = next.bookmarks
         dirty = true
         pendingWrite = true
@@ -1452,6 +1484,12 @@ fun EditorScreen(
 
     BackHandler(enabled = focused) { leave() }
 
+    // The ruler is lifted off a document when you move to another one, so the toolbar's ruler
+    // button always describes the document it is sitting under.
+    LaunchedEffect(focused) {
+        if (focused && tools.rulerVisible && tools.rulerOwner !== host) tools.rulerVisible = false
+    }
+
     // A tab's close button reaches in from outside exactly the way the back gesture does from
     // inside.
     LaunchedEffect(closeRequested.value) {
@@ -1459,362 +1497,385 @@ fun EditorScreen(
     }
 
     // ---- UI ------------------------------------------------------------------
+    //
+    // Nothing is laid out here. The bars and the views are handed to the host, and the workspace
+    // puts them where they go: the bars once, across the screen, for the document last touched;
+    // the views into whichever panes are showing this document.
 
     val linkSummary = com.inkslate.ui.rememberLinkSummary()
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            // In focus mode the app bar goes too, leaving only the drawing tools.
-            if (!immersive.isFullscreen) {
-                TopAppBar(
-                    title = {
-                        Column {
+    val topBar: @Composable () -> Unit = {
+        // In focus mode the app bar goes too, leaving only the drawing tools.
+        if (!immersive.isFullscreen) {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            file.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        doc?.let {
                             Text(
-                                file.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                fontWeight = FontWeight.SemiBold,
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            doc?.let {
-                                Text(
-                                    "Page ${page + 1} of ${it.pageCount}  ·  " + when {
-                                        // The other device writes it; "unsaved" here would only
-                                        // be saying that its write is still on the way.
-                                        linkStatus == DocumentSync.Status.WRITTEN_ELSEWHERE ->
-                                            "linked, saved by your other device"
-                                        else -> when (writeState) {
-                                            WriteState.SAVING -> "saving..."
-                                            WriteState.SAVED -> "saved"
-                                            WriteState.UNSAVED -> "unsaved"
-                                        } + when (linkStatus) {
-                                            DocumentSync.Status.WRITING_HERE -> "  ·  linked, saved here"
-                                            DocumentSync.Status.AGREEING -> "  ·  linking..."
-                                            DocumentSync.Status.WAITING_FOR_FILE ->
-                                                "  ·  waiting for sync"
-                                            // The other device does not have this open, or is not
-                                            // connected at all - which one is worth knowing.
-                                            else -> linkSummary?.takeIf { it.linked }?.let {
-                                                "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
-                                            }.orEmpty()
-                                        }
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { leave() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                        }
-                    },
-                    actions = {
-                        // Only there while linked, so a glance says whether marks are travelling.
-                        com.inkslate.ui.LinkIndicator(
-                            short = true,
-                            modifier = Modifier.align(Alignment.CenterVertically)
-                        )
-                        // Back by request. It was removed when the document started being
-                        // written as you work, on the reasoning that closing is either a no-op
-                        // or the last few hundred milliseconds of it - which is true right up
-                        // until an automatic write is the thing you need to not happen. A
-                        // control that says "keep this, now" is worth its place in the bar.
-                        IconButton(onClick = { saveByRule() }) {
-                            Icon(
-                                Icons.Default.Save,
-                                "Save into the document",
-                                tint = if (writeState == WriteState.SAVED)
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                else MaterialTheme.colorScheme.primary
+                                "Page ${page + 1} of ${it.pageCount}  ·  " + when {
+                                    // The other device writes it; "unsaved" here would only
+                                    // be saying that its write is still on the way.
+                                    linkStatus == DocumentSync.Status.WRITTEN_ELSEWHERE ->
+                                        "linked, saved by your other device"
+                                    else -> when (writeState) {
+                                        WriteState.SAVING -> "saving..."
+                                        WriteState.SAVED -> "saved"
+                                        WriteState.UNSAVED -> "unsaved"
+                                    } + when (linkStatus) {
+                                        DocumentSync.Status.WRITING_HERE -> "  ·  linked, saved here"
+                                        DocumentSync.Status.AGREEING -> "  ·  linking..."
+                                        DocumentSync.Status.WAITING_FOR_FILE ->
+                                            "  ·  waiting for sync"
+                                        // The other device does not have this open, or is not
+                                        // connected at all - which one is worth knowing.
+                                        else -> linkSummary?.takeIf { it.linked }?.let {
+                                            "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
+                                        }.orEmpty()
+                                    }
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(
-                            onClick = { drawingView.value?.undo(); dirty = true },
-                            enabled = drawingView.value?.canUndo() == true
-                        ) { Icon(Icons.AutoMirrored.Filled.Undo, "Undo") }
-                        IconButton(
-                            onClick = { drawingView.value?.redo(); dirty = true },
-                            enabled = drawingView.value?.canRedo() == true
-                        ) { Icon(Icons.AutoMirrored.Filled.Redo, "Redo") }
-                        IconButton(onClick = { searchOpen = true }) {
-                        Icon(Icons.Default.Search, "Find in document")
                     }
-                    IconButton(onClick = { immersive.toggle() }) {
-                            Icon(Icons.Default.Fullscreen, "Fullscreen")
-                        }
-                        Box {
-                            IconButton(onClick = { menuOpen = true }) {
-                                Icon(Icons.Default.MoreVert, "More")
-                            }
-                            DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                                DropdownMenuItem(
-                                    text = { Text("Share...") },
-                                    onClick = { menuOpen = false; shareDocument() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Export...") },
-                                    onClick = { menuOpen = false; exportOpen = true }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Checkpoint this version") },
-                                    onClick = { menuOpen = false; checkpoint() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Version history...") },
-                                    onClick = { menuOpen = false; versionsOpen = true }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Rules for this file") },
-                                    onClick = { menuOpen = false; showFileRules = true }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Measure save speed") },
-                                    onClick = {
-                                        menuOpen = false
-                                        syncPage()
-                                        benchRunning = true
-                                        scope.launch {
-                                            val text = withContext(Dispatchers.IO) {
-                                                com.inkslate.pdf.SaveBenchmark.run(
-                                                    context, file, doc!!.ink,
-                                                    prefs.effectiveFor(file.absolutePath).inkFormat
-                                                )
-                                            }
-                                            benchRunning = false
-                                            benchReport = text
-                                        }
-                                    }
-                                )
-                                PageFilter.entries.forEach { option ->
-                                    DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                if (pageFilter == option) "\u2713  " + option.label
-                                                else "      " + option.label
-                                            )
-                                        },
-                                        onClick = {
-                                            menuOpen = false
-                                            pageFilter = option
-                                            drawingView.value?.pageFilter = option
-                                        }
-                                    )
-                                }
-                                HorizontalDivider()
-                                // Arrangement used to be five loose entries here. It belongs with
-                                // the pages themselves, so it moved into Pages along with adding,
-                                // removing, duplicating and reordering them.
-                                DropdownMenuItem(
-                                    text = { Text("Pages...") },
-                                    onClick = { menuOpen = false; pagesOpen = true }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Fit page") },
-                                    onClick = { menuOpen = false; drawingView.value?.fitToScreen() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Fit width") },
-                                    onClick = { menuOpen = false; drawingView.value?.fitWidth() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Reset view") },
-                                    onClick = {
-                                        menuOpen = false
-                                        drawingView.value?.resetView()
-                                    }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Clear this page") },
-                                    onClick = {
-                                        menuOpen = false
-                                        drawingView.value?.clearPage(); dirty = true
-                                    }
-                                )
-                            }
-                        }
-                    }
-                )
-            }
-        },
-        bottomBar = {
-            doc?.let { d ->
-                // navigationBarsPadding keeps the toolbar clear of the gesture bar, which
-                // otherwise sits directly on top of the tool buttons
-                Column(Modifier.navigationBarsPadding()) {
-                    if (d.pageCount > 1 || PageSources.isPdf(d.file)) {
-                        PageBar(
-                            page = page,
-                            pageCount = d.pageCount,
-                            bookmarked = bookmarks.any { it.page == page },
-                            onPrev = { drawingView.value?.goToPage(page - 1) },
-                            onNext = { drawingView.value?.goToPage(page + 1) },
-                            onOpenNavigation = { navOpen = true },
-                            onOpenPages = { pagesOpen = true },
-                            onToggleBookmark = {
-                                if (bookmarks.any { it.page == page }) {
-                                    d.ink = d.ink.withBookmarkRemoved(page)
-                                    bookmarks = d.ink.bookmarks
-                                    persistWorking()
-                                } else {
-                                    bookmarkPrompt = page
-                                }
-                            }
-                        )
-                    }
-                    if (trayOpen) {
-                        val placement = armedItem
-                        ShapeTray(
-                            shelf = tools.stampShelf,
-                            armed = (placement as? DrawingView.Placement.StampItem)?.kind,
-                            armedText = (placement as? DrawingView.Placement.TextItem)?.text,
-                            symbols = traySymbols,
-                            onArm = ::armKind,
-                            onDisarm = {
-                                trayDisarming = true
-                                drawingView.value?.disarmPlacement()
-                                trayDisarming = false
-                            },
-                            onOpenLibrary = { libraryOpen = true },
-                            onSettingsFor = { kind ->
-                                endPlacedSettings()
-                                armedSettings = kind
-                            },
-                            onOpenSettings = {
-                                (placement as? DrawingView.Placement.StampItem)?.let {
-                                    endPlacedSettings()
-                                    armedSettings = it.kind
-                                }
-                            },
-                            onShowSymbols = { traySymbols = it },
-                            onSymbol = { sym ->
-                                val held = (armedItem as? DrawingView.Placement.TextItem)?.text
-                                val text = if (held == null || symbolPlaced) sym else held + sym
-                                symbolPlaced = false
-                                drawingView.value?.armText(text)
-                            },
-                            onBackspace = {
-                                val held = (armedItem as? DrawingView.Placement.TextItem)?.text
-                                if (held != null) {
-                                    val cut = if (held.codePointCount(0, held.length) <= 1) ""
-                                    else held.substring(0, held.offsetByCodePoints(held.length, -1))
-                                    trayDisarming = true
-                                    if (cut.isEmpty()) drawingView.value?.disarmPlacement()
-                                    else drawingView.value?.armText(cut)
-                                    trayDisarming = false
-                                }
-                            },
-                            onClose = ::closeTray
-                        )
-                    }
-                    // On a narrow screen the panel needs the room more than the pen does; it is
-                    // one tap to close, and the tray above it still switches shape.
-                    val panelOpen = armedSettings != null || placedSettings != null
-                    if (!panelOpen || LocalConfiguration.current.screenWidthDp >= 840) {
-                    ToolBar(
-                        state = tools,
-                        selectionCount = selectionCount,
-                        canCrop = canCrop,
-                        cropping = cropping,
-                        shapesOpen = trayOpen,
-                        actions = ToolBarActions(
-                            onChanged = {
-                                val before = drawingView.value?.tool
-                                tools.applyTo(drawingView.value)
-                                // Picking another tool puts a shape away; changing the pen's
-                                // colour or width does not.
-                                if (before != null && before != drawingView.value?.tool) {
-                                    drawingView.value?.disarmPlacement()
-                                }
-                            },
-                            onUndo = { drawingView.value?.undo(); dirty = true; undoTick++ },
-                            onRedo = { drawingView.value?.redo(); dirty = true; undoTick++ },
-                            canUndo = canUndo,
-                            canRedo = canRedo,
-                            onRestyleSelection = { color, width ->
-                                drawingView.value?.restyleSelection(newColor = color, newWidth = width)
-                                dirty = true; undoTick++
-                            },
-                            onDeleteSelection = {
-                                drawingView.value?.deleteSelection(); dirty = true; undoTick++
-                            },
-                            onDuplicateSelection = {
-                                drawingView.value?.duplicateSelection(); dirty = true; undoTick++
-                            },
-                            onCopySelection = {
-                                val n = drawingView.value?.copySelection() ?: 0
-                                scope.launch {
-                                    snackbar.showSnackbar("Copied $n object${if (n == 1) "" else "s"}")
-                                }
-                            },
-                            onCutSelection = {
-                                val n = drawingView.value?.cutSelection() ?: 0
-                                dirty = true; undoTick++
-                                scope.launch {
-                                    snackbar.showSnackbar("Cut $n object${if (n == 1) "" else "s"}")
-                                }
-                            },
-                            onClearSelection = { drawingView.value?.clearSelection() },
-                            onPaste = {
-                                val n = drawingView.value?.paste() ?: 0
-                                if (n > 0) { dirty = true; undoTick++ }
-                                else scope.launch { snackbar.showSnackbar("Nothing copied yet") }
-                            },
-                            canPaste = canPaste,
-                            onInsertTable = { r, c ->
-                                drawingView.value?.insertTable(r, c); dirty = true; undoTick++
-                            },
-                            onCycleMode = { held ->
-                                tools.advanceMode(drawingView.value, held)
-                            },
-                            onSetButtonAction = { action ->
-                                tools.setActionFor(tools.activeMode, action)
-                                tools.applyTo(drawingView.value)
-                            },
-                            onEditPressureCurve = { pressureCurveOpen = true },
-                            onToggleShapes = { if (trayOpen) closeTray() else openTray() },
-                            onEditStamp = selectedStamp?.let { tag ->
-                                {
-                                    armedSettings = null
-                                    drawingView.value?.beginStampEdit()
-                                    placedSettings = tag
-                                }
-                            },
-                            onInsertPicture = {
-                                runCatching { picturePicker.launch("image/*") }.onFailure {
-                                    scope.launch {
-                                        snackbar.showSnackbar("No picture picker on this device")
-                                    }
-                                }
-                            },
-                            onTakePhoto = { takePhoto() },
-                            onSnapRuler = { drawingView.value?.snapRulerAngle() },
-                            onRotateRuler = { d -> drawingView.value?.rotateRuler(d) },
-                            onResetRuler = { drawingView.value?.placeRulerAcrossView() },
-                            onPickCustomColour = { colourPickerOpen = true },
-                            onMessage = { scope.launch { snackbar.showSnackbar(it) } },
-                            onBeginCrop = {
-                                if (drawingView.value?.beginCrop() != true) {
-                                    scope.launch {
-                                        snackbar.showSnackbar("Select one picture to crop it")
-                                    }
-                                }
-                            },
-                            onApplyCrop = {
-                                drawingView.value?.applyCrop()
-                                dirty = true; undoTick++
-                            },
-                            onResetCrop = { drawingView.value?.resetCrop() },
-                            onCancelCrop = { drawingView.value?.cancelCrop() }
-                        )
+                },
+                actions = {
+                    // Only there while linked, so a glance says whether marks are travelling.
+                    com.inkslate.ui.LinkIndicator(
+                        short = true,
+                        modifier = Modifier.align(Alignment.CenterVertically)
                     )
+                    // Back by request. It was removed when the document started being
+                    // written as you work, on the reasoning that closing is either a no-op
+                    // or the last few hundred milliseconds of it - which is true right up
+                    // until an automatic write is the thing you need to not happen. A
+                    // control that says "keep this, now" is worth its place in the bar.
+                    IconButton(onClick = { saveByRule() }) {
+                        Icon(
+                            Icons.Default.Save,
+                            "Save into the document",
+                            tint = if (writeState == WriteState.SAVED)
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    IconButton(
+                        onClick = { drawingView.value?.undo(); dirty = true },
+                        enabled = drawingView.value?.canUndo() == true
+                    ) { Icon(Icons.AutoMirrored.Filled.Undo, "Undo") }
+                    IconButton(
+                        onClick = { drawingView.value?.redo(); dirty = true },
+                        enabled = drawingView.value?.canRedo() == true
+                    ) { Icon(Icons.AutoMirrored.Filled.Redo, "Redo") }
+                    IconButton(onClick = { searchOpen = true }) {
+                    Icon(Icons.Default.Search, "Find in document")
+                }
+                IconButton(onClick = { immersive.toggle() }) {
+                        Icon(Icons.Default.Fullscreen, "Fullscreen")
+                    }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }) {
+                            Icon(Icons.Default.MoreVert, "More")
+                        }
+                        DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Share...") },
+                                onClick = { menuOpen = false; shareDocument() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Export...") },
+                                onClick = { menuOpen = false; exportOpen = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Checkpoint this version") },
+                                onClick = { menuOpen = false; checkpoint() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Version history...") },
+                                onClick = { menuOpen = false; versionsOpen = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Rules for this file") },
+                                onClick = { menuOpen = false; showFileRules = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Measure save speed") },
+                                onClick = {
+                                    menuOpen = false
+                                    syncPage()
+                                    benchRunning = true
+                                    scope.launch {
+                                        val text = withContext(Dispatchers.IO) {
+                                            com.inkslate.pdf.SaveBenchmark.run(
+                                                context, file, doc!!.ink,
+                                                prefs.effectiveFor(file.absolutePath).inkFormat
+                                            )
+                                        }
+                                        benchRunning = false
+                                        benchReport = text
+                                    }
+                                }
+                            )
+                            PageFilter.entries.forEach { option ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            if (pageFilter == option) "\u2713  " + option.label
+                                            else "      " + option.label
+                                        )
+                                    },
+                                    onClick = {
+                                        menuOpen = false
+                                        pageFilter = option
+                                        drawingView.value?.pageFilter = option
+                                    }
+                                )
+                            }
+                            HorizontalDivider()
+                            // Arrangement used to be five loose entries here. It belongs with
+                            // the pages themselves, so it moved into Pages along with adding,
+                            // removing, duplicating and reordering them.
+                            DropdownMenuItem(
+                                text = { Text("Pages...") },
+                                onClick = { menuOpen = false; pagesOpen = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Fit page") },
+                                onClick = { menuOpen = false; drawingView.value?.fitToScreen() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Fit width") },
+                                onClick = { menuOpen = false; drawingView.value?.fitWidth() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Reset view") },
+                                onClick = {
+                                    menuOpen = false
+                                    drawingView.value?.resetView()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Clear this page") },
+                                onClick = {
+                                    menuOpen = false
+                                    drawingView.value?.clearPage(); dirty = true
+                                }
+                            )
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    val bottomBar: @Composable () -> Unit = {
+        doc?.let { d ->
+            // navigationBarsPadding keeps the toolbar clear of the gesture bar, which
+            // otherwise sits directly on top of the tool buttons
+            Column(Modifier.navigationBarsPadding()) {
+                if (d.pageCount > 1 || PageSources.isPdf(d.file)) {
+                    PageBar(
+                        page = page,
+                        pageCount = d.pageCount,
+                        bookmarked = bookmarks.any { it.page == page },
+                        onPrev = { drawingView.value?.goToPage(page - 1) },
+                        onNext = { drawingView.value?.goToPage(page + 1) },
+                        onOpenNavigation = { navOpen = true },
+                        onOpenPages = { pagesOpen = true },
+                        onToggleBookmark = {
+                            if (bookmarks.any { it.page == page }) {
+                                d.ink = d.ink.withBookmarkRemoved(page)
+                                bookmarks = d.ink.bookmarks
+                                persistWorking()
+                            } else {
+                                bookmarkPrompt = page
+                            }
+                        }
+                    )
+                }
+                if (trayOpen) {
+                    val placement = armedItem
+                    ShapeTray(
+                        shelf = tools.stampShelf,
+                        armed = (placement as? DrawingView.Placement.StampItem)?.kind,
+                        armedText = (placement as? DrawingView.Placement.TextItem)?.text,
+                        symbols = traySymbols,
+                        onArm = ::armKind,
+                        onDisarm = {
+                            trayDisarming = true
+                            drawingView.value?.disarmPlacement()
+                            trayDisarming = false
+                        },
+                        onOpenLibrary = { libraryOpen = true },
+                        onSettingsFor = { kind ->
+                            endPlacedSettings()
+                            armedSettings = kind
+                        },
+                        onOpenSettings = {
+                            (placement as? DrawingView.Placement.StampItem)?.let {
+                                endPlacedSettings()
+                                armedSettings = it.kind
+                            }
+                        },
+                        onShowSymbols = { traySymbols = it },
+                        onSymbol = { sym ->
+                            val held = (armedItem as? DrawingView.Placement.TextItem)?.text
+                            val text = if (held == null || symbolPlaced) sym else held + sym
+                            symbolPlaced = false
+                            drawingView.value?.armText(text)
+                        },
+                        onBackspace = {
+                            val held = (armedItem as? DrawingView.Placement.TextItem)?.text
+                            if (held != null) {
+                                val cut = if (held.codePointCount(0, held.length) <= 1) ""
+                                else held.substring(0, held.offsetByCodePoints(held.length, -1))
+                                trayDisarming = true
+                                if (cut.isEmpty()) drawingView.value?.disarmPlacement()
+                                else drawingView.value?.armText(cut)
+                                trayDisarming = false
+                            }
+                        },
+                        onClose = ::closeTray
+                    )
+                }
+                // On a narrow screen the panel needs the room more than the pen does; it is
+                // one tap to close, and the tray above it still switches shape.
+                val panelOpen = armedSettings != null || placedSettings != null
+                if (!panelOpen || LocalConfiguration.current.screenWidthDp >= 840) {
+                ToolBar(
+                    state = tools,
+                    selectionCount = selectionCount,
+                    canCrop = canCrop,
+                    cropping = cropping,
+                    shapesOpen = trayOpen,
+                    actions = ToolBarActions(
+                        onChanged = {
+                            val before = drawingView.value?.tool
+                            // A ruler turned on from here is laid on this document.
+                            if (tools.rulerVisible) tools.rulerOwner = host
+                            tools.applyTo(drawingView.value)
+                            // Picking another tool puts a shape away; changing the pen's
+                            // colour or width does not.
+                            if (before != null && before != drawingView.value?.tool) {
+                                drawingView.value?.disarmPlacement()
+                            }
+                        },
+                        onUndo = { drawingView.value?.undo(); dirty = true; undoTick++ },
+                        onRedo = { drawingView.value?.redo(); dirty = true; undoTick++ },
+                        canUndo = canUndo,
+                        canRedo = canRedo,
+                        onRestyleSelection = { color, width ->
+                            drawingView.value?.restyleSelection(newColor = color, newWidth = width)
+                            dirty = true; undoTick++
+                        },
+                        onDeleteSelection = {
+                            drawingView.value?.deleteSelection(); dirty = true; undoTick++
+                        },
+                        onDuplicateSelection = {
+                            drawingView.value?.duplicateSelection(); dirty = true; undoTick++
+                        },
+                        onCopySelection = {
+                            val n = drawingView.value?.copySelection() ?: 0
+                            scope.launch {
+                                snackbar.showSnackbar("Copied $n object${if (n == 1) "" else "s"}")
+                            }
+                        },
+                        onCutSelection = {
+                            val n = drawingView.value?.cutSelection() ?: 0
+                            dirty = true; undoTick++
+                            scope.launch {
+                                snackbar.showSnackbar("Cut $n object${if (n == 1) "" else "s"}")
+                            }
+                        },
+                        onClearSelection = { drawingView.value?.clearSelection() },
+                        onPaste = {
+                            val n = drawingView.value?.paste() ?: 0
+                            if (n > 0) { dirty = true; undoTick++ }
+                            else scope.launch { snackbar.showSnackbar("Nothing copied yet") }
+                        },
+                        canPaste = canPaste,
+                        onInsertTable = { r, c ->
+                            drawingView.value?.insertTable(r, c); dirty = true; undoTick++
+                        },
+                        onCycleMode = { held ->
+                            tools.advanceMode(drawingView.value, held)
+                        },
+                        onSetButtonAction = { action ->
+                            tools.setActionFor(tools.activeMode, action)
+                            tools.applyTo(drawingView.value)
+                        },
+                        onEditPressureCurve = { pressureCurveOpen = true },
+                        onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                        onEditStamp = selectedStamp?.let { tag ->
+                            {
+                                armedSettings = null
+                                drawingView.value?.beginStampEdit()
+                                placedSettings = tag
+                            }
+                        },
+                        onInsertPicture = {
+                            runCatching { picturePicker.launch("image/*") }.onFailure {
+                                scope.launch {
+                                    snackbar.showSnackbar("No picture picker on this device")
+                                }
+                            }
+                        },
+                        onTakePhoto = { takePhoto() },
+                        onSnapRuler = { drawingView.value?.snapRulerAngle() },
+                        onRotateRuler = { d -> drawingView.value?.rotateRuler(d) },
+                        onResetRuler = { drawingView.value?.placeRulerAcrossView() },
+                        onPickCustomColour = { colourPickerOpen = true },
+                        onMessage = { scope.launch { snackbar.showSnackbar(it) } },
+                        onBeginCrop = {
+                            if (drawingView.value?.beginCrop() != true) {
+                                scope.launch {
+                                    snackbar.showSnackbar("Select one picture to crop it")
+                                }
+                            }
+                        },
+                        onApplyCrop = {
+                            drawingView.value?.applyCrop()
+                            dirty = true; undoTick++
+                        },
+                        onResetCrop = { drawingView.value?.resetCrop() },
+                        onCancelCrop = { drawingView.value?.cancelCrop() }
+                    )
+                )
+                }
+            }
+        }
+    }
+
+    val pane: @Composable (com.inkslate.ui.DocView, Boolean) -> Unit = { slot, inFocus ->
+        // A stamp in hand belongs to the pane being worked in. Leaving it puts the item down in
+        // the pane left behind, and arriving picks it up again in this one - so the tray, which is
+        // the workspace's, keeps meaning the same thing wherever the pen goes next.
+        LaunchedEffect(inFocus, slot.view) {
+            val v = slot.view ?: return@LaunchedEffect
+            if (!inFocus) {
+                if (v.armedPlacement() != null) {
+                    trayDisarming = true
+                    v.disarmPlacement()
+                    trayDisarming = false
+                }
+            } else if (trayOpen && v.armedPlacement() == null) {
+                when (val held = heldPlacement) {
+                    is DrawingView.Placement.StampItem -> v.armStamp(held.kind, held.options)
+                    is DrawingView.Placement.TextItem -> v.armText(held.text)
+                    is DrawingView.Placement.ImageItem -> v.armImage(held.imageId, held.aspect, held.label)
+                    null -> tools.stampShelf.lastKind?.let { kind ->
+                        v.armStamp(kind, tools.stampOptionsFor(kind))
                     }
                 }
             }
         }
-    ) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
+
+        Column(Modifier.fillMaxSize()) {
 
         // Said plainly and kept on screen, because the app is now deliberately not doing the
         // thing it normally does, and silence about that would read as saving being broken.
@@ -1849,7 +1910,8 @@ fun EditorScreen(
                 else -> AndroidView(
                     factory = { ctx ->
                         DrawingView(ctx).also { view ->
-                            view.ids = StrokeIdGen(DeviceId.get(ctx))
+                            // The document's marks and their ids, shared with any other view of it.
+                            view.model = model
                             view.onContentChanged = {
                                 dirty = true
                                 undoTick++
@@ -1862,6 +1924,8 @@ fun EditorScreen(
                                 // Held in memory and autosaved; the document's page is only
                                 // actually resized when the document is written.
                                 doc?.let { d -> d.ink = d.ink.copy(canvas = grown) }
+                                // The other view of this document grows with it.
+                                host.views.forEach { if (it.view !== view) it.view?.canvas = grown }
                                 dirty = true
                             }
                             // Records only that the hardware exists. Revealing the profile is
@@ -1898,18 +1962,18 @@ fun EditorScreen(
                             }
                             view.onPagesNeedRender = { missing ->
                                 if (missing.isNotEmpty()) {
-                                    wantedPages = (wantedPages + missing).distinct().sorted()
-                                    renderNonce++
+                                    slot.wantedPages = (slot.wantedPages + missing).distinct().sorted()
+                                    slot.renderNonce++
                                 }
                             }
                             view.onVisiblePagesChanged = { visible ->
                                 // pad by one page either side so scrolling does not reveal blanks
                                 val lo = (visible.minOrNull() ?: 0) - 1
                                 val hi = (visible.maxOrNull() ?: 0) + 1
-                                wantedPages = (lo..hi).filter { it in 0 until (doc?.pageCount ?: 1) }
+                                slot.wantedPages = (lo..hi).filter { it in 0 until (doc?.pageCount ?: 1) }
                             }
-                            view.onCurrentPageChanged = { page = it }
-                            StrokeRasteriser.imageResolver = { id -> imageStore.load(id) }
+                            view.onCurrentPageChanged = { slot.page = it }
+                            view.imageResolver = { id -> imageStore.load(id) }
                             view.textSnapper = { p, pts ->
                                 PdfText.wordsUnderPath(file, p, pts, 4f)
                             }
@@ -1930,7 +1994,10 @@ fun EditorScreen(
                                     scope.launch { snackbar.showSnackbar("Could not capture that area") }
                                 }
                             }
-                            view.onSelectionChanged = {
+                            view.onSelectionChanged = sel@{
+                                // Only the view being worked in speaks for the document's
+                                // selection; the other one hearing about an erase is not news.
+                                if (slot.index != host.activeViewIndex) return@sel
                                 selectionCount = it
                                 canCrop = view.croppableSelection()
                                 val stamp = view.selectedStamp()
@@ -1950,8 +2017,11 @@ fun EditorScreen(
                                 if (held?.kind == kind) view.armStamp(kind, tools.stampOptionsFor(kind))
                             }
                             view.onCropModeChanged = { cropping = it }
-                            view.onPlacementChanged = {
+                            view.onPlacementChanged = placed@{
+                                // Put down by leaving the pane, not by using it: nothing to report.
+                                if (slot.index != host.activeViewIndex) return@placed
                                 armedItem = it
+                                if (it != null) heldPlacement = it
                                 // Put away by a stroke rather than by the tray: the tray has done
                                 // its job, and folds out of the way of the writing.
                                 if (it == null && !trayDisarming && trayOpen) {
@@ -1967,11 +2037,24 @@ fun EditorScreen(
                                 cellPrompt = CellPromptRequest(table, r, c)
                             }
                             tools.applyTo(view)
-                            drawingView.value = view
+                            slot.view = view
                             // pages are declared by the effect above once geometry is known
                         }
                     },
-
+                    // Off screen, the surface goes and takes its page pictures with it. Where it was
+                    // looking is kept, and put back when the view is shown again.
+                    onRelease = { view ->
+                        view.cameraState()?.let { slot.savedCamera = it }
+                        if (slot.view === view) slot.view = null
+                    },
+                    // The workspace's one set of tools, applied to every surface whenever it
+                    // changes - not only to the one whose bar changed it.
+                    update = { view ->
+                        @Suppress("UNUSED_VARIABLE") val rev = tools.revision
+                        tools.applyTo(view)
+                        view.rulerVisible = tools.rulerVisible && tools.rulerOwner === host
+                        view.pageFilter = pageFilter
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -2003,96 +2086,104 @@ fun EditorScreen(
                 }
             }
 
-            // Anything waiting to be put on the page says so, and says how. Stamps and symbols
-            // both land here, because from the user's side they are the same action.
-            (armedItem as? DrawingView.Placement.ImageItem)?.let { item ->
-                Card(
-                    modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Row(
-                        Modifier.padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Tap to place, or drag to size  ·  ${item.label}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+            if (inFocus) {
+                // Anything waiting to be put on the page says so, and says how. Stamps and symbols
+                // both land here, because from the user's side they are the same action.
+                (armedItem as? DrawingView.Placement.ImageItem)?.let { item ->
+                    Card(
+                        modifier = Modifier.align(Alignment.TopCenter).padding(10.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
                         )
-                        TextButton(onClick = {
-                            drawingView.value?.disarmPlacement()
-                        }) { Text("Done") }
+                    ) {
+                        Row(
+                            Modifier.padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Tap to place, or drag to size  ·  ${item.label}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            TextButton(onClick = {
+                                drawingView.value?.disarmPlacement()
+                            }) { Text("Done") }
+                        }
                     }
                 }
-            }
 
-            // Down the side where there is room for it. A settings panel across the foot of the
-            // page was squeezed between the tray, the selection bar and the toolbar, all of which
-            // kept their space while the panel - the thing actually being worked in - lost its.
-            val sidePanel = LocalConfiguration.current.screenWidthDp >= 840
-            armedSettings?.let { kind ->
-                StampSettingsPanel(
-                    kind = kind,
-                    options = tools.stampOptionsFor(kind),
-                    subtitle = "For the next one you place",
-                    editKey = "armed:" + kind.name,
-                    preview = true,
-                    recentColours = tools.customColors,
-                    onChange = { o ->
-                        tools.editStampShelf { it.withOptions(kind, o) }
-                        if ((armedItem as? DrawingView.Placement.StampItem)?.kind == kind) {
-                            drawingView.value?.armStamp(kind, tools.stampOptionsFor(kind))
-                        }
-                    },
-                    onDone = { armedSettings = null },
-                    side = sidePanel,
-                    modifier = Modifier.align(
-                        if (sidePanel) Alignment.CenterEnd else Alignment.BottomCenter
-                    )
-                )
-            }
-            placedSettings?.let { tag ->
-                val kind = com.inkslate.core.Stamps.kindOf(tag)
-                if (kind != null) {
+                // Down the side where there is room for it. A settings panel across the foot of the
+                // page was squeezed between the tray, the selection bar and the toolbar, all of which
+                // kept their space while the panel - the thing actually being worked in - lost its.
+                val sidePanel = LocalConfiguration.current.screenWidthDp >= 840
+                armedSettings?.let { kind ->
                     StampSettingsPanel(
                         kind = kind,
-                        options = tag.options,
-                        subtitle = "This one, on the page - and the next one you place",
-                        editKey = "placed:" + tag.group,
-                        preview = false,
+                        options = tools.stampOptionsFor(kind),
+                        subtitle = "For the next one you place",
+                        editKey = "armed:" + kind.name,
+                        preview = true,
                         recentColours = tools.customColors,
                         onChange = { o ->
-                            drawingView.value?.previewStampEdit(o)
-                            // Keep its size: this is the look being set, not where it stands.
-                            tools.editStampShelf {
-                                it.withOptions(kind, o.copy(size = it.optionsFor(kind).size))
+                            tools.editStampShelf { it.withOptions(kind, o) }
+                            if ((armedItem as? DrawingView.Placement.StampItem)?.kind == kind) {
+                                drawingView.value?.armStamp(kind, tools.stampOptionsFor(kind))
                             }
-                            dirty = true
                         },
-                        onDone = ::endPlacedSettings,
+                        onDone = { armedSettings = null },
                         side = sidePanel,
                         modifier = Modifier.align(
                             if (sidePanel) Alignment.CenterEnd else Alignment.BottomCenter
                         )
                     )
                 }
+                placedSettings?.let { tag ->
+                    val kind = com.inkslate.core.Stamps.kindOf(tag)
+                    if (kind != null) {
+                        StampSettingsPanel(
+                            kind = kind,
+                            options = tag.options,
+                            subtitle = "This one, on the page - and the next one you place",
+                            editKey = "placed:" + tag.group,
+                            preview = false,
+                            recentColours = tools.customColors,
+                            onChange = { o ->
+                                drawingView.value?.previewStampEdit(o)
+                                // Keep its size: this is the look being set, not where it stands.
+                                tools.editStampShelf {
+                                    it.withOptions(kind, o.copy(size = it.optionsFor(kind).size))
+                                }
+                                dirty = true
+                            },
+                            onDone = ::endPlacedSettings,
+                            side = sidePanel,
+                            modifier = Modifier.align(
+                                if (sidePanel) Alignment.CenterEnd else Alignment.BottomCenter
+                            )
+                        )
+                    }
+                }
             }
 
-            // The app bar is gone in focus mode, so this is the only way back out.
-            if (immersive.isFullscreen) {
-                FilledTonalIconButton(
-                    onClick = { immersive.set(false) },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(10.dp)
-                ) { Icon(Icons.Default.FullscreenExit, "Leave fullscreen") }
+            // Messages about this document, over the view its bars are showing.
+            if (slot.index == host.activeViewIndex) {
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
             }
         }
         }
     }
+
+    androidx.compose.runtime.SideEffect {
+        host.topBar = topBar
+        host.bottomBar = bottomBar
+        host.pane = pane
+    }
+
+    // Keeps this document's messages moving while none of its views is on screen. A message
+    // nobody draws never times out, and neither does whatever is waiting for it to go: a save
+    // that ends by saying so would never finish, as far as the rest of the editor could tell.
+    SnackbarHost(snackbar, Modifier.size(0.dp))
+
 
     // ---- dialogs -------------------------------------------------------------
 
@@ -2232,7 +2323,7 @@ fun EditorScreen(
                             ?: android.graphics.Color.parseColor("#8FA8C8"),
                         spacing = style?.spacing ?: 24f
                     )
-                    drawingView.value?.canvas = d.ink.canvas
+                    host.views.forEach { it.view?.canvas = d.ink.canvas }
                     dirty = true
                 },
                 onLayoutChange = { option ->
@@ -2630,7 +2721,7 @@ fun EditorScreen(
                             onSuccess = { n ->
                                 val fresh = withContext(Dispatchers.IO) { repo.open(file) }
                                 if (fresh != null) {
-                                    drawingView.value?.setStrokes(fresh.allStrokes())
+                                    model.setStrokes(fresh.allStrokes())
                                     doc?.ink = fresh.ink
                                     fresh.close()
                                 }
@@ -2672,7 +2763,7 @@ fun EditorScreen(
                             doc?.let { d ->
                                 val fresh = withContext(Dispatchers.IO) { repo.open(file) }
                                 if (fresh != null) {
-                                    drawingView.value?.setStrokes(fresh.allStrokes())
+                                    model.setStrokes(fresh.allStrokes())
                                     d.ink = fresh.ink
                                     fresh.close()
                                 }

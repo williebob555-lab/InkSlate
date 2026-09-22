@@ -29,49 +29,176 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.inkslate.ink.DrawingView
 import java.io.File
 
 /** One open document: a tab in the workspace. Its id is stable for the tab's whole lifetime. */
-class DocTab(val id: String, val file: File) {
+class DocTab(val id: String, val file: File, val host: DocumentHost) {
     /** Flipped by the tab's own close button to ask the document to save-through and close. */
     val closeRequested = mutableStateOf(false)
-    /** Kept in sync by the editor itself, so the tab strip can get out of the way of focus mode. */
-    val immersive = mutableStateOf(false)
 }
 
 /** Which of the (at most two) visible panes the last touch landed in. */
 enum class Pane { PRIMARY, SECONDARY }
 
+/** What one pane shows: a document, and which of its views. */
+data class PaneRef(val tabId: String, val view: Int)
+
+/**
+ * One view of a document: a drawing surface, where it is looking, and the pages it wants drawn.
+ *
+ * A document is usually looked at through one of these. Shown in both halves of a split it has
+ * two, each with its own place and zoom over the one set of marks - see [com.inkslate.ink.InkModel]
+ * - so writing in either half is writing in the same document, with one undo history between them.
+ *
+ * The surface itself only exists while the view is on screen. Off screen, the view keeps where it
+ * was looking in [savedCamera] and gives its page pictures back; the marks and their history are
+ * the document's, and never went anywhere.
+ */
+class DocView(val index: Int) {
+    var view by mutableStateOf<DrawingView?>(null)
+    var page by mutableStateOf(0)
+    var wantedPages by mutableStateOf(listOf(0))
+
+    /**
+     * Bumped when the surface reports a visible page still lacking a bitmap. Without it, an
+     * identical page list would not re-emit and the retry would never reach the loader.
+     */
+    var renderNonce by mutableStateOf(0)
+
+    /** Where the view was looking when it last left the screen, put back when it returns. */
+    var savedCamera: FloatArray? = null
+}
+
+/**
+ * Where an open document meets the workspace around it.
+ *
+ * The document itself - its marks, its history, its link to your other devices - lives in the
+ * editor, which stays open for as long as the tab does. What the workspace needs from it is put
+ * here: the bar that goes above the pages, the one that goes below, and a way to draw one of its
+ * views into a pane. The workspace draws those bars once, for whichever document was touched last,
+ * which is what keeps two documents side by side from being two copies of the whole screen.
+ */
+class DocumentHost(val immersive: ImmersiveController) {
+    val snackbar = SnackbarHostState()
+
+    val views = mutableStateListOf(DocView(0))
+
+    /** The view the bars and the back gesture act on - the one last touched, of this document's. */
+    var activeViewIndex by mutableStateOf(0)
+
+    val activeView: DocView
+        get() = views.firstOrNull { it.index == activeViewIndex } ?: views[0]
+
+    var activePage: Int
+        get() = activeView.page
+        set(value) {
+            activeView.page = value
+        }
+
+    fun viewOrFirst(index: Int): DocView = views.firstOrNull { it.index == index } ?: views[0]
+
+    /**
+     * The view with [index], made if it is not there yet - starting where the first one is, so a
+     * second view of a document opens on what you were already looking at.
+     */
+    fun ensureView(index: Int): DocView {
+        views.firstOrNull { it.index == index }?.let { return it }
+        val from = views[0]
+        return DocView(index).also { fresh ->
+            fresh.page = from.page
+            fresh.savedCamera = from.view?.cameraState() ?: from.savedCamera
+            views.add(fresh)
+        }
+    }
+
+    /** The app bar for this document: its name, where it stands, and its own actions. */
+    var topBar by mutableStateOf<(@Composable () -> Unit)?>(null)
+
+    /** Page navigation, the shapes tray and the tools. */
+    var bottomBar by mutableStateOf<(@Composable () -> Unit)?>(null)
+
+    /** One view of the document; the flag says whether it is the pane last touched. */
+    var pane by mutableStateOf<(@Composable (DocView, Boolean) -> Unit)?>(null)
+}
+
+/**
+ * The drawing surface of whichever of the document's views was touched last.
+ *
+ * Read everywhere the editor used to hold its one surface, so everything the bars ask of "the
+ * page" - undo, zoom, the ruler, going to a page - happens in the half you are working in.
+ */
+class ActiveSurface(private val host: DocumentHost) {
+    val value: DrawingView?
+        get() = host.activeView.view
+}
+
+/**
+ * Draws the one of [host]'s bars that [pick] picks, in its own scope.
+ *
+ * Keyed on the document. Every document's bars are the same code, so without the key moving from
+ * one document to another would look to Compose like the same bar recomposing, and whatever it
+ * remembers - a menu left open, the tool it last saw - would carry across to the other document.
+ */
+@Composable
+fun HostBar(host: DocumentHost?, pick: (DocumentHost) -> (@Composable () -> Unit)?) {
+    host ?: return
+    val bar = pick(host) ?: return
+    androidx.compose.runtime.key(host) { bar() }
+}
+
+/**
+ * Draws one of [host]'s views, in its own scope - see [HostBar].
+ *
+ * Keyed on the document and the view for the same reason, and here it matters a great deal: a
+ * pane that goes from one document to another must get a drawing surface of its own, not keep
+ * the one showing the document before - with that document's marks in it.
+ */
+@Composable
+fun HostPane(host: DocumentHost, view: DocView, focused: Boolean) {
+    androidx.compose.runtime.key(host, view) {
+        host.pane?.invoke(view, focused)
+    }
+}
+
 /**
  * The row of tabs across the top of the screen: a pinned Home tab, one chip per open document, and
  * a button to open another.
  *
- * A tap on a document brings it to the primary pane; the split partner - the other document showing
- * at the same time, on a screen wide enough for it - is set from a tab's own long-press menu, the
- * same way any other per-item action reaches its menu on this build.
+ * A tap on a document shows it in the pane last touched, or moves there if it is already on
+ * screen. The other half of a split - on a screen wide enough for one - is set from a tab's own
+ * long-press menu, the same way any other per-item action reaches its menu on this build,
+ * including a second view of the document already showing.
  */
 @Composable
 fun TabStrip(
     tabs: List<DocTab>,
     homeShown: Boolean,
-    activeTabId: String?,
-    splitTabId: String?,
+    shownIds: Set<String>,
+    focusedId: String?,
+    primaryId: String?,
+    secondaryId: String?,
     splitAvailable: Boolean,
     onHome: () -> Unit,
     onSelect: (String) -> Unit,
@@ -89,6 +216,7 @@ fun TabStrip(
         ) {
             TabChip(
                 selected = homeShown,
+                focused = homeShown,
                 onClick = onHome,
                 leading = { Icon(Icons.Default.Home, null, modifier = Modifier.size(18.dp)) },
                 label = "Home"
@@ -100,10 +228,16 @@ fun TabStrip(
                 for (tab in tabs) {
                     DocumentTabChip(
                         tab = tab,
-                        selected = !homeShown && tab.id == activeTabId,
-                        split = tab.id == splitTabId,
-                        splitActive = splitTabId != null,
-                        canSplit = splitAvailable && tabs.size > 1 && tab.id != activeTabId,
+                        shown = !homeShown && tab.id in shownIds,
+                        focused = !homeShown && tab.id == focusedId,
+                        twice = tab.id == primaryId && tab.id == secondaryId,
+                        splitLabel = when {
+                            !splitAvailable -> null
+                            tab.id == secondaryId -> null
+                            tab.id == primaryId -> "Open a second view to the side"
+                            else -> "Open to the side"
+                        },
+                        splitActive = secondaryId != null,
                         onSelect = { onSelect(tab.id) },
                         onOpenInSplit = { onOpenInSplit(tab.id) },
                         onCloseSplit = onCloseSplit,
@@ -123,6 +257,7 @@ fun TabStrip(
 @Composable
 private fun TabChip(
     selected: Boolean,
+    focused: Boolean,
     onClick: () -> Unit,
     label: String,
     leading: @Composable () -> Unit,
@@ -132,12 +267,20 @@ private fun TabChip(
 ) {
     val background = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent
     val content = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+    val accent = MaterialTheme.colorScheme.primary
     Row(
         modifier
             .fillMaxHeight()
             .widthIn(min = 96.dp, max = 220.dp)
             .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
             .background(background)
+            // The document the bars belong to, marked the way a focused field is: a line under it.
+            .drawBehind {
+                if (focused) {
+                    val h = 3.dp.toPx()
+                    drawRect(accent, topLeft = Offset(0f, size.height - h), size = Size(size.width, h))
+                }
+            }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -159,10 +302,13 @@ private fun TabChip(
 @Composable
 private fun DocumentTabChip(
     tab: DocTab,
-    selected: Boolean,
-    split: Boolean,
+    shown: Boolean,
+    focused: Boolean,
+    /** Showing in both halves at once. */
+    twice: Boolean,
+    /** What "open to the side" says for this tab, or null when it cannot or already is. */
+    splitLabel: String?,
     splitActive: Boolean,
-    canSplit: Boolean,
     onSelect: () -> Unit,
     onOpenInSplit: () -> Unit,
     onCloseSplit: () -> Unit,
@@ -178,14 +324,15 @@ private fun DocumentTabChip(
     }
     Box {
         TabChip(
-            selected = selected || split,
+            selected = shown,
+            focused = focused,
             onClick = onSelect,
             label = tab.file.name,
             leading = { Icon(icon, null, modifier = Modifier.size(16.dp)) },
             trailing = {
-                if (split) {
+                if (twice) {
                     Icon(
-                        Icons.Default.VerticalSplit, "Showing in the split pane",
+                        Icons.Default.VerticalSplit, "Showing in both halves",
                         modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -196,9 +343,9 @@ private fun DocumentTabChip(
             onLongClick = { menuOpen = true }
         )
         DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-            if (canSplit) {
+            if (splitLabel != null) {
                 DropdownMenuItem(
-                    text = { Text("Open to the side") },
+                    text = { Text(splitLabel) },
                     onClick = { menuOpen = false; onOpenInSplit() }
                 )
             }
@@ -217,7 +364,7 @@ private fun DocumentTabChip(
 
 /**
  * The bar between two documents shown side by side. Dragged to resize, tapped to fold the split
- * away again - the same document that was primary keeps the whole width.
+ * away again - the document in the other half keeps the whole width.
  */
 @Composable
 fun SplitDivider(onDrag: (Float) -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {

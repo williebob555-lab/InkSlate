@@ -153,7 +153,9 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
      * device that turned up used to be another branch here, written against the one before it,
      * and each new branch broke a neighbour.
      */
-    action: InputAction = InputAction.DRAW_MOUSE
+    action: InputAction = InputAction.DRAW_MOUSE,
+    /** Which document this page belongs to; the ruler only acts on the one it lies on. */
+    rulerOwner: Any? = null
 ) {
     // The pen the action names, if it names one. Moving the page or erasing keeps whatever pen is
     // in hand, so an erase is the width of the pen doing it.
@@ -199,7 +201,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
 
     // The straightedge is taken hold of before any tool gets the pointer: it is a physical thing
     // resting on the page, and reaching for it should not depend on which pen is in hand.
-    val ruler = tools.ruler
+    val ruler = tools.ruler?.takeIf { tools.rulerOwner === rulerOwner }
     if (tools.rulerVisible && ruler != null && ruler.page == index) {
         val grab = ruler.grabAt(
             px, py,
@@ -651,7 +653,9 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
 
             // Once a stroke is being ruled it stays ruled to the end, the same way the pen stays
             // against the edge rather than wandering off when the hand drifts.
-            val liveRuler = tools.ruler?.takeIf { tools.rulerVisible && it.page == index }
+            val liveRuler = tools.ruler?.takeIf {
+                tools.rulerVisible && tools.rulerOwner === rulerOwner && it.page == index
+            }
             var ruled = false
 
             fun sample(screen: Offset, pressure: Float, type: PointerType) {

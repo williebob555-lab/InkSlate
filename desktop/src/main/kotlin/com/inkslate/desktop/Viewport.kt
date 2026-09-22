@@ -37,7 +37,24 @@ class Viewport {
     /** The document's extent, so panning can be held near it rather than off into nothing. */
     var content by mutableStateOf(Box(0f, 0f, 612f, 792f))
 
-    var viewSize by mutableStateOf(Size.Zero)
+    private var sizeState by mutableStateOf(Size.Zero)
+
+    /**
+     * The window onto the document, in pixels.
+     *
+     * When it changes width - a split opened or closed, the window resized - what was in the
+     * middle stays in the middle, and the top stays where it was. Held by the left edge instead,
+     * a page centred in a narrow pane was left hugging the left of a wide one when the split closed.
+     */
+    var viewSize: Size
+        get() = sizeState
+        set(value) {
+            val old = sizeState
+            if (old.width > 0f && value.width > 0f && value.height > 0f && old.width != value.width) {
+                offset = Offset(offset.x + (old.width - value.width) / (2f * scale), offset.y)
+            }
+            sizeState = value
+        }
 
     /** The middle of the window, which is what a keyboard zoom is about. */
     fun centreOfView(): Offset = Offset(viewSize.width / 2f, viewSize.height / 2f)

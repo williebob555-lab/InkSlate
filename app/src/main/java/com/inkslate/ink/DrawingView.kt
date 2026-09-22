@@ -19,6 +19,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import com.inkslate.data.StrokeIdGen
+
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -35,6 +36,8 @@ import com.inkslate.core.InkCanvas
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.InputMode
 import com.inkslate.core.ToolConfig
+
+private typealias Op = InkModel.Op
 
 /**
  * The inking surface.
@@ -179,7 +182,34 @@ class DrawingView @JvmOverloads constructor(
 
     // ---- content -------------------------------------------------------------
 
-    private val strokes = ArrayList<Stroke>()
+    /**
+     * The document's marks, shared with every other view of the same document. See [InkModel].
+     *
+     * Everything below reads and edits the marks through it, so a second view of a document is a
+     * second window onto one set of marks rather than a copy that drifts.
+     */
+    /**
+     * Where this document's pictures come from.
+     *
+     * Each document keeps its own, beside it. The rasteriser has one slot for this, so every view
+     * hands it its own just before drawing - with two documents on screen, a single shared one
+     * meant the pictures of whichever opened first were looked for among the other's.
+     */
+    var imageResolver: ((String) -> Bitmap?)? = null
+
+    var model: InkModel = InkModel()
+        set(value) {
+            if (field === value) return
+            if (isAttachedToWindow) {
+                field.detach(this)
+                value.attach(this)
+            }
+            field = value
+            pageIndexDirty = true
+            invalidate()
+        }
+
+    private val strokes: ArrayList<Stroke> get() = model.strokes
 
     /**
      * Strokes grouped by page, rebuilt only when content changes.
@@ -191,23 +221,31 @@ class DrawingView @JvmOverloads constructor(
     private var pageIndexDirty = true
     private val strokesByPage = HashMap<Int, MutableList<Stroke>>()
 
+    /** The model's version this view's page index was built from. */
+    private var indexedVersion = -1L
+
     private fun rebuildPageIndex() {
-        if (!pageIndexDirty) return
+        if (!pageIndexDirty && indexedVersion == model.version) return
+        indexedVersion = model.version
         strokesByPage.values.forEach { it.clear() }
         for (st in strokes) {
             strokesByPage.getOrPut(st.pageIndex) { ArrayList() }.add(st)
         }
         pageIndexDirty = false
     }
-    private val undoStack = ArrayList<Op>()
-    private val redoStack = ArrayList<Op>()
+    private val undoStack: ArrayList<Op> get() = model.undoStack
+    private val redoStack: ArrayList<Op> get() = model.redoStack
     private val selection = LinkedHashSet<String>()
 
     /**
      * Mints stroke ids. Injected by the host so ids carry this device tag, which is what keeps
      * two devices editing the same synced document from colliding.
      */
-    var ids: StrokeIdGen = StrokeIdGen("local")
+    var ids: StrokeIdGen
+        get() = model.ids
+        set(value) {
+            model.ids = value
+        }
 
     /**
      * Which page index this view currently holds strokes for, or -1 for none.
@@ -216,8 +254,6 @@ class DrawingView @JvmOverloads constructor(
      */
     var loadedPageIndex: Int = -1
 
-    /** An undoable edit, as add/remove sets so erase-many is a single step. */
-    private data class Op(val added: List<Stroke>, val removed: List<Stroke>)
 
     // ---- active tool settings ------------------------------------------------
 
@@ -453,7 +489,7 @@ class DrawingView @JvmOverloads constructor(
         replaceStrokes(current, rebuilt)
         selection.clear(); rebuilt.forEach { selection.add(it.id) }
         growCanvasForAll(rebuilt)
-        pageIndexDirty = true
+        contentMoved()
         invalidate()
     }
 
@@ -1567,11 +1603,27 @@ class DrawingView @JvmOverloads constructor(
     }
 
     fun setStrokes(list: List<Stroke>) {
-        strokes.clear(); strokes.addAll(list)
+        model.setStrokes(list)
         pageIndexDirty = true
-        ids.seedFrom(list.map { it.id })
-        undoStack.clear(); redoStack.clear(); selection.clear()
+        selection.clear()
         invalidate(); onSelectionChanged?.invoke(0)
+    }
+
+    /** Another view of the same document changed its marks. */
+    internal fun peerMoved() {
+        pageIndexDirty = true
+        // A selection can name a mark the other view has since erased; it is only ever ids, so
+        // it quietly selects nothing rather than anything wrong, but the count on the toolbar
+        // should not claim otherwise.
+        if (selection.removeAll { id -> strokes.none { it.id == id } }) {
+            onSelectionChanged?.invoke(selection.size)
+        }
+        invalidate()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        model.attach(this)
     }
 
     fun strokesSnapshot(): List<Stroke> = ArrayList(strokes)
@@ -1891,6 +1943,7 @@ class DrawingView @JvmOverloads constructor(
             }
             val previousFilter = StrokeRasteriser.colorFilter
             StrokeRasteriser.colorFilter = null    // capture true colours, not the reading tint
+            StrokeRasteriser.imageResolver = imageResolver
             strokesByPage[page].orEmpty()
                 .filter { it.kind != StrokeKind.IMAGE || it.imageId != null }
                 .forEach { StrokeRasteriser.draw(c, it) }
@@ -2241,6 +2294,7 @@ class DrawingView @JvmOverloads constructor(
         }
 
         StrokeRasteriser.colorFilter = pageFilter.filter
+        StrokeRasteriser.imageResolver = imageResolver
 
         canvas.save()
         canvas.concat(pageToView)
@@ -2407,7 +2461,7 @@ class DrawingView @JvmOverloads constructor(
                 val keep = RectF(cropRect); keep.offset(o[0], o[1]); pageToView.mapRect(keep)
 
                 // The source at full extent, so a crop can be widened as well as tightened.
-                val bmp = target.imageId?.let { StrokeRasteriser.imageResolver?.invoke(it) }
+                val bmp = target.imageId?.let { imageResolver?.invoke(it) }
                 if (bmp != null && !bmp.isRecycled) {
                     canvas.drawBitmap(bmp, null, full, imageOverlayPaint)
                 }
@@ -3248,6 +3302,7 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        model.detach(this)
         stopFling()
         velocityTracker?.recycle()
         velocityTracker = null
@@ -3340,7 +3395,7 @@ class DrawingView @JvmOverloads constructor(
                 val i = strokes.indexOfFirst { it.id == orig.id }
                 if (i >= 0) strokes[i] = orig
             }
-            pageIndexDirty = true
+            contentMoved()
         }
 
         if (erasedThisGesture.isNotEmpty()) {
@@ -3645,7 +3700,7 @@ class DrawingView @JvmOverloads constructor(
             // be undone with it - otherwise undo restores the original *and* leaves the pieces.
             addedThisGesture.addAll(fresh)
         }
-        pageIndexDirty = true
+        contentMoved()
         selection.clear()
         onContentChanged?.invoke()
     }
@@ -3914,7 +3969,7 @@ class DrawingView @JvmOverloads constructor(
                     x = snapped.first; y = snapped.second
                 }
                 strokes[i] = Stamps.withEnd(orig, moving, x, y)
-                pageIndexDirty = true
+                contentMoved()
             }
             Grab.ROTATE -> {
                 val cx = selBoundsAtGrab.centerX(); val cy = selBoundsAtGrab.centerY()
@@ -3930,7 +3985,7 @@ class DrawingView @JvmOverloads constructor(
 
     private fun applyLiveTransform(m: Matrix, addRotation: Float = 0f) {
         if (selectionAtGrab.isEmpty()) return
-        pageIndexDirty = true
+        contentMoved()
         val at = grabIndices
         selectionAtGrab.forEachIndexed { n, orig ->
             // Positions are worked out once when the drag starts. Searching the whole document
@@ -3977,7 +4032,7 @@ class DrawingView @JvmOverloads constructor(
                         replaceStrokes(after, rebuilt)
                         selection.clear(); rebuilt.forEach { selection.add(it.id) }
                         after = rebuilt
-                        pageIndexDirty = true
+                        contentMoved()
                     }
                     if (moved) {
                         pushOp(Op(after, selectionAtGrab))
@@ -4233,6 +4288,12 @@ class DrawingView @JvmOverloads constructor(
         pushOp(Op(netAdded, netRemoved))
     }
 
+    /** The marks changed here: rebuild this view's index, and tell every other view of them. */
+    private fun contentMoved() {
+        pageIndexDirty = true
+        model.moved(this)
+    }
+
     private fun pushOp(op: Op) {
         undoStack.add(op)
         if (undoStack.size > 200) undoStack.removeAt(0)
@@ -4240,7 +4301,7 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun changed() {
-        pageIndexDirty = true
+        contentMoved()
         invalidate()
         onContentChanged?.invoke()
     }

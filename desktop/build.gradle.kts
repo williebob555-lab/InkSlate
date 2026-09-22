@@ -60,6 +60,8 @@ dependencies {
     implementation(libs.jna.platform)
 
     testImplementation("junit:junit:4.13.2")
+    // Drives the real workspace - tabs, split view, drawing - without a window, and photographs it.
+    testImplementation(compose.desktop.uiTestJUnit4)
 }
 
 // The release workflow passes -Pinkslate.version, from the git tag and nowhere else.

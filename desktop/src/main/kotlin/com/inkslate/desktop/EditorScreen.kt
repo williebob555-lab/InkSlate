@@ -143,21 +143,26 @@ fun EditorScreen(
     navigation: NavigationHooks,
     onClose: () -> Unit,
     /**
-     * Whether this is the pane the keyboard belongs to right now.
+     * Where this document meets the workspace. The editor lays nothing out itself: it hands its
+     * bars and its views to the host, and the workspace puts them where they go - once, for the
+     * document last touched, rather than a whole window's worth per document.
+     */
+    host: DocumentHost,
+    /**
+     * Whether this is the document the keyboard belongs to right now.
      *
-     * Two of these can be on screen at once in split view, and only one of them may claim
-     * Ctrl+S/Ctrl+Z/Escape and the rest - otherwise whichever pane composed last would always win,
+     * Two documents can be on screen at once in split view, and only one of them may claim
+     * Ctrl+S/Ctrl+Z/Escape and the rest - otherwise whichever composed last would always win,
      * regardless of which one the marks are actually going on.
      */
-    focused: Boolean = true,
+    focused: Boolean,
     /** Flipped from outside - a tab's own close button - to ask this document to close itself. */
-    closeRequested: State<Boolean> = remember { mutableStateOf(false) },
-    /** Kept up to date with focus mode, so the tab strip can hide itself along with everything else. */
-    immersiveState: MutableState<Boolean> = remember { mutableStateOf(false) }
+    closeRequested: State<Boolean>
 ) {
     val scope = rememberCoroutineScope()
-    val snackbar = remember { SnackbarHostState() }
+    val snackbar = host.snackbar
     val textMeasurer = rememberTextMeasurer()
+    // The workspace's one set of tools; see LocalToolState.
     val tools = rememberToolState()
     val prefs = remember { SavePrefs() }
     val images = remember(file) { ImageStore(file) }
@@ -187,17 +192,18 @@ fun EditorScreen(
     var editingText by remember { mutableStateOf<Stroke?>(null) }
     var newTextAt by remember { mutableStateOf<Stroke?>(null) }
     var pickingColour by remember { mutableStateOf(false) }
-    // The shapes tray, and what is open off it. See ShapeTray and PageGestures.
-    var trayOpen by remember { mutableStateOf(false) }
-    var traySymbols by remember { mutableStateOf(false) }
-    var libraryOpen by remember { mutableStateOf(false) }
+    // The shapes tray, and what is open off it. See ShapeTray and PageGestures. The workspace's,
+    // not this document's: it belongs to the one bar of tools under every document.
+    var trayOpen by tools::trayOpen
+    var traySymbols by tools::traySymbols
+    var libraryOpen by tools::libraryOpen
     /** The kind whose settings are open for the next one placed, or null. */
-    var armedSettings by remember { mutableStateOf<com.inkslate.core.Stamps.Kind?>(null) }
+    var armedSettings by tools::armedSettings
     /** The stamp on the page whose settings are open, and the strokes it was when they opened. */
     var placedSettings by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
     var stampEditBefore by remember { mutableStateOf<List<Stroke>>(emptyList()) }
     // A symbol clicked after the last string was placed starts a new string.
-    var symbolPlaced by remember { mutableStateOf(false) }
+    var symbolPlaced by tools::symbolPlaced
     var pagesOpen by remember { mutableStateOf(false) }
     var versionsOpen by remember { mutableStateOf(false) }
     var exportOpen by remember { mutableStateOf(false) }
@@ -233,24 +239,28 @@ fun EditorScreen(
     var confirmOverwrite by remember { mutableStateOf(false) }
     var fileRulesOpen by remember { mutableStateOf(false) }
 
-    val viewport = remember(file) { Viewport() }
-    var page by remember(file) { mutableStateOf(0) }
+    // The camera and the page are the view's, not the document's: a document shown in both halves
+    // of a split has two of each. Everything here that moves the camera or asks which page this is
+    // means the view last touched - the one the bars above and below are showing.
+    val viewport: Viewport by host::activeViewport
+    var page: Int by host::activePage
     var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
     var pressureCurveOpen by remember { mutableStateOf(false) }
     var benchRunning by remember { mutableStateOf(false) }
     var benchReport by remember { mutableStateOf<String?>(null) }
-    /** Focus mode: the page and the tools, nothing else. */
-    var immersive by remember { mutableStateOf(false) }
+    /** Focus mode: the page and the tools, nothing else. The workspace's, like the bars it hides. */
+    var immersive by host.immersiveState
 
     // The viewport is not Compose state on the throw path - it is read by the frame loop - so the
     // two scrolling settings are pushed into it rather than read out of the tool state there.
     // As an effect rather than in the composition body: composition can run more than once for
     // the same state, and writing through it is how a recomposition acquires a side effect.
     SideEffect {
-        viewport.flingEnabled = tools.flingEnabled
-        viewport.flingScale = tools.flingScale
-        immersiveState.value = immersive
+        host.views.forEach {
+            it.viewport.flingEnabled = tools.flingEnabled
+            it.viewport.flingScale = tools.flingScale
+        }
     }
 
     /**
@@ -337,8 +347,12 @@ fun EditorScreen(
     // file on disk, and writing it on each frame of a drag would be a stream of writes for a
     // number nobody reads until the document is opened again.
     DisposableEffect(file.absolutePath, source) {
+        // Captured now. Read at dispose time, `source` is already the document that just finished
+        // loading - so this saved the untouched default camera the moment a document opened, and
+        // the restore below then put that back instead of fitting the page to the window.
+        val opened = source
         onDispose {
-            if (source != null && tools.rememberView) {
+            if (opened != null && positionRestored && tools.rememberView) {
                 ReadingPosition.save(
                     file.absolutePath, page, layout,
                     viewport.scale, viewport.offset.x, viewport.offset.y
@@ -1273,7 +1287,7 @@ fun EditorScreen(
      * left on page four is not where anyone reaching for one on page nine expects it.
      */
     fun toggleRuler() {
-        if (tools.rulerVisible) {
+        if (tools.rulerVisible && tools.rulerOwner === host) {
             tools.rulerVisible = false
             return
         }
@@ -1282,7 +1296,14 @@ fun EditorScreen(
         tools.ruler = com.inkslate.core.Ruler.across(
             com.inkslate.core.Box(0f, 0f, dim.width, dim.height), page
         )
+        tools.rulerOwner = host
         tools.rulerVisible = true
+    }
+
+    // The ruler is lifted off a document when you move to another one, so the toolbar's ruler
+    // button always describes the document it is sitting under.
+    LaunchedEffect(focused) {
+        if (focused && tools.rulerVisible && tools.rulerOwner !== host) tools.rulerVisible = false
     }
 
     fun toggleBookmark() {
@@ -1368,6 +1389,10 @@ fun EditorScreen(
     }
 
     // ---- layout --------------------------------------------------------------
+    //
+    // Nothing is laid out here. The bars and the views are handed to the host, and the workspace
+    // puts them where they go: the bars once, across the window, for the document last touched;
+    // the views into whichever panes are showing this document.
 
     val linkSummary = rememberLinkSummary()
 
@@ -1377,355 +1402,351 @@ fun EditorScreen(
         else -> WriteState.SAVED
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        topBar = topBar@{
-            // In focus mode the app bar goes too, leaving only the page and the drawing tools.
-            if (immersive) return@topBar
-            TopAppBar(
-                title = {
-                    Column {
+    val topBar: @Composable () -> Unit = topBar@{
+        // In focus mode the app bar goes too, leaving only the page and the drawing tools.
+        if (immersive) return@topBar
+        TopAppBar(
+            title = {
+                Column {
+                    Text(
+                        file.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    source?.let {
                         Text(
-                            file.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            fontWeight = FontWeight.SemiBold,
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        source?.let {
-                            Text(
-                                "Page ${page + 1} of ${it.pageCount}  ·  " + when (linkStatus) {
-                                    // The other device writes it; "unsaved" here would only be
-                                    // saying that its write is still on the way.
-                                    DocumentSync.Status.WRITTEN_ELSEWHERE ->
-                                        "linked, saved by your other device"
-                                    DocumentSync.Status.WRITING_HERE -> "${writeState.label}  ·  linked, saved here"
-                                    DocumentSync.Status.AGREEING -> "${writeState.label}  ·  linking..."
-                                    DocumentSync.Status.WAITING_FOR_FILE ->
-                                        "${writeState.label}  ·  waiting for sync"
-                                    // The other device does not have this open, or is not
-                                    // connected at all - which one is worth knowing.
-                                    DocumentSync.Status.ALONE -> writeState.label + linkSummary?.takeIf { it.linked }?.let {
-                                        "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
-                                    }.orEmpty()
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = ::leave) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
-                actions = {
-                    // Only there while linked, so a glance says whether marks are travelling.
-                    LinkIndicator(short = true, modifier = Modifier.align(Alignment.CenterVertically))
-                    // The same button the tablet has, in the same place: a control that says
-                    // "keep this, now" rather than a menu entry two taps away. Tinted while
-                    // there is something not yet in the document.
-                    IconButton(onClick = { save() }) {
-                        Icon(
-                            Icons.Default.Save,
-                            "Save into the document",
-                            tint = if (writeState == WriteState.SAVED) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.primary
-                            }
+                            "Page ${page + 1} of ${it.pageCount}  ·  " + when (linkStatus) {
+                                // The other device writes it; "unsaved" here would only be
+                                // saying that its write is still on the way.
+                                DocumentSync.Status.WRITTEN_ELSEWHERE ->
+                                    "linked, saved by your other device"
+                                DocumentSync.Status.WRITING_HERE -> "${writeState.label}  ·  linked, saved here"
+                                DocumentSync.Status.AGREEING -> "${writeState.label}  ·  linking..."
+                                DocumentSync.Status.WAITING_FOR_FILE ->
+                                    "${writeState.label}  ·  waiting for sync"
+                                // The other device does not have this open, or is not
+                                // connected at all - which one is worth knowing.
+                                DocumentSync.Status.ALONE -> writeState.label + linkSummary?.takeIf { it.linked }?.let {
+                                    "  ·  " + it.label.replaceFirstChar { c -> c.lowercase() }
+                                }.orEmpty()
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = ::undoOnce, enabled = undo.isNotEmpty()) {
-                        Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
-                    }
-                    IconButton(onClick = ::redoOnce, enabled = redo.isNotEmpty()) {
-                        Icon(Icons.AutoMirrored.Filled.Redo, "Redo")
-                    }
-                    IconButton(onClick = { searchOpen = true }) {
-                        Icon(Icons.Default.Search, "Find in document")
-                    }
-                    // In the document, not behind the settings: what a button does is something
-                    // you want to check or change in the middle of using it.
-                    IconButton(onClick = { controlsOpen = true }) {
-                        Icon(Icons.Default.Mouse, "Controls")
-                    }
-                    IconButton(onClick = { immersive = true }) {
-                        Icon(Icons.Default.Fullscreen, "Focus mode")
-                    }
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, "More")
+                }
+            },
+            actions = {
+                // Only there while linked, so a glance says whether marks are travelling.
+                LinkIndicator(short = true, modifier = Modifier.align(Alignment.CenterVertically))
+                // The same button the tablet has, in the same place: a control that says
+                // "keep this, now" rather than a menu entry two taps away. Tinted while
+                // there is something not yet in the document.
+                IconButton(onClick = { save() }) {
+                    Icon(
+                        Icons.Default.Save,
+                        "Save into the document",
+                        tint = if (writeState == WriteState.SAVED) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.primary
                         }
-                        DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Save into the document") },
-                                onClick = { menuOpen = false; save() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Share...") },
-                                onClick = { menuOpen = false; shareDocument() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Export...") },
-                                onClick = { menuOpen = false; exportOpen = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Checkpoint this version") },
-                                onClick = { menuOpen = false; checkpoint() }
-                            )
-                            if ((source?.pageCount ?: 0) == 1 && DesktopSources.isPdf(file)) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (ink.canvas != null) "Back to a fixed page"
-                                            else "Make this a canvas that grows"
-                                        )
-                                    },
-                                    onClick = {
-                                        menuOpen = false
-                                        val src = source
-                                        ink = if (ink.canvas != null) {
-                                            ink.copy(canvas = null)
-                                        } else {
-                                            val dim = src?.pageDim(0)
-                                            ink.copy(
-                                                canvas = com.inkslate.core.InkCanvas.startingAt(
-                                                    dim?.width ?: 612f,
-                                                    dim?.height ?: 792f
-                                                )
-                                            )
-                                        }
-                                        dirty = true
-                                    }
-                                )
-                            }
-                            DropdownMenuItem(
-                                text = { Text("Version history...") },
-                                onClick = { menuOpen = false; versionsOpen = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Rules for this file") },
-                                onClick = { menuOpen = false; fileRulesOpen = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Measure save speed") },
-                                onClick = {
-                                    menuOpen = false
-                                    benchRunning = true
-                                    scope.launch {
-                                        val text = withContext(Dispatchers.IO) {
-                                            SaveBenchmark.run(
-                                                file, ink,
-                                                prefs.effectiveFor(file.absolutePath).inkFormat
-                                            )
-                                        }
-                                        benchRunning = false
-                                        benchReport = text
-                                    }
-                                }
-                            )
-                            if (tools.rulerVisible) {
-                                DropdownMenuItem(
-                                    text = { Text("Snap the ruler to 15°") },
-                                    onClick = {
-                                        menuOpen = false
-                                        tools.ruler = tools.ruler?.snappedToAngle(15f)
-                                    }
-                                )
-                            }
+                    )
+                }
+                IconButton(onClick = ::undoOnce, enabled = undo.isNotEmpty()) {
+                    Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
+                }
+                IconButton(onClick = ::redoOnce, enabled = redo.isNotEmpty()) {
+                    Icon(Icons.AutoMirrored.Filled.Redo, "Redo")
+                }
+                IconButton(onClick = { searchOpen = true }) {
+                    Icon(Icons.Default.Search, "Find in document")
+                }
+                // In the document, not behind the settings: what a button does is something
+                // you want to check or change in the middle of using it.
+                IconButton(onClick = { controlsOpen = true }) {
+                    Icon(Icons.Default.Mouse, "Controls")
+                }
+                IconButton(onClick = { immersive = true }) {
+                    Icon(Icons.Default.Fullscreen, "Focus mode")
+                }
+                Box {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Icon(Icons.Default.MoreVert, "More")
+                    }
+                    DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Save into the document") },
+                            onClick = { menuOpen = false; save() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Share...") },
+                            onClick = { menuOpen = false; shareDocument() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Export...") },
+                            onClick = { menuOpen = false; exportOpen = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Checkpoint this version") },
+                            onClick = { menuOpen = false; checkpoint() }
+                        )
+                        if ((source?.pageCount ?: 0) == 1 && DesktopSources.isPdf(file)) {
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        if (tools.cropMargins) "✓  Trim page margins"
-                                        else "      Trim page margins"
+                                        if (ink.canvas != null) "Back to a fixed page"
+                                        else "Make this a canvas that grows"
                                     )
                                 },
-                                onClick = { menuOpen = false; tools.cropMargins = !tools.cropMargins }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Fit page") },
                                 onClick = {
                                     menuOpen = false
-                                    viewport.fit(viewport.content)
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Fit width") },
-                                onClick = { menuOpen = false; viewport.fitWidth(viewport.content) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Reset view") },
-                                onClick = {
-                                    menuOpen = false
-                                    viewport.stop()
-                                    viewport.restore(1f, 0f, 0f)
-                                    goToPage(page)
-                                }
-                            )
-                            // The page arrangement lives in the Pages sheet, as on the tablet.
-                            HorizontalDivider()
-                            PageFilter.entries.forEach { option ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (pageFilter == option) "✓  " + option.label
-                                            else "      " + option.label
+                                    val src = source
+                                    ink = if (ink.canvas != null) {
+                                        ink.copy(canvas = null)
+                                    } else {
+                                        val dim = src?.pageDim(0)
+                                        ink.copy(
+                                            canvas = com.inkslate.core.InkCanvas.startingAt(
+                                                dim?.width ?: 612f,
+                                                dim?.height ?: 792f
+                                            )
                                         )
-                                    },
-                                    onClick = { menuOpen = false; pageFilter = option }
-                                )
-                            }
-                            HorizontalDivider()
-                            DropdownMenuItem(
-                                text = { Text("Clear this page") },
-                                onClick = {
-                                    menuOpen = false
-                                    val before = strokes.filter { it.pageIndex == page }
-                                    if (before.isNotEmpty()) {
-                                        strokes.applyEdit(before, emptyList())
-                                        pushOp(Op.removed(before))
-                                        selection = emptySet()
                                     }
+                                    dirty = true
                                 }
                             )
                         }
-                    }
-                }
-            )
-        },
-        bottomBar = {
-            Column {
-                source?.let { src ->
-                    PageBar(
-                        page = page,
-                        pageCount = src.pageCount,
-                        bookmarked = bookmarks.any { it.page == page },
-                        onPrev = { goToPage(page - 1) },
-                        onNext = { goToPage(page + 1) },
-                        onOpenNavigation = { navOpen = true },
-                        onOpenPages = { pagesOpen = true },
-                        onToggleBookmark = ::toggleBookmark
-                    )
-                }
-                if (trayOpen) {
-                    // Read so the tray follows what is in hand, which is not itself Compose state.
-                    @Suppress("UNUSED_VARIABLE") val tick = tools.armedTick
-                    ShapeTray(
-                        shelf = tools.stampShelf,
-                        armed = tools.armedStamp?.first,
-                        armedText = tools.armedText,
-                        symbols = traySymbols,
-                        onArm = ::armKind,
-                        onDisarm = { tools.disarm() },
-                        onOpenLibrary = { libraryOpen = true },
-                        onSettingsFor = { kind ->
-                            endPlacedSettings()
-                            armedSettings = kind
-                        },
-                        onOpenSettings = {
-                            tools.armedStamp?.first?.let { kind ->
-                                endPlacedSettings()
-                                armedSettings = kind
-                            }
-                        },
-                        onShowSymbols = { traySymbols = it },
-                        onSymbol = { sym ->
-                            val held = tools.armedText
-                            tools.armText(if (held == null || symbolPlaced) sym else held + sym)
-                            symbolPlaced = false
-                        },
-                        onBackspace = {
-                            val held = tools.armedText
-                            if (held != null) {
-                                if (held.codePointCount(0, held.length) <= 1) {
-                                    tools.disarm()
-                                } else {
-                                    tools.armText(held.substring(0, held.offsetByCodePoints(held.length, -1)))
+                        DropdownMenuItem(
+                            text = { Text("Version history...") },
+                            onClick = { menuOpen = false; versionsOpen = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Rules for this file") },
+                            onClick = { menuOpen = false; fileRulesOpen = true }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Measure save speed") },
+                            onClick = {
+                                menuOpen = false
+                                benchRunning = true
+                                scope.launch {
+                                    val text = withContext(Dispatchers.IO) {
+                                        SaveBenchmark.run(
+                                            file, ink,
+                                            prefs.effectiveFor(file.absolutePath).inkFormat
+                                        )
+                                    }
+                                    benchRunning = false
+                                    benchReport = text
                                 }
                             }
-                        },
-                        onClose = ::closeTray
-                    )
+                        )
+                        if (tools.rulerVisible) {
+                            DropdownMenuItem(
+                                text = { Text("Snap the ruler to 15°") },
+                                onClick = {
+                                    menuOpen = false
+                                    tools.ruler = tools.ruler?.snappedToAngle(15f)
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    if (tools.cropMargins) "✓  Trim page margins"
+                                    else "      Trim page margins"
+                                )
+                            },
+                            onClick = { menuOpen = false; tools.cropMargins = !tools.cropMargins }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Fit page") },
+                            onClick = {
+                                menuOpen = false
+                                viewport.fit(viewport.content)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Fit width") },
+                            onClick = { menuOpen = false; viewport.fitWidth(viewport.content) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Reset view") },
+                            onClick = {
+                                menuOpen = false
+                                viewport.stop()
+                                viewport.restore(1f, 0f, 0f)
+                                goToPage(page)
+                            }
+                        )
+                        // The page arrangement lives in the Pages sheet, as on the tablet.
+                        HorizontalDivider()
+                        PageFilter.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (pageFilter == option) "✓  " + option.label
+                                        else "      " + option.label
+                                    )
+                                },
+                                onClick = { menuOpen = false; pageFilter = option }
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Clear this page") },
+                            onClick = {
+                                menuOpen = false
+                                val before = strokes.filter { it.pageIndex == page }
+                                if (before.isNotEmpty()) {
+                                    strokes.applyEdit(before, emptyList())
+                                    pushOp(Op.removed(before))
+                                    selection = emptySet()
+                                }
+                            }
+                        )
+                    }
                 }
-                val shapeTool = remember { mutableStateOf(tools.active.tool) }
-                ToolBar(
-                    state = tools,
-                    selectionCount = selection.size,
-                    shapesOpen = trayOpen,
-                    actions = ToolBarActions(
-                        onChanged = {
-                            // Leaving the select tool is also leaving the selection; a frame
-                            // around something you can no longer move is just clutter.
-                            if (tools.active.tool != Tool.SELECT) selection = emptySet()
-                            // Picking another tool puts a shape away; changing the pen does not.
-                            if (tools.active.tool != shapeTool.value) {
-                                shapeTool.value = tools.active.tool
-                                if (tools.hasArmed) closeTray()
-                            }
-                        },
-                        onUndo = ::undoOnce,
-                        onRedo = ::redoOnce,
-                        canUndo = undo.isNotEmpty(),
-                        canRedo = redo.isNotEmpty(),
-                        onRestyleSelection = { colour, width ->
-                            replaceSelection {
-                                it.copy(
-                                    color = colour ?: it.color,
-                                    baseWidth = width ?: it.baseWidth,
-                                    updatedUtc = System.currentTimeMillis()
-                                )
-                            }
-                        },
-                        onDeleteSelection = ::deleteSelection,
-                        onDuplicateSelection = ::duplicateSelection,
-                        onCopySelection = {
-                            val n = copySelection()
-                            scope.launch {
-                                snackbar.showSnackbar("Copied $n object${if (n == 1) "" else "s"}")
-                            }
-                        },
-                        onCutSelection = { if (copySelection() > 0) deleteSelection() },
-                        onClearSelection = { selection = emptySet() },
-                        onPaste = ::paste,
-                        canPaste = Clipboard.contents.isNotEmpty(),
-                        onPickCustomColour = { pickingColour = true },
-                        onToggleShapes = { if (trayOpen) closeTray() else openTray() },
-                        onEditStamp = com.inkslate.core.Stamps.stampOf(selected())?.let { tag ->
-                            {
-                                armedSettings = null
-                                stampEditBefore = selected()
-                                placedSettings = tag
-                            }
-                        },
-                        onToggleRuler = ::toggleRuler,
-                        onInsertPicture = ::importPicture,
-                        onCapture = { tools.edit { it.tool = com.inkslate.core.Tool.REGION } },
-                        onEditPressureCurve = { pressureCurveOpen = true },
-                        onSnapRuler = { tools.ruler = tools.ruler?.snappedToAngle(15f) },
-                        onRotateRuler = { deg -> tools.ruler = tools.ruler?.rotatedBy(deg) },
-                        onResetRuler = {
-                            val src = source
-                            if (src != null) {
-                                val dim = src.pageDim(page)
-                                tools.ruler = com.inkslate.core.Ruler.across(
-                                    com.inkslate.core.Box(0f, 0f, dim.width, dim.height), page
-                                )
-                            }
-                        },
-                        onBeginCrop = {
-                            cropping = selected().singleOrNull()
-                                ?.takeIf { it.kind == Stroke.Kind.IMAGE }
-                        },
-                        canCrop = selected().singleOrNull()?.kind == Stroke.Kind.IMAGE,
-                        onMessage = { scope.launch { snackbar.showSnackbar(it) } }
-                    )
-                )
-                StatusBar(status, busy)
             }
+        )
+    }
+
+    val bottomBar: @Composable () -> Unit = {
+        Column {
+            source?.let { src ->
+                PageBar(
+                    page = page,
+                    pageCount = src.pageCount,
+                    bookmarked = bookmarks.any { it.page == page },
+                    onPrev = { goToPage(page - 1) },
+                    onNext = { goToPage(page + 1) },
+                    onOpenNavigation = { navOpen = true },
+                    onOpenPages = { pagesOpen = true },
+                    onToggleBookmark = ::toggleBookmark
+                )
+            }
+            if (trayOpen) {
+                // Read so the tray follows what is in hand, which is not itself Compose state.
+                @Suppress("UNUSED_VARIABLE") val tick = tools.armedTick
+                ShapeTray(
+                    shelf = tools.stampShelf,
+                    armed = tools.armedStamp?.first,
+                    armedText = tools.armedText,
+                    symbols = traySymbols,
+                    onArm = ::armKind,
+                    onDisarm = { tools.disarm() },
+                    onOpenLibrary = { libraryOpen = true },
+                    onSettingsFor = { kind ->
+                        endPlacedSettings()
+                        armedSettings = kind
+                    },
+                    onOpenSettings = {
+                        tools.armedStamp?.first?.let { kind ->
+                            endPlacedSettings()
+                            armedSettings = kind
+                        }
+                    },
+                    onShowSymbols = { traySymbols = it },
+                    onSymbol = { sym ->
+                        val held = tools.armedText
+                        tools.armText(if (held == null || symbolPlaced) sym else held + sym)
+                        symbolPlaced = false
+                    },
+                    onBackspace = {
+                        val held = tools.armedText
+                        if (held != null) {
+                            if (held.codePointCount(0, held.length) <= 1) {
+                                tools.disarm()
+                            } else {
+                                tools.armText(held.substring(0, held.offsetByCodePoints(held.length, -1)))
+                            }
+                        }
+                    },
+                    onClose = ::closeTray
+                )
+            }
+            val shapeTool = remember { mutableStateOf(tools.active.tool) }
+            ToolBar(
+                state = tools,
+                selectionCount = selection.size,
+                shapesOpen = trayOpen,
+                actions = ToolBarActions(
+                    onChanged = {
+                        // Leaving the select tool is also leaving the selection; a frame
+                        // around something you can no longer move is just clutter.
+                        if (tools.active.tool != Tool.SELECT) selection = emptySet()
+                        // Picking another tool puts a shape away; changing the pen does not.
+                        if (tools.active.tool != shapeTool.value) {
+                            shapeTool.value = tools.active.tool
+                            if (tools.hasArmed) closeTray()
+                        }
+                    },
+                    onUndo = ::undoOnce,
+                    onRedo = ::redoOnce,
+                    canUndo = undo.isNotEmpty(),
+                    canRedo = redo.isNotEmpty(),
+                    onRestyleSelection = { colour, width ->
+                        replaceSelection {
+                            it.copy(
+                                color = colour ?: it.color,
+                                baseWidth = width ?: it.baseWidth,
+                                updatedUtc = System.currentTimeMillis()
+                            )
+                        }
+                    },
+                    onDeleteSelection = ::deleteSelection,
+                    onDuplicateSelection = ::duplicateSelection,
+                    onCopySelection = {
+                        val n = copySelection()
+                        scope.launch {
+                            snackbar.showSnackbar("Copied $n object${if (n == 1) "" else "s"}")
+                        }
+                    },
+                    onCutSelection = { if (copySelection() > 0) deleteSelection() },
+                    onClearSelection = { selection = emptySet() },
+                    onPaste = ::paste,
+                    canPaste = Clipboard.contents.isNotEmpty(),
+                    onPickCustomColour = { pickingColour = true },
+                    onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                    onEditStamp = com.inkslate.core.Stamps.stampOf(selected())?.let { tag ->
+                        {
+                            armedSettings = null
+                            stampEditBefore = selected()
+                            placedSettings = tag
+                        }
+                    },
+                    onToggleRuler = ::toggleRuler,
+                    onInsertPicture = ::importPicture,
+                    onCapture = { tools.edit { it.tool = com.inkslate.core.Tool.REGION } },
+                    onEditPressureCurve = { pressureCurveOpen = true },
+                    onSnapRuler = { tools.ruler = tools.ruler?.snappedToAngle(15f) },
+                    onRotateRuler = { deg -> tools.ruler = tools.ruler?.rotatedBy(deg) },
+                    onResetRuler = {
+                        val src = source
+                        if (src != null) {
+                            val dim = src.pageDim(page)
+                            tools.ruler = com.inkslate.core.Ruler.across(
+                                com.inkslate.core.Box(0f, 0f, dim.width, dim.height), page
+                            )
+                            tools.rulerOwner = host
+                        }
+                    },
+                    onBeginCrop = {
+                        cropping = selected().singleOrNull()
+                            ?.takeIf { it.kind == Stroke.Kind.IMAGE }
+                    },
+                    canCrop = selected().singleOrNull()?.kind == Stroke.Kind.IMAGE,
+                    onMessage = { scope.launch { snackbar.showSnackbar(it) } }
+                )
+            )
+            StatusBar(status, busy)
         }
-    ) { pad ->
+    }
+
+    val pane: @Composable (DocView, Boolean) -> Unit = { view, inFocus ->
         val src = source
-        Box(Modifier.padding(pad).fillMaxSize()) {
+        Box(Modifier.fillMaxSize()) {
             if (src == null) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) {
                     Text(
@@ -1737,10 +1758,10 @@ fun EditorScreen(
             } else {
                 DocumentCanvas(
                     source = src,
-                    viewport = viewport,
+                    viewport = view.viewport,
                     layout = layout,
-                    currentPage = page,
-                    onPageChanged = { page = it },
+                    currentPage = view.page,
+                    onPageChanged = { view.page = it },
                     strokes = strokes,
                     selection = selection,
                     onSelection = {
@@ -1767,6 +1788,7 @@ fun EditorScreen(
                     onCommitted = ::pushOp,
                     onEditText = { editingText = it },
                     canvas = ink.canvas,
+                    rulerOwner = host,
                     images = { id ->
                         loadedImages[id] ?: images.load(id)?.also { loadedImages[id] = it }
                     },
@@ -1822,54 +1844,66 @@ fun EditorScreen(
                         )
                     }
                 )
-                armedSettings?.let { kind ->
-                    StampSettingsPanel(
-                        kind = kind,
-                        options = tools.stampShelf.optionsFor(kind),
-                        subtitle = "For the next one you place",
-                        editKey = "armed:" + kind.name,
-                        preview = true,
-                        recentColours = tools.customColors,
-                        onChange = { o ->
-                            tools.editStampShelf { it.withOptions(kind, o) }
-                            if (tools.armedStamp?.first == kind) tools.arm(kind, tools.stampShelf.optionsFor(kind))
-                        },
-                        onDone = { armedSettings = null },
-                        modifier = Modifier.align(Alignment.CenterEnd)
-                    )
-                }
-                placedSettings?.let { tag ->
-                    com.inkslate.core.Stamps.kindOf(tag)?.let { kind ->
+                // The settings panels sit over the pane the keyboard is in, and nowhere else.
+                if (inFocus) {
+                    armedSettings?.let { kind ->
                         StampSettingsPanel(
                             kind = kind,
-                            options = tag.options,
-                            subtitle = "This one, on the page - and the next one you place",
-                            editKey = "placed:" + tag.group,
-                            preview = false,
+                            options = tools.stampShelf.optionsFor(kind),
+                            subtitle = "For the next one you place",
+                            editKey = "armed:" + kind.name,
+                            preview = true,
                             recentColours = tools.customColors,
                             onChange = { o ->
-                                previewStampEdit(o)
-                                tools.editStampShelf {
-                                    it.withOptions(kind, o.copy(size = it.optionsFor(kind).size))
-                                }
-                                dirty = true
+                                tools.editStampShelf { it.withOptions(kind, o) }
+                                if (tools.armedStamp?.first == kind) tools.arm(kind, tools.stampShelf.optionsFor(kind))
                             },
-                            onDone = ::endPlacedSettings,
+                            onDone = { armedSettings = null },
                             modifier = Modifier.align(Alignment.CenterEnd)
                         )
+                    }
+                    placedSettings?.let { tag ->
+                        com.inkslate.core.Stamps.kindOf(tag)?.let { kind ->
+                            StampSettingsPanel(
+                                kind = kind,
+                                options = tag.options,
+                                subtitle = "This one, on the page - and the next one you place",
+                                editKey = "placed:" + tag.group,
+                                preview = false,
+                                recentColours = tools.customColors,
+                                onChange = { o ->
+                                    previewStampEdit(o)
+                                    tools.editStampShelf {
+                                        it.withOptions(kind, o.copy(size = it.optionsFor(kind).size))
+                                    }
+                                    dirty = true
+                                },
+                                onDone = ::endPlacedSettings,
+                                modifier = Modifier.align(Alignment.CenterEnd)
+                            )
+                        }
                     }
                 }
             }
 
-            // The app bar is gone in focus mode, so this is the only way back out.
-            if (immersive) {
-                FilledTonalIconButton(
-                    onClick = { immersive = false },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
-                ) { Icon(Icons.Default.FullscreenExit, "Leave focus mode") }
+            // Messages about this document, over the view its bars are showing.
+            if (view.index == host.activeViewIndex) {
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
             }
         }
     }
+
+    SideEffect {
+        host.topBar = topBar
+        host.bottomBar = bottomBar
+        host.pane = pane
+    }
+
+    // Keeps this document's messages moving while none of its views is on screen. A message
+    // nobody draws never times out, and neither does whatever is waiting for it to go: a save
+    // that ends by saying so would hold the document "saving" until its tab was looked at again.
+    SnackbarHost(snackbar, Modifier.size(0.dp))
+
 
     // ---- dialogs -------------------------------------------------------------
 
@@ -2158,6 +2192,37 @@ fun EditorScreen(
                 onDismiss = { pagesOpen = false }
             )
         }
+    }
+
+    // The page indicator's sheet and the bookmark prompt. Both went missing along with the stamp
+    // picker's arrival, leaving the page bar's middle button and its bookmark button doing nothing.
+    if (navOpen) {
+        NavigationSheet(
+            pageCount = source?.pageCount ?: 1,
+            currentPage = page,
+            outline = outline,
+            bookmarks = bookmarks,
+            onGoToPage = { navOpen = false; goToPage(it) },
+            onRemoveBookmark = { p ->
+                ink = ink.withBookmarkRemoved(p)
+                bookmarks = ink.bookmarks
+                dirty = true
+            },
+            onDismiss = { navOpen = false }
+        )
+    }
+
+    bookmarkPrompt?.let { target ->
+        BookmarkDialog(
+            page = target,
+            onDismiss = { bookmarkPrompt = null },
+            onConfirm = { label ->
+                ink = ink.withBookmarkAdded(target, label)
+                bookmarks = ink.bookmarks
+                dirty = true
+                bookmarkPrompt = null
+            }
+        )
     }
 
     // The button for this has been in the toolbar all along with nothing behind it: the sheet was

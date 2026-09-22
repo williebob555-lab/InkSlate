@@ -104,6 +104,31 @@ class ToolState(private val context: Context) {
     var snapHighlighterToText by mutableStateOf(true)
     var cropMargins by mutableStateOf(false)
     var rulerVisible by mutableStateOf(false)
+
+    /**
+     * The document the ruler is lying on.
+     *
+     * There is one ruler for the whole workspace, as there is one pen: it rests on one document
+     * at a time, and reaching for it from another moves it there. Without an owner, turning it on
+     * would put a ruler - snapping ink - on every open document at once.
+     */
+    var rulerOwner: Any? by mutableStateOf(null)
+
+    // ---- the shapes tray -----------------------------------------------------
+    //
+    // Held here rather than by each document for the same reason the pens are: the bar under the
+    // pages is one set of tools for the whole workspace, and it should look the same whichever
+    // document was touched last.
+
+    var trayOpen by mutableStateOf(false)
+    var traySymbols by mutableStateOf(false)
+    var libraryOpen by mutableStateOf(false)
+
+    /** The kind whose settings are open for the next one placed, or null. */
+    var armedSettings by mutableStateOf<com.inkslate.core.Stamps.Kind?>(null)
+
+    /** A symbol tapped after the last string was placed starts a new string. */
+    var symbolPlaced by mutableStateOf(false)
     /**
      * What the barrel button does while it is held - always [StylusButtonAction.PROFILE], which
      * is to say "draw with the barrel's own tool, colour and width".
@@ -324,7 +349,8 @@ class ToolState(private val context: Context) {
         view.lassoSelect = lassoSelect
         view.snapHighlighterToText = snapHighlighterToText
         view.cropMargins = cropMargins
-        view.rulerVisible = rulerVisible
+        // Not the ruler: that is shown only on the document it lies on, which is the workspace's
+        // to decide - see rulerOwner.
         view.stylusButton = stylusButton
         view.flingEnabled = flingEnabled
         view.flingScale = flingScale
@@ -579,6 +605,15 @@ class ToolState(private val context: Context) {
     }
 }
 
+/**
+ * The workspace's one set of tools, when there is a workspace to hold it.
+ *
+ * Every open document draws with the same pens, and Settings edits those same pens - a second
+ * instance would only catch up with a change the next time it was created.
+ */
+val LocalToolState = androidx.compose.runtime.staticCompositionLocalOf<ToolState?> { null }
+
+/** The workspace's tools, or a fresh set for a screen shown outside one. */
 @Composable
 fun rememberToolState(context: Context = LocalContext.current): ToolState =
-    remember { ToolState(context) }
+    LocalToolState.current ?: remember { ToolState(context) }

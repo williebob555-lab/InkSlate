@@ -166,6 +166,8 @@ fun DocumentCanvas(
     wordsUnder: ((Int, List<Pair<Float, Float>>) -> List<InkBox>)? = null,
     /** Set when this document is a canvas that grows to fit what is written on it. */
     canvas: com.inkslate.core.InkCanvas? = null,
+    /** Which document this is, so the workspace's one ruler shows only on the one it lies on. */
+    rulerOwner: Any? = null,
     modifier: Modifier = Modifier
 ) {
     val extents = remember(source, source.pageCount) {
@@ -560,7 +562,8 @@ fun DocumentCanvas(
                         onDrew = onDrew,
                         onCaptureRegion = onCaptureRegion,
                         wordsUnder = wordsUnder,
-                        action = action
+                        action = action,
+                        rulerOwner = rulerOwner
                     )
                 }
             }
@@ -609,7 +612,8 @@ fun DocumentCanvas(
                                 crop = if (cropMargins) contentBoxes[slot.index] else null,
                                 scale = vp.scale,
                                 ruler = tools.ruler?.takeIf {
-                                    tools.rulerVisible && it.page == slot.index
+                                    tools.rulerVisible && tools.rulerOwner === rulerOwner &&
+                                        it.page == slot.index
                                 },
                                 images = images
                             )

@@ -209,6 +209,31 @@ class ToolState {
     var rulerVisible by mutableStateOf(false)
 
     /**
+     * The document the ruler is lying on.
+     *
+     * There is one ruler for the whole workspace, as there is one pen: it rests on one document
+     * at a time, and reaching for it from another moves it there. Without an owner, a ruler laid
+     * on one document would also appear - and snap ink - at the same place on every other one.
+     */
+    var rulerOwner: Any? by mutableStateOf(null)
+
+    // ---- the shapes tray -----------------------------------------------------
+    //
+    // Held here rather than by each document for the same reason the pens are: the bar under the
+    // pages is one set of tools for the whole workspace, and it should look the same whichever
+    // document was touched last.
+
+    var trayOpen by mutableStateOf(false)
+    var traySymbols by mutableStateOf(false)
+    var libraryOpen by mutableStateOf(false)
+
+    /** The kind whose settings are open for the next one placed, or null. */
+    var armedSettings by mutableStateOf<com.inkslate.core.Stamps.Kind?>(null)
+
+    /** A symbol clicked after the last string was placed starts a new string. */
+    var symbolPlaced by mutableStateOf(false)
+
+    /**
      * Where the straightedge is lying, in the coordinates of the page it is on.
      *
      * Page coordinates rather than screen, so it stays put relative to the work when the view is
@@ -527,14 +552,17 @@ class ToolState {
 }
 
 /**
- * The tool state for a screen.
+ * The workspace's one set of tools, when there is a workspace to hold it.
  *
- * Deliberately one per screen rather than a singleton, exactly as on the tablet: every setting in
- * here writes itself to the preferences as it changes, so two instances agree without having to
- * be the same object, and neither holds the other's ruler or half-placed stamp.
+ * Every open document draws with the same pens, and Settings edits those same pens - a second
+ * instance would only catch up with a change the next time it was created.
  */
+val LocalToolState = androidx.compose.runtime.staticCompositionLocalOf<ToolState?> { null }
+
+/** The workspace's tools, or a fresh set for a screen shown outside one. */
 @androidx.compose.runtime.Composable
-fun rememberToolState(): ToolState = androidx.compose.runtime.remember { ToolState() }
+fun rememberToolState(): ToolState =
+    LocalToolState.current ?: androidx.compose.runtime.remember { ToolState() }
 
 /** The palette the toolbar shows: your own colours first, then the shared set. */
 fun ToolState.swatches(): List<Int> = (customColors + Palette.COLORS).distinct()

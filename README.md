@@ -77,11 +77,17 @@ off and taking the next stable release puts you back on the ordinary channel.
 - Automatic trimming of a scanned page's margins
 
 **Files**
-- Every open document is a tab across the top, switched between instantly - nothing is reloaded,
-  so the undo history and scroll position are exactly where you left them
-- Two documents open side by side at once - drag the divider to resize, right-click (long-press
-  on Android) a tab for "Open to the side," and draw or write into either half without switching
-  focus first. On Android this needs a tablet-sized screen; tabs alone work everywhere
+- Every open document is a tab across the top. Switching tabs does not open the file again, so
+  the undo history and the place you were reading are where you left them
+- One workspace, not one window per document: a single app bar, page bar and set of tools, which
+  act on whichever document you touched last. Pens, colours, presets, the shapes tray and the
+  ruler are the same whichever document you are in
+- Two documents side by side - right-click a tab (long-press on Android) and choose "Open to the
+  side", then drag the divider to resize. Write in either half without switching first
+- The same document twice, side by side: "Open a second view to the side" on the tab in front.
+  Each half has its own place and zoom; they are one document, so ink written in either appears
+  in both, and one undo takes back the last change made in either
+- On Android the split needs a tablet-sized screen; tabs work everywhere
 - Browses your storage directly, with thumbnails that already show your ink
 - Blank documents: ruled, grid, dot, graph, Cornell, music, isometric, up to whiteboard size
 - Canvas documents that grow as you write past an edge, and stay ordinary PDFs while doing it
