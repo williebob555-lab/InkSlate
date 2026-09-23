@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -260,6 +261,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                     onCloseTab = { id -> tabOf(id)?.closeRequested?.value = true },
                     onCloseOthers = ::closeOthers,
                     onCloseAll = ::closeAll,
+                    onMoveTab = { from, to -> tabs.add(to, tabs.removeAt(from)) },
                     onNewTab = { homeShown = true; screen = Screen.Home },
                     onLeaveFullscreen = if (immersive && !homeShown) {
                         { immersive = false }
@@ -301,7 +303,11 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                         val s = secondary
                         if (secondaryTab != null && s != null) {
                             val ratio = splitRatio.coerceIn(0.15f, 0.85f)
-                            Row(Modifier.fillMaxSize()) {
+                            // The bar follows the pointer: a drag is a share of the room the two
+                            // halves have between them, not of some fixed guess at it.
+                            val dividerPx = with(androidx.compose.ui.platform.LocalDensity.current) { SPLIT_DIVIDER.toPx() }
+                            var splitWidth by remember { mutableStateOf(0) }
+                            Row(Modifier.fillMaxSize().onSizeChanged { splitWidth = it.width }) {
                                 PaneFrame(
                                     focused = focusedPane == Pane.PRIMARY,
                                     onFocus = { focusedPane = Pane.PRIMARY },
@@ -314,10 +320,8 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                                 }
                                 SplitDivider(
                                     onDrag = { deltaPx ->
-                                        // A resolution-independent nudge is close enough here -
-                                        // this is a hand on a mouse, not something that needs to
-                                        // track the pointer pixel for pixel.
-                                        splitRatio = (splitRatio + deltaPx / 1600f).coerceIn(0.15f, 0.85f)
+                                        val room = (splitWidth - dividerPx).coerceAtLeast(1f)
+                                        splitRatio = (splitRatio + deltaPx / room).coerceIn(0.15f, 0.85f)
                                     },
                                     onClose = ::closeSplit
                                 )

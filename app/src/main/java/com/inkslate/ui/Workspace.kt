@@ -2,6 +2,8 @@ package com.inkslate.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -35,6 +37,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,11 +50,17 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.inkslate.ink.DrawingView
 import java.io.File
 
@@ -204,6 +214,8 @@ fun TabStrip(
     primaryId: String?,
     secondaryId: String?,
     splitAvailable: Boolean,
+    /** The split puts the second document below rather than beside. */
+    stacked: Boolean = false,
     onHome: () -> Unit,
     onSelect: (String) -> Unit,
     onOpenInSplit: (String) -> Unit,
@@ -214,8 +226,31 @@ fun TabStrip(
     onNewTab: () -> Unit,
     /** Set while the page has the screen to itself; the tabs stay, and this is the way back out. */
     onLeaveFullscreen: (() -> Unit)? = null,
+    /** Move the document tab at the first index to the second. Home is not in [tabs] and stays put. */
+    onMoveTab: (Int, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    // A tab being dragged along the strip, and how far it sits from its own slot. It changes places
+    // with a neighbour once it is more than halfway over it, so the finger and the tab stay together.
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    val widths = remember { mutableMapOf<String, Int>() }
+    val move by rememberUpdatedState(onMoveTab)
+    fun dragBy(id: String, dx: Float) {
+        dragOffset += dx
+        while (true) {
+            val i = tabs.indexOfFirst { it.id == id }
+            if (i < 0) return
+            val next = tabs.getOrNull(i + 1)?.let { widths[it.id] }
+            val prev = tabs.getOrNull(i - 1)?.let { widths[it.id] }
+            if (dragOffset > 0 && next != null && dragOffset > next / 2f) {
+                move(i, i + 1); dragOffset -= next
+            } else if (dragOffset < 0 && prev != null && -dragOffset > prev / 2f) {
+                move(i, i - 1); dragOffset += prev
+            } else return
+        }
+    }
+
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 1.dp) {
         Row(
             modifier.fillMaxWidth().height(48.dp),
@@ -232,17 +267,22 @@ fun TabStrip(
                 Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                for (tab in tabs) {
+                for (tab in tabs) key(tab.id) {
                     DocumentTabChip(
                         tab = tab,
+                        dragOffset = if (draggingId == tab.id) dragOffset else null,
+                        onWidth = { widths[tab.id] = it },
+                        onDragStart = { draggingId = tab.id; dragOffset = 0f },
+                        onDragBy = { dragBy(tab.id, it) },
+                        onDragEnd = { draggingId = null; dragOffset = 0f },
                         shown = !homeShown && tab.id in shownIds,
                         focused = !homeShown && tab.id == focusedId,
                         twice = tab.id == primaryId && tab.id == secondaryId,
                         splitLabel = when {
                             !splitAvailable -> null
                             tab.id == secondaryId -> null
-                            tab.id == primaryId -> "Open a second view to the side"
-                            else -> "Open to the side"
+                            tab.id == primaryId -> if (stacked) "Open a second view below" else "Open a second view to the side"
+                            else -> if (stacked) "Open below" else "Open to the side"
                         },
                         splitActive = secondaryId != null,
                         onSelect = { onSelect(tab.id) },
@@ -275,7 +315,9 @@ private fun TabChip(
     leading: @Composable () -> Unit,
     trailing: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    /** Replaces the plain tap and long-press when the chip handles its own touches. */
+    gestures: Modifier? = null
 ) {
     val background = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent
     val content = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
@@ -293,7 +335,7 @@ private fun TabChip(
                     drawRect(accent, topLeft = Offset(0f, size.height - h), size = Size(size.width, h))
                 }
             }
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .then(gestures ?: Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick))
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -314,6 +356,12 @@ private fun TabChip(
 @Composable
 private fun DocumentTabChip(
     tab: DocTab,
+    /** How far the tab has been dragged from its slot, or null when it is not being dragged. */
+    dragOffset: Float?,
+    onWidth: (Int) -> Unit,
+    onDragStart: () -> Unit,
+    onDragBy: (Float) -> Unit,
+    onDragEnd: () -> Unit,
     shown: Boolean,
     focused: Boolean,
     /** Showing in both halves at once. */
@@ -334,11 +382,60 @@ private fun DocumentTabChip(
         "png", "jpg", "jpeg", "webp" -> Icons.Default.Image
         else -> Icons.Default.Description
     }
-    Box {
+    val haptics = LocalHapticFeedback.current
+    val select by rememberUpdatedState(onSelect)
+    // A tap selects. A long press either opens the menu, if the finger lifts where it went down, or
+    // picks the tab up to drag along the strip. A finger that moves before the long press is the
+    // strip being scrolled, and is left to it.
+    val gestures = Modifier.pointerInput(tab.id) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            var lifted: androidx.compose.ui.input.pointer.PointerInputChange? = null
+            var moved = false
+            val waited = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                while (true) {
+                    val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                    if (!c.pressed) { lifted = c; break }
+                    if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                        moved = true; break
+                    }
+                }
+            }
+            if (waited != null) {
+                // The close button inside the chip takes its own taps.
+                val up = lifted
+                if (!moved && up != null && !up.isConsumed) { up.consume(); select() }
+                return@awaitEachGesture
+            }
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            onDragStart()
+            var travel = 0f
+            while (true) {
+                val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                if (!c.pressed) { c.consume(); break }
+                val dx = c.positionChange().x
+                travel += kotlin.math.abs(dx)
+                c.consume()
+                onDragBy(dx)
+            }
+            onDragEnd()
+            if (travel < viewConfiguration.touchSlop) menuOpen = true
+        }
+    }
+    Box(
+        Modifier
+            .onSizeChanged { onWidth(it.width) }
+            .zIndex(if (dragOffset != null) 1f else 0f)
+            .graphicsLayer {
+                translationX = dragOffset ?: 0f
+                if (dragOffset != null) shadowElevation = 6.dp.toPx()
+            }
+    ) {
         TabChip(
-            selected = shown,
+            selected = shown || dragOffset != null,
             focused = focused,
             onClick = onSelect,
+            gestures = gestures,
             label = tab.file.name,
             leading = { Icon(icon, null, modifier = Modifier.size(16.dp)) },
             trailing = {
@@ -352,7 +449,6 @@ private fun DocumentTabChip(
                     Icon(Icons.Default.Close, "Close ${tab.file.name}", modifier = Modifier.size(14.dp))
                 }
             },
-            onLongClick = { menuOpen = true }
         )
         DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
             if (splitLabel != null) {
@@ -375,20 +471,32 @@ private fun DocumentTabChip(
 }
 
 /**
- * The bar between two documents shown side by side. Dragged to resize, tapped to fold the split
- * away again - the document in the other half keeps the whole width.
+ * The bar between two documents shown side by side, or one above the other when [stacked]. Dragged
+ * to resize, tapped to fold the split away again - the document in the other half keeps the whole
+ * screen. [onDrag] is told how far the finger moved along the split, in pixels.
  */
+/** How thick the bar between the two halves of a split is. */
+val SPLIT_DIVIDER = 14.dp
+
 @Composable
-fun SplitDivider(onDrag: (Float) -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun SplitDivider(
+    onDrag: (Float) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+    stacked: Boolean = false
+) {
+    val drag by rememberUpdatedState(onDrag)
     Box(
         modifier
-            .fillMaxHeight()
-            .width(14.dp)
+            .then(
+                if (stacked) Modifier.fillMaxWidth().height(SPLIT_DIVIDER)
+                else Modifier.fillMaxHeight().width(SPLIT_DIVIDER)
+            )
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-            .pointerInput(Unit) {
+            .pointerInput(stacked) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
-                    onDrag(dragAmount.x)
+                    drag(if (stacked) dragAmount.y else dragAmount.x)
                 }
             },
         contentAlignment = Alignment.Center

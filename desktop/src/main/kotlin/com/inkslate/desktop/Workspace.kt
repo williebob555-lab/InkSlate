@@ -3,6 +3,7 @@ package com.inkslate.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,8 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,11 +50,14 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import java.io.File
 
 /** One open document: a tab in the workspace. Its id is stable for the tab's whole lifetime. */
@@ -195,8 +201,31 @@ fun TabStrip(
     onCloseAll: () -> Unit,
     onNewTab: () -> Unit,
     /** Set while the page has the screen to itself; the tabs stay, and this is the way back out. */
-    onLeaveFullscreen: (() -> Unit)? = null
+    onLeaveFullscreen: (() -> Unit)? = null,
+    /** Move the document tab at the first index to the second. Home is not in [tabs] and stays put. */
+    onMoveTab: (Int, Int) -> Unit = { _, _ -> }
 ) {
+    // A tab being dragged along the strip, and how far it sits from its own slot. It changes places
+    // with a neighbour once it is more than halfway over it, so the pointer and the tab stay together.
+    var draggingId by remember { mutableStateOf<String?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+    val widths = remember { mutableMapOf<String, Int>() }
+    val move by rememberUpdatedState(onMoveTab)
+    fun dragBy(id: String, dx: Float) {
+        dragOffset += dx
+        while (true) {
+            val i = tabs.indexOfFirst { it.id == id }
+            if (i < 0) return
+            val next = tabs.getOrNull(i + 1)?.let { widths[it.id] }
+            val prev = tabs.getOrNull(i - 1)?.let { widths[it.id] }
+            if (dragOffset > 0 && next != null && dragOffset > next / 2f) {
+                move(i, i + 1); dragOffset -= next
+            } else if (dragOffset < 0 && prev != null && -dragOffset > prev / 2f) {
+                move(i, i - 1); dragOffset += prev
+            } else return
+        }
+    }
+
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 1.dp) {
         Row(
             Modifier.fillMaxWidth().height(44.dp),
@@ -213,9 +242,14 @@ fun TabStrip(
                 Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                for (tab in tabs) {
+                for (tab in tabs) key(tab.id) {
                     DocumentTabChip(
                         tab = tab,
+                        dragOffset = if (draggingId == tab.id) dragOffset else null,
+                        onWidth = { widths[tab.id] = it },
+                        onDragStart = { draggingId = tab.id; dragOffset = 0f },
+                        onDragBy = { dragBy(tab.id, it) },
+                        onDragEnd = { draggingId = null; dragOffset = 0f },
                         shown = !homeShown && tab.id in shownIds,
                         focused = !homeShown && tab.id == focusedId,
                         twice = tab.id == primaryId && tab.id == secondaryId,
@@ -297,6 +331,12 @@ private fun TabChip(
 @Composable
 private fun DocumentTabChip(
     tab: DocTab,
+    /** How far the tab has been dragged from its slot, or null when it is not being dragged. */
+    dragOffset: Float?,
+    onWidth: (Int) -> Unit,
+    onDragStart: () -> Unit,
+    onDragBy: (Float) -> Unit,
+    onDragEnd: () -> Unit,
     shown: Boolean,
     focused: Boolean,
     /** Showing in both halves at once. */
@@ -317,9 +357,28 @@ private fun DocumentTabChip(
         "png", "jpg", "jpeg", "webp" -> Icons.Default.Image
         else -> Icons.Default.Description
     }
-    Box {
+    // Dragged sideways, a tab moves along the strip; a click without moving still just selects it.
+    Box(
+        Modifier
+            .onSizeChanged { onWidth(it.width) }
+            .zIndex(if (dragOffset != null) 1f else 0f)
+            .graphicsLayer {
+                translationX = dragOffset ?: 0f
+                if (dragOffset != null) shadowElevation = 6.dp.toPx()
+            }
+            .pointerInput(tab.id) {
+                detectHorizontalDragGestures(
+                    onDragStart = { onDragStart() },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragEnd() }
+                ) { change, dx ->
+                    change.consume()
+                    onDragBy(dx)
+                }
+            }
+    ) {
         TabChip(
-            selected = shown,
+            selected = shown || dragOffset != null,
             focused = focused,
             onClick = onSelect,
             label = tab.file.name,
@@ -361,12 +420,15 @@ private fun DocumentTabChip(
  * The bar between two documents shown side by side. Dragged to resize, clicked to fold the split
  * away again - the same document that was primary keeps the whole width.
  */
+/** How wide the bar between the two halves of a split is. */
+val SPLIT_DIVIDER = 10.dp
+
 @Composable
 fun SplitDivider(onDrag: (Float) -> Unit, onClose: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier
             .fillMaxHeight()
-            .width(10.dp)
+            .width(SPLIT_DIVIDER)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->

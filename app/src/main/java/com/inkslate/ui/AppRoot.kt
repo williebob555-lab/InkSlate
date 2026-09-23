@@ -39,6 +39,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.inkslate.data.FileRepo
@@ -93,10 +95,13 @@ fun AppRoot(
     var refreshKey by remember { mutableStateOf(0) }
     var newDocOpen by remember { mutableStateOf(false) }
 
-    // A screen wide enough to show a side panel is wide enough to show a second document -
-    // the same 840dp the editor already uses to decide whether a panel can sit beside the page
-    // instead of over it.
-    val splitAvailable = LocalConfiguration.current.screenWidthDp >= 840
+    // A screen wide enough to show a side panel is wide enough to show a second document beside
+    // the first - the same 840dp the editor already uses to decide whether a panel can sit beside
+    // the page instead of over it. Turned to portrait, the same screen is that tall instead, and
+    // the second document goes below.
+    val config = LocalConfiguration.current
+    val splitStacked = config.screenWidthDp < 840
+    val splitAvailable = config.screenWidthDp >= 840 || config.screenHeightDp >= 840
 
     // ---- the workspace -------------------------------------------------------------
 
@@ -213,8 +218,8 @@ fun AppRoot(
         tabs.forEach { it.closeRequested.value = true }
     }
 
-    // A narrow screen - the tablet turned to portrait, the app in a split-screen window - has no
-    // room for two panes. The document being worked in keeps the screen.
+    // A small window - the app in a split-screen window, a phone on its side - has no room for
+    // two panes. The document being worked in keeps the screen.
     LaunchedEffect(splitAvailable) {
         if (!splitAvailable && secondary != null) {
             if (focusedPane == Pane.SECONDARY) primary = secondary
@@ -305,6 +310,8 @@ fun AppRoot(
                         primaryId = primaryTab?.id,
                         secondaryId = secondaryTab?.id,
                         splitAvailable = splitAvailable,
+                        stacked = splitStacked,
+                        onMoveTab = { from, to -> tabs.add(to, tabs.removeAt(from)) },
                         onHome = { homeShown = true },
                         onSelect = ::selectTab,
                         onOpenInSplit = ::openInSplit,
@@ -355,32 +362,55 @@ fun AppRoot(
                             val s = secondary
                             if (secondaryTab != null && s != null) {
                                 val ratio = splitRatio.coerceIn(0.15f, 0.85f)
-                                Row(Modifier.fillMaxSize()) {
+                                // The bar follows the finger: a drag is a share of the room the two
+                                // halves have between them, not of some fixed guess at it.
+                                val dividerPx = with(LocalDensity.current) { SPLIT_DIVIDER.toPx() }
+                                var splitLength by remember { mutableStateOf(0) }
+                                val first: @Composable (Modifier) -> Unit = { m ->
                                     PaneFrame(
                                         focused = focusedPane == Pane.PRIMARY,
                                         onFocus = { focusedPane = Pane.PRIMARY },
-                                        modifier = Modifier.weight(ratio).fillMaxHeight()
+                                        modifier = m
                                     ) {
                                         HostPane(
                                             primaryTab.host, primaryTab.host.viewOrFirst(p.view),
                                             focusedPane == Pane.PRIMARY
                                         )
                                     }
+                                }
+                                val divider: @Composable () -> Unit = {
                                     SplitDivider(
                                         onDrag = { deltaPx ->
-                                            splitRatio = (splitRatio + deltaPx / 1200f).coerceIn(0.15f, 0.85f)
+                                            val room = (splitLength - dividerPx).coerceAtLeast(1f)
+                                            splitRatio = (splitRatio + deltaPx / room).coerceIn(0.15f, 0.85f)
                                         },
-                                        onClose = ::closeSplit
+                                        onClose = ::closeSplit,
+                                        stacked = splitStacked
                                     )
+                                }
+                                val second: @Composable (Modifier) -> Unit = { m ->
                                     PaneFrame(
                                         focused = focusedPane == Pane.SECONDARY,
                                         onFocus = { focusedPane = Pane.SECONDARY },
-                                        modifier = Modifier.weight(1f - ratio).fillMaxHeight()
+                                        modifier = m
                                     ) {
                                         HostPane(
                                             secondaryTab.host, secondaryTab.host.viewOrFirst(s.view),
                                             focusedPane == Pane.SECONDARY
                                         )
+                                    }
+                                }
+                                if (splitStacked) {
+                                    Column(Modifier.fillMaxSize().onSizeChanged { splitLength = it.height }) {
+                                        first(Modifier.weight(ratio).fillMaxWidth())
+                                        divider()
+                                        second(Modifier.weight(1f - ratio).fillMaxWidth())
+                                    }
+                                } else {
+                                    Row(Modifier.fillMaxSize().onSizeChanged { splitLength = it.width }) {
+                                        first(Modifier.weight(ratio).fillMaxHeight())
+                                        divider()
+                                        second(Modifier.weight(1f - ratio).fillMaxHeight())
                                     }
                                 }
                             } else {
