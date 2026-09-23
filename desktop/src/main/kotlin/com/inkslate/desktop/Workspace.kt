@@ -55,9 +55,12 @@ import androidx.compose.ui.unit.dp
 import java.io.File
 
 /** One open document: a tab in the workspace. Its id is stable for the tab's whole lifetime. */
-class DocTab(val id: String, val file: File, val host: DocumentHost) {
+class DocTab(val id: String, val file: File, val host: DocumentHost, fullscreen: Boolean = false) {
     /** Flipped by the tab's own close button to ask the document to save-through and close. */
     val closeRequested = mutableStateOf(false)
+
+    /** Whether this document was left fullscreen, which is how it comes back when you return to it. */
+    var fullscreen by mutableStateOf(fullscreen)
 }
 
 /** Which of the (at most two) visible panes the keyboard currently belongs to. */

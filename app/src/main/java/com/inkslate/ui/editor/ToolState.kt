@@ -190,6 +190,8 @@ class ToolState(private val context: Context) {
     var rememberView by mutableStateOf(true)
     /** Hold the screen awake while a document is open. */
     var keepScreenOn by mutableStateOf(true)
+    /** Going Home from a fullscreen document leaves the system bars hidden. */
+    var fullscreenOnHome by mutableStateOf(false)
     /** Multiplier on release velocity. Higher covers more of a long document per flick. */
     var flingScale by mutableStateOf(1.35f)
     var tableRows by mutableStateOf(3)
@@ -489,6 +491,7 @@ class ToolState(private val context: Context) {
             .putBoolean(K_FLING, flingEnabled)
             .putBoolean(K_REMEMBER_VIEW, rememberView)
             .putBoolean(K_KEEP_AWAKE, keepScreenOn)
+            .putBoolean(K_FULLSCREEN_HOME, fullscreenOnHome)
             .putString(K_STYLUS_BUTTON, stylusButton.name)
             .putFloat(K_FLING_SCALE, flingScale)
             .putInt(K_ROWS, tableRows)
@@ -519,6 +522,7 @@ class ToolState(private val context: Context) {
         flingEnabled = sp.getBoolean(K_FLING, true)
         rememberView = sp.getBoolean(K_REMEMBER_VIEW, true)
         keepScreenOn = sp.getBoolean(K_KEEP_AWAKE, true)
+        fullscreenOnHome = sp.getBoolean(K_FULLSCREEN_HOME, false)
         // Both barrel buttons are their own pen now, and nothing in the UI can change that, so
         // an older install's saved ERASE is deliberately not read back - it would leave the
         // barrel rubbing out with no control left to turn it off.
@@ -562,6 +566,7 @@ class ToolState(private val context: Context) {
         private const val K_FLING = "fling"
         private const val K_REMEMBER_VIEW = "remember_view"
         private const val K_KEEP_AWAKE = "keep_awake"
+        private const val K_FULLSCREEN_HOME = "fullscreen_on_home"
         private const val K_STYLUS_BUTTON = "stylus_button"
         private const val K_STYLUS_BUTTON_2 = "stylus_button_2"
         private const val K_MOUSE_SEEN = "mouse_seen"

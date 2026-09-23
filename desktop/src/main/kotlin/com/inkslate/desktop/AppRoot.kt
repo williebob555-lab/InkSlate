@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -144,7 +145,9 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
             val tab = DocTab(
                 id = "${f.absolutePath}#${System.nanoTime()}",
                 file = f,
-                host = DocumentHost(immersiveState)
+                host = DocumentHost(immersiveState),
+                // A document opened while in focus mode joins it.
+                fullscreen = immersive
             )
             tabs.add(tab)
             tab.id
@@ -187,11 +190,6 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         tabs.forEach { it.closeRequested.value = true }
     }
 
-    // Focus mode is for the page; going Home ends it, as leaving the editor always did.
-    androidx.compose.runtime.LaunchedEffect(homeShown) {
-        if (homeShown) immersive = false
-    }
-
     val primaryTab = if (homeShown) null else tabOf(primary?.tabId)
     val secondaryTab = if (homeShown || primaryTab == null) null else tabOf(secondary?.tabId)
     val focusedRef = when {
@@ -200,6 +198,24 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         else -> primary
     }
     val focusedTab = tabOf(focusedRef?.tabId)
+
+    // Focus mode belongs to what is in front. Each document comes back the way it was left; the
+    // two halves of a split share one, so moving between them never changes it. Home has no page
+    // to focus on, so it always ends it. Opening or closing one half of a split leaves it as it is,
+    // since the document still on screen is where you were.
+    val lastFront = remember { arrayOf(emptyList<String>()) }
+    val frontKey = if (homeShown) "" else listOfNotNull(primaryTab?.id, secondaryTab?.id).joinToString("|")
+    androidx.compose.runtime.LaunchedEffect(frontKey) {
+        val front = listOfNotNull(primaryTab, secondaryTab)
+        val stayed = front.any { it.id in lastFront[0] }
+        lastFront[0] = front.map { it.id }
+        immersive = when {
+            homeShown -> false
+            stayed -> immersive
+            else -> focusedTab?.fullscreen ?: false
+        }
+        snapshotFlow { immersiveState.value }.collect { on -> front.forEach { it.fullscreen = on } }
+    }
 
     // Which of each document's views its bars follow: the one on screen, and for the document
     // the keyboard is in, the one last touched.

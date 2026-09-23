@@ -32,6 +32,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -167,7 +168,9 @@ fun AppRoot(
             val tab = DocTab(
                 id = "${f.absolutePath}#${System.nanoTime()}",
                 file = f,
-                host = DocumentHost(immersive)
+                host = DocumentHost(immersive),
+                // A document opened while the screen is already fullscreen joins it.
+                fullscreen = immersive.isFullscreen
             )
             tabs.add(tab)
             tab.id
@@ -210,12 +213,6 @@ fun AppRoot(
         tabs.forEach { it.closeRequested.value = true }
     }
 
-    // Focus mode is for the page. Home comes back with the system bars, as leaving the editor
-    // always brought them back.
-    LaunchedEffect(homeShown) {
-        if (homeShown && immersive.isFullscreen) immersive.set(false)
-    }
-
     // A narrow screen - the tablet turned to portrait, the app in a split-screen window - has no
     // room for two panes. The document being worked in keeps the screen.
     LaunchedEffect(splitAvailable) {
@@ -234,6 +231,26 @@ fun AppRoot(
         else -> primary
     }
     val focusedTab = tabOf(focusedRef?.tabId)
+
+    // Fullscreen belongs to what is in front. Each document comes back the way it was left; the
+    // two halves of a split share one, so moving between them never flickers the system bars.
+    // Home brings the bars back unless it has been asked to stay fullscreen, and never with no
+    // tabs open, since the way out of fullscreen lives in the tab strip. Opening or closing one half
+    // of a split leaves it as it is, since the document still on screen is where you were.
+    val lastFront = remember { arrayOf(emptyList<String>()) }
+    val frontKey = if (homeShown) "" else listOfNotNull(primaryTab?.id, secondaryTab?.id).joinToString("|")
+    LaunchedEffect(frontKey, tools.fullscreenOnHome, tabs.isEmpty()) {
+        val front = listOfNotNull(primaryTab, secondaryTab)
+        val stayed = front.any { it.id in lastFront[0] }
+        lastFront[0] = front.map { it.id }
+        val want = when {
+            homeShown -> tools.fullscreenOnHome && tabs.isNotEmpty() && immersive.isFullscreen
+            stayed -> immersive.isFullscreen
+            else -> focusedTab?.fullscreen ?: false
+        }
+        if (immersive.isFullscreen != want) immersive.set(want)
+        snapshotFlow { immersive.isFullscreen }.collect { on -> front.forEach { it.fullscreen = on } }
+    }
 
     // Which of each document's views its bars follow: the one on screen, and for the document
     // being worked in, the one last touched.
@@ -296,7 +313,7 @@ fun AppRoot(
                         onCloseOthers = ::closeOthers,
                         onCloseAll = ::closeAll,
                         onNewTab = { homeShown = true; screen = Screen.Home },
-                        onLeaveFullscreen = if (immersive.isFullscreen && !homeShown) {
+                        onLeaveFullscreen = if (immersive.isFullscreen) {
                             { immersive.set(false) }
                         } else null
                     )

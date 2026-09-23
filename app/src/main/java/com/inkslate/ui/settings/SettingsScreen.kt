@@ -229,6 +229,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                 checked = tools.keepScreenOn
             ) { tools.keepScreenOn = it; tools.persistNow() }
 
+            SwitchRow(
+                title = "Stay fullscreen on Home",
+                subtitle = "Going Home from a fullscreen document keeps the status and navigation " +
+                    "bars hidden. Off, Home always brings them back. Each document still comes " +
+                    "back the way you left it.",
+                checked = tools.fullscreenOnHome
+            ) { tools.fullscreenOnHome = it; tools.persistNow() }
+
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Stylus")
 
