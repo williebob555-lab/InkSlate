@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -207,7 +208,9 @@ fun TabStrip(
     onCloseTab: (String) -> Unit,
     onCloseOthers: (String) -> Unit,
     onCloseAll: () -> Unit,
-    onNewTab: () -> Unit
+    onNewTab: () -> Unit,
+    /** Set while the page has the screen to itself; the tabs stay, and this is the way back out. */
+    onLeaveFullscreen: (() -> Unit)? = null
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 1.dp) {
         Row(
@@ -249,6 +252,11 @@ fun TabStrip(
             }
             IconButton(onClick = onNewTab) {
                 Icon(Icons.Default.Add, "Open another document")
+            }
+            if (onLeaveFullscreen != null) {
+                IconButton(onClick = onLeaveFullscreen) {
+                    Icon(Icons.Default.FullscreenExit, "Leave fullscreen")
+                }
             }
         }
     }

@@ -10,8 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FullscreenExit
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -229,8 +227,9 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
 
     CompositionLocalProvider(LocalToolState provides tools) {
         Column(Modifier.fillMaxSize()) {
-            // Focus mode is "just the page and the tools": the tabs go along with the app bar.
-            if (tabs.isNotEmpty() && !(immersive && !homeShown)) {
+            // Focus mode takes away the app bar, but the tabs stay so other documents are still a
+            // click away; the way back out sits at the end of them.
+            if (tabs.isNotEmpty()) {
                 TabStrip(
                     tabs = tabs,
                     homeShown = homeShown,
@@ -245,7 +244,10 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                     onCloseTab = { id -> tabOf(id)?.closeRequested?.value = true },
                     onCloseOthers = ::closeOthers,
                     onCloseAll = ::closeAll,
-                    onNewTab = { homeShown = true; screen = Screen.Home }
+                    onNewTab = { homeShown = true; screen = Screen.Home },
+                    onLeaveFullscreen = if (immersive && !homeShown) {
+                        { immersive = false }
+                    } else null
                 )
             }
 
@@ -319,14 +321,6 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                                 HostPane(primaryTab.host, primaryTab.host.viewOrFirst(p.view), true)
                             }
                         }
-                    }
-
-                    // The bars are gone in focus mode, so this is the only way back out.
-                    if (immersive && !homeShown) {
-                        FilledTonalIconButton(
-                            onClick = { immersive = false },
-                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
-                        ) { Icon(Icons.Default.FullscreenExit, "Leave focus mode") }
                     }
                 }
             }
