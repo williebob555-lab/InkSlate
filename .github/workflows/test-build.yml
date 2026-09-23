@@ -276,36 +276,22 @@ jobs:
             echo NOTES
           } >> "$GITHUB_OUTPUT"
 
-      # The tag moves, and the release under it keeps whatever was uploaded to it before - so
-      # without this the page fills with the installers of every past test build, and the updater
-      # is free to hand someone one of them instead of this one.
-      - name: Clear the previous test build's files
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check there is something to publish
         run: |
-          # Only the platforms this run actually built: an APK that failed to build must not
-          # take the last working APK off the release with it.
-          have_apk=$(ls artifacts/*.apk 2>/dev/null | head -1 || true)
-          have_msi=$(ls artifacts/*.msi 2>/dev/null | head -1 || true)
-          if [ -z "$have_apk" ] && [ -z "$have_msi" ]; then
+          if ! ls artifacts/*.apk artifacts/*.msi >/dev/null 2>&1; then
             echo "::error::Nothing was built, so there is nothing to publish."
             exit 1
           fi
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/test" \
-            --jq '.assets[] | "\(.id) \(.name)"' 2>/dev/null > /tmp/assets || true
-          while read -r id name; do
-            [ -n "$id" ] || continue
-            case "$name" in
-              *.apk) [ -n "$have_apk" ] || continue ;;
-              *.msi) [ -n "$have_msi" ] || continue ;;
-            esac
-            echo "Removing $name"
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
-          done < /tmp/assets
 
       # One moving tag rather than one per push, so the releases page stays about real releases
       # and there is only ever one test build to reason about.
+      #
+      # The new files go up before the old ones come off. It used to be the other way round, and
+      # an upload that failed once left the release with no installers in it at all. An upload
+      # can fail for reasons of GitHub's own, so it gets a second try before the run gives up.
       - name: Publish
+        id: publish
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test
@@ -314,3 +300,41 @@ jobs:
           prerelease: true
           files: artifacts/**/*
           fail_on_unmatched_files: true
+
+      - name: Publish (second try)
+        if: steps.publish.outcome == 'failure'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test
+          name: Test build ${{ needs.version.outputs.name }}
+          body: ${{ steps.notes.outputs.body }}
+          prerelease: true
+          files: artifacts/**/*
+          fail_on_unmatched_files: true
+
+      # The tag moves, and the release under it keeps whatever was uploaded to it before - so
+      # without this the page fills with the installers of every past test build, and the updater
+      # is free to hand someone one of them instead of this one. This only runs once the new
+      # files are up, so there is never a moment with none.
+      - name: Clear the previous test build's files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only the platforms this run actually built: an APK that failed to build must not
+          # take the last working APK off the release with it. And never a file this run just
+          # uploaded.
+          have_apk=$(ls artifacts/*.apk 2>/dev/null | head -1 || true)
+          have_msi=$(ls artifacts/*.msi 2>/dev/null | head -1 || true)
+          ls artifacts > /tmp/new
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/test" \
+            --jq '.assets[] | "\(.id) \(.name)"' > /tmp/assets
+          while read -r id name; do
+            [ -n "$id" ] || continue
+            grep -qxF "$name" /tmp/new && continue
+            case "$name" in
+              *.apk) [ -n "$have_apk" ] || continue ;;
+              *.msi) [ -n "$have_msi" ] || continue ;;
+            esac
+            echo "Removing $name"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
+          done < /tmp/assets
