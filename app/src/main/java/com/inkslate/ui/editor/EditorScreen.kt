@@ -1280,6 +1280,11 @@ fun EditorScreen(
                 }
             }
             fileRepo.invalidateThumb(d.file)
+            // The write is finished here. Showing the message waits until it times out, and
+            // leaving used to wait for that too - four seconds of "Saving" over a save that had
+            // taken a few milliseconds. A failure still waits: leaving would take the only word
+            // of it off the screen.
+            if (result !is SaveResult.Failed) onDone()
             when (result) {
                 is SaveResult.Written -> snackbar.showSnackbar(
                     if (result.wasCopy) "Saved a copy: ${result.target.name}"
@@ -1291,7 +1296,7 @@ fun EditorScreen(
                 SaveResult.NothingToDo ->
                     snackbar.showSnackbar("Nothing drawn yet, so nothing was exported")
             }
-            onDone()
+            if (result is SaveResult.Failed) onDone()
         }
     }
 
