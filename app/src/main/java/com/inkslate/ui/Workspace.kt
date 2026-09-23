@@ -210,11 +210,12 @@ fun TabStrip(
     onCloseAll: () -> Unit,
     onNewTab: () -> Unit,
     /** Set while the page has the screen to itself; the tabs stay, and this is the way back out. */
-    onLeaveFullscreen: (() -> Unit)? = null
+    onLeaveFullscreen: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 1.dp) {
         Row(
-            Modifier.fillMaxWidth().height(48.dp),
+            modifier.fillMaxWidth().height(48.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             TabChip(

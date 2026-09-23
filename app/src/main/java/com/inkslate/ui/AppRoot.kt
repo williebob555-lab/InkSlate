@@ -6,11 +6,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Button
@@ -276,6 +280,7 @@ fun AppRoot(
                 // documents are still a tap away; the way back out sits at the end of them.
                 if (tabs.isNotEmpty()) {
                     TabStrip(
+                        modifier = Modifier.statusBarsPadding(),
                         tabs = tabs,
                         homeShown = homeShown,
                         shownIds = setOfNotNull(primaryTab?.id, secondaryTab?.id),
@@ -297,6 +302,12 @@ fun AppRoot(
                     )
                 }
 
+                // With the tabs at the top, the status bar's room is already made above them, so
+                // the app bars below must not make it a second time.
+                Column(
+                    Modifier.weight(1f).fillMaxWidth()
+                        .then(if (tabs.isNotEmpty()) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)
+                ) {
                 if (focusedTab != null) HostBar(focusedTab.host) { it.topBar }
 
                 Surface(Modifier.weight(1f).fillMaxWidth(), color = MaterialTheme.colorScheme.background) {
@@ -365,6 +376,7 @@ fun AppRoot(
                 }
 
                 if (focusedTab != null) HostBar(focusedTab.host) { it.bottomBar }
+                }
             }
 
             // Every open document, whether or not any of it is on screen. Each keeps its marks,
