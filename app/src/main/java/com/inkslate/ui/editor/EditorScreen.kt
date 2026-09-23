@@ -1244,14 +1244,27 @@ fun EditorScreen(
         // Saving on purpose settles the question the freeze was holding open.
         writesFrozen = false
         scope.launch {
+            val pressedAt = System.currentTimeMillis()
             val effective = prefs.effectiveFor(d.file.absolutePath).copy(mode = mode)
             // The working copy is a full serialisation of every stroke. Skipped when the document
             // has not moved since it was last written, which after the background write-through
             // is most of the time - it was the remaining wait on a close that had nothing to do.
             if (d.ink !== d.savedInk) withContext(Dispatchers.IO) { repo.saveWorking(d) }
+            val workingAt = System.currentTimeMillis()
+            var exportedAt = workingAt
             val result = writingDocument {
                 withContext(Dispatchers.IO) { repo.export(d, effective) }
+                    .also { exportedAt = System.currentTimeMillis() }
             }
+            // Every part of a save from the moment it was asked for, so a slow one says where the
+            // time went - the export's own line only covers the export.
+            val doneAt = System.currentTimeMillis()
+            EventLog.info(
+                "save",
+                "${d.file.name}: ${result::class.simpleName} in ${doneAt - pressedAt}ms " +
+                    "[working copy ${workingAt - pressedAt}ms, export ${exportedAt - workingAt}ms, " +
+                    "after ${doneAt - exportedAt}ms]"
+            )
             dirty = false
             // Overwriting writes the handwriting into the document as part of the export, so
             // there is nothing left for the exit-time bake to do.

@@ -1046,7 +1046,19 @@ class DocumentRepo(private val context: Context) {
         doc: OpenDocument,
         settings: SaveSettings,
         recordHistory: Boolean = true
-    ): SaveResult = writing { exportLocked(doc, settings, recordHistory) }
+    ): SaveResult {
+        // Only one write at a time, so a save pressed while the background write is under way
+        // waits for it. Said in the log when it is long enough to be felt, because otherwise that
+        // wait is invisible in every timing below.
+        val asked = System.currentTimeMillis()
+        return writing {
+            val waited = System.currentTimeMillis() - asked
+            if (waited >= 100) {
+                EventLog.info("export", "${doc.file.name}: waited ${waited}ms for a write already under way")
+            }
+            exportLocked(doc, settings, recordHistory)
+        }
+    }
 
     private fun exportLocked(
         doc: OpenDocument,
