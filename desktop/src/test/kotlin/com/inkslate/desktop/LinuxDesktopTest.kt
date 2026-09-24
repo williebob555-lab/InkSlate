@@ -46,17 +46,18 @@ class LinuxDesktopTest {
 
     /**
      * The native reader opens its connection, finds devices and reports the mouse when the
-     * virtual X server's test pointer moves.
+     * virtual X server's test pointer clicks.
      */
     @Test
-    fun `the X reader sees the pointer move`() {
+    fun `the X reader sees the mouse`() {
         assumeTrue(AppDirs.isLinux && !System.getenv("DISPLAY").isNullOrBlank() && onPath("xdotool"))
         PenInput.pen(down = false, pressure = null, button = 0)
         X11Pointer.install(java.awt.Frame())
         assertTrue("the reader did not start", X11Pointer.active)
         repeat(20) { step ->
-            ProcessBuilder("xdotool", "mousemove", "${100 + step * 7}", "${100 + step * 3}")
-                .start().waitFor()
+            // A click, not a move: xdotool moves the pointer by warping it, which the server
+            // reports to nobody as input. A click goes through the XTest device like a real one.
+            ProcessBuilder("xdotool", "click", "1").start().waitFor()
             if (PenInput.device == PenInput.Device.MOUSE) return@repeat
             Thread.sleep(50)
         }
