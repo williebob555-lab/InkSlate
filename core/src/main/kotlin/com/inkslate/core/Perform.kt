@@ -82,6 +82,33 @@ object Perform {
     }
 
     fun on(action: PerformAction): Boolean = isOn?.invoke(action) ?: false
+
+    // ---- opening at a page -------------------------------------------------------
+
+    private val jumps = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /**
+     * Ask for [path] to be shown at [page] (0-based) - a part that starts partway into a band pack,
+     * or the page another tablet is on. Taken by the editor for that file as soon as it can go
+     * there: straight away if it is already open, or in place of its remembered position if it is
+     * just opening.
+     */
+    fun requestPage(path: String, page: Int) {
+        jumps[path] = page
+    }
+
+    /** The page asked for [path], once; null when none was. */
+    fun takePage(path: String): Int? = jumps.remove(path)
+
+    // ---- telling the app where the reader is ---------------------------------------
+
+    /** Show a page (0-based) of the document in front; set by whichever editor has focus. */
+    @Volatile
+    var jumpTo: ((path: String, page: Int) -> Unit)? = null
+
+    /** Told the page (0-based) whenever the document in front changes page. For companion mode. */
+    @Volatile
+    var onPage: ((path: String, page: Int) -> Unit)? = null
 }
 
 /**

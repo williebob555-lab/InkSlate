@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryAdd
@@ -112,6 +113,11 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                             leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
                             onClick = { more = false; chooseFolder = true }
                         )
+                        DropdownMenuItem(
+                            text = { Text("Companion (lead or follow)...") },
+                            leadingIcon = { Icon(Icons.Default.Devices, null) },
+                            onClick = { more = false; state.companionOpen = true }
+                        )
                         if (state.library != null) {
                             DropdownMenuItem(
                                 text = { Text("Import from MobileSheets...") },
@@ -155,6 +161,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
     if (importMs) MobileSheetsDialog(state, onClose = { importMs = false })
+    if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     if (chooseFolder) {
         FolderPickerDialog(
             title = "Choose your music folder",
@@ -271,7 +278,11 @@ internal fun openSong(state: SheetsState, song: Song) {
     val part = PartChoice.partFor(song, state.profile) ?: return
     state.current = song
     val file = state.fileOf(part.file) ?: return
+    // A part partway into a band pack opens at its own first page.
+    part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
     state.platform.openPart(song, part, file)
+    // Following tablets change song with this one; the page follows as it is turned.
+    state.companion.pageTurned((part.firstPage ?: 1) - 1)
 }
 
 @Composable

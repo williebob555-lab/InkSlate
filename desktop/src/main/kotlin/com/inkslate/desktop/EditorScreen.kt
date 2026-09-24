@@ -1095,6 +1095,12 @@ fun EditorScreen(
         val src = source ?: return@LaunchedEffect
         if (positionRestored || viewport.viewSize.width <= 0f) return@LaunchedEffect
         positionRestored = true
+        // A page asked for from outside - a band-pack part, another tablet - wins over the
+        // remembered one.
+        com.inkslate.core.Perform.takePage(file.absolutePath)?.let { asked ->
+            goToPage(asked)
+            return@LaunchedEffect
+        }
         val at = if (tools.rememberView) ReadingPosition.load(file.absolutePath) else null
         if (at == null) {
             // Nothing remembered: open on the page, in the middle of the window. The corner of a
@@ -1348,6 +1354,11 @@ fun EditorScreen(
         }
     }
 
+    // Where the reader is, for another tablet following this one.
+    LaunchedEffect(focused, page) {
+        if (focused) com.inkslate.core.Perform.onPage?.invoke(file.absolutePath, page)
+    }
+
     // Hand the window's key handler something to call. Re-assigned on each composition so the
     // captured lambdas always see current state rather than the state at first composition. Only
     // the focused pane may do this - in split view the other one is still on screen, but the
@@ -1371,6 +1382,12 @@ fun EditorScreen(
         shortcuts.shapes = { if (trayOpen) closeTray() else openTray() }
         // Pedals and page keys. A turn this document cannot make (past its last page) returns
         // false, and InkSheets takes it as a turn to the next song.
+        if (positionRestored) {
+            com.inkslate.core.Perform.takePage(file.absolutePath)?.let { asked -> goToPage(asked) }
+        }
+        com.inkslate.core.Perform.jumpTo = { path, target ->
+            if (path == file.absolutePath) goToPage(target)
+        }
         com.inkslate.core.Perform.document = { action ->
             val count = source?.pageCount ?: 0
             when (action) {

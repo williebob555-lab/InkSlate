@@ -121,6 +121,13 @@ class AndroidSheetsPlatform(
 
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = MediaAudioPlayer()
 
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    override fun onMain(block: () -> Unit) { main.post(block) }
+
+    override val deviceName: String =
+        (android.provider.Settings.Global.getString(context.contentResolver, "device_name")
+            ?: android.os.Build.MODEL).ifBlank { "Tablet" }
+
     private companion object {
         const val K_DEVICE = "sheets_device"
     }

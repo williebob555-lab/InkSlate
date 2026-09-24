@@ -56,6 +56,12 @@ interface SheetsPlatform {
     /** The microphone, for the tuner; null where there is none. */
     val microphone: Microphone?
 
+    /** Run [block] on the UI thread - for things that arrive from the network. */
+    fun onMain(block: () -> Unit)
+
+    /** What this device is called to other tablets in companion mode. */
+    val deviceName: String
+
     /** A player for a song's recordings; null where there is none. */
     fun audioPlayer(): AudioPlayer? = null
 }

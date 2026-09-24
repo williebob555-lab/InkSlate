@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayCircle
@@ -79,6 +80,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             modifier = Modifier.verticalScroll(rememberScrollState())
         ) {
             if (!collapsed) {
+                state.companion.status?.let { status ->
+                    Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp, start = 6.dp, end = 6.dp))
+                }
                 // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
                     val total = state.library?.setlist(setlistId)?.entries?.size ?: 0
@@ -124,6 +128,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
+    if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     val song = state.current
     if (state.audioOpen && song != null) AudioDialog(state, song, onClose = { state.audioOpen = false })
 }
@@ -138,6 +143,11 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
                 onClick = { onDismiss(); state.audioOpen = true }
             )
         }
+        DropdownMenuItem(
+            text = { Text("Companion (lead or follow)...") },
+            leadingIcon = { Icon(Icons.Default.Devices, null) },
+            onClick = { onDismiss(); state.companionOpen = true }
+        )
         DropdownMenuItem(
             text = { Text("Metronome settings...") },
             leadingIcon = { Icon(Icons.Default.Timer, null) },

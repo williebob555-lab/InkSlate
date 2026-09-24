@@ -39,6 +39,10 @@ class SheetsState(val platform: SheetsPlatform) {
     /** The song opened last - what the strip's recording button plays. */
     var current by mutableStateOf<com.inksheets.core.Song?>(null)
 
+    /** Leading or following other tablets. */
+    val companion = Companion(this)
+    var companionOpen by mutableStateOf(false)
+
     /** The recordings panel, for the song opened last. */
     var audioOpen by mutableStateOf(false)
     var metronomeOpen by mutableStateOf(false)
@@ -78,6 +82,12 @@ class SheetsState(val platform: SheetsPlatform) {
                 com.inkslate.core.PerformAction.PLAY_AUDIO -> { Recording.toggle(this); true }
                 else -> false
             }
+        }
+        // Whichever song is in front is "the song": the one the play button plays and the one a
+        // leading tablet tells its followers about.
+        com.inkslate.core.Perform.onPage = { path, page ->
+            songAt(path)?.let { if (current?.id != it.id) current = it }
+            companion.pageTurned(page)
         }
     }
 
@@ -188,6 +198,12 @@ class SheetsState(val platform: SheetsPlatform) {
         val lib = library ?: return
         lib.block()
         version = lib.version
+    }
+
+    /** The song one of whose parts is the file at [path]. */
+    fun songAt(path: String): com.inksheets.core.Song? {
+        val rel = relative(File(path)) ?: return null
+        return library?.songs?.firstOrNull { s -> s.parts.any { it.file == rel } }
     }
 
     /** A library-relative path turned into the file on this device. */

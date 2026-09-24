@@ -53,6 +53,8 @@ class SheetsScreensTest {
         override fun pageText(file: File, page: Int): String? = null
         override val audioOut: AudioOut? = null
         override val microphone: Microphone? = null
+        override fun onMain(block: () -> Unit) = block()
+        override val deviceName = "Test stand"
     }
 
     private fun shoot(name: String, image: java.awt.image.BufferedImage) {

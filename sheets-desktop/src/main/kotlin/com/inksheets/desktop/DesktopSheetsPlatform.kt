@@ -125,6 +125,11 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
 
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = JavaSoundPlayer()
 
+    override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)
+
+    override val deviceName: String =
+        runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Laptop"
+
     private companion object {
         const val K_DEVICE = "sheets_device"
     }

@@ -570,6 +570,12 @@ fun EditorScreen(
                 // documents saved before the camera was recorded.
                 if (slot.index == 0 && !positionRestored) {
                     positionRestored = true
+                    // A page asked for from outside - a band-pack part, another tablet - wins
+                    // over the remembered view.
+                    com.inkslate.core.Perform.takePage(d.file.absolutePath)?.let { asked ->
+                        pendingCamera = null
+                        pendingPage = asked
+                    }
                     val restored = pendingCamera?.let { view.restoreCamera(it) } == true
                     if (!restored && pendingPage in 1 until d.pageCount) view.goToPage(pendingPage)
                     if (restored || pendingPage > 0) {
@@ -1502,9 +1508,22 @@ fun EditorScreen(
 
     BackHandler(enabled = focused) { leave() }
 
+    // Where the reader is, for another tablet following this one.
+    LaunchedEffect(focused, page) {
+        if (focused) com.inkslate.core.Perform.onPage?.invoke(file.absolutePath, page)
+    }
+
     // Pedals and page keys reach the document in front. A turn it cannot make (past its last
     // page) returns false, and InkSheets takes that as a turn to the next song in the setlist.
     if (focused) {
+        if (positionRestored) {
+            drawingView.value?.let { view ->
+                com.inkslate.core.Perform.takePage(file.absolutePath)?.let { asked -> view.goToPage(asked) }
+            }
+        }
+        com.inkslate.core.Perform.jumpTo = { path, target ->
+            if (path == file.absolutePath) drawingView.value?.goToPage(target)
+        }
         com.inkslate.core.Perform.document = { action ->
             val view = drawingView.value
             val count = view?.pageCount ?: 0
