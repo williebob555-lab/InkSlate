@@ -39,8 +39,18 @@ import kotlinx.coroutines.flow.debounce
 fun main() {
     LinuxDisplay.prepare()
     EventLog.installCrashHandler()
-    EventLog.info("app", "InkSlate ${DesktopUpdates.installedVersion()} started")
+    EventLog.info("app", "${AppFlavor.name} ${DesktopUpdates.installedVersion()} started")
     ui()
+}
+
+/**
+ * Start the desktop app as [name] - how InkSheets starts, with its own Home screen installed
+ * through [AppFlavor.home] first.
+ */
+fun runAs(name: String, setup: () -> Unit) {
+    System.setProperty("inkslate.appName", name)
+    setup()
+    main()
 }
 
 @OptIn(ExperimentalComposeUiApi::class, kotlinx.coroutines.FlowPreview::class)
@@ -86,7 +96,7 @@ private fun ui() = application {
     Window(
         onCloseRequest = ::exitApplication,
         state = state,
-        title = "InkSlate",
+        title = AppFlavor.name,
         onKeyEvent = { event ->
             // Looked up rather than decided here. What a key does is a table now, on the same
             // terms as what a button does - see KeyBindingStore - so a shortcut can be moved, and

@@ -1127,7 +1127,7 @@ private fun UpdateSection() {
                 phase = Phase.Checking
                 scope.launch {
                     val result = withContext(Dispatchers.IO) {
-                        UpdateCheck.check(installed, DesktopUpdates.platform, DesktopUpdates.channel())
+                        UpdateCheck.check(installed, DesktopUpdates.platform, DesktopUpdates.channel(), AppFlavor.name)
                     }
                     phase = when (result) {
                         is UpdateCheck.Result.UpToDate -> Phase.UpToDate(result.installed.toString())

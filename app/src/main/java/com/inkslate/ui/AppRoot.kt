@@ -338,14 +338,21 @@ fun AppRoot(
                     Box(Modifier.fillMaxSize()) {
                         if (homeShown) {
                             when (val s = screen) {
-                                Screen.Home -> HomeScreen(
-                                    onOpenFile = ::openFile,
-                                    onOpenFolder = { screen = Screen.Browser(it.absolutePath) },
-                                    onBrowse = { screen = Screen.Browser(null) },
-                                    onOpenSettings = { screen = Screen.Settings },
-                                    onNewDocument = { newDocOpen = true },
-                                    refreshKey = refreshKey
-                                )
+                                Screen.Home -> {
+                                    val flavorHome = com.inkslate.AppFlavor.home
+                                    if (flavorHome != null) {
+                                        flavorHome(::openFile) { screen = Screen.Settings }
+                                    } else {
+                                        HomeScreen(
+                                            onOpenFile = ::openFile,
+                                            onOpenFolder = { screen = Screen.Browser(it.absolutePath) },
+                                            onBrowse = { screen = Screen.Browser(null) },
+                                            onOpenSettings = { screen = Screen.Settings },
+                                            onNewDocument = { newDocOpen = true },
+                                            refreshKey = refreshKey
+                                        )
+                                    }
+                                }
 
                                 is Screen.Browser -> BrowserScreen(
                                     startDir = s.dir?.let(::File),

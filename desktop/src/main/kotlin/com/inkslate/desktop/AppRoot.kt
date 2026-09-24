@@ -275,14 +275,21 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                 Box(Modifier.fillMaxSize()) {
                     if (homeShown) {
                         when (val s = screen) {
-                            Screen.Home -> HomeScreen(
-                                onOpenFile = ::openFile,
-                                onBrowse = { screen = Screen.Browser(null) },
-                                onOpenSettings = { screen = Screen.Settings },
-                                onNewDocument = { newDocOpen = true },
-                                refreshKey = refreshKey,
-                                navigation = navigation
-                            )
+                            Screen.Home -> {
+                                val flavorHome = AppFlavor.home
+                                if (flavorHome != null) {
+                                    flavorHome(::openFile) { screen = Screen.Settings }
+                                } else {
+                                    HomeScreen(
+                                        onOpenFile = ::openFile,
+                                        onBrowse = { screen = Screen.Browser(null) },
+                                        onOpenSettings = { screen = Screen.Settings },
+                                        onNewDocument = { newDocOpen = true },
+                                        refreshKey = refreshKey,
+                                        navigation = navigation
+                                    )
+                                }
+                            }
 
                             is Screen.Browser -> BrowserScreen(
                                 startDir = s.dir?.let(::File),

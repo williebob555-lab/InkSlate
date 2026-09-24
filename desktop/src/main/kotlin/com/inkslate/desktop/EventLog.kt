@@ -110,7 +110,7 @@ object EventLog {
                     appendLine(
                         SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
                     )
-                    appendLine("InkSlate ${DesktopUpdates.installedVersion()}")
+                    appendLine("${AppFlavor.name} ${DesktopUpdates.installedVersion()}")
                     appendLine(
                         "Java ${System.getProperty("java.version")} on " +
                             "${System.getProperty("os.name")} ${System.getProperty("os.version")}"

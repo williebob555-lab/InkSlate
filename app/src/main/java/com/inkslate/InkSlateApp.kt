@@ -17,5 +17,7 @@ class InkSlateApp : Application() {
         // PdfBox-Android resolves fonts and mappings from assets; prime it once at startup
         // rather than paying the cost, and any failure, on the first save.
         runCatching { InkExporter.init(this) }
+        // InkSlate or InkSheets: each flavour has its own FlavorSetup.
+        FlavorSetup.install(this)
     }
 }

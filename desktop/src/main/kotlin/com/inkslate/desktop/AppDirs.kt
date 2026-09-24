@@ -22,7 +22,7 @@ object AppDirs {
         System.getProperty("os.name").orEmpty().startsWith("Linux", ignoreCase = true)
 
     /** The app's own folder, created if it is not there yet. */
-    val root: File by lazy { File(base(), "InkSlate").apply { mkdirs() } }
+    val root: File by lazy { File(base(), AppFlavor.name).apply { mkdirs() } }
 
     /** A folder inside [root], created if it is not there yet. */
     fun dir(name: String): File = File(root, name).apply { mkdirs() }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The tuner listens through the microphone. Asked for only when the tuner is opened. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+</manifest>

@@ -34,7 +34,10 @@ object AppUpdates {
 
     /** Blocking. Callers move it off the main thread. */
     fun check(context: Context): UpdateCheck.Result =
-        UpdateCheck.check(installedVersion(context), UpdateCheck.Platform.ANDROID, channel(context))
+        UpdateCheck.check(
+            installedVersion(context), UpdateCheck.Platform.ANDROID, channel(context),
+            app = context.getString(com.inkslate.R.string.app_name)
+        )
 
     /**
      * Which builds this device is willing to be offered.

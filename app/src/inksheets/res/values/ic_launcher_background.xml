@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- InkSheets' own colour, so it is never mistaken for InkSlate on a launcher. -->
+    <color name="ic_launcher_background">#6E1E3A</color>
+</resources>

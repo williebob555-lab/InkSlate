@@ -19,3 +19,4 @@ include(":app")
 include(":desktop")
 // InkSheets, the sheet-music app built on InkSlate: its library, setlists and instruments.
 include(":sheets-core")
+include(":sheets-desktop")

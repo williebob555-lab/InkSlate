@@ -108,8 +108,8 @@ jobs:
       - name: Name the APK after its version
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk \
-             "dist/InkSlate-${{ needs.version.outputs.name }}.apk"
+          cp app/build/outputs/apk/inkslate/release/app-inkslate-release.apk "dist/InkSlate-${{ needs.version.outputs.name }}.apk"
+          cp app/build/outputs/apk/inksheets/release/app-inksheets-release.apk "dist/InkSheets-${{ needs.version.outputs.name }}.apk"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -135,13 +135,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Build the MSI
-        run: ./gradlew :desktop:packageMsi "-Pinkslate.version=${{ needs.version.outputs.name }}" --stacktrace
+        run: ./gradlew :desktop:packageMsi :sheets-desktop:packageMsi "-Pinkslate.version=${{ needs.version.outputs.name }}" --stacktrace
 
       - name: Collect the installer
         shell: bash
         run: |
           mkdir -p dist
           find desktop/build/compose -name '*.msi' -exec cp {} "dist/InkSlate-${{ needs.version.outputs.name }}.msi" \;
+          find sheets-desktop/build/compose -name '*.msi' -exec cp {} "dist/InkSheets-${{ needs.version.outputs.name }}.msi" \;
 
       # Windows creates a system restore point and prices up every file before it shows the
       # installer's first window, which is a minute or two of an empty window on a package that
@@ -151,7 +152,7 @@ jobs:
       - name: Ask Windows not to dawdle before the installer appears
         shell: powershell
         run: |
-          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          foreach ($msi in (Get-ChildItem dist/*.msi).FullName) {
           $installer = New-Object -ComObject WindowsInstaller.Installer
           $db = $installer.OpenDatabase($msi, 1)
           foreach ($sql in @(
@@ -159,6 +160,7 @@ jobs:
             "INSERT INTO Property (Property, Value) VALUES ('MSIFASTINSTALL', '7')"
           )) { $v = $db.OpenView($sql); $v.Execute(); $v.Close() }
           $db.Commit()
+          }
 
       # In its own step, which is its own process: the handle that wrote the file still holds it
       # inside the step above, and opening it a second time there fails on the lock rather than
@@ -166,7 +168,7 @@ jobs:
       - name: Check the installer took it
         shell: powershell
         run: |
-          $msi = (Get-ChildItem dist/*.msi | Select-Object -First 1).FullName
+          foreach ($msi in (Get-ChildItem dist/*.msi).FullName) {
           $installer = New-Object -ComObject WindowsInstaller.Installer
           $db = $installer.OpenDatabase($msi, 0)
           $found = $false
@@ -180,6 +182,7 @@ jobs:
             $v.Close()
           }
           if (-not $found) { throw 'The installer did not keep MSIFASTINSTALL.' }
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -212,12 +215,13 @@ jobs:
       # Same folded version as the MSI - RPM will not take a "-" inside a version either.
       - name: Build the rpm
         run: |
-          ./gradlew :desktop:packageRpm "-Pinkslate.version=${{ needs.version.outputs.name }}" --stacktrace
+          ./gradlew :desktop:packageRpm :sheets-desktop:packageRpm "-Pinkslate.version=${{ needs.version.outputs.name }}" --stacktrace
 
       - name: Collect the package
         run: |
           mkdir -p dist
           find desktop/build/compose -name '*.rpm' -exec cp {} "dist/InkSlate-${{ needs.version.outputs.name }}.rpm" \;
+          find sheets-desktop/build/compose -name '*.rpm' -exec cp {} "dist/InkSheets-${{ needs.version.outputs.name }}.rpm" \;
           rpm -qip dist/*.rpm
 
       - uses: actions/upload-artifact@v4

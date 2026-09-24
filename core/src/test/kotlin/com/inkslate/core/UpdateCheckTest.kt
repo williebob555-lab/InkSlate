@@ -265,4 +265,14 @@ class UpdateCheckTest {
         )
         assertNull(UpdateCheck.pickAsset(release("1.2.0", "InkSlate-1.2.0.msi"), UpdateCheck.Platform.LINUX))
     }
+
+    /** Both apps ship in one release; each takes only its own file. */
+    @Test
+    fun `each app takes its own file from a shared release`() {
+        val r = release("1.3.0", "InkSheets-1.3.0.apk", "InkSlate-1.3.0.apk", "InkSheets-1.3.0.rpm", "InkSlate-1.3.0.rpm")
+        assertEquals("InkSlate-1.3.0.apk", UpdateCheck.pickAsset(r, UpdateCheck.Platform.ANDROID)?.name)
+        assertEquals("InkSheets-1.3.0.apk", UpdateCheck.pickAsset(r, UpdateCheck.Platform.ANDROID, "InkSheets")?.name)
+        assertEquals("InkSheets-1.3.0.rpm", UpdateCheck.pickAsset(r, UpdateCheck.Platform.LINUX, "InkSheets")?.name)
+        assertNull(UpdateCheck.pickAsset(release("1.3.0", "InkSlate-1.3.0.msi"), UpdateCheck.Platform.WINDOWS, "InkSheets"))
+    }
 }

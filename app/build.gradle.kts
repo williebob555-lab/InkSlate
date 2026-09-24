@@ -43,6 +43,28 @@ android {
         versionName = System.getenv("INKSLATE_VERSION_NAME") ?: "1.0"
     }
 
+    // Two apps from one codebase. InkSheets is InkSlate with a music library for a Home screen;
+    // its own application id means it installs beside InkSlate rather than over it, and the same
+    // signing key means the in-app updater can replace either.
+    flavorDimensions += "app"
+    productFlavors {
+        create("inkslate") {
+            dimension = "app"
+            applicationId = "com.inkslate"
+        }
+        create("inksheets") {
+            dimension = "app"
+            applicationId = "com.inksheets"
+        }
+    }
+
+    // The music screens are shared source with the desktop build - see sheets-ui/README.md.
+    sourceSets {
+        getByName("inksheets") {
+            kotlin.directories.add(rootProject.file("sheets-ui/src/main/kotlin").path)
+        }
+    }
+
     signingConfigs {
         if (hasReleaseKeystore) {
             create("release") {
@@ -100,6 +122,7 @@ kotlin {
 
 dependencies {
     implementation(project(":core"))
+    "inksheetsImplementation"(project(":sheets-core"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

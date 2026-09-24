@@ -70,6 +70,9 @@ object UpdateCheck {
         TEST("Test builds as well")
     }
 
+    /** Every app published from this repository, by the name its files start with. */
+    val APPS = listOf("InkSlate", "InkSheets")
+
     enum class Platform(internal val extensions: List<String>) {
         ANDROID(listOf(".apk")),
         // The desktop module already builds both, so accept either and prefer the .msi.
@@ -121,7 +124,8 @@ object UpdateCheck {
     fun check(
         installedVersion: String,
         platform: Platform,
-        channel: Channel = Channel.STABLE
+        channel: Channel = Channel.STABLE,
+        app: String = "InkSlate"
     ): Result {
         val installed = Version.parse(installedVersion)
             ?: return Result.Failed("This build has no version number to compare against.")
@@ -140,7 +144,7 @@ object UpdateCheck {
 
         if (release.version <= installed) return Result.UpToDate(installed)
 
-        val download = pickAsset(release, platform)
+        val download = pickAsset(release, platform, app)
             ?: return Result.AvailableWithoutDownload(release)
 
         return Result.Available(release, download)
@@ -157,9 +161,15 @@ object UpdateCheck {
      * Where a platform lists several extensions they are in order of preference, so a release
      * carrying both an installer and a bare executable hands over the installer.
      */
-    internal fun pickAsset(release: Release, platform: Platform): Asset? {
+    internal fun pickAsset(release: Release, platform: Platform, app: String = "InkSlate"): Asset? {
         for (extension in platform.extensions) {
-            val matching = release.assets.filter { it.name.endsWith(extension, ignoreCase = true) }
+            // One release carries both apps - InkSlate-1.3.0.apk beside InkSheets-1.3.0.apk - and
+            // each must only ever be handed its own. A file named for neither is anybody's.
+            val matching = release.assets.filter { asset ->
+                asset.name.endsWith(extension, ignoreCase = true) && APPS.none { other ->
+                    !other.equals(app, ignoreCase = true) && asset.name.startsWith("$other-", ignoreCase = true)
+                }
+            }
             if (matching.isEmpty()) continue
             val wanted = release.version.toString()
             val named = matching.firstOrNull { it.name.contains(wanted, ignoreCase = true) }
