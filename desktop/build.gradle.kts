@@ -39,6 +39,12 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     }
 
+    System.getProperty("inkslate.strip")?.let {
+        systemProperty("inkslate.strip", it)
+        outputs.upToDateWhen { false }
+        testLogging.showStandardStreams = true
+    }
+
     System.getProperty("inkslate.pdfs")?.let {
         systemProperty("inkslate.pdfs", it)
         // The documents behind it can change without anything here changing, and a sweep that

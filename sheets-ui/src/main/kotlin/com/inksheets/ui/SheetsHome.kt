@@ -1,6 +1,8 @@
 package com.inksheets.ui
 
 import androidx.compose.foundation.clickable
+import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -295,19 +297,67 @@ private fun SongsPane(state: SheetsState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(songs, key = { it.first.id }) { (song, fit) ->
-                SongRow(
-                    song = song,
-                    practice = practice[song.id],
-                    unsure = fit == PartChoice.Fit.UNKNOWN,
-                    onOpen = { state.stopPlaying(); openSong(state, song) },
-                    onEdit = { editing = song },
-                    onAddToSetlist = { addingToSetlist = song },
-                    onRecordings = { recordingsFor = song },
-                    onDelete = { state.change { deleteSong(song.id) } }
-                )
-                HorizontalDivider()
+        // In groups, not one long stack: A to Z under letters, "needs practice" under how long ago.
+        val groups = remember(songs, byPractice, practice) {
+            songs.groupBy { (song, _) ->
+                if (byPractice) practiceGroup(practice[song.id]?.lastDay) else letterOf(song.title)
+            }.toList()
+        }
+        val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+        val scope = androidx.compose.runtime.rememberCoroutineScope()
+        // Where each group's heading sits in the list, for the letter strip to jump to.
+        val headingAt = remember(groups) {
+            var at = 0
+            groups.associate { (name, members) -> name to at.also { at += 1 + members.size } }
+        }
+        Row(Modifier.fillMaxSize()) {
+            LazyColumn(Modifier.weight(1f).fillMaxSize(), state = listState) {
+                groups.forEach { (name, members) ->
+                    @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+                    stickyHeader(key = "group-$name") {
+                        Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                name + "  \u00B7  " + members.size,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                    items(members, key = { it.first.id }) { (song, fit) ->
+                        SongRow(
+                            song = song,
+                            practice = practice[song.id],
+                            unsure = fit == PartChoice.Fit.UNKNOWN,
+                            onOpen = { state.stopPlaying(); openSong(state, song) },
+                            onEdit = { editing = song },
+                            onAddToSetlist = { addingToSetlist = song },
+                            onRecordings = { recordingsFor = song },
+                            onDelete = { state.change { deleteSong(song.id) } }
+                        )
+                        HorizontalDivider()
+                    }
+                }
+            }
+            // The letters down the side: tap one to go straight there.
+            if (!byPractice && groups.size > 1) {
+                Column(
+                    Modifier.fillMaxHeight().padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.SpaceEvenly,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    groups.forEach { (name, _) ->
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { scope.launch { listState.scrollToItem(headingAt[name] ?: 0) } }
+                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -447,5 +497,23 @@ internal fun ago(isoDay: String): String {
         days <= 0L -> "today"
         days == 1L -> "yesterday"
         else -> "$days days ago"
+    }
+}
+
+/** The letter a title files under, as a printed index has it: "The Liberty Bell" under L, numbers under #. */
+internal fun letterOf(title: String): String {
+    val c = com.inksheets.core.Library.sortKey(title).firstOrNull { it.isLetterOrDigit() } ?: return "#"
+    return if (c.isLetter()) c.uppercaseChar().toString() else "#"
+}
+
+/** Which "needs practice" group a song falls in, by the day it was last practised. */
+internal fun practiceGroup(lastDay: String?): String {
+    val days = lastDay?.let {
+        runCatching { java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(it), java.time.LocalDate.now()) }.getOrNull()
+    } ?: return "Never practised"
+    return when {
+        days > 30 -> "Over a month ago"
+        days > 7 -> "This month"
+        else -> "This week"
     }
 }
