@@ -126,6 +126,18 @@ jobs:
       - name: Package the rpm
         run: ./gradlew :desktop:packageRpm :sheets-desktop:packageRpm --stacktrace
 
+      # The installed app runs on a trimmed Java runtime, not the full JDK the tests use, so a
+      # module a library needs can pass every test and fail on the first installed machine (it
+      # did: the MobileSheets import needs java.sql). Read the packaged runtime's own list.
+      - name: The packaged InkSheets runtime has what it needs
+        run: |
+          release=$(find sheets-desktop/build/compose -path '*lib/runtime/release' | head -1)
+          echo "Checking $release"
+          grep '^MODULES=' "$release"
+          for m in java.sql java.desktop java.logging jdk.unsupported; do
+            grep '^MODULES=' "$release" | grep -qw "$m" || { echo "::error::The packaged runtime is missing $m"; exit 1; }
+          done
+
       - name: Keep the test report if it failed
         if: failure()
         uses: actions/upload-artifact@v4

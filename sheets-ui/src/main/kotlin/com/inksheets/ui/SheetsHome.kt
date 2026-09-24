@@ -75,8 +75,9 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     var importMs by remember { mutableStateOf(false) }
     var openShared by remember { mutableStateOf(false) }
     var backupToImport by remember { mutableStateOf<java.io.File?>(null) }
+    var backupsLookedAt by remember { mutableStateOf(0) }
     // A MobileSheets backup put in the music folder is noticed and offered, once.
-    val waitingBackup = remember(state.root, state.version) {
+    val waitingBackup = remember(state.root, state.version, backupsLookedAt) {
         state.root?.listFiles { f -> f.isFile && f.extension.equals("msb", ignoreCase = true) }
             ?.firstOrNull { state.platform.pref(backupDoneKey(it)) == null }
     }
@@ -166,7 +167,10 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f)
                         )
-                        TextButton(onClick = { state.platform.setPref(backupDoneKey(msb), "skipped") ; state.change { } }) { Text("Not now") }
+                        TextButton(onClick = {
+                            state.platform.setPref(backupDoneKey(msb), "skipped")
+                            backupsLookedAt++
+                        }) { Text("Not now") }
                         Button(onClick = { backupToImport = msb }) { Text("Import it") }
                     }
                 }
@@ -186,7 +190,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
     if (importMs) MobileSheetsDialog(state, onClose = { importMs = false })
-    backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; state.change { } }, backup = msb) }
+    backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     if (chooseFolder) {

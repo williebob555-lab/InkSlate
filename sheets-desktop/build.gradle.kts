@@ -62,8 +62,16 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Rpm)
             packageName = "InkSheets"
             packageVersion = packageVersionOf(inkslateVersion)
-            // The microphone (tuner) and sound out (metronome).
-            modules("java.desktop")
+            // The installed app runs on a trimmed runtime holding only the modules named here (plus
+            // Compose's own), not the full JDK the tests run on - so a module a library needs and
+            // nobody names works in every test and fails on the first installed machine. That is
+            // how "the backup could not be read" happened: SQLite needs java.sql.
+            //   java.desktop  - sound in and out (metronome, tuner, recordings)
+            //   java.sql      - the MobileSheets database (sqlite-jdbc)
+            //   java.logging  - PDFBox's and the audio decoders' logging
+            //   jdk.unsupported - sqlite-jdbc and JNA reach for sun.misc
+            // CI lists the packaged runtime's modules and fails if any of these is missing.
+            modules("java.desktop", "java.sql", "java.logging", "jdk.unsupported")
 
             linux {
                 packageName = "inksheets"
