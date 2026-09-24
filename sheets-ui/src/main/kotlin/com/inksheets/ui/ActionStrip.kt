@@ -18,6 +18,8 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.ExpandLess
@@ -90,6 +92,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 for (action in shown) {
                     val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
                     if (songAction && state.playing == null) continue
+                    if (action == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty()) continue
                     val group = groupOf(action)
                     if (lastGroup >= 0 && group != lastGroup) {
                         HorizontalDivider(Modifier.width(24.dp).padding(vertical = 2.dp))
@@ -121,11 +124,20 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
+    val song = state.current
+    if (state.audioOpen && song != null) AudioDialog(state, song, onClose = { state.audioOpen = false })
 }
 
 @Composable
 private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onChanged: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        state.current?.let { song ->
+            DropdownMenuItem(
+                text = { Text("Recordings...") },
+                leadingIcon = { Icon(Icons.Default.PlayCircle, null) },
+                onClick = { onDismiss(); state.audioOpen = true }
+            )
+        }
         DropdownMenuItem(
             text = { Text("Metronome settings...") },
             leadingIcon = { Icon(Icons.Default.Timer, null) },
@@ -157,7 +169,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
 private fun groupOf(action: PerformAction): Int = when (action) {
     PerformAction.PEN, PerformAction.HIGHLIGHTER, PerformAction.ERASER, PerformAction.UNDO, PerformAction.REDO -> 1
     PerformAction.NEXT_SONG, PerformAction.PREVIOUS_SONG -> 2
-    PerformAction.METRONOME, PerformAction.TUNER -> 3
+    PerformAction.METRONOME, PerformAction.TUNER, PerformAction.PLAY_AUDIO -> 3
     PerformAction.FULLSCREEN -> 4
     else -> 0
 }
@@ -173,6 +185,7 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
     PerformAction.PREVIOUS_SONG -> Icons.Default.SkipPrevious
     PerformAction.METRONOME -> Icons.Default.Timer
     PerformAction.TUNER -> Icons.Default.GraphicEq
+    PerformAction.PLAY_AUDIO -> if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayCircle
     PerformAction.PEN -> Icons.Default.Edit
     PerformAction.HIGHLIGHTER -> Icons.Default.BorderColor
     PerformAction.ERASER -> Icons.Default.CleaningServices

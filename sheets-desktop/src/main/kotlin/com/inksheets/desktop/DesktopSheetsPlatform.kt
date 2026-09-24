@@ -123,6 +123,8 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override val audioOut: AudioOut = JavaSoundOut()
     override val microphone: Microphone = JavaSoundMic()
 
+    override fun audioPlayer(): com.inksheets.ui.AudioPlayer = JavaSoundPlayer()
+
     private companion object {
         const val K_DEVICE = "sheets_device"
     }

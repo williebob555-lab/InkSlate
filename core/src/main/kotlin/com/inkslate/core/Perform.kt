@@ -24,6 +24,7 @@ enum class PerformAction(val label: String) {
     PREVIOUS_SONG("Previous song in the setlist"),
     METRONOME("Start or stop the metronome"),
     TUNER("Open the tuner"),
+    PLAY_AUDIO("Play or pause the recording"),
     PEN("Pen"),
     HIGHLIGHTER("Highlighter"),
     ERASER("Eraser"),

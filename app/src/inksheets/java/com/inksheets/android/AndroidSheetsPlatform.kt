@@ -119,6 +119,8 @@ class AndroidSheetsPlatform(
     override val audioOut: AudioOut = TrackOut()
     override val microphone: Microphone = RecordMic(context)
 
+    override fun audioPlayer(): com.inksheets.ui.AudioPlayer = MediaAudioPlayer()
+
     private companion object {
         const val K_DEVICE = "sheets_device"
     }

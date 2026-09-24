@@ -55,6 +55,28 @@ interface SheetsPlatform {
 
     /** The microphone, for the tuner; null where there is none. */
     val microphone: Microphone?
+
+    /** A player for a song's recordings; null where there is none. */
+    fun audioPlayer(): AudioPlayer? = null
+}
+
+/**
+ * Plays one recording at a time, slower or faster without changing pitch, shifted in pitch, and
+ * round an A-B loop. [load] is slow and runs off the UI thread; the rest are quick.
+ */
+interface AudioPlayer {
+    fun load(file: File): Boolean
+    fun play()
+    fun pause()
+    val playing: Boolean
+    fun seek(ms: Long)
+    val positionMs: Long
+    val durationMs: Long
+    var speed: Double
+    var pitch: Int
+    /** Loop between two places; nulls for no loop. */
+    fun setLoop(startMs: Long?, endMs: Long?)
+    fun release()
 }
 
 /** A mono float output the caller keeps filled. */

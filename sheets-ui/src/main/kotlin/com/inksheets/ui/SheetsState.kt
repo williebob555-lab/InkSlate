@@ -35,6 +35,12 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /** The tuner and metronome panels, which a pedal or a button over the page can open. */
     var tunerOpen by mutableStateOf(false)
+
+    /** The song opened last - what the strip's recording button plays. */
+    var current by mutableStateOf<com.inksheets.core.Song?>(null)
+
+    /** The recordings panel, for the song opened last. */
+    var audioOpen by mutableStateOf(false)
     var metronomeOpen by mutableStateOf(false)
 
     /** Whether a finger tap at the side of the page turns it. On unless turned off. */
@@ -69,6 +75,7 @@ class SheetsState(val platform: SheetsPlatform) {
                 com.inkslate.core.PerformAction.PREVIOUS_SONG -> step(-1)
                 com.inkslate.core.PerformAction.METRONOME -> { toggleMetronome(); true }
                 com.inkslate.core.PerformAction.TUNER -> { tunerOpen = true; true }
+                com.inkslate.core.PerformAction.PLAY_AUDIO -> { Recording.toggle(this); true }
                 else -> false
             }
         }
@@ -214,6 +221,7 @@ class SheetsState(val platform: SheetsPlatform) {
             com.inkslate.core.PerformAction.UNDO,
             com.inkslate.core.PerformAction.PREVIOUS_SONG,
             com.inkslate.core.PerformAction.NEXT_SONG,
+            com.inkslate.core.PerformAction.PLAY_AUDIO,
             com.inkslate.core.PerformAction.METRONOME,
             com.inkslate.core.PerformAction.TUNER,
             com.inkslate.core.PerformAction.FULLSCREEN

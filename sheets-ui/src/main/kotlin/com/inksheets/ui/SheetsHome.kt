@@ -209,6 +209,7 @@ private fun SongsPane(state: SheetsState) {
     var query by rememberSaveable { mutableStateOf("") }
     var editing by remember { mutableStateOf<Song?>(null) }
     var addingToSetlist by remember { mutableStateOf<Song?>(null) }
+    var recordingsFor by remember { mutableStateOf<Song?>(null) }
 
     val version = state.version
     val songs = remember(version, state.profileId, query) {
@@ -246,6 +247,7 @@ private fun SongsPane(state: SheetsState) {
                     onOpen = { state.stopPlaying(); openSong(state, song) },
                     onEdit = { editing = song },
                     onAddToSetlist = { addingToSetlist = song },
+                    onRecordings = { recordingsFor = song },
                     onDelete = { state.change { deleteSong(song.id) } }
                 )
                 HorizontalDivider()
@@ -254,6 +256,7 @@ private fun SongsPane(state: SheetsState) {
     }
 
     editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    recordingsFor?.let { song -> AudioDialog(state, song, onClose = { recordingsFor = null }) }
     addingToSetlist?.let { song ->
         SetlistChooserDialog(
             state,
@@ -266,6 +269,7 @@ private fun SongsPane(state: SheetsState) {
 /** Open the part of [song] for the instrument being played. */
 internal fun openSong(state: SheetsState, song: Song) {
     val part = PartChoice.partFor(song, state.profile) ?: return
+    state.current = song
     val file = state.fileOf(part.file) ?: return
     state.platform.openPart(song, part, file)
 }
@@ -277,6 +281,7 @@ internal fun SongRow(
     onOpen: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onAddToSetlist: (() -> Unit)? = null,
+    onRecordings: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null
 ) {
@@ -312,6 +317,12 @@ internal fun SongRow(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     onEdit?.let { DropdownMenuItem(text = { Text("Details and parts") }, onClick = { menu = false; it() }) }
                     onAddToSetlist?.let { DropdownMenuItem(text = { Text("Add to setlist...") }, onClick = { menu = false; it() }) }
+                    onRecordings?.let {
+                        DropdownMenuItem(
+                            text = { Text(if (song.audio.isEmpty()) "Pair a recording..." else "Recordings (${song.audio.size})") },
+                            onClick = { menu = false; it() }
+                        )
+                    }
                     onDelete?.let {
                         var confirm by remember { mutableStateOf(false) }
                         DropdownMenuItem(

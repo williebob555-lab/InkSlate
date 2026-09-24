@@ -31,6 +31,9 @@ dependencies {
     // Reading a MobileSheets library's database for import. Carries its own native library for
     // Windows and Linux, so nothing needs installing.
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
+    // Decoders for paired recordings; Java Sound reads WAV and AIFF on its own.
+    implementation("com.googlecode.soundlibs:mp3spi:1.9.5.4")
+    implementation("com.googlecode.soundlibs:vorbisspi:1.0.3.3")
     testImplementation("junit:junit:4.13.2")
 }
 
