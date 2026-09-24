@@ -79,6 +79,55 @@ internal object Recording {
     }
 }
 
+/** Recording yourself: the microphone into a WAV in the music folder, paired with the song after. */
+internal object SelfRecorder {
+    var recording by mutableStateOf(false)
+    var seconds by mutableStateOf(0)
+    private var writer: com.inksheets.core.WavWriter? = null
+    private var song: Song? = null
+
+    /** A title as a folder name: the characters Windows will not have in one taken out. */
+    private fun folderName(title: String) = title.map { if (it in "\\/:*?\"<>|") ' ' else it }.joinToString("").trim()
+
+    fun start(state: SheetsState, song: Song): Boolean {
+        val mic = state.platform.microphone ?: return false
+        val root = state.root ?: return false
+        val stamp = java.time.LocalDateTime.now().withNano(0).toString().replace(':', '-')
+        val file = java.io.File(root, "Recordings/${folderName(song.title)}/$stamp.wav")
+        file.parentFile?.mkdirs()
+        val w = com.inksheets.core.WavWriter(file, mic.sampleRate)
+        val started = mic.start { chunk ->
+            w.write(chunk)
+            val s = w.seconds.toInt()
+            if (s != seconds) state.platform.onMain { seconds = s }
+        }
+        if (!started) {
+            w.close()
+            file.delete()
+            return false
+        }
+        writer = w
+        this.song = song
+        seconds = 0
+        recording = true
+        return true
+    }
+
+    /** Stop, and pair the take with the song, labelled with when it was made. */
+    fun stop(state: SheetsState) {
+        state.platform.microphone?.stop()
+        val w = writer ?: return
+        writer = null
+        recording = false
+        w.close()
+        val s = song ?: return
+        val rel = state.relative(w.file) ?: return
+        val label = "Me, " + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm"))
+        val current = state.library?.song(s.id) ?: return
+        state.change { editSong(s.id) { audio = current.audio + AudioTrack(file = rel, label = label) } }
+    }
+}
+
 /** A song's recordings: play, loop a passage, slow it down, shift its pitch; and pair new ones. */
 @Composable
 internal fun AudioDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
@@ -140,6 +189,15 @@ internal fun AudioDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
         onDismiss = onClose,
         wide = true,
         buttons = {
+            if (SelfRecorder.recording) {
+                TextButton(onClick = {
+                    SelfRecorder.stop(state)
+                    tracks = state.library?.song(song.id)?.audio ?: tracks
+                    selected = tracks.lastIndex
+                }) { Text("Stop recording (${SelfRecorder.seconds}s)") }
+            } else {
+                TextButton(onClick = { SelfRecorder.start(state, song) }) { Text("Record yourself") }
+            }
             TextButton(onClick = { picking = true }) { Text("Pair another") }
             TextButton(onClick = onClose) { Text("Close") }
         }

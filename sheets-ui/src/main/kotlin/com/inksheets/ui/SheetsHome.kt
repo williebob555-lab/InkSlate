@@ -217,16 +217,23 @@ private fun SongsPane(state: SheetsState) {
     var editing by remember { mutableStateOf<Song?>(null) }
     var addingToSetlist by remember { mutableStateOf<Song?>(null) }
     var recordingsFor by remember { mutableStateOf<Song?>(null) }
+    var byPractice by rememberSaveable { mutableStateOf(false) }
 
     val version = state.version
-    val songs = remember(version, state.profileId, query) {
+    val practice = remember(version) {
+        val lib = state.library
+        lib?.songs.orEmpty().associate { it.id to lib!!.practiceOf(it.id) }
+    }
+    val songs = remember(version, state.profileId, query, byPractice) {
         val all = state.library?.songs.orEmpty()
         val q = query.trim().lowercase()
         val matching = if (q.isEmpty()) all else all.filter { s ->
             (listOf(s.title) + s.composers + s.arrangers + s.artists + s.genres + s.tags)
                 .any { it.lowercase().contains(q) }
         }
-        PartChoice.songsFor(matching, state.profile)
+        val listed = PartChoice.songsFor(matching, state.profile)
+        // "Needs practice": the least recently practised first, never-practised at the very top.
+        if (byPractice) listed.sortedBy { (s, _) -> practice[s.id]?.lastDay ?: "" } else listed
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -238,6 +245,10 @@ private fun SongsPane(state: SheetsState) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
+        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.FilterChip(selected = !byPractice, onClick = { byPractice = false }, label = { Text("A to Z") })
+            androidx.compose.material3.FilterChip(selected = byPractice, onClick = { byPractice = true }, label = { Text("Needs practice") })
+        }
         if (songs.isEmpty()) {
             Text(
                 if (state.library?.songs.isNullOrEmpty()) "No music yet. Add some with the button at the top."
@@ -250,6 +261,7 @@ private fun SongsPane(state: SheetsState) {
             items(songs, key = { it.first.id }) { (song, fit) ->
                 SongRow(
                     song = song,
+                    practice = practice[song.id],
                     unsure = fit == PartChoice.Fit.UNKNOWN,
                     onOpen = { state.stopPlaying(); openSong(state, song) },
                     onEdit = { editing = song },
@@ -289,6 +301,7 @@ internal fun openSong(state: SheetsState, song: Song) {
 internal fun SongRow(
     song: Song,
     unsure: Boolean,
+    practice: com.inksheets.core.Library.Practice? = null,
     onOpen: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onAddToSetlist: (() -> Unit)? = null,
@@ -305,7 +318,8 @@ internal fun SongRow(
             val detail = listOfNotNull(
                 song.composers.joinToString(", ").takeIf { it.isNotEmpty() },
                 song.key?.let { "in $it" },
-                song.tempo?.let { "♩=$it" }
+                song.tempo?.let { "♩=$it" },
+                practice?.takeIf { it.totalSeconds >= 60 }?.let { p -> "practised ${duration(p.totalSeconds)}" + (p.lastDay?.let { ", " + ago(it) } ?: "") }
             ).joinToString("  ·  ")
             if (detail.isNotEmpty()) {
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -379,5 +393,21 @@ internal fun AddButton(label: String, onClick: () -> Unit) {
         Icon(Icons.Default.Add, null)
         Spacer(Modifier.width(4.dp))
         Text(label)
+    }
+}
+
+internal fun duration(seconds: Long): String {
+    val m = seconds / 60
+    return if (m < 60) "${m}m" else "${m / 60}h ${m % 60}m"
+}
+
+internal fun ago(isoDay: String): String {
+    val days = runCatching {
+        java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(isoDay), java.time.LocalDate.now())
+    }.getOrNull() ?: return isoDay
+    return when {
+        days <= 0L -> "today"
+        days == 1L -> "yesterday"
+        else -> "$days days ago"
     }
 }

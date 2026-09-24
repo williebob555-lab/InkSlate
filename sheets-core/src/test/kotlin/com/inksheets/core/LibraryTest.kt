@@ -165,6 +165,22 @@ class LibraryTest {
         assertEquals("Half", lib.song("x")!!.title)
     }
 
+    @Test
+    fun `practice adds up across days and devices`() {
+        val (tabletRoot, tablet) = device("tablet")
+        val (laptopRoot, laptop) = device("laptop")
+        val song = tablet.addSong("Etude")
+        tablet.addPractice(song.id, "2026-09-20", 600)
+        tablet.addPractice(song.id, "2026-09-20", 300)
+        sync(tabletRoot, laptopRoot); laptop.refresh()
+        laptop.addPractice(song.id, "2026-09-22", 1200)
+        sync(laptopRoot, tabletRoot); tablet.refresh()
+        val p = tablet.practiceOf(song.id)
+        assertEquals(2100L, p.totalSeconds)
+        assertEquals("2026-09-22", p.lastDay)
+        assertEquals(900L, p.byDay["2026-09-20"])
+    }
+
     private fun Library.ownLogSize(): Long =
         File(tmp.root, "tablet/.inksheets/log/tablet.jsonl").length()
 }

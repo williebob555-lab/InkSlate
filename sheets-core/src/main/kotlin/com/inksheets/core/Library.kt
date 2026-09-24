@@ -287,6 +287,37 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         edit(FOLDER, id) { put(Op.DELETED, true) }
     }
 
+    // ---- practice ------------------------------------------------------------------
+
+    /** How much a song has been practised, on every device together. */
+    data class Practice(val totalSeconds: Long, val lastDay: String?, val byDay: Map<String, Long>)
+
+    /**
+     * Add [seconds] of practice on [song] on [day] (an ISO date). Each device keeps its own total
+     * for each song and day, so two devices practising the same song never write the same record.
+     */
+    fun addPractice(songId: String, day: String, seconds: Long) {
+        val id = "$songId|$day|${log.device}"
+        val before = synchronized(this) {
+            (state.fields(PRACTICE, id)?.get("seconds")?.value as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L
+        }
+        edit(PRACTICE, id) {
+            put("song", songId)
+            put("day", day)
+            put("seconds", before + seconds)
+        }
+    }
+
+    fun practiceOf(songId: String): Practice = synchronized(this) {
+        val days = HashMap<String, Long>()
+        state.live(PRACTICE).values.forEach { f ->
+            if (f.string("song") != songId) return@forEach
+            val day = f.string("day") ?: return@forEach
+            days[day] = (days[day] ?: 0) + (f.string("seconds")?.toLongOrNull() ?: 0)
+        }
+        Practice(days.values.sum(), days.keys.maxOrNull(), days.toSortedMap())
+    }
+
     /** Rewrite this device's log without its superseded edits, once it has grown enough to matter. */
     @Synchronized
     fun compactIfLarge(threshold: Long = 4L * 1024 * 1024) {
@@ -390,6 +421,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         const val SONG = "song"
         const val SETLIST = "setlist"
         const val FOLDER = "folder"
+        const val PRACTICE = "practice"
 
         internal val STRING_LIST = ListSerializer(String.serializer())
         internal val PART_LIST = ListSerializer(Part.serializer())

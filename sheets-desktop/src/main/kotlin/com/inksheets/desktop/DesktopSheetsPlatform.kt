@@ -178,13 +178,13 @@ private class JavaSoundOut : AudioOut {
     }
 }
 
-/** The default microphone through Java Sound, delivered in overlapping blocks for the tuner. */
+/** The default microphone through Java Sound, delivered as it arrives. */
 private class JavaSoundMic : Microphone {
     override val sampleRate = 48_000
     @Volatile private var line: TargetDataLine? = null
     @Volatile private var running = false
 
-    override fun start(blockSize: Int, onBlock: (FloatArray) -> Unit): Boolean {
+    override fun start(onChunk: (FloatArray) -> Unit): Boolean {
         stop()
         val opened = runCatching {
             val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
@@ -196,21 +196,16 @@ private class JavaSoundMic : Microphone {
         line = opened
         running = true
         Thread({
-            val hop = blockSize / 4
-            val window = FloatArray(blockSize)
-            val bytes = ByteArray(hop * 2)
+            val bytes = ByteArray(sampleRate / 100 * 2)     // 10 ms at a time
             while (running) {
                 val n = opened.read(bytes, 0, bytes.size)
                 if (n <= 0) continue
-                val samples = n / 2
-                System.arraycopy(window, samples, window, 0, window.size - samples)
-                for (i in 0 until samples) {
-                    val v = (bytes[2 * i].toInt() and 0xFF) or (bytes[2 * i + 1].toInt() shl 8)
-                    window[window.size - samples + i] = v.toShort() / 32768f
+                val chunk = FloatArray(n / 2) { i ->
+                    ((bytes[2 * i].toInt() and 0xFF) or (bytes[2 * i + 1].toInt() shl 8)).toShort() / 32768f
                 }
-                onBlock(window.copyOf())
+                onChunk(chunk)
             }
-        }, "tuner").apply { isDaemon = true; start() }
+        }, "microphone").apply { isDaemon = true; start() }
         return true
     }
 

@@ -67,6 +67,17 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     var menu by remember { mutableStateOf(false) }
     var shown by remember { mutableStateOf(state.stripActions()) }
 
+    // Practice time: counted while a song is open in front of you, half a minute at a time.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(30_000)
+            val song = state.current ?: continue
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { state.change { addPractice(song.id, java.time.LocalDate.now().toString(), 30) } }
+            }
+        }
+    }
+
     Surface(
         shape = RoundedCornerShape(20.dp),
         tonalElevation = 3.dp,
@@ -80,6 +91,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             modifier = Modifier.verticalScroll(rememberScrollState())
         ) {
             if (!collapsed) {
+                if (SelfRecorder.recording) {
+                    Text("● Rec", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+                }
                 state.companion.status?.let { status ->
                     Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp, start = 6.dp, end = 6.dp))
                 }

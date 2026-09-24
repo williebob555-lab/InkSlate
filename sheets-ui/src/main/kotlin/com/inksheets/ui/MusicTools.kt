@@ -159,10 +159,19 @@ internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
     }
     DisposableEffect(mic, attempt) {
         if (mic != null) {
-            val window = Tuner.windowFor(mic.sampleRate)
+            val size = Tuner.windowFor(mic.sampleRate)
+            val window = FloatArray(size)
+            var sinceLast = 0
             var smoothed: Double? = null
-            listening = mic.start(window) { block ->
-                val reading = Tuner.detect(block, mic.sampleRate)
+            listening = mic.start { chunk ->
+                // Slide the window along; look again every quarter of a window.
+                val n = chunk.size.coerceAtMost(size)
+                System.arraycopy(window, n, window, 0, size - n)
+                System.arraycopy(chunk, chunk.size - n, window, size - n, n)
+                sinceLast += chunk.size
+                if (sinceLast < size / 4) return@start
+                sinceLast = 0
+                val reading = Tuner.detect(window.copyOf(), mic.sampleRate)
                 if (reading == null || reading.clarity < 0.75) return@start
                 // A little smoothing, so the needle settles rather than shivers.
                 val s = smoothed?.let { prev ->

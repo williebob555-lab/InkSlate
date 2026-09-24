@@ -187,7 +187,7 @@ private class RecordMic(private val context: Context) : Microphone {
     @Volatile private var running = false
     private var record: AudioRecord? = null
 
-    override fun start(blockSize: Int, onBlock: (FloatArray) -> Unit): Boolean {
+    override fun start(onChunk: (FloatArray) -> Unit): Boolean {
         stop()
         if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             (context as? Activity)?.requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 7301)
@@ -198,24 +198,20 @@ private class RecordMic(private val context: Context) : Microphone {
             @Suppress("MissingPermission")
             AudioRecord(
                 MediaRecorder.AudioSource.UNPROCESSED, sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_FLOAT, maxOf(min, blockSize * 4 * 2)
+                AudioFormat.ENCODING_PCM_FLOAT, maxOf(min, sampleRate / 5 * 4)
             ).takeIf { it.state == AudioRecord.STATE_INITIALIZED }
         }.getOrNull() ?: return false
         record = rec
         running = true
         rec.startRecording()
         Thread({
-            val hop = blockSize / 4
-            val window = FloatArray(blockSize)
-            val chunk = FloatArray(hop)
+            val chunk = FloatArray(sampleRate / 100)       // 10 ms at a time
             while (running) {
                 val n = rec.read(chunk, 0, chunk.size, AudioRecord.READ_BLOCKING)
                 if (n <= 0) continue
-                System.arraycopy(window, n, window, 0, window.size - n)
-                System.arraycopy(chunk, 0, window, window.size - n, n)
-                onBlock(window.copyOf())
+                onChunk(chunk.copyOf(n))
             }
-        }, "tuner").apply { isDaemon = true; start() }
+        }, "microphone").apply { isDaemon = true; start() }
         return true
     }
 

@@ -97,9 +97,10 @@ interface AudioOut {
 interface Microphone {
     val sampleRate: Int
     /**
-     * Start delivering blocks of at least [blockSize] samples to [onBlock] on a background
-     * thread. Returns false when the microphone could not be opened (or permission was refused).
+     * Start delivering the sound as it arrives, in short chunks, to [onChunk] on a background
+     * thread - the tuner windows them, a recording writes them out. Returns false when the
+     * microphone could not be opened (or permission was refused).
      */
-    fun start(blockSize: Int, onBlock: (FloatArray) -> Unit): Boolean
+    fun start(onChunk: (FloatArray) -> Unit): Boolean
     fun stop()
 }
