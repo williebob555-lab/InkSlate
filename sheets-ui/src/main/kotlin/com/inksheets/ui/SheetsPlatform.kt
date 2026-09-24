@@ -41,6 +41,12 @@ interface SheetsPlatform {
     /** Whether [recognise] can do anything here. */
     val canRecognise: Boolean get() = false
 
+    /**
+     * Open a MobileSheets database (`mobilesheets.db`) read-only and hand its tables over, or null
+     * when it cannot be opened. The caller closes nothing: each call reads what it needs.
+     */
+    fun openMobileSheets(db: File): com.inksheets.core.MobileSheetsImport.Tables? = null
+
     /** Turn tap-the-side-to-turn-the-page on or off in the editor, where it can do that. */
     fun setEdgeTaps(on: Boolean) {}
 

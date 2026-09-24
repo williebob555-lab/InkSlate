@@ -1515,6 +1515,8 @@ fun EditorScreen(
                     (page > 0).also { if (it) view.goToPage(page - 1) }
                 com.inkslate.core.PerformAction.FIRST_PAGE -> { view.goToPage(0); true }
                 com.inkslate.core.PerformAction.LAST_PAGE -> { view.goToPage(count - 1); true }
+                com.inkslate.core.PerformAction.UNDO -> { view.undo(); dirty = true; true }
+                com.inkslate.core.PerformAction.REDO -> { view.redo(); dirty = true; true }
                 com.inkslate.core.PerformAction.HALF_PAGE_FORWARD -> view.scrollByViewFraction(0.5f)
                 com.inkslate.core.PerformAction.HALF_PAGE_BACK -> view.scrollByViewFraction(-0.5f)
                 else -> false

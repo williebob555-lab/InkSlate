@@ -66,6 +66,30 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.edgeTapTurns = on
     }
 
+    override fun openMobileSheets(db: File): com.inksheets.core.MobileSheetsImport.Tables? = runCatching {
+        android.database.sqlite.SQLiteDatabase.openDatabase(db.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY).close()
+        com.inksheets.core.MobileSheetsImport.Tables { table ->
+            runCatching {
+                android.database.sqlite.SQLiteDatabase.openDatabase(db.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY).use { sql ->
+                    sql.rawQuery("SELECT * FROM \"" + table.replace("\"", "") + "\"", null).use { c ->
+                        val rows = ArrayList<Map<String, Any?>>()
+                        while (c.moveToNext()) {
+                            rows += (0 until c.columnCount).associate { i ->
+                                c.getColumnName(i) to when (c.getType(i)) {
+                                    android.database.Cursor.FIELD_TYPE_INTEGER -> c.getLong(i)
+                                    android.database.Cursor.FIELD_TYPE_FLOAT -> c.getDouble(i)
+                                    android.database.Cursor.FIELD_TYPE_STRING -> c.getString(i)
+                                    else -> null
+                                }
+                            }
+                        }
+                        rows
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+    }.onFailure { EventLog.warn("sheets", "Could not open ${db.name}: ${it.message}") }.getOrNull()
+
     override val canRecognise: Boolean = true
 
     /**

@@ -38,7 +38,11 @@ enum class KeyAction(val label: String, val perform: com.inkslate.core.PerformAc
     NEXT_SONG("Next song in the setlist", com.inkslate.core.PerformAction.NEXT_SONG),
     PREVIOUS_SONG("Previous song in the setlist", com.inkslate.core.PerformAction.PREVIOUS_SONG),
     METRONOME("Start or stop the metronome", com.inkslate.core.PerformAction.METRONOME),
-    TUNER("Open the tuner", com.inkslate.core.PerformAction.TUNER)
+    TUNER("Open the tuner", com.inkslate.core.PerformAction.TUNER),
+    PEN_TOOL("Pen", com.inkslate.core.PerformAction.PEN),
+    HIGHLIGHTER_TOOL("Highlighter", com.inkslate.core.PerformAction.HIGHLIGHTER),
+    ERASER_TOOL("Eraser", com.inkslate.core.PerformAction.ERASER),
+    FULLSCREEN("Fullscreen on or off", com.inkslate.core.PerformAction.FULLSCREEN)
 }
 
 /** A key with the modifiers held down with it. */

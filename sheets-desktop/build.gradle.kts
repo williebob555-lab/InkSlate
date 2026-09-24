@@ -28,6 +28,9 @@ dependencies {
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
     implementation(libs.pdfbox.jvm)
+    // Reading a MobileSheets library's database for import. Carries its own native library for
+    // Windows and Linux, so nothing needs installing.
+    implementation("org.xerial:sqlite-jdbc:3.47.1.0")
     testImplementation("junit:junit:4.13.2")
 }
 

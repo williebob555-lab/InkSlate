@@ -98,6 +98,28 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         }
     }
 
+    override fun openMobileSheets(db: File): com.inksheets.core.MobileSheetsImport.Tables? = runCatching {
+        Class.forName("org.sqlite.JDBC")
+        val url = "jdbc:sqlite:file:" + db.absolutePath.replace(File.separatorChar, '/') + "?mode=ro"
+        java.sql.DriverManager.getConnection(url).close()
+        com.inksheets.core.MobileSheetsImport.Tables { table ->
+            runCatching {
+                java.sql.DriverManager.getConnection(url).use { c ->
+                    c.createStatement().use { st ->
+                        st.executeQuery("SELECT * FROM \"" + table.replace("\"", "") + "\"").use { rs ->
+                            val meta = rs.metaData
+                            val rows = ArrayList<Map<String, Any?>>()
+                            while (rs.next()) {
+                                rows += (1..meta.columnCount).associate { meta.getColumnName(it) to rs.getObject(it) }
+                            }
+                            rows
+                        }
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+    }.onFailure { EventLog.warn("sheets", "Could not open ${db.name}: ${it.message}") }.getOrNull()
+
     override val audioOut: AudioOut = JavaSoundOut()
     override val microphone: Microphone = JavaSoundMic()
 

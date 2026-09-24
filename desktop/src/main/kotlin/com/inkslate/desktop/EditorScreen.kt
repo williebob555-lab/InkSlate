@@ -1380,6 +1380,8 @@ fun EditorScreen(
                     (page > 0).also { if (it) goToPage(page - 1) }
                 com.inkslate.core.PerformAction.FIRST_PAGE -> { goToPage(0); true }
                 com.inkslate.core.PerformAction.LAST_PAGE -> { goToPage(count - 1); true }
+                com.inkslate.core.PerformAction.UNDO -> { undoOnce(); true }
+                com.inkslate.core.PerformAction.REDO -> { redoOnce(); true }
                 com.inkslate.core.PerformAction.HALF_PAGE_FORWARD, com.inkslate.core.PerformAction.HALF_PAGE_BACK -> {
                     // Half the window: the bottom half of what was showing moves to the top, so
                     // the next lines are there before the last ones have gone.

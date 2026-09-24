@@ -20,6 +20,9 @@ object AppFlavor {
     /** Replaces the Home screen. Given a way to open a document in a tab and to open Settings. */
     var home: (@Composable (openFile: (File) -> Unit, openSettings: () -> Unit) -> Unit)? = null
 
+    /** The finger moves the page rather than drawing, until changed in Settings. */
+    var fingerPans: Boolean = false
+
     /** Drawn over the document in front, in the corner of its pane. */
     var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
 }

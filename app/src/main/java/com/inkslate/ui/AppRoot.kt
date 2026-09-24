@@ -238,6 +238,39 @@ fun AppRoot(
     val focusedTab = tabOf(focusedRef?.tabId)
     // With no document in front, a pedal has no page to turn; the focused editor sets it again.
     if (focusedTab == null) com.inkslate.core.Perform.document = null
+    // Pen tools and fullscreen from the strip over the page or a pedal. The pen's own profile is
+    // changed (and the mouse's, for a laptop without one), so the next mark is the new tool
+    // whatever touched the button - there is no mode to leave to annotate.
+    com.inkslate.core.Perform.workspace = { action ->
+        when (action) {
+            com.inkslate.core.PerformAction.PEN, com.inkslate.core.PerformAction.HIGHLIGHTER,
+            com.inkslate.core.PerformAction.ERASER -> {
+                listOf(com.inkslate.core.InputMode.PEN, com.inkslate.core.InputMode.MOUSE).forEach {
+                    com.inkslate.core.QuickTools.apply(tools.configFor(it), action)
+                }
+                tools.edit {}
+                true
+            }
+            com.inkslate.core.PerformAction.FULLSCREEN -> { immersive.set(!immersive.isFullscreen); true }
+            else -> false
+        }
+    }
+    // An app where the pen annotates and the finger turns pages (InkSheets) starts the finger
+    // on moving the page instead of drawing - once, so a change made in Settings stays made.
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        if (com.inkslate.AppFlavor.fingerPans && context.getSharedPreferences("flavor", android.content.Context.MODE_PRIVATE).getString("finger_pans_applied", null) == null) {
+            tools.configFor(com.inkslate.core.InputMode.TOUCH).tool = com.inkslate.core.Tool.PAN
+            tools.edit {}
+            context.getSharedPreferences("flavor", android.content.Context.MODE_PRIVATE).edit().putString("finger_pans_applied", "true").apply()
+        }
+    }
+    com.inkslate.core.Perform.isOn = { action ->
+        tools.revision
+        when (action) {
+            com.inkslate.core.PerformAction.FULLSCREEN -> immersive.isFullscreen
+            else -> com.inkslate.core.QuickTools.current(tools.configFor(com.inkslate.core.InputMode.PEN)) == action
+        }
+    }
 
     // Fullscreen belongs to what is in front. Each document comes back the way it was left; the
     // two halves of a split share one, so moving between them never flickers the system bars.

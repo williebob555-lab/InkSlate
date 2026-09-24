@@ -10,6 +10,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.BorderColor
+import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FirstPage
@@ -61,7 +71,11 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
         modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+            modifier = Modifier.verticalScroll(rememberScrollState())
+        ) {
             if (!collapsed) {
                 // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
@@ -72,15 +86,23 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                         modifier = Modifier.padding(top = 6.dp)
                     )
                 }
+                var lastGroup = -1
                 for (action in shown) {
                     val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
                     if (songAction && state.playing == null) continue
-                    val lit = action == PerformAction.METRONOME && SharedMetronome.running
+                    val group = groupOf(action)
+                    if (lastGroup >= 0 && group != lastGroup) {
+                        HorizontalDivider(Modifier.width(24.dp).padding(vertical = 2.dp))
+                    }
+                    lastGroup = group
+                    val lit = (action == PerformAction.METRONOME && SharedMetronome.running) ||
+                        (action != PerformAction.FULLSCREEN && Perform.on(action))
                     IconButton(
                         onClick = { Perform.run(action) },
-                        colors = if (lit) IconButtonDefaults.filledIconButtonColors() else IconButtonDefaults.iconButtonColors()
+                        colors = if (lit) IconButtonDefaults.filledTonalIconButtonColors() else IconButtonDefaults.iconButtonColors(),
+                        modifier = Modifier.size(44.dp)
                     ) {
-                        Icon(iconOf(action), action.label)
+                        Icon(iconOf(action, Perform.on(PerformAction.FULLSCREEN)), action.label)
                     }
                 }
                 Box {
@@ -123,7 +145,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
                 text = { Text(action.label) },
                 leadingIcon = { Checkbox(checked = action in chosen, onCheckedChange = null) },
                 onClick = {
-                    state.setStripActions(if (action in chosen) chosen - action else (chosen + action).sortedBy { it.ordinal })
+                    state.setStripActions(if (action in chosen) chosen - action else (chosen + action).sortedWith(compareBy({ groupOf(it) }, { it.ordinal })))
                     onChanged()
                 }
             )
@@ -131,7 +153,16 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
     }
 }
 
-private fun iconOf(action: PerformAction): ImageVector = when (action) {
+/** Page turns, pen tools, songs, sound, the screen: a thin rule between each. */
+private fun groupOf(action: PerformAction): Int = when (action) {
+    PerformAction.PEN, PerformAction.HIGHLIGHTER, PerformAction.ERASER, PerformAction.UNDO, PerformAction.REDO -> 1
+    PerformAction.NEXT_SONG, PerformAction.PREVIOUS_SONG -> 2
+    PerformAction.METRONOME, PerformAction.TUNER -> 3
+    PerformAction.FULLSCREEN -> 4
+    else -> 0
+}
+
+private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = when (action) {
     PerformAction.NEXT_PAGE -> Icons.AutoMirrored.Filled.NavigateNext
     PerformAction.PREVIOUS_PAGE -> Icons.AutoMirrored.Filled.NavigateBefore
     PerformAction.HALF_PAGE_FORWARD -> Icons.Default.ExpandMore
@@ -142,6 +173,12 @@ private fun iconOf(action: PerformAction): ImageVector = when (action) {
     PerformAction.PREVIOUS_SONG -> Icons.Default.SkipPrevious
     PerformAction.METRONOME -> Icons.Default.Timer
     PerformAction.TUNER -> Icons.Default.GraphicEq
+    PerformAction.PEN -> Icons.Default.Edit
+    PerformAction.HIGHLIGHTER -> Icons.Default.BorderColor
+    PerformAction.ERASER -> Icons.Default.CleaningServices
+    PerformAction.UNDO -> Icons.AutoMirrored.Filled.Undo
+    PerformAction.REDO -> Icons.AutoMirrored.Filled.Redo
+    PerformAction.FULLSCREEN -> if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen
 }
 
 private const val K_COLLAPSED = "sheets_strip_collapsed"

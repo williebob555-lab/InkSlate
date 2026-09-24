@@ -29,6 +29,7 @@ object FlavorSetup {
     }
 
     fun install(app: Application) {
+        AppFlavor.fingerPans = true
         AppFlavor.home = { open, openSettings ->
             openFile = open
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)

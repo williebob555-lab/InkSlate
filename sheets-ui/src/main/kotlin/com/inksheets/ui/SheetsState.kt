@@ -201,13 +201,22 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_EDGE_TAPS = "sheets_edge_taps"
         private const val K_STRIP = "sheets_strip"
 
+        /**
+         * Page turns, then the pen tools - a rehearsal note goes on in one tap and the pen is
+         * back in one more - then songs, the metronome and tuner, and fullscreen.
+         */
         val DEFAULT_STRIP = listOf(
             com.inkslate.core.PerformAction.PREVIOUS_PAGE,
             com.inkslate.core.PerformAction.NEXT_PAGE,
+            com.inkslate.core.PerformAction.PEN,
+            com.inkslate.core.PerformAction.HIGHLIGHTER,
+            com.inkslate.core.PerformAction.ERASER,
+            com.inkslate.core.PerformAction.UNDO,
             com.inkslate.core.PerformAction.PREVIOUS_SONG,
             com.inkslate.core.PerformAction.NEXT_SONG,
             com.inkslate.core.PerformAction.METRONOME,
-            com.inkslate.core.PerformAction.TUNER
+            com.inkslate.core.PerformAction.TUNER,
+            com.inkslate.core.PerformAction.FULLSCREEN
         )
     }
 }

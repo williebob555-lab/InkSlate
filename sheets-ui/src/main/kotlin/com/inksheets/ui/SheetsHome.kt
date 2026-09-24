@@ -71,6 +71,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     var showTuner by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var chooseFolder by remember { mutableStateOf(false) }
+    var importMs by remember { mutableStateOf(false) }
 
     // Scans nobody has read yet are read in the background, a page at a time.
     var reading by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -111,6 +112,13 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                             leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
                             onClick = { more = false; chooseFolder = true }
                         )
+                        if (state.library != null) {
+                            DropdownMenuItem(
+                                text = { Text("Import from MobileSheets...") },
+                                leadingIcon = { Icon(Icons.Default.LibraryAdd, null) },
+                                onClick = { more = false; importMs = true }
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("Settings") },
                             leadingIcon = { Icon(Icons.Default.Settings, null) },
@@ -146,6 +154,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
+    if (importMs) MobileSheetsDialog(state, onClose = { importMs = false })
     if (chooseFolder) {
         FolderPickerDialog(
             title = "Choose your music folder",

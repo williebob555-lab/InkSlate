@@ -12,6 +12,7 @@ import java.io.File
  * the action buttons over the song in front - one [SheetsState] behind both.
  */
 fun main() = runAs("InkSheets") {
+    AppFlavor.fingerPans = true
     var openFile: ((File) -> Unit)? = null
     val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }) }
     AppFlavor.home = { open, openSettings ->
