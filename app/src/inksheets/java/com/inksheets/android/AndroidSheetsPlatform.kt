@@ -62,6 +62,10 @@ class AndroidSheetsPlatform(
         }
     }.getOrNull()
 
+    override fun setEdgeTaps(on: Boolean) {
+        com.inkslate.ink.DrawingView.edgeTapTurns = on
+    }
+
     override val canRecognise: Boolean = true
 
     /**

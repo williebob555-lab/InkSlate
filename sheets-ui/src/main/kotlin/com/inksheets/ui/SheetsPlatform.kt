@@ -41,6 +41,9 @@ interface SheetsPlatform {
     /** Whether [recognise] can do anything here. */
     val canRecognise: Boolean get() = false
 
+    /** Turn tap-the-side-to-turn-the-page on or off in the editor, where it can do that. */
+    fun setEdgeTaps(on: Boolean) {}
+
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
 

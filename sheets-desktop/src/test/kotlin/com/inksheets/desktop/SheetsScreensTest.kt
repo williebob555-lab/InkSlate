@@ -1,6 +1,9 @@
 package com.inksheets.desktop
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxSize
+import com.inksheets.ui.ActionStrip
 import androidx.compose.material3.Surface
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.graphics.toAwtImage
@@ -114,6 +117,31 @@ class SheetsScreensTest {
             onNodeWithText("beats per minute").assertExists()
             shoot("metronome", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
+    }
+
+    @Test
+    fun `the action strip sits over the page and runs pedal actions`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        val ran = ArrayList<com.inkslate.core.PerformAction>()
+        com.inkslate.core.Perform.document = { ran += it; true }
+        runDesktopComposeUiTest(width = 900, height = 700) {
+            setContent {
+                MaterialTheme {
+                    androidx.compose.foundation.layout.Box(
+                        androidx.compose.ui.Modifier.fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color(0xFFF4F1EA))
+                    ) {
+                        ActionStrip(state)
+                    }
+                }
+            }
+            waitForIdle()
+            onNode(androidx.compose.ui.test.hasContentDescription("Next page")).performClick()
+            assertEquals(listOf(com.inkslate.core.PerformAction.NEXT_PAGE), ran)
+            shoot("action-strip", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+        }
+        com.inkslate.core.Perform.document = null
     }
 
     private fun androidx.compose.ui.test.ComposeUiTest.onNodeWithContentDescriptionSafe(label: String) =

@@ -2792,6 +2792,22 @@ class DrawingView @JvmOverloads constructor(
                 }
             }
             MotionEvent.ACTION_UP -> {
+                // A finger tapped near the left or right edge turns the page, where the app asks
+                // for that (InkSheets does). Only a tap that never became a stroke - a finger
+                // that landed and lifted without moving - so writing near the edge still writes,
+                // and the pen never turns pages at all.
+                val tapped = pending
+                if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0) {
+                    val at = event.x / width
+                    if (at < EDGE_TAP_SHARE || at > 1f - EDGE_TAP_SHARE) {
+                        discardPending()
+                        com.inkslate.core.Perform.run(
+                            if (at > 0.5f) com.inkslate.core.PerformAction.NEXT_PAGE
+                            else com.inkslate.core.PerformAction.PREVIOUS_PAGE
+                        )
+                        return true
+                    }
+                }
                 // A tap has to keep working: placing a stamp, selecting an object, deselecting.
                 commitPending()
                 onUp(cancelled = false, t = t)
@@ -4320,7 +4336,15 @@ class DrawingView @JvmOverloads constructor(
         onContentChanged?.invoke()
     }
 
-    private companion object {
+    companion object {
+        /** Set by an app that turns pages with a finger tap at the sides (InkSheets). */
+        @JvmStatic
+        @Volatile
+        var edgeTapTurns: Boolean = false
+
+        /** How much of the width at each side counts as "the side". */
+        const val EDGE_TAP_SHARE = 0.18f
+
         /** Placeholder id for the stroke being drawn right now; never persisted. */
         const val LIVE_ID = "live"
 

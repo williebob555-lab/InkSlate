@@ -33,11 +33,34 @@ class SheetsState(val platform: SheetsPlatform) {
     val profile: InstrumentProfile?
         get() = profiles.firstOrNull { it.id == profileId }
 
+    /** The tuner and metronome panels, which a pedal or a button over the page can open. */
+    var tunerOpen by mutableStateOf(false)
+    var metronomeOpen by mutableStateOf(false)
+
+    /** Whether a finger tap at the side of the page turns it. On unless turned off. */
+    var edgeTaps: Boolean
+        get() = edgeTapsState
+        set(on) {
+            edgeTapsState = on
+            platform.setPref(K_EDGE_TAPS, on.toString())
+            platform.setEdgeTaps(on)
+        }
+    private var edgeTapsState by mutableStateOf(platform.pref(K_EDGE_TAPS) != "false")
+
+    /** The actions on the strip over the page. */
+    fun stripActions(): List<com.inkslate.core.PerformAction> =
+        platform.pref(K_STRIP)?.split(',')?.mapNotNull { n -> com.inkslate.core.PerformAction.entries.firstOrNull { it.name == n } }
+            ?: DEFAULT_STRIP
+
+    fun setStripActions(actions: List<com.inkslate.core.PerformAction>) =
+        platform.setPref(K_STRIP, actions.joinToString(",") { it.name })
+
     /** The setlist being played through, and where in it: what "next song" means. */
     var playing by mutableStateOf<Pair<String, Int>?>(null)
         private set
 
     init {
+        platform.setEdgeTaps(edgeTapsState)
         platform.pref(K_LIBRARY)?.let(::File)?.takeIf { it.isDirectory }?.let(::open)
         // Song turns and the metronome from a pedal, whatever screen is in front.
         com.inkslate.core.Perform.app = { action ->
@@ -45,6 +68,7 @@ class SheetsState(val platform: SheetsPlatform) {
                 com.inkslate.core.PerformAction.NEXT_SONG -> step(1)
                 com.inkslate.core.PerformAction.PREVIOUS_SONG -> step(-1)
                 com.inkslate.core.PerformAction.METRONOME -> { toggleMetronome(); true }
+                com.inkslate.core.PerformAction.TUNER -> { tunerOpen = true; true }
                 else -> false
             }
         }
@@ -174,5 +198,16 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_LIBRARY = "sheets_library"
         private const val K_PROFILE = "sheets_profile"
         private const val K_TRIED = "sheets_ocr_tried"
+        private const val K_EDGE_TAPS = "sheets_edge_taps"
+        private const val K_STRIP = "sheets_strip"
+
+        val DEFAULT_STRIP = listOf(
+            com.inkslate.core.PerformAction.PREVIOUS_PAGE,
+            com.inkslate.core.PerformAction.NEXT_PAGE,
+            com.inkslate.core.PerformAction.PREVIOUS_SONG,
+            com.inkslate.core.PerformAction.NEXT_SONG,
+            com.inkslate.core.PerformAction.METRONOME,
+            com.inkslate.core.PerformAction.TUNER
+        )
     }
 }

@@ -13,4 +13,7 @@ import java.io.File
 object AppFlavor {
     /** Replaces the Home screen. Given a way to open a document in a tab and to open Settings. */
     var home: (@Composable (openFile: (File) -> Unit, openSettings: () -> Unit) -> Unit)? = null
+
+    /** Drawn over the document in front, in the corner of its pane. */
+    var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
 }

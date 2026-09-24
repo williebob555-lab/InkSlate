@@ -144,7 +144,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     }
 
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
-    if (showTuner) TunerDialog(state, onClose = { showTuner = false })
+    if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
     if (chooseFolder) {
         FolderPickerDialog(

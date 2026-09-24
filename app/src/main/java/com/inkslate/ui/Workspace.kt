@@ -1,5 +1,6 @@
 package com.inkslate.ui
 
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -192,7 +193,11 @@ fun HostBar(host: DocumentHost?, pick: (DocumentHost) -> (@Composable () -> Unit
 @Composable
 fun HostPane(host: DocumentHost, view: DocView, focused: Boolean) {
     androidx.compose.runtime.key(host, view) {
-        host.pane?.invoke(view, focused)
+        androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+            host.pane?.invoke(view, focused)
+            // What an app built on this one lays over the page - InkSheets' action buttons.
+            if (focused) com.inkslate.AppFlavor.paneOverlay?.invoke(this)
+        }
     }
 }
 

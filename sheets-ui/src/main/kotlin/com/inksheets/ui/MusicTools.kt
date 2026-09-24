@@ -148,7 +148,16 @@ internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
     var failed by remember { mutableStateOf(false) }
     var a4 by remember { mutableStateOf(440.0) }
 
-    DisposableEffect(mic) {
+    // The first time on the tablet, opening the microphone asks for permission and fails; it is
+    // tried again every moment until the answer is yes, so allowing it starts the tuner.
+    var attempt by remember { mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(failed, attempt) {
+        if (failed) {
+            kotlinx.coroutines.delay(1_200)
+            attempt++
+        }
+    }
+    DisposableEffect(mic, attempt) {
         if (mic != null) {
             val window = Tuner.windowFor(mic.sampleRate)
             var smoothed: Double? = null
