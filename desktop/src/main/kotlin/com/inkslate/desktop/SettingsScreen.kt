@@ -361,10 +361,7 @@ private fun StorageSection() {
 
     LaunchedEffect(tick) {
         summary = withContext(Dispatchers.IO) {
-            val dir = File(
-                System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"),
-                "InkSlate/working"
-            )
+            val dir = AppDirs.dir("working")
             val files = dir.listFiles()?.filter { it.isFile }.orEmpty()
             val bytes = files.sumOf { it.length() }
             "${files.size} working ${if (files.size == 1) "copy" else "copies"}  ·  " +
@@ -438,7 +435,8 @@ private fun YourDevicesSection() {
 
     SwitchRow(
         title = "Talk to my other devices",
-        subtitle = "Listens on port ${DesktopPeers.port()}. Windows will ask once to allow it.",
+        subtitle = "Listens on port ${DesktopPeers.port()}." +
+            if (AppDirs.isWindows) " Windows will ask once to allow it." else "",
         checked = enabled
     ) {
         enabled = it
@@ -905,9 +903,9 @@ private fun DiagnosticsSection() {
             )
             Text(
                 remember(tick) {
-                    if (WindowsPointer.active) {
-                        "Pen and touch are being read from Windows directly - " +
-                            WindowsPointer.latest
+                    if (PenInput.active) {
+                        "Pen and touch are being read from the system directly - " +
+                            PenInput.latest
                     } else {
                         "Pen and touch are not being read, so every device counts as a mouse."
                     }
@@ -1056,6 +1054,8 @@ private sealed interface Phase {
     data class Downloading(val progress: Float) : Phase
     data class Downloaded(val installer: File, val version: String) : Phase
     data class Failed(val message: String) : Phase
+    data object Installing : Phase
+    data class Installed(val version: String) : Phase
 }
 
 /**
@@ -1126,7 +1126,7 @@ private fun UpdateSection() {
                 phase = Phase.Checking
                 scope.launch {
                     val result = withContext(Dispatchers.IO) {
-                        UpdateCheck.check(installed, UpdateCheck.Platform.WINDOWS, DesktopUpdates.channel())
+                        UpdateCheck.check(installed, DesktopUpdates.platform, DesktopUpdates.channel())
                     }
                     phase = when (result) {
                         is UpdateCheck.Result.UpToDate -> Phase.UpToDate(result.installed.toString())
@@ -1201,7 +1201,7 @@ private fun UpdateSection() {
             is UpdateCheck.Result.AvailableWithoutDownload -> Column {
                 Text(
                     "Version ${found.release.version} is published, but that release does not " +
-                        "carry a Windows installer.",
+                        "carry an installer for this system.",
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = 16.dp, top = 8.dp)
                 )
@@ -1237,9 +1237,14 @@ private fun UpdateSection() {
                 modifier = Modifier.padding(start = 16.dp, top = 8.dp)
             )
             Text(
-                "Opening it hands the installer to Windows, which will ask for its own " +
-                    "confirmation. Close InkSlate first: an installer cannot replace files the " +
-                    "running application still has open.",
+                if (AppDirs.isLinux) {
+                    "Installing asks for your password, then replaces InkSlate in place. " +
+                        "The new version starts the next time InkSlate is opened."
+                } else {
+                    "Opening it hands the installer to Windows, which will ask for its own " +
+                        "confirmation. Close InkSlate first: an installer cannot replace files the " +
+                        "running application still has open."
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -1247,23 +1252,44 @@ private fun UpdateSection() {
             Row {
                 TextButton(
                     onClick = {
-                        runCatching { DesktopUpdates.open(current.installer) }.onFailure {
-                            phase = Phase.Failed(
-                                it.message ?: "Windows would not open the installer."
-                            )
+                        if (AppDirs.isLinux) {
+                            phase = Phase.Installing
+                            scope.launch {
+                                val done = withContext(Dispatchers.IO) {
+                                    runCatching { DesktopUpdates.open(current.installer) }
+                                }
+                                phase = done.fold(
+                                    onSuccess = { Phase.Installed(current.version) },
+                                    onFailure = { Phase.Failed(it.message ?: "The package would not install.") }
+                                )
+                            }
+                        } else {
+                            runCatching { DesktopUpdates.open(current.installer) }.onFailure {
+                                phase = Phase.Failed(
+                                    it.message ?: "Windows would not open the installer."
+                                )
+                            }
                         }
                     },
                     modifier = Modifier.padding(horizontal = 12.dp)
-                ) { Text("Open the installer") }
+                ) { Text(if (AppDirs.isLinux) "Install" else "Open the installer") }
                 TextButton(
                     onClick = {
                         runCatching {
                             DesktopUpdates.reveal(current.installer)
                         }
                     }
-                ) { Text("Show in Explorer") }
+                ) { Text(if (AppDirs.isLinux) "Show in folder" else "Show in Explorer") }
             }
         }
+
+        is Phase.Installing -> Busy("Installing...")
+
+        is Phase.Installed -> Text(
+            "Version ${current.version} is installed. Close and reopen InkSlate to start using it.",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 16.dp, top = 8.dp)
+        )
 
         is Phase.Failed -> Column {
             Text(

@@ -365,9 +365,18 @@ fun EditorScreen(
     // the window so it lasts exactly as long as a document is open, which is what the setting says.
     LaunchedEffect(file.absolutePath) {
         ScreenAwake.reset()
-        while (true) {
-            delay(ScreenAwake.INTERVAL_MS)
-            if (tools.keepScreenOn) ScreenAwake.tick() else ScreenAwake.reset()
+        try {
+            while (true) {
+                if (AppDirs.isLinux) {
+                    ScreenInhibit.hold(file.absolutePath, tools.keepScreenOn)
+                    delay(2_000)
+                } else {
+                    delay(ScreenAwake.INTERVAL_MS)
+                    if (tools.keepScreenOn) ScreenAwake.tick() else ScreenAwake.reset()
+                }
+            }
+        } finally {
+            if (AppDirs.isLinux) ScreenInhibit.hold(file.absolutePath, false)
         }
     }
 
@@ -692,7 +701,7 @@ fun EditorScreen(
      * Hand the document to something else.
      *
      * Windows has no share sheet a plain desktop program can raise, so this does what the share
-     * sheet is for: it writes the marks in and then shows the file itself, selected, in Explorer -
+     * sheet is for: it writes the marks in and then shows the file itself, selected, in the file manager -
      * from where it can be dragged into an email, a chat window or a hand-in page. Saving first
      * matters, because a file shared without it is the file as it was this morning.
      */
@@ -700,7 +709,7 @@ fun EditorScreen(
         scope.launch {
             save {
                 runCatching {
-                    ProcessBuilder("explorer.exe", "/select,", file.absolutePath).start()
+                    SystemShell.reveal(file)
                 }.onFailure {
                     scope.launch { snackbar.showSnackbar("Could not show ${file.name}") }
                 }
@@ -783,7 +792,7 @@ fun EditorScreen(
                     val choice = snackbar.showSnackbar(status, actionLabel = "Show in folder")
                     if (choice == SnackbarResult.ActionPerformed) {
                         runCatching {
-                            ProcessBuilder("explorer.exe", "/select,", written.absolutePath).start()
+                            SystemShell.reveal(written)
                         }
                     }
                 },

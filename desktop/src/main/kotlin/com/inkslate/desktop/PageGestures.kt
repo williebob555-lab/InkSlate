@@ -670,8 +670,8 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
                 // it wearing the same value, so speed has to stand in there too. On Windows the
                 // pen reports 1.0 as well for the same reason, and the real figure is the one read
                 // off the contact message rather than anything in the event.
-                val fromPen = WindowsPointer.pressure
-                    ?.takeIf { WindowsPointer.active && WindowsPointer.device == WindowsPointer.Device.PEN }
+                val fromPen = PenInput.pressure
+                    ?.takeIf { PenInput.active && PenInput.device == PenInput.Device.PEN }
                 val reported = when {
                     !tools.pressureEnabled -> 1f
                     fromPen != null -> fromPen
@@ -724,7 +724,7 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             // for the length of a word - and on a long stroke, wondering whether it is working.
             var grownAt = 0L
             dragUntilRelease(down.position) { change, _ ->
-                if (WindowsPointer.gesturing) {
+                if (PenInput.gesturing) {
                     abandoned = true
                     collected.clear()
                     onLive(emptyList())

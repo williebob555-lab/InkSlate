@@ -193,9 +193,7 @@ object DocumentIO {
      * neither clutters a folder nor gets swept into a sync.
      */
     private val workingDir: File by lazy {
-        val base = System.getenv("LOCALAPPDATA")
-            ?: System.getProperty("user.home")
-        File(base, "InkSlate/working").apply { mkdirs() }
+        AppDirs.dir("working")
     }
 
     private fun workingFileFor(file: File): File {

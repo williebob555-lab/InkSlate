@@ -235,16 +235,57 @@ jobs:
           # An installer that never got built should stop the build, not warn inside a green log.
           if-no-files-found: error
 
+  linux:
+    name: Fedora package
+    needs: version
+    runs-on: ubuntu-latest
+    # Like Windows, a missing package must never withhold the other test builds.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # jpackage builds an .rpm with rpmbuild, which Ubuntu does not carry by default. The package
+      # it makes names the libraries it needs by their sonames, so it installs on Fedora as it is.
+      - name: Tools for building an rpm
+        run: sudo apt-get update -q && sudo apt-get install -y -q rpm
+
+      # Same folded version as the MSI - RPM will not take a "-" inside a version either.
+      - name: Build the rpm
+        run: |
+          ./gradlew :desktop:packageRpm "-Pinkslate.version=${{ needs.version.outputs.name }}" --stacktrace
+
+      - name: Collect the package
+        run: |
+          mkdir -p dist
+          find desktop/build/compose -name '*.rpm' -exec cp {} "dist/InkSlate-${{ needs.version.outputs.name }}.rpm" \;
+          rpm -qip dist/*.rpm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package
+          path: dist/*.rpm
+          retention-days: 1
+          if-no-files-found: error
+
   publish:
     name: Publish the test build
-    needs: [version, android, windows]
+    needs: [version, android, windows, linux]
     # Whatever was built goes out. It used to be both halves or neither, so that clearing the
     # release could not leave the Windows updater looking at a release with no installer in it -
     # but that also meant a broken Android toolchain withheld a perfectly good Windows installer,
     # which is exactly what happened for four pushes running. The clearing step below now only
     # removes the platform it is replacing, so a half-built test build updates its own half and
     # leaves the other one as it was. The run still shows red for the half that failed.
-    if: always() && (needs.android.result == 'success' || needs.windows.result == 'success')
+    if: >-
+      always() && (needs.android.result == 'success' || needs.windows.result == 'success' ||
+      needs.linux.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -266,6 +307,7 @@ jobs:
             # before it on this tag, and the other platform's installer here is then older.
             ls artifacts/*.apk >/dev/null 2>&1 || echo '**No Android APK in this build** - that half failed; the APK here is from an earlier one.'
             ls artifacts/*.msi >/dev/null 2>&1 || echo '**No Windows installer in this build** - that half failed; the installer here is from an earlier one.'
+            ls artifacts/*.rpm >/dev/null 2>&1 || echo '**No Fedora package in this build** - that part failed; the package here is from an earlier one.'
             echo "$(git log -1 --pretty=%B)"
             echo
             echo '---'
@@ -278,7 +320,7 @@ jobs:
 
       - name: Check there is something to publish
         run: |
-          if ! ls artifacts/*.apk artifacts/*.msi >/dev/null 2>&1; then
+          if ! ls artifacts/*.apk artifacts/*.msi artifacts/*.rpm 2>/dev/null | grep -q .; then
             echo "::error::Nothing was built, so there is nothing to publish."
             exit 1
           fi
@@ -325,6 +367,7 @@ jobs:
           # uploaded.
           have_apk=$(ls artifacts/*.apk 2>/dev/null | head -1 || true)
           have_msi=$(ls artifacts/*.msi 2>/dev/null | head -1 || true)
+          have_rpm=$(ls artifacts/*.rpm 2>/dev/null | head -1 || true)
           ls artifacts > /tmp/new
           gh api "repos/$GITHUB_REPOSITORY/releases/tags/test" \
             --jq '.assets[] | "\(.id) \(.name)"' > /tmp/assets
@@ -334,6 +377,7 @@ jobs:
             case "$name" in
               *.apk) [ -n "$have_apk" ] || continue ;;
               *.msi) [ -n "$have_msi" ] || continue ;;
+              *.rpm) [ -n "$have_rpm" ] || continue ;;
             esac
             echo "Removing $name"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true

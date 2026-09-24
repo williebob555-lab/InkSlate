@@ -98,3 +98,38 @@ jobs:
             core/build/reports/tests
             desktop/build/reports/tests
           retention-days: 14
+
+  # Fedora's build, tested on the nearest thing a build machine has: Ubuntu, with a virtual X
+  # server for the pen reader to talk to and a private D-Bus for the keep-the-display-on request.
+  # It also packages the .rpm, so a change that breaks packaging is caught here rather than on
+  # the day of a release.
+  desktop-linux:
+    name: Desktop (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Tools the tests and the package need
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool dbus rpm
+
+      - name: Unit tests and compile
+        run: xvfb-run -a ./gradlew :desktop:test :desktop:compileKotlin --stacktrace
+
+      - name: Package the rpm
+        run: ./gradlew :desktop:packageRpm --stacktrace
+
+      - name: Keep the test report if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-linux-test-reports
+          path: desktop/build/reports/tests
+          retention-days: 14

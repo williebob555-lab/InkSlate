@@ -53,10 +53,7 @@ object SaveBenchmark {
     private fun kb(f: File) = "${f.length() / 1024}KB"
 
     fun run(file: File, ink: InkDocument, format: InkFormat): String {
-        val dir = File(
-            System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"),
-            "InkSlate/savebench"
-        ).apply { mkdirs() }
+        val dir = AppDirs.dir("savebench")
         dir.listFiles()?.forEach { it.delete() }
 
         val r = Report()

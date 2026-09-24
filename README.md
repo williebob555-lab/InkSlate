@@ -3,8 +3,8 @@
 <img src="brand/inkslate-512.png" alt="" width="96" align="right">
 
 An annotation app for homework. Open a PDF or a picture, write on it with a stylus, and save
-either a copy or over the original. There is an Android build and a Windows build, and they are
-the same application: a worksheet annotated on the tablet opens on the laptop with the handwriting
+either a copy or over the original. There is an Android build, a Windows build and a Fedora
+build, and they are the same application: a worksheet annotated on the tablet opens on the laptop with the handwriting
 already on it.
 
 ---
@@ -23,6 +23,16 @@ into its own folder.
 before showing anything, which can take a few minutes the first time and looks like nothing is
 happening; right-click the file, choose Properties, and tick **Unblock** first to skip that. The
 in-app updater downloads without that mark, so later updates do not have the wait.
+
+**Fedora (KDE)** — download the `.rpm` and open it; Discover offers to install it. Or, in a
+terminal:
+
+```bash
+sudo dnf install ./InkSlate-*.rpm
+```
+
+It appears in the application menu under Graphics. The pen's pressure, its barrel button and
+two-finger pan and zoom work under the normal (Wayland) session.
 
 ### Updating
 

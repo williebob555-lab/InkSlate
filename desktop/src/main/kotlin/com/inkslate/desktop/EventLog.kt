@@ -38,8 +38,7 @@ object EventLog {
     private val entries = ArrayDeque<Entry>()
 
     private val logFile: File by lazy {
-        val base = System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home")
-        File(base, "InkSlate").apply { mkdirs() }.let { File(it, "events.log") }
+        File(AppDirs.root, "events.log")
     }
 
     fun info(tag: String, message: String) = add(Level.INFO, tag, message)

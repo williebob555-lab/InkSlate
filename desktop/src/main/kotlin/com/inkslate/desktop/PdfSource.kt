@@ -66,9 +66,7 @@ class PdfSource(
         else -> {
             // A large book read into memory whole is a large book's worth of heap for the whole
             // session. A private copy costs a moment of disk instead, and nothing syncs it.
-            val dir = File(
-                System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "InkSlate/open"
-            ).apply { mkdirs() }
+            val dir = AppDirs.dir("open")
             val copy = File(dir, "${java.util.UUID.randomUUID()}.pdf")
             file.copyTo(copy, overwrite = true)
             copy.deleteOnExit()

@@ -107,9 +107,7 @@ class ImageStore(sourceFile: File) {
          * starts. These are found when the folder does not have the picture yet, and are never the
          * copy anything else reads.
          */
-        @Volatile var linkedDir: File? = File(
-            System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home"), "InkSlate/linked-images"
-        )
+        @Volatile var linkedDir: File? = File(AppDirs.root, "linked-images")
 
         /** Keep a picture that arrived over the link. Returns whether it was kept. */
         fun keepLinked(id: String, png: ByteArray): Boolean = runCatching {

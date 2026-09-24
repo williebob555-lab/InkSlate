@@ -73,7 +73,9 @@ object UpdateCheck {
     enum class Platform(internal val extensions: List<String>) {
         ANDROID(listOf(".apk")),
         // The desktop module already builds both, so accept either and prefer the .msi.
-        WINDOWS(listOf(".msi", ".exe"))
+        WINDOWS(listOf(".msi", ".exe")),
+        // Fedora and its relatives. The package carries its own runtime, so one file serves them.
+        LINUX(listOf(".rpm"))
     }
 
     // ---------------------------------------------------------------- results

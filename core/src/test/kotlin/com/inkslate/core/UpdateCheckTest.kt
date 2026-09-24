@@ -254,4 +254,15 @@ class UpdateCheckTest {
         val r = release("1.2.0", "InkSlate-1.2.0.msi")
         assertNull(UpdateCheck.pickAsset(r, UpdateCheck.Platform.ANDROID))
     }
+
+    /** Fedora is handed the package, and never the Windows installer beside it. */
+    @Test
+    fun `linux takes the rpm`() {
+        val r = release("1.2.0", "InkSlate-1.2.0.msi", "InkSlate-1.2.0.rpm", "InkSlate-1.2.0.apk")
+        assertEquals(
+            "InkSlate-1.2.0.rpm",
+            UpdateCheck.pickAsset(r, UpdateCheck.Platform.LINUX)?.name
+        )
+        assertNull(UpdateCheck.pickAsset(release("1.2.0", "InkSlate-1.2.0.msi"), UpdateCheck.Platform.LINUX))
+    }
 }

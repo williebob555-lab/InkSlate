@@ -13,23 +13,17 @@ import com.sun.jna.win32.W32APIOptions
 import java.awt.Component
 import java.awt.Container
 import java.awt.Window
-import java.util.concurrent.ConcurrentHashMap
-import javax.swing.SwingUtilities
-import kotlin.math.hypot
 
 /**
- * Reading the pen and the glass, because the runtime will not.
+ * Reading the pen and the glass on Windows, because the runtime will not.
  *
- * A desktop Java program on Windows is told nothing about what touched the screen. The toolkit
- * turns a pen and a single finger into mouse clicks and throws the rest away: no pressure, no way
- * to tell a pen from a left click, no second finger, no pinch. That is not a gap in this program -
- * there is no stylus or touch pointer type anywhere in the desktop stack to receive - so the only
- * place left to read them is where Windows delivers them, which is the window's own message loop.
+ * The toolkit turns a pen and a single finger into mouse clicks and throws the rest away: no
+ * pressure, no way to tell a pen from a left click, no second finger, no pinch. The only place
+ * left to read them is where Windows delivers them, which is the window's own message loop.
  *
  * So this sits in front of that loop and reads the messages the toolkit discards, then passes every
- * one of them on untouched. Nothing is taken away from the toolkit: the mouse events it makes from
- * a pen still arrive and still draw the stroke. What is added is who is drawing it - [device] and
- * [pressure] - and the fingers it never mentions, which is what makes a pinch possible.
+ * one of them on untouched, and reports what it read to [PenInput]. Nothing is taken away from the
+ * toolkit: the mouse events it makes from a pen still arrive and still draw the stroke.
  *
  * It is additive on purpose. If the hook cannot be installed, or Windows is not the system, or any
  * part of it throws, the program behaves exactly as it did before: a pen is a mouse, and drawing
@@ -37,64 +31,10 @@ import kotlin.math.hypot
  */
 object WindowsPointer {
 
-    enum class Device { MOUSE, PEN, FINGER }
-
-    /** What made the contact that is down now, or made the last one. */
-    @Volatile
-    var device: Device = Device.MOUSE
-        private set
-
-    /** 0..1 from a pen that reports it; null for anything that does not, including a mouse. */
-    @Volatile
-    var pressure: Float? = null
-        private set
-
-    /**
-     * Which of the pen's buttons is held: 0 none, 1 the barrel, 2 the second one.
-     *
-     * Windows describes a pen's buttons as two separate things rather than a number - the barrel
-     * switch, and the eraser end, which is what a second button on the shaft usually reports
-     * itself as. They are kept apart here because the tablet gives each its own pen, with its own
-     * colour, width and tool, and one button standing in for both would collapse the two.
-     */
-    @Volatile
-    var penButton: Int = 0
-        private set
-
-    /** Fingers on the glass right now. */
-    @Volatile
-    var contacts: Int = 0
-        private set
-
-    /**
-     * True while two or more fingers are down.
-     *
-     * A stroke that began under the first finger has to be abandoned when the second arrives -
-     * otherwise a pinch leaves a line through the page - and this is what the drawing gesture
-     * watches to know to drop it.
-     */
-    @Volatile
-    var gesturing: Boolean = false
-        private set
-
-    /** True when the hook is in place, so the settings screen can say so rather than guess. */
+    /** True when the hook is in place. */
     @Volatile
     var active: Boolean = false
         private set
-
-    /** The last thing that happened, for Settings -> Diagnostics. */
-    @Volatile
-    var latest: String = "No pen or touch seen yet."
-        private set
-
-    /**
-     * A two-finger movement, in screen pixels: how far the pair moved, and how much they spread.
-     *
-     * Delivered on the UI thread. The canvas turns this into a pan and a zoom about the midpoint,
-     * which is the same gesture the tablet has.
-     */
-    var onGesture: ((centreX: Float, centreY: Float, dx: Float, dy: Float, zoom: Float) -> Unit)? =
-        null
 
     // ---- installing ----------------------------------------------------------
 
@@ -174,20 +114,6 @@ object WindowsPointer {
 
     // ---- reading -------------------------------------------------------------
 
-    private val fingers = ConcurrentHashMap<Int, FloatArray>()
-    private var lastCentre: FloatArray? = null
-    private var lastSpread = 0f
-
-    /**
-     * Whether the pen is on the glass.
-     *
-     * While it is, every contact is a palm and is ignored outright. A hand resting on a page is
-     * the normal way to write, and without this it would read as a second finger - which cancels
-     * the stroke being written, so writing with the hand down would delete its own line.
-     */
-    @Volatile
-    private var penDown = false
-
     private fun read(msg: Int, wParam: WPARAM, lParam: LPARAM) {
         when (msg) {
             WM_POINTERDOWN, WM_POINTERUPDATE, WM_POINTERUP -> pointer(msg, wParam, lParam)
@@ -208,32 +134,11 @@ object WindowsPointer {
     private fun promoted() {
         val extra = runCatching { user32.GetMessageExtraInfo().toLong() }.getOrNull() ?: return
         val stamped = (extra and SIGNATURE_MASK) == MI_WP_SIGNATURE
-        device = when {
-            !stamped -> Device.MOUSE
-            (extra and FROM_TOUCH) != 0L -> Device.FINGER
-            else -> Device.PEN
+        when {
+            !stamped -> PenInput.mouse()
+            (extra and FROM_TOUCH) != 0L -> PenInput.touchedSomewhere()
+            else -> PenInput.device = PenInput.Device.PEN
         }
-        if (device != Device.PEN) {
-            pressure = null
-            penButton = 0
-            penDown = false
-        }
-        // A mouse moving is proof that no gesture is under way. Contacts are released by a message
-        // that can be missed - a finger that leaves over the edge of the window, a window that
-        // loses focus mid-pinch - and a contact that is never released would leave the program
-        // believing two fingers are down, which is a program that has quietly stopped drawing.
-        if (device == Device.MOUSE && fingers.isNotEmpty()) forgetContacts()
-    }
-
-    private fun forgetContacts() {
-        owedX = 0f
-        owedY = 0f
-        owedZoom = 1f
-        fingers.clear()
-        contacts = 0
-        gesturing = false
-        lastCentre = null
-        lastSpread = 0f
     }
 
     private fun pointer(msg: Int, wParam: WPARAM, lParam: LPARAM) {
@@ -243,13 +148,12 @@ object WindowsPointer {
 
         when (kind.value) {
             PT_PEN -> {
-                device = Device.PEN
-                penDown = msg != WM_POINTERUP
-                if (penDown) forgetContacts()
+                var button = 0
+                var pressure: Float? = null
                 val info = POINTER_PEN_INFO()
                 if (user32.GetPointerPenInfo(id, info)) {
                     info.read()
-                    penButton = when {
+                    button = when {
                         (info.penFlags and (PEN_FLAG_ERASER or PEN_FLAG_INVERTED)) != 0 -> 2
                         (info.penFlags and PEN_FLAG_BARREL) != 0 -> 1
                         else -> 0
@@ -260,33 +164,17 @@ object WindowsPointer {
                         null
                     }
                 }
-                if (msg == WM_POINTERUP) {
-                    pressure = null
-                    penButton = 0
-                }
-                note(
-                    "Pen  pressure ${pressure?.let { "%.2f".format(it) } ?: "none"}" +
-                        when (penButton) {
-                            1 -> "  barrel held"
-                            2 -> "  second button held"
-                            else -> ""
-                        }
-                )
+                PenInput.pen(down = msg != WM_POINTERUP, pressure = pressure, button = button)
             }
 
             PT_TOUCH -> {
-                if (penDown) return
-                device = Device.FINGER
+                if (PenInput.penDown) return
                 val x = (lParam.toInt() and 0xFFFF).toShort().toFloat()
                 val y = ((lParam.toInt() shr 16) and 0xFFFF).toShort().toFloat()
-                when (msg) {
-                    WM_POINTERUP -> fingers.remove(id)
-                    else -> fingers[id] = floatArrayOf(x, y)
-                }
-                regather()
+                if (msg == WM_POINTERUP) PenInput.fingerUp(id) else PenInput.finger(id, x, y)
             }
 
-            PT_MOUSE -> device = Device.MOUSE
+            PT_MOUSE -> PenInput.device = PenInput.Device.MOUSE
         }
     }
 
@@ -304,109 +192,19 @@ object WindowsPointer {
      */
     private fun touch(wParam: WPARAM, lParam: LPARAM) {
         val count = wParam.toInt() and 0xFFFF
-        if (count <= 0 || penDown) return
+        if (count <= 0 || PenInput.penDown) return
         val inputs = TOUCHINPUT().toArray(count).map { it as TOUCHINPUT }.toTypedArray()
         val handle = Pointer(lParam.toLong())
         if (!user32.GetTouchInputInfo(handle, count, inputs, inputs[0].size())) return
 
-        device = Device.FINGER
         for (input in inputs) {
             input.read()
             // Hundredths of a pixel, in screen coordinates.
             val x = input.x / 100f
             val y = input.y / 100f
-            if (input.dwFlags and TOUCHEVENTF_UP != 0) fingers.remove(input.dwID)
-            else fingers[input.dwID] = floatArrayOf(x, y)
+            if (input.dwFlags and TOUCHEVENTF_UP != 0) PenInput.fingerUp(input.dwID)
+            else PenInput.finger(input.dwID, x, y)
         }
-        regather()
-    }
-
-    /** Work out what the fingers on the glass are collectively doing. */
-    private fun regather() {
-        val held = fingers.values.toList()
-        contacts = held.size
-
-        if (held.size < 2) {
-            gesturing = false
-            lastCentre = null
-            lastSpread = 0f
-            if (held.size == 1) note("One finger")
-            return
-        }
-
-        val cx = held.sumOf { it[0].toDouble() }.toFloat() / held.size
-        val cy = held.sumOf { it[1].toDouble() }.toFloat() / held.size
-        // How far apart the fingers are, as a mean distance from their midpoint: the measure a
-        // pinch changes and a two-finger drag leaves alone.
-        val spread = held
-            .sumOf { hypot((it[0] - cx).toDouble(), (it[1] - cy).toDouble()) }
-            .let { (it / held.size).toFloat() }
-            .let { if (it <= 0.01f) 0.01f else it }
-
-        val previous = lastCentre
-        val previousSpread = lastSpread
-        lastCentre = floatArrayOf(cx, cy)
-        lastSpread = spread
-
-        // The first frame of a gesture only establishes where the fingers are; moving on it would
-        // jump the page by however far apart they happened to land.
-        if (previous == null || previousSpread <= 0f) {
-            gesturing = true
-            note("${held.size} fingers - gesture started")
-            return
-        }
-
-        gesturing = true
-        val dx = cx - previous[0]
-        val dy = cy - previous[1]
-        val zoom = (spread / previousSpread).coerceIn(0.5f, 2f)
-        note("${held.size} fingers  moved %.0f,%.0f  zoom %.3f".format(dx, dy, zoom))
-
-        post(cx, cy, dx, dy, zoom)
-    }
-
-    // ---- handing a gesture to the screen -------------------------------------
-
-    private val waiting = java.util.concurrent.atomic.AtomicBoolean(false)
-
-    @Volatile private var owedX = 0f
-    @Volatile private var owedY = 0f
-    @Volatile private var owedZoom = 1f
-    @Volatile private var owedCentreX = 0f
-    @Volatile private var owedCentreY = 0f
-
-    /**
-     * Collect the movement and hand it over once, rather than once per contact message.
-     *
-     * Ten fingers' worth of contacts arrive together and a touchscreen reports far faster than a
-     * screen redraws, so forwarding each one separately asked the page to move a hundred times
-     * between two frames - every one of them a repaint that nobody ever saw. The movement adds up
-     * and the zoom multiplies, so collecting them loses nothing: what arrives is the same gesture
-     * with the same result, delivered once for each frame that can show it.
-     */
-    private fun post(cx: Float, cy: Float, dx: Float, dy: Float, zoom: Float) {
-        owedX += dx
-        owedY += dy
-        owedZoom *= zoom
-        owedCentreX = cx
-        owedCentreY = cy
-        if (onGesture == null) return
-        if (waiting.getAndSet(true)) return
-
-        SwingUtilities.invokeLater {
-            waiting.set(false)
-            val x = owedX
-            val y = owedY
-            val z = owedZoom
-            owedX = 0f
-            owedY = 0f
-            owedZoom = 1f
-            runCatching { onGesture?.invoke(owedCentreX, owedCentreY, x, y, z) }
-        }
-    }
-
-    private fun note(what: String) {
-        latest = what
     }
 
     // ---- the bindings --------------------------------------------------------

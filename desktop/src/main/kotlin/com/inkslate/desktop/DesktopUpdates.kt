@@ -42,30 +42,18 @@ object DesktopUpdates {
 
     private const val K_TEST_CHANNEL = "update_test_channel"
 
-    /**
-     * Open a page in whatever the machine uses for the web.
-     *
-     * Falls back to handing the address to Explorer, which knows what to do with one, because
-     * `Desktop.browse` is unsupported on some window managers and throwing there would turn a link
-     * into a button that does nothing.
-     */
+    /** Open a page in whatever the machine uses for the web. */
     fun openInBrowser(url: String) {
-        val opened = runCatching {
-            check(Desktop.isDesktopSupported())
-            check(Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
-            Desktop.getDesktop().browse(java.net.URI(url))
-            true
-        }.getOrDefault(false)
-        // Not only when BROWSE is unsupported, but whenever it fails: the runtime's shell
-        // integration throws on this machine for files it has no trouble with, and a link that
-        // silently does nothing is worse than one that takes the long way round.
-        if (!opened) runCatching { ProcessBuilder("explorer.exe", url).start() }
+        runCatching { SystemShell.openUrl(url) }
     }
+
+    /** Which files this system installs from. */
+    val platform: UpdateCheck.Platform =
+        if (AppDirs.isLinux) UpdateCheck.Platform.LINUX else UpdateCheck.Platform.WINDOWS
 
     /** Downloads land beside the working copies rather than in the user's Downloads folder. */
     fun downloadDir(): File {
-        val base = System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home")
-        return File(base, "InkSlate/updates").apply { mkdirs() }
+        return AppDirs.dir("updates")
     }
 
     /**
@@ -98,6 +86,10 @@ object DesktopUpdates {
      * by then it is the only one left to report.
      */
     fun open(installer: File) {
+        if (installer.extension.equals("rpm", ignoreCase = true)) {
+            installRpm(installer)
+            return
+        }
         require(installer.isFile) { "The downloaded installer is no longer there." }
         unblock(installer)
 
@@ -137,7 +129,8 @@ object DesktopUpdates {
         runCatching {
             dir.listFiles().orEmpty().forEach { other ->
                 val stale = other.isFile && other != installer &&
-                    other.extension.equals("msi", ignoreCase = true)
+                    (other.extension.equals("msi", ignoreCase = true) ||
+                        other.extension.equals("rpm", ignoreCase = true))
                 if (stale && other.delete()) {
                     EventLog.info("update", "Removed the old installer ${other.name}")
                 }
@@ -145,8 +138,39 @@ object DesktopUpdates {
         }
     }
 
-    /** Show the file in Explorer, for when opening it is not what the person wants yet. */
-    fun reveal(installer: File) {
-        ProcessBuilder("explorer.exe", "/select,", installer.absolutePath).start()
+    /** Show the file in the file manager, for when opening it is not what the person wants yet. */
+    fun reveal(installer: File) = SystemShell.reveal(installer)
+
+    /**
+     * Install a downloaded package on Fedora, and wait for it.
+     *
+     * `pkexec` puts up the desktop's own password prompt, so nothing here needs a terminal. The
+     * package replaces the files under /opt while this copy is still running, which is safe: the
+     * running program keeps the files it opened, and the next launch reads the new ones. If there
+     * is no pkexec - a system without polkit - the file goes to whatever installs packages by
+     * double-click, which on KDE is Discover.
+     */
+    private fun installRpm(rpm: File) {
+        val pkexec = listOf("/usr/bin/pkexec", "/bin/pkexec").firstOrNull { File(it).canExecute() }
+        if (pkexec == null) {
+            SystemShell.open(rpm)
+            EventLog.info("update", "Handed ${rpm.name} to the package installer")
+            return
+        }
+        val process = ProcessBuilder(pkexec, "dnf", "install", "-y", rpm.absolutePath)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().readText()
+        when (val code = process.waitFor()) {
+            0 -> EventLog.info("update", "Installed ${rpm.name}")
+            // 126 and 127 are pkexec's own: the password prompt was dismissed, or not allowed.
+            126, 127 -> throw IllegalStateException("The install was cancelled.")
+            else -> {
+                EventLog.warn("update", "dnf failed ($code): ${output.takeLast(600)}")
+                throw IllegalStateException(
+                    output.lines().lastOrNull { it.isNotBlank() } ?: "The package would not install."
+                )
+            }
+        }
     }
 }

@@ -446,7 +446,7 @@ fun DocumentCanvas(
     // message loop - so it arrives here rather than as a gesture. Positions come in screen pixels
     // and the canvas works in its own, which is the one conversion needed.
     DisposableEffect(viewport) {
-        WindowsPointer.onGesture = { centreX, centreY, dx, dy, zoom ->
+        PenInput.onGesture = { centreX, centreY, dx, dy, zoom ->
             val origin = PointerDiagnostics.canvasOriginOnScreen()
             if (origin != null) {
                 val about = Offset(centreX - origin.x, centreY - origin.y)
@@ -455,7 +455,7 @@ fun DocumentCanvas(
                 viewport.zoomBy(zoom, about)
             }
         }
-        onDispose { WindowsPointer.onGesture = null }
+        onDispose { PenInput.onGesture = null }
     }
 
     // A throw keeps moving after the fingers or the wheel have stopped.
@@ -524,7 +524,7 @@ fun DocumentCanvas(
                     val action = tools.bindings.actionFor(device, button)
 
                     // Two fingers are a pinch, not a stroke, so nothing starts under them.
-                    if (WindowsPointer.gesturing) return@awaitEachGesture
+                    if (PenInput.gesturing) return@awaitEachGesture
 
                     // The three that are not gestures at all: they happen once, on the press.
                     when (action) {

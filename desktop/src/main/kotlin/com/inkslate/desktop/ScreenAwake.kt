@@ -6,6 +6,8 @@ import java.awt.Robot
 /**
  * Keeps the display from blanking while a document is open.
  *
+ * On Linux the desktop is simply asked, through [ScreenInhibit]; this is the Windows half.
+ *
  * The tablet asks the window for this and gets it. Windows offers nothing a plain desktop program
  * can call without dropping into native code, so this does the only thing the JVM can: it nudges
  * the pointer to exactly where it already is, which resets the idle timer without moving anything.
@@ -32,6 +34,9 @@ object ScreenAwake {
         val before = lastSeen
         lastSeen = here
         if (here == null || before == null || here != before) return false
+        // Linux is asked properly instead - see ScreenInhibit - and a synthetic pointer event
+        // under Wayland brings up a remote-control permission prompt rather than doing anything.
+        if (!AppDirs.isWindows) return false
         robot?.mouseMove(here.x, here.y) ?: return false
         return true
     }

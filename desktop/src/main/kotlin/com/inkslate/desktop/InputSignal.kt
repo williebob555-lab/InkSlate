@@ -24,11 +24,11 @@ object InputSignal {
 
     fun deviceOf(down: PointerInputChange): InputDevice = when {
         // Windows hands a desktop program nothing but mouse events, so where the window's own
-        // messages are being read, that is the only thing that knows. See WindowsPointer.
-        WindowsPointer.active -> when (WindowsPointer.device) {
-            WindowsPointer.Device.PEN -> InputDevice.PEN
-            WindowsPointer.Device.FINGER -> InputDevice.FINGER
-            WindowsPointer.Device.MOUSE -> InputDevice.MOUSE
+        // messages are being read, that is the only thing that knows. See PenInput.
+        PenInput.active -> when (PenInput.device) {
+            PenInput.Device.PEN -> InputDevice.PEN
+            PenInput.Device.FINGER -> InputDevice.FINGER
+            PenInput.Device.MOUSE -> InputDevice.MOUSE
         }
 
         down.type == PointerType.Stylus -> InputDevice.PEN
@@ -46,7 +46,7 @@ object InputSignal {
      */
     fun buttonOf(device: InputDevice, buttons: PointerButtons): InputButton {
         if (device == InputDevice.PEN) {
-            val held = if (WindowsPointer.active) WindowsPointer.penButton else 0
+            val held = if (PenInput.active) PenInput.penButton else 0
             return when {
                 held >= 2 -> InputButton.PEN_TWO
                 held == 1 -> InputButton.PEN_ONE

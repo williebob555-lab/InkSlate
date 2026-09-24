@@ -24,7 +24,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
 
 /**
- * The Windows build.
+ * The desktop build, for Windows and for Linux (Fedora KDE).
  *
  * Deliberately the same application as the tablet's rather than a companion to it: the same four
  * screens, the same palette, the same document format, and `:core` shared between them so the two
@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.debounce
  * calls it.
  */
 fun main() {
+    LinuxDisplay.prepare()
     EventLog.installCrashHandler()
     EventLog.info("app", "InkSlate ${DesktopUpdates.installedVersion()} started")
     ui()
@@ -123,12 +124,12 @@ private fun ui() = application {
         // little after the window is, and it is one of the windows that has to be hooked.
         LaunchedEffect(window) {
             repeat(12) {
-                if (WindowsPointer.active) return@LaunchedEffect
-                WindowsPointer.install(window)
+                if (PenInput.active) return@LaunchedEffect
+                PenInput.install(window)
                 delay(250)
             }
         }
-        DisposableEffect(window) { onDispose { WindowsPointer.uninstall() } }
+        DisposableEffect(window) { onDispose { PenInput.uninstall() } }
 
         // Windows cannot see the text boxes in a drawing surface, so it never offers the
         // on-screen keyboard for them. Every text field in the program starts its input through
@@ -137,7 +138,7 @@ private fun ui() = application {
             PlatformTextInputInterceptor { request, next ->
                 val wanted = TouchKeyboard.hasDigitiser() && (
                     TouchKeyboard.inTabletPosture() ||
-                        WindowsPointer.device != WindowsPointer.Device.MOUSE
+                        PenInput.device != PenInput.Device.MOUSE
                     )
                 if (wanted) TouchKeyboard.show()
                 try {

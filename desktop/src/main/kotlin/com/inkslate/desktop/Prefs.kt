@@ -12,14 +12,13 @@ import java.util.Properties
  * the failure mode is a silent refusal to save - the list simply stops growing. A file has no
  * such ceiling, and it can be read by a human when something looks wrong.
  *
- * Kept beside the working copies in `%LOCALAPPDATA%\InkSlate` so everything this app remembers
+ * Kept beside the working copies in the app's own folder (see [AppDirs]) so everything this app remembers
  * about a machine is in one directory.
  */
 object DesktopPrefs {
 
     private val file: File by lazy {
-        val base = System.getenv("LOCALAPPDATA") ?: System.getProperty("user.home")
-        File(base, "InkSlate").apply { mkdirs() }.let { File(it, "settings.properties") }
+        File(AppDirs.root, "settings.properties")
     }
 
     private val props: Properties by lazy {

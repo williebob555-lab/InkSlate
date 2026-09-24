@@ -64,7 +64,7 @@ object PointerDiagnostics {
 
         val reading = buildString {
             val what =
-                if (WindowsPointer.active) WindowsPointer.device.name.lowercase().replaceFirstChar {
+                if (PenInput.active) PenInput.device.name.lowercase().replaceFirstChar {
                     it.uppercase()
                 } else type.toString()
             append(what).append("  in window ")
