@@ -110,7 +110,7 @@ class SheetsState(val platform: SheetsPlatform) {
         entries.forEachIndexed { i, e ->
             val s = lib.song(e.songId) ?: return@forEachIndexed
             val part = com.inksheets.core.PartChoice.partFor(s, profile) ?: return@forEachIndexed
-            val file = fileOf(part.file)?.takeIf { it.isFile } ?: return@forEachIndexed
+            val file = partFile(s, part) ?: return@forEachIndexed
             if (i == index) focus = tabs.size
             if (tabs.none { it.first == file }) {
                 part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
@@ -165,7 +165,7 @@ class SheetsState(val platform: SheetsPlatform) {
         }
         todo.forEachIndexed { i, (song, part) ->
             onProgress(i, todo.size)
-            val file = fileOf(part.file) ?: return@forEachIndexed
+            val file = partFile(song, part) ?: return@forEachIndexed
             if (!file.isFile) return@forEachIndexed
             val text = runCatching { platform.recognise(file, part.firstPage ?: 1) }.getOrNull()
             val match = text?.let { com.inksheets.core.InstrumentReader.read(it) }
@@ -238,6 +238,69 @@ class SheetsState(val platform: SheetsPlatform) {
     fun songAt(path: String): com.inksheets.core.Song? {
         val rel = relative(File(path)) ?: return null
         return library?.songs?.firstOrNull { s -> s.parts.any { it.file == rel } }
+    }
+
+    // ---- files that have moved ------------------------------------------------------
+
+    /** Every file in the music folder by name, for finding ones that moved; built when needed. */
+    @Volatile
+    private var byName: Map<String, List<File>>? = null
+
+    private fun filesByName(fresh: Boolean = false): Map<String, List<File>> {
+        if (!fresh) byName?.let { return it }
+        val base = root ?: return emptyMap()
+        return base.walkTopDown().onEnter { !it.name.startsWith(".") }
+            .filter { it.isFile }
+            .groupBy { it.name.lowercase() }
+            .also { byName = it }
+    }
+
+    /** A moved file, found by its name - only when exactly one file in the music folder has it. */
+    private fun findMoved(relative: String, fresh: Boolean): File? =
+        filesByName(fresh)[relative.substringAfterLast('/').lowercase()]?.singleOrNull()
+
+    /**
+     * The file for [part] of [song] on this device. Where a file is not where the library says -
+     * moved into another folder, say - it is found by name and the library corrected, so every
+     * device follows the move.
+     */
+    fun partFile(song: com.inksheets.core.Song, part: com.inksheets.core.Part): File? {
+        fileOf(part.file)?.takeIf { it.isFile }?.let { return it }
+        val found = findMoved(part.file, fresh = false)?.takeIf { it.isFile } ?: findMoved(part.file, fresh = true) ?: return null
+        val rel = relative(found) ?: return found
+        val latest = library?.song(song.id) ?: return found
+        change { editSong(song.id) { parts = latest.parts.map { if (it.id == part.id) it.copy(file = rel) else it } } }
+        return found
+    }
+
+    /**
+     * Correct every part and recording whose file has moved within the music folder. Run in the
+     * background when the library opens; a no-op when nothing has moved.
+     */
+    fun relinkMoved(): Int {
+        val lib = library ?: return 0
+        var fixed = 0
+        var index: Map<String, List<File>>? = null
+        for (song in lib.songs) {
+            val missingParts = song.parts.filter { fileOf(it.file)?.isFile != true }
+            val missingAudio = song.audio.filter { fileOf(it.file)?.isFile != true }
+            if (missingParts.isEmpty() && missingAudio.isEmpty()) continue
+            val names = index ?: filesByName(fresh = true).also { index = it }
+            fun moved(path: String): String? =
+                names[path.substringAfterLast('/').lowercase()]?.singleOrNull()?.let { relative(it) }
+            val parts = song.parts.map { p -> if (p in missingParts) moved(p.file)?.let { p.copy(file = it) } ?: p else p }
+            val audio = song.audio.map { a -> if (a in missingAudio) moved(a.file)?.let { a.copy(file = it) } ?: a else a }
+            if (parts != song.parts || audio != song.audio) {
+                fixed += parts.zip(song.parts).count { (a, b) -> a != b } + audio.zip(song.audio).count { (a, b) -> a != b }
+                change {
+                    editSong(song.id) {
+                        if (parts != song.parts) this.parts = parts
+                        if (audio != song.audio) this.audio = audio
+                    }
+                }
+            }
+        }
+        return fixed
     }
 
     /** A library-relative path turned into the file on this device. */

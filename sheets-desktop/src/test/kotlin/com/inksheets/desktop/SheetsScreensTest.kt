@@ -66,6 +66,8 @@ class SheetsScreensTest {
     @Test
     fun `the library shows the chosen instrument's songs and opens its part`() {
         val root = tmp.newFolder("Music")
+        listOf("Band/Liberty Bell - Trombone.pdf", "Band/Liberty Bell - Euphonium.pdf", "Jazz/September - Bass.pdf", "Scans/scan0042.pdf")
+            .forEach { File(root, it).apply { parentFile.mkdirs(); writeText("x") } }
         val platform = FakePlatform(root)
         val state = SheetsState(platform)
         state.change {
@@ -144,6 +146,26 @@ class SheetsScreensTest {
             shoot("action-strip", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
         com.inkslate.core.Perform.document = null
+    }
+
+    @Test
+    fun `a part whose file was moved is found by name and the library corrected`() {
+        val root = tmp.newFolder("Music")
+        File(root, "MobileSheets").mkdirs()
+        File(root, "Chester.pdf").writeText("moved up a folder")
+        File(root, "Hurricane Season - Trombone 1.pdf").writeText("also moved")
+        val state = SheetsState(FakePlatform(root))
+        state.change {
+            addSong("Chester", listOf(Part(file = "MobileSheets/Chester.pdf", instrument = "euphonium")))
+            addSong("Hurricane Season", listOf(Part(file = "MobileSheets/Hurricane Season - Trombone 1.pdf")))
+        }
+        // Opening one finds it at once.
+        val chester = state.library!!.songs.first { it.title == "Chester" }
+        assertEquals(File(root, "Chester.pdf"), state.partFile(chester, chester.parts.single()))
+        assertEquals("Chester.pdf", state.library!!.song(chester.id)!!.parts.single().file)
+        // The background pass puts the rest right.
+        assertEquals(1, state.relinkMoved())
+        assertEquals("Hurricane Season - Trombone 1.pdf", state.library!!.songs.first { it.title == "Hurricane Season" }.parts.single().file)
     }
 
     private fun androidx.compose.ui.test.ComposeUiTest.onNodeWithContentDescriptionSafe(label: String) =

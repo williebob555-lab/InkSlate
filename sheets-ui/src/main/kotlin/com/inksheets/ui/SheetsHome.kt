@@ -85,7 +85,10 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     // Scans nobody has read yet are read in the background, a page at a time.
     var reading by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     LaunchedEffect(state.library) {
-        if (state.library == null || !state.platform.canRecognise) return@LaunchedEffect
+        if (state.library == null) return@LaunchedEffect
+        // Files moved around the music folder are found again before anything else.
+        withContext(Dispatchers.IO) { runCatching { state.relinkMoved() } }
+        if (!state.platform.canRecognise) return@LaunchedEffect
         withContext(Dispatchers.IO) {
             runCatching {
                 state.readUnknownParts { done, of -> reading = if (done < of) done to of else null }
@@ -324,7 +327,7 @@ private fun SongsPane(state: SheetsState) {
 internal fun openSong(state: SheetsState, song: Song) {
     val part = PartChoice.partFor(song, state.profile) ?: return
     state.current = song
-    val file = state.fileOf(part.file) ?: return
+    val file = state.partFile(song, part) ?: return
     // A part partway into a band pack opens at its own first page.
     part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
     state.platform.openPart(song, part, file)

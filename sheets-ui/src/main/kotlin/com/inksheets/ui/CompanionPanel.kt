@@ -111,7 +111,7 @@ class Companion(private val state: SheetsState) {
         val library = state.library ?: return
         val song = CompanionLink.songFor(library, showing) ?: return
         val part = PartChoice.partFor(song, state.profile) ?: return
-        val file = state.fileOf(part.file) ?: return
+        val file = state.partFile(song, part) ?: return
         val page = CompanionLink.pageFor(follow, showing.page)
         if (state.current?.id == song.id) {
             if (page != null) Perform.jumpTo?.invoke(file.absolutePath, page)
