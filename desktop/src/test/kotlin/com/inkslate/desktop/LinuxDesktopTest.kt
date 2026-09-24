@@ -60,7 +60,8 @@ class LinuxDesktopTest {
             if (PenInput.device == PenInput.Device.MOUSE) return@repeat
             Thread.sleep(50)
         }
-        assertEquals(PenInput.Device.MOUSE, PenInput.device)
+        val log = runCatching { java.io.File(AppDirs.root, "events.log").readText().takeLast(2000) }.getOrDefault("")
+        assertEquals("${X11Pointer.status}\n$log", PenInput.Device.MOUSE, PenInput.device)
         X11Pointer.uninstall()
     }
 

@@ -129,7 +129,7 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/inkslate.jks"
 
       - name: Run the tests
-        run: ./gradlew :core:test :app:testDebugUnitTest :desktop:test --stacktrace
+        run: ./gradlew :core:test :sheets-core:test :app:testDebugUnitTest :desktop:test --stacktrace
 
       - name: Build the signed APK
         env:

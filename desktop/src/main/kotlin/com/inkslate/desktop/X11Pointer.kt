@@ -36,6 +36,17 @@ object X11Pointer {
     @Volatile
     private var running = false
 
+    /** What the reader has seen, for Settings -> Diagnostics and for the tests. */
+    @Volatile
+    var summary: String = "Not started."
+        private set
+
+    @Volatile
+    private var seen = 0L
+
+    @Volatile
+    private var lastDevice = ""
+
     fun install(@Suppress("UNUSED_PARAMETER") window: Window) {
         if (active) return
         if (System.getenv("DISPLAY").isNullOrBlank()) {
@@ -72,16 +83,18 @@ object X11Pointer {
                 isDaemon = true
                 start()
             }
-            EventLog.info(
-                "pointer",
-                "Reading pen and touch through XInput ${major.value}.${minor.value}: " +
-                    reading.devices.values.joinToString { "${it.name} (${it.kind.name.lowercase()})" }
-            )
+            summary = "XInput ${major.value}.${minor.value}: " +
+                reading.devices.values.joinToString { "${it.id} ${it.name} (${it.kind.name.lowercase()})" }
+            EventLog.info("pointer", "Reading pen and touch through $summary")
         }.onFailure {
             active = false
             EventLog.warn("pointer", "Pen and touch stay as mouse: ${it.message}")
         }
     }
+
+    /** A line saying how many events have arrived and from what, for diagnosing a machine. */
+    val status: String
+        get() = "$summary; $seen events, last from $lastDevice"
 
     fun uninstall() {
         // The reading thread is parked inside the X library waiting for the next event and cannot
@@ -126,7 +139,11 @@ object X11Pointer {
                     if (type == XI_HIERARCHY_CHANGED) {
                         reading.devices = queryDevices(display)
                     } else {
-                        reading.handle(type, raw(data))
+                        val raw = raw(data)
+                        seen++
+                        lastDevice = reading.devices[raw.sourceId]?.let { "${it.name} (${it.kind.name.lowercase()})" }
+                            ?: "unknown device ${raw.sourceId}"
+                        reading.handle(type, raw)
                     }
                 } finally {
                     x11.XFreeEventData(display, event)

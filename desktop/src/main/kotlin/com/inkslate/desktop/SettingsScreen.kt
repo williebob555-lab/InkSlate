@@ -905,7 +905,8 @@ private fun DiagnosticsSection() {
                 remember(tick) {
                     if (PenInput.active) {
                         "Pen and touch are being read from the system directly - " +
-                            PenInput.latest
+                            PenInput.latest +
+                            if (X11Pointer.active) "\n" + X11Pointer.status else ""
                     } else {
                         "Pen and touch are not being read, so every device counts as a mouse."
                     }
