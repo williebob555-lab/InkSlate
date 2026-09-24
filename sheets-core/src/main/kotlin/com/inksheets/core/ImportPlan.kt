@@ -28,19 +28,25 @@ object ImportPlan {
     fun plan(
         files: List<String>,
         textOf: (String) -> String? = { null },
-        existing: List<Song> = emptyList()
+        existing: List<Song> = emptyList(),
+        /** Text recognised from a scan, asked for only when a file has no text of its own. */
+        recognise: (String) -> String? = { null }
     ): List<PlannedSong> {
         val known = existing.flatMap { s -> s.parts.map { it.file } }.toSet()
         val songs = LinkedHashMap<String, Pair<String, MutableList<PlannedPart>>>()
         for (file in files) {
             if (file in known) continue
             val name = file.substringAfterLast('/')
-            val fromText = textOf(file)?.let { InstrumentReader.read(it) }
             val fromName = InstrumentReader.readFileName(name)
+            val ownText = textOf(file)?.let { InstrumentReader.read(it) }
+            // Recognising a scan takes a moment a page, so it is kept for the files that need it:
+            // no text of their own, and nothing in the name either.
+            val fromText = ownText ?: if (fromName == null) recognise(file)?.let { InstrumentReader.read(it) } else null
+            val textSource = if (ownText != null) InstrumentSource.TEXT else InstrumentSource.OCR
             // Printed words beat the file name, unless the print only said something as weak as
             // "Bass" and the name says more.
             val chosen = when {
-                fromText != null && (fromName == null || fromText.strength >= fromName.strength) -> fromText to InstrumentSource.TEXT
+                fromText != null && (fromName == null || fromText.strength >= fromName.strength) -> fromText to textSource
                 fromName != null -> fromName to InstrumentSource.FILE_NAME
                 else -> null
             }

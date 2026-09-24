@@ -62,6 +62,32 @@ class AndroidSheetsPlatform(
         }
     }.getOrNull()
 
+    override val canRecognise: Boolean = true
+
+    /**
+     * Recognise the words at the top of a page. The instrument is printed in the top corner of a
+     * part, and reading only the top third is both faster and keeps the notes themselves (which
+     * recognition reads as a spray of letters) out of the answer.
+     */
+    override fun recognise(file: File, page: Int): String? = runCatching {
+        val bitmap = TopOfPage.render(file, page) ?: return null
+        try {
+            val image = com.google.mlkit.vision.common.InputImage.fromBitmap(bitmap, 0)
+            val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+                com.google.mlkit.vision.text.latin.TextRecognizerOptions.DEFAULT_OPTIONS
+            )
+            try {
+                val result = com.google.android.gms.tasks.Tasks.await(recognizer.process(image))
+                result.textBlocks.flatMap { block -> block.lines.map { it.text } }
+                    .joinToString("\n").ifBlank { null }
+            } finally {
+                recognizer.close()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }.onFailure { EventLog.warn("sheets", "Could not read ${file.name}: ${it.message}") }.getOrNull()
+
     override val audioOut: AudioOut = TrackOut()
     override val microphone: Microphone = RecordMic(context)
 

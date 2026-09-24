@@ -42,7 +42,7 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
 
     /**
      * The first lines of text on a page - where a part's instrument is printed. A scan has no
-     * text of its own; for those this returns null until recognition is added.
+     * text of its own; for those see [recognise].
      */
     override fun pageText(file: File, page: Int): String? = runCatching {
         Loader.loadPDF(file).use { pdf ->
@@ -55,6 +55,48 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
             text.lines().filter { it.isNotBlank() }.take(15).joinToString("\n").ifBlank { null }
         }
     }.getOrNull()
+
+    /**
+     * Tesseract, where it is installed: `sudo dnf install tesseract` on Fedora, the UB Mannheim
+     * installer on Windows. Nothing is bundled - where it is missing, scans are left for a device
+     * that can read them (the tablet always can), and what it finds reaches here through the
+     * synced library.
+     */
+    private val tesseract: String? by lazy {
+        val names = if (System.getProperty("os.name").startsWith("Windows")) listOf("tesseract.exe") else listOf("tesseract")
+        val onPath = System.getenv("PATH").orEmpty().split(File.pathSeparator)
+            .flatMap { dir -> names.map { File(dir, it) } }
+        val usual = listOf(
+            File("C:/Program Files/Tesseract-OCR/tesseract.exe"),
+            File("/usr/bin/tesseract"),
+            File("/usr/local/bin/tesseract")
+        )
+        (onPath + usual).firstOrNull { it.canExecute() }?.absolutePath
+    }
+
+    override val canRecognise: Boolean get() = tesseract != null
+
+    override fun recognise(file: File, page: Int): String? {
+        val exe = tesseract ?: return null
+        val image = TopOfPage.render(file, page) ?: return null
+        val png = File.createTempFile("inksheets-ocr", ".png")
+        return try {
+            javax.imageio.ImageIO.write(image, "png", png)
+            val process = ProcessBuilder(exe, png.absolutePath, "stdout", "--psm", "3")
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+            val text = process.inputStream.bufferedReader().readText()
+            if (!process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly()
+                null
+            } else text.lines().filter { it.isNotBlank() }.joinToString("\n").ifBlank { null }
+        } catch (e: Exception) {
+            EventLog.warn("sheets", "Could not read ${file.name}: ${e.message}")
+            null
+        } finally {
+            png.delete()
+        }
+    }
 
     override val audioOut: AudioOut = JavaSoundOut()
     override val microphone: Microphone = JavaSoundMic()

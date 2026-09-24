@@ -31,6 +31,16 @@ interface SheetsPlatform {
      */
     fun pageText(file: File, page: Int = 1): String?
 
+    /**
+     * The words recognised in the top part of a page of [file] (a PDF or a picture) - for scans,
+     * which have no text of their own. Null where this device cannot recognise text. Slow, and
+     * called off the UI thread.
+     */
+    fun recognise(file: File, page: Int = 1): String? = null
+
+    /** Whether [recognise] can do anything here. */
+    val canRecognise: Boolean get() = false
+
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
 

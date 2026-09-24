@@ -118,7 +118,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Tools the tests and the package need
-        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool dbus rpm
+        run: sudo apt-get update -q && sudo apt-get install -y -q xvfb xdotool dbus rpm tesseract-ocr
 
       - name: Unit tests and compile
         run: xvfb-run -a ./gradlew :desktop:test :sheets-desktop:test --stacktrace

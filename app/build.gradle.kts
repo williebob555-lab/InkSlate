@@ -123,6 +123,10 @@ kotlin {
 dependencies {
     implementation(project(":core"))
     "inksheetsImplementation"(project(":sheets-core"))
+    // Reading the instrument off scanned parts. The bundled model works on-device with no Google
+    // account or Play services, so it works on a sideloaded install; it adds a few MB to InkSheets
+    // only.
+    "inksheetsImplementation"("com.google.mlkit:text-recognition:16.0.1")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

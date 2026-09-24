@@ -79,7 +79,9 @@ internal fun ImportDialog(state: SheetsState, onClose: () -> Unit) {
                 if (rel.endsWith(".pdf", ignoreCase = true)) {
                     state.fileOf(rel)?.let { runCatching { state.platform.pageText(it) }.getOrNull() }
                 } else null
-            }, existing = existing)
+            }, existing = existing, recognise = { rel ->
+                state.fileOf(rel)?.let { runCatching { state.platform.recognise(it) }.getOrNull() }
+            })
         }
     }
 
@@ -129,6 +131,7 @@ internal fun ImportDialog(state: SheetsState, onClose: () -> Unit) {
                                     "${p.file.substringAfterLast('/')} — " + when {
                                         instrument == null -> "instrument not found; set it later in the song's details"
                                         p.source == InstrumentSource.TEXT -> "$instrument (read from the page)"
+                                        p.source == InstrumentSource.OCR -> "$instrument (read from the scan)"
                                         else -> "$instrument (from the file name)"
                                     },
                                     style = MaterialTheme.typography.bodySmall,

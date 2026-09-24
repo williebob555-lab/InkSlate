@@ -163,9 +163,8 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text(setlist.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-            val first = setlist.entries.firstNotNullOfOrNull { songs[it.songId] }
-            if (first != null) {
-                TextButton(onClick = { openSong(state, first) }) {
+            if (setlist.entries.isNotEmpty()) {
+                TextButton(onClick = { state.playSetlist(setlist.id, 0) }) {
                     Icon(Icons.Default.PlayArrow, null)
                     Text("Start")
                 }
@@ -184,7 +183,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                     SongRow(
                         song = song,
                         unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
-                        onOpen = { openSong(state, song) },
+                        onOpen = { state.playSetlist(setlist.id, index) },
                         trailing = {
                             Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
                             IconButton(onClick = { state.change { moveInSetlist(setlist.id, entry.id, index - 1) } }, enabled = index > 0) {

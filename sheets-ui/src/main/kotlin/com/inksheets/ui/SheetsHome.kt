@@ -72,6 +72,18 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     var showImport by remember { mutableStateOf(false) }
     var chooseFolder by remember { mutableStateOf(false) }
 
+    // Scans nobody has read yet are read in the background, a page at a time.
+    var reading by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    LaunchedEffect(state.library) {
+        if (state.library == null || !state.platform.canRecognise) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            runCatching {
+                state.readUnknownParts { done, of -> reading = if (done < of) done to of else null }
+            }
+        }
+        reading = null
+    }
+
     // Edits from other devices arrive through the synced folder; look for them now and then.
     LaunchedEffect(state.library) {
         while (true) {
@@ -112,6 +124,14 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
         if (state.library == null) {
             Welcome(onChoose = { chooseFolder = true })
         } else {
+            reading?.let { (done, of) ->
+                Text(
+                    "Reading the instrument off scanned parts: ${done + 1} of $of",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Songs") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Setlists") })
@@ -214,7 +234,7 @@ private fun SongsPane(state: SheetsState) {
                 SongRow(
                     song = song,
                     unsure = fit == PartChoice.Fit.UNKNOWN,
-                    onOpen = { openSong(state, song) },
+                    onOpen = { state.stopPlaying(); openSong(state, song) },
                     onEdit = { editing = song },
                     onAddToSetlist = { addingToSetlist = song },
                     onDelete = { state.change { deleteSong(song.id) } }

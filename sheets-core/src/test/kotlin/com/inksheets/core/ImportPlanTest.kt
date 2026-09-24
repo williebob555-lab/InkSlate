@@ -41,4 +41,19 @@ class ImportPlanTest {
         val plan = ImportPlan.plan(listOf("Band/a.pdf", "Band/b.pdf"), existing = existing)
         assertEquals(listOf("Band/b.pdf"), plan.flatMap { s -> s.parts.map { it.file } })
     }
+
+    @Test
+    fun `a scan is recognised only when it has no text of its own`() {
+        val asked = ArrayList<String>()
+        val plan = ImportPlan.plan(
+            listOf("a.pdf", "b.pdf"),
+            textOf = { if (it == "a.pdf") "Trombone 1" else null },
+            recognise = { asked += it; "Euph. T.C." }
+        )
+        assertEquals(listOf("b.pdf"), asked)
+        val parts = plan.flatMap { it.parts }
+        assertEquals(InstrumentSource.TEXT, parts[0].source)
+        assertEquals("euphonium-tc", parts[1].instrument)
+        assertEquals(InstrumentSource.OCR, parts[1].source)
+    }
 }
