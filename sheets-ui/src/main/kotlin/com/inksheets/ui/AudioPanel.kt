@@ -276,46 +276,17 @@ private fun clock(ms: Long): String {
     return "%d:%02d".format(s / 60, s % 60)
 }
 
-/** Choosing a recording inside the music folder. */
+/** Choosing a recording inside the music folder, so it syncs with the song. */
 @Composable
 private fun AudioFilePicker(state: SheetsState, onChosen: (String) -> Unit, onDismiss: () -> Unit) {
     val root = state.root ?: return
-    var at by remember { mutableStateOf(root) }
-    val entries = remember(at) {
-        at.listFiles { f -> !f.name.startsWith(".") && (f.isDirectory || f.extension.lowercase() in AUDIO_EXTENSIONS) }
-            .orEmpty().sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-    }
-    SheetDialog(title = "Pair a recording", onDismiss = onDismiss, wide = true, buttons = {
-        TextButton(onClick = onDismiss) { Text("Cancel") }
-    }) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { at.parentFile?.let { at = it } }, enabled = at.canonicalPath != root.canonicalPath) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, "Up")
-                }
-                Text(state.relative(at)?.ifEmpty { "Music folder" } ?: at.name, style = MaterialTheme.typography.bodySmall)
-            }
-            LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                items(entries, key = { it.path }) { f ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable {
-                            if (f.isDirectory) at = f else state.relative(f)?.let(onChosen)
-                        }.padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(if (f.isDirectory) Icons.Default.Folder else Icons.Default.AudioFile, null)
-                        Spacer(Modifier.width(12.dp))
-                        Text(f.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
-            }
-            if (entries.none { !it.isDirectory } && at == root) {
-                Text(
-                    "Recordings need to be in the music folder so they sync with the song.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
+    FilePickerDialog(
+        title = "Pair a recording",
+        start = root,
+        within = root,
+        extensions = AUDIO_EXTENSIONS,
+        onChosen = { f -> state.relative(f)?.let(onChosen) },
+        onDismiss = onDismiss,
+        note = "Recordings need to be in the music folder so they sync with the song."
+    )
 }

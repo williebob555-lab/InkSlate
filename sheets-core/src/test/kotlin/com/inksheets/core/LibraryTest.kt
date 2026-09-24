@@ -181,6 +181,20 @@ class LibraryTest {
         assertEquals(900L, p.byDay["2026-09-20"])
     }
 
+    @Test
+    fun `instrument profiles can be added, changed and removed, built-in ones included`() {
+        val (_, lib) = device("tablet")
+        assertEquals(listOf("trombone", "baritone", "bass-guitar"), lib.profiles().map { it.id })
+        lib.saveProfile(InstrumentProfile("tuba", "Tuba", listOf("tuba")))
+        lib.saveProfile(InstrumentProfile("trombone", "Trombone (bass too)", listOf("trombone", "bass-trombone")))
+        lib.deleteProfile("bass-guitar")
+        val ids = lib.profiles().map { it.id }
+        assertEquals(listOf("trombone", "baritone", "tuba"), ids)
+        assertEquals("Trombone (bass too)", lib.profiles().first().name)
+        lib.saveProfile(Instruments.defaultProfiles.last())   // brought back
+        assertTrue("bass-guitar" in lib.profiles().map { it.id })
+    }
+
     private fun Library.ownLogSize(): Long =
         File(tmp.root, "tablet/.inksheets/log/tablet.jsonl").length()
 }

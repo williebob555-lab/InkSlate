@@ -121,6 +121,21 @@ class AndroidSheetsPlatform(
 
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = MediaAudioPlayer()
 
+    /** The share sheet: email, a messaging app, Drive, Nearby Share - whatever the tablet has. */
+    override fun share(file: File) {
+        runCatching {
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(send, file.name).apply {
+                if (context !is android.app.Activity) addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        }.onFailure { EventLog.warn("sheets", "Could not share ${file.name}: ${it.message}") }
+    }
+
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     override fun onMain(block: () -> Unit) { main.post(block) }
 

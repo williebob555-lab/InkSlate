@@ -73,6 +73,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     var showImport by remember { mutableStateOf(false) }
     var chooseFolder by remember { mutableStateOf(false) }
     var importMs by remember { mutableStateOf(false) }
+    var openShared by remember { mutableStateOf(false) }
 
     // Scans nobody has read yet are read in the background, a page at a time.
     var reading by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -120,6 +121,11 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                         )
                         if (state.library != null) {
                             DropdownMenuItem(
+                                text = { Text("Open a shared setlist...") },
+                                leadingIcon = { Icon(Icons.Default.LibraryAdd, null) },
+                                onClick = { more = false; openShared = true }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Import from MobileSheets...") },
                                 leadingIcon = { Icon(Icons.Default.LibraryAdd, null) },
                                 onClick = { more = false; importMs = true }
@@ -161,6 +167,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
     if (importMs) MobileSheetsDialog(state, onClose = { importMs = false })
+    if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     if (chooseFolder) {
         FolderPickerDialog(
@@ -197,6 +204,8 @@ private fun Welcome(onChoose: () -> Unit) {
 @Composable
 private fun InstrumentChooser(state: SheetsState) {
     var open by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(false) }
+    if (editing) ProfilesDialog(state, onClose = { editing = false })
     Box {
         TextButton(onClick = { open = true }) {
             Text(state.profile?.name ?: "All instruments")
@@ -207,6 +216,8 @@ private fun InstrumentChooser(state: SheetsState) {
             state.profiles.forEach { p ->
                 DropdownMenuItem(text = { Text(p.name) }, onClick = { state.chooseProfile(p.id); open = false })
             }
+            HorizontalDivider()
+            DropdownMenuItem(text = { Text("Edit instruments...") }, onClick = { open = false; editing = true })
         }
     }
 }

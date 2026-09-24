@@ -25,7 +25,12 @@ class SheetsState(val platform: SheetsPlatform) {
     var version by mutableStateOf(0L)
         private set
 
-    val profiles: List<InstrumentProfile> = Instruments.defaultProfiles
+    /** The instruments to choose between: the library's own (synced), or the built-in three. */
+    val profiles: List<InstrumentProfile>
+        get() {
+            version   // read, so screens showing these redraw when they change
+            return library?.profiles() ?: Instruments.defaultProfiles
+        }
 
     var profileId by mutableStateOf(platform.pref(K_PROFILE))
         private set

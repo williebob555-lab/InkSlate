@@ -55,6 +55,7 @@ internal fun SetlistsPane(state: SheetsState) {
     var folderId by rememberSaveable { mutableStateOf<String?>(null) }
     var openSetlist by rememberSaveable { mutableStateOf<String?>(null) }
     var naming by remember { mutableStateOf<Naming?>(null) }
+    var sharing by remember { mutableStateOf<String?>(null) }
 
     val version = state.version
     val library = state.library ?: return
@@ -115,6 +116,7 @@ internal fun SetlistsPane(state: SheetsState) {
                     detail = listOfNotNull(s.date, "${s.entries.size} songs").joinToString("  ·  "),
                     onClick = { openSetlist = s.id },
                     menu = listOf(
+                        "Share with bandmates..." to { sharing = s.id },
                         "Rename" to { naming = Naming.RenameSetlist(s) },
                         "Move to top level" to { state.change { editSetlist(s.id) { this.folderId = null } } },
                         "Delete" to { state.change { deleteSetlist(s.id) } }
@@ -127,6 +129,7 @@ internal fun SetlistsPane(state: SheetsState) {
         }
     }
 
+    sharing?.let { id -> ShareSetlistDialog(state, id, onClose = { sharing = null }) }
     naming?.let { n ->
         NameDialog(
             title = n.title,

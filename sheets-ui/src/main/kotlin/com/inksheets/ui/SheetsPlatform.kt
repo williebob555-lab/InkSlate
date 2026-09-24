@@ -56,6 +56,9 @@ interface SheetsPlatform {
     /** The microphone, for the tuner; null where there is none. */
     val microphone: Microphone?
 
+    /** Hand a file to the system to send somewhere: the share sheet, or the file manager. */
+    fun share(file: File) {}
+
     /** Run [block] on the UI thread - for things that arrive from the network. */
     fun onMain(block: () -> Unit)
 

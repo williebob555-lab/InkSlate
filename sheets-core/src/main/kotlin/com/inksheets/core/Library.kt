@@ -287,6 +287,34 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         edit(FOLDER, id) { put(Op.DELETED, true) }
     }
 
+    // ---- instrument profiles ---------------------------------------------------------
+
+    /**
+     * The instrument profiles: the built-in ones (unless changed or removed here) and any made
+     * here. Kept in the library so every device offers the same choices.
+     */
+    fun profiles(): List<InstrumentProfile> = synchronized(this) {
+        val stored = state.live(PROFILE).map { (id, f) ->
+            InstrumentProfile(id, f.string("name") ?: "Instrument", f.list("instruments", STRING_LIST))
+        }.associateBy { it.id }
+        val builtIn = Instruments.defaultProfiles.mapNotNull { d ->
+            when {
+                d.id in stored -> stored.getValue(d.id)
+                state.fields(PROFILE, d.id) != null -> null      // removed
+                else -> d
+            }
+        }
+        builtIn + stored.values.filter { s -> Instruments.defaultProfiles.none { it.id == s.id } }.sortedBy { it.name }
+    }
+
+    fun saveProfile(profile: InstrumentProfile) = edit(PROFILE, profile.id) {
+        put("name", profile.name)
+        put("instruments", profile.instruments, STRING_LIST)
+        put(Op.DELETED, false)
+    }
+
+    fun deleteProfile(id: String) = edit(PROFILE, id) { put(Op.DELETED, true) }
+
     // ---- practice ------------------------------------------------------------------
 
     /** How much a song has been practised, on every device together. */
@@ -422,6 +450,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         const val SETLIST = "setlist"
         const val FOLDER = "folder"
         const val PRACTICE = "practice"
+        const val PROFILE = "profile"
 
         internal val STRING_LIST = ListSerializer(String.serializer())
         internal val PART_LIST = ListSerializer(Part.serializer())

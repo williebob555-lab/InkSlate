@@ -127,6 +127,10 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
 
     override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)
 
+    override fun share(file: File) {
+        runCatching { com.inkslate.desktop.SystemShell.reveal(file) }
+    }
+
     override val deviceName: String =
         runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Laptop"
 
