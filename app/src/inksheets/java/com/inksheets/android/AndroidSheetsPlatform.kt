@@ -136,6 +136,14 @@ class AndroidSheetsPlatform(
         }.onFailure { EventLog.warn("sheets", "Could not share ${file.name}: ${it.message}") }
     }
 
+    override fun openSet(parts: List<Pair<File, String>>, focus: Int) {
+        com.inkslate.AppFlavor.openSet?.invoke(parts, focus) ?: parts.getOrNull(focus)?.let { openFile(it.first) }
+    }
+
+    override fun closeSet() {
+        com.inkslate.AppFlavor.closeSet?.invoke()
+    }
+
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     override fun onMain(block: () -> Unit) { main.post(block) }
 

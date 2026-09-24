@@ -1516,7 +1516,7 @@ class DrawingView @JvmOverloads constructor(
         if (layout == newLayout) return
         layout = newLayout
         relayout()
-        fitWidth()
+        if (fitWholePage && layout == PageLayout.SINGLE) fitToScreen() else fitWidth()
         reportVisiblePages()
     }
 
@@ -1525,7 +1525,7 @@ class DrawingView @JvmOverloads constructor(
         currentPage = target
         syncCurrentDims()
         if (layout == PageLayout.SINGLE) {
-            relayout(); fitWidth()
+            relayout(); if (fitWholePage) fitToScreen() else fitWidth()
         } else {
             // scroll the page into view without changing zoom
             val slot = slots.getOrNull(target) ?: return
@@ -2066,7 +2066,12 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
-        if (ow == 0 || oh == 0) fitWidth() else { clampTranslation(); syncInverse() }
+        when {
+            // Music: the whole page, centred, whatever the screen did.
+            fitWholePage && layout == PageLayout.SINGLE -> fitToScreen()
+            ow == 0 || oh == 0 -> fitWidth()
+            else -> { clampTranslation(); syncInverse() }
+        }
         // A camera asked for before the view had been measured is applied here, the moment it
         // can be. Without this, reopening a document was a race the restore usually lost on a
         // cold start, and the position was silently dropped rather than visibly wrong - which is
@@ -4341,6 +4346,11 @@ class DrawingView @JvmOverloads constructor(
         @JvmStatic
         @Volatile
         var edgeTapTurns: Boolean = false
+
+        /** Fit the whole page, centred, in the one-page layout (InkSheets), rather than its width. */
+        @JvmStatic
+        @Volatile
+        var fitWholePage: Boolean = false
 
         /** How much of the width at each side counts as "the side". */
         const val EDGE_TAP_SHARE = 0.18f

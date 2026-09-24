@@ -127,6 +127,14 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
 
     override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)
 
+    override fun openSet(parts: List<Pair<File, String>>, focus: Int) {
+        com.inkslate.desktop.AppFlavor.openSet?.invoke(parts, focus) ?: parts.getOrNull(focus)?.let { openFile(it.first) }
+    }
+
+    override fun closeSet() {
+        com.inkslate.desktop.AppFlavor.closeSet?.invoke()
+    }
+
     override fun share(file: File) {
         runCatching { com.inkslate.desktop.SystemShell.reveal(file) }
     }

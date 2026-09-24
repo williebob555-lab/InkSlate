@@ -30,6 +30,8 @@ object FlavorSetup {
 
     fun install(app: Application) {
         AppFlavor.fingerPans = true
+        AppFlavor.musicView = true
+        com.inkslate.ink.DrawingView.fitWholePage = true
         AppFlavor.home = { open, openSettings ->
             openFile = open
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)

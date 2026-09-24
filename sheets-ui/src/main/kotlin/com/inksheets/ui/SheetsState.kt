@@ -96,15 +96,44 @@ class SheetsState(val platform: SheetsPlatform) {
         }
     }
 
-    /** Open entry [index] of a setlist, and remember it for the pedals. */
+    /**
+     * Open a setlist as tabs - every song, in order, with your instrument's part - and bring entry
+     * [index] to the front. Remembered for the pedals, the strip and companion mode.
+     */
     fun playSetlist(setlistId: String, index: Int) {
         val lib = library ?: return
         val entries = lib.setlist(setlistId)?.entries ?: return
         val entry = entries.getOrNull(index) ?: return
         val song = lib.song(entry.songId) ?: return
+        val tabs = ArrayList<Pair<File, String>>()
+        var focus = 0
+        entries.forEachIndexed { i, e ->
+            val s = lib.song(e.songId) ?: return@forEachIndexed
+            val part = com.inksheets.core.PartChoice.partFor(s, profile) ?: return@forEachIndexed
+            val file = fileOf(part.file)?.takeIf { it.isFile } ?: return@forEachIndexed
+            if (i == index) focus = tabs.size
+            if (tabs.none { it.first == file }) {
+                part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
+                tabs += file to s.title
+            } else if (i == index) {
+                focus = tabs.indexOfFirst { it.first == file }
+            }
+        }
         playing = setlistId to index
-        openSong(this, song)
+        current = song
+        platform.openSet(tabs, focus)
+        companion.pageTurned(0)
     }
+
+    /** Put the setlist away: its tabs are saved and closed, and it is no longer being played. */
+    fun closeSetlist() {
+        playing = null
+        platform.closeSet()
+    }
+
+    /** The name of the setlist being played, for the strip. */
+    val playingName: String?
+        get() = playing?.let { (id, _) -> library?.setlist(id)?.name }
 
     /** A song opened from the library rather than a setlist ends any setlist being played. */
     fun stopPlaying() {

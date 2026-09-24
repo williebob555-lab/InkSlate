@@ -166,6 +166,12 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text(setlist.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            if (state.playing?.first == setlist.id) {
+                TextButton(onClick = { state.closeSetlist() }) {
+                    Icon(Icons.Default.Close, null)
+                    Text("Close set")
+                }
+            }
             if (setlist.entries.isNotEmpty()) {
                 TextButton(onClick = { state.playSetlist(setlist.id, 0) }) {
                     Icon(Icons.Default.PlayArrow, null)

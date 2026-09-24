@@ -62,7 +62,23 @@ import androidx.compose.ui.zIndex
 import java.io.File
 
 /** One open document: a tab in the workspace. Its id is stable for the tab's whole lifetime. */
-class DocTab(val id: String, val file: File, val host: DocumentHost, fullscreen: Boolean = false) {
+class DocTab(
+    val id: String,
+    val file: File,
+    val host: DocumentHost,
+    fullscreen: Boolean = false,
+    /** What the tab says, when that is not the file's name: a setlist's song title. */
+    title: String? = null,
+    /**
+     * Whether the document has been read. A setlist opens all its songs as tabs at once, and a
+     * concert's worth of documents read up front would be most of the memory there is; each one
+     * is read the first time its tab is shown.
+     */
+    loaded: Boolean = true
+) {
+    var title by mutableStateOf(title)
+    var loaded by mutableStateOf(loaded)
+
     /** Flipped by the tab's own close button to ask the document to save-through and close. */
     val closeRequested = mutableStateOf(false)
 
@@ -386,7 +402,7 @@ private fun DocumentTabChip(
             selected = shown || dragOffset != null,
             focused = focused,
             onClick = onSelect,
-            label = tab.file.name,
+            label = tab.title ?: tab.file.name,
             leading = { Icon(icon, null, modifier = Modifier.size(16.dp)) },
             trailing = {
                 if (twice) {

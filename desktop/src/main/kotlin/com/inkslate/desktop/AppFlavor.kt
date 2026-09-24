@@ -23,6 +23,20 @@ object AppFlavor {
     /** The finger moves the page rather than drawing, until changed in Settings. */
     var fingerPans: Boolean = false
 
+    /**
+     * Music, not homework: a document opens with the bars hidden (the tab row stays, and the
+     * strip over the page brings the tools back), one page at a time, the whole page fitted to the
+     * screen and centred - and kept that way as pages turn and the window changes size.
+     */
+    var musicView: Boolean = false
+
+    /**
+     * Open a whole setlist as tabs, in order, each named by its song, with [focus] in front; and
+     * put them all away again. Set by the workspace; used by InkSheets.
+     */
+    var openSet: ((parts: List<Pair<File, String>>, focus: Int) -> Unit)? = null
+    var closeSet: (() -> Unit)? = null
+
     /** Drawn over the document in front, in the corner of its pane. */
     var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
 }

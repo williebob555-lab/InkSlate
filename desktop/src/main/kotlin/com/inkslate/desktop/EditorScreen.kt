@@ -244,7 +244,7 @@ fun EditorScreen(
     // means the view last touched - the one the bars above and below are showing.
     val viewport: Viewport by host::activeViewport
     var page: Int by host::activePage
-    var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
+    var layout by remember { mutableStateOf(if (AppFlavor.musicView) PageLayout.SINGLE else PageLayout.VERTICAL) }
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
     var pressureCurveOpen by remember { mutableStateOf(false) }
     var benchRunning by remember { mutableStateOf(false) }
@@ -1078,9 +1078,13 @@ fun EditorScreen(
             val d = src.pageDim(it)
             com.inkslate.core.PageExtent(d.width, d.height)
         }
+        page = clamped
+        // Music is read a whole page at a time: fitted, centred, nothing off the edge.
+        if (AppFlavor.musicView) {
+            paperBox(clamped)?.let { viewport.fit(it, padding = 8f); return }
+        }
         val origins = com.inkslate.core.PageArranger.arrange(extents, layout, clamped)
         origins.getOrNull(clamped)?.let { (x, y) -> viewport.goTo(x, y) }
-        page = clamped
     }
 
     /**
@@ -1106,12 +1110,14 @@ fun EditorScreen(
             // Nothing remembered: open on the page, in the middle of the window. The corner of a
             // document is the corner of a whiteboard's canvas, which is empty space some distance
             // from anything anybody wrote.
-            paperBox(page)?.let { viewport.fit(it) }
+            if (AppFlavor.musicView) goToPage(page) else paperBox(page)?.let { viewport.fit(it) }
             return@LaunchedEffect
         }
-        layout = at.layout
+        if (!AppFlavor.musicView) layout = at.layout
         page = at.page.coerceIn(0, src.pageCount - 1)
-        if (at.hasCamera) {
+        if (AppFlavor.musicView) {
+            goToPage(page)
+        } else if (at.hasCamera) {
             viewport.restore(at.scale!!, at.x!!, at.y!!)
         } else {
             paperBox(page)?.let { viewport.fit(it) } ?: goToPage(page)
@@ -1352,6 +1358,12 @@ fun EditorScreen(
             }
             onClose()
         }
+    }
+
+    // In the music view the page stays whole on screen whatever the window does - the bars coming
+    // and going, the window resized, a monitor swapped.
+    LaunchedEffect(viewport.viewSize) {
+        if (AppFlavor.musicView && positionRestored && source != null) goToPage(page)
     }
 
     // Where the reader is, for another tablet following this one.

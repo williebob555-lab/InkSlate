@@ -30,7 +30,7 @@ enum class PerformAction(val label: String) {
     ERASER("Eraser"),
     UNDO("Undo"),
     REDO("Redo"),
-    FULLSCREEN("Fullscreen on or off");
+    FULLSCREEN("Show or hide the tools");
 
     /** Handled by the document in front. */
     val forDocument: Boolean

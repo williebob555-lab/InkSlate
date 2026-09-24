@@ -56,6 +56,12 @@ interface SheetsPlatform {
     /** The microphone, for the tuner; null where there is none. */
     val microphone: Microphone?
 
+    /** Open a setlist's parts as tabs, in order and named by song, with [focus] in front. */
+    fun openSet(parts: List<Pair<File, String>>, focus: Int) {}
+
+    /** Put a setlist's tabs away. */
+    fun closeSet() {}
+
     /** Hand a file to the system to send somewhere: the share sheet, or the file manager. */
     fun share(file: File) {}
 

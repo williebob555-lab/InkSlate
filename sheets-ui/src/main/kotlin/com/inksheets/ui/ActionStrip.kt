@@ -17,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
@@ -97,7 +99,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 state.companion.status?.let { status ->
                     Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp, start = 6.dp, end = 6.dp))
                 }
-                // Where in a setlist this song is, when one is being played.
+                // Where in a setlist this song is, when one is being played, and the way to put the
+                // whole set away.
                 state.playing?.let { (setlistId, index) ->
                     val total = state.library?.setlist(setlistId)?.entries?.size ?: 0
                     Text(
@@ -105,6 +108,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(top = 6.dp)
                     )
+                    IconButton(onClick = { state.closeSetlist() }, modifier = Modifier.size(36.dp)) {
+                        Icon(Icons.Default.Close, "Close the setlist")
+                    }
                 }
                 var lastGroup = -1
                 for (action in shown) {
@@ -215,7 +221,7 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
     PerformAction.ERASER -> Icons.Default.CleaningServices
     PerformAction.UNDO -> Icons.AutoMirrored.Filled.Undo
     PerformAction.REDO -> Icons.AutoMirrored.Filled.Redo
-    PerformAction.FULLSCREEN -> if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen
+    PerformAction.FULLSCREEN -> if (fullscreen) Icons.Default.Construction else Icons.Default.Fullscreen
 }
 
 private const val K_COLLAPSED = "sheets_strip_collapsed"

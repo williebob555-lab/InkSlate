@@ -13,6 +13,7 @@ import java.io.File
  */
 fun main() = runAs("InkSheets") {
     AppFlavor.fingerPans = true
+    AppFlavor.musicView = true
     var openFile: ((File) -> Unit)? = null
     val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }) }
     AppFlavor.home = { open, openSettings ->

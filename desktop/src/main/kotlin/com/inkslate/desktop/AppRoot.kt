@@ -120,6 +120,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     /** Put [id] in front of you: focus it where it already is, or show it in the focused pane. */
     fun selectTab(id: String) {
         homeShown = false
+        tabOf(id)?.loaded = true
         when {
             primary?.tabId == id -> focusedPane = Pane.PRIMARY
             secondary?.tabId == id -> focusedPane = Pane.SECONDARY
@@ -139,8 +140,8 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         } else {
             // Closed the same safe way its own tab button would, so nothing is lost - just no
             // longer kept open.
-            if (tabs.size >= MAX_OPEN_TABS) {
-                tabs.firstOrNull { it.id != primary?.tabId && it.id != secondary?.tabId }
+            if (tabs.count { it.loaded } >= MAX_OPEN_TABS) {
+                tabs.firstOrNull { it.loaded && it.title == null && it.id != primary?.tabId && it.id != secondary?.tabId }
                     ?.closeRequested?.value = true
             }
             val tab = DocTab(
@@ -148,12 +149,42 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                 file = f,
                 host = DocumentHost(immersiveState),
                 // A document opened while in focus mode joins it.
-                fullscreen = immersive
+                fullscreen = immersive || AppFlavor.musicView
             )
             tabs.add(tab)
             tab.id
         }
         selectTab(id)
+    }
+
+    /**
+     * A setlist as tabs: one per song in set order, named by song, read only when first shown.
+     * Tabs from anything else are put away (saved and closed), so the row is the set.
+     */
+    fun openSet(parts: List<Pair<File, String>>, focus: Int) {
+        val wanted = parts.map { it.first.absolutePath }.toSet()
+        tabs.filter { it.file.absolutePath !in wanted }.forEach { it.closeRequested.value = true }
+        val ordered = ArrayList<DocTab>()
+        var front: String? = null
+        parts.forEachIndexed { i, (f, title) ->
+            val tab = ordered.firstOrNull { it.file.absolutePath == f.absolutePath }
+                ?: tabs.firstOrNull { it.file.absolutePath == f.absolutePath && !it.closeRequested.value }
+                ?: DocTab(
+                    id = "${f.absolutePath}#${System.nanoTime()}",
+                    file = f,
+                    host = DocumentHost(immersiveState),
+                    fullscreen = immersive || AppFlavor.musicView,
+                    title = title,
+                    loaded = false
+                ).also { tabs.add(it) }
+            tab.title = title
+            if (tab !in ordered) ordered += tab
+            if (i == focus) front = tab.id
+        }
+        // In set order, ahead of anything still on its way out.
+        tabs.removeAll(ordered)
+        tabs.addAll(0, ordered)
+        front?.let(::selectTab)
     }
 
     /**
@@ -199,6 +230,9 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         else -> primary
     }
     val focusedTab = tabOf(focusedRef?.tabId)
+    AppFlavor.openSet = ::openSet
+    AppFlavor.closeSet = { closeAll() }
+
     // With no document in front, a pedal has no page to turn; the focused editor sets it again.
     if (focusedTab == null) com.inkslate.core.Perform.document = null
     // Pen tools and fullscreen from the strip over the page or a pedal. The pen's own profile is
@@ -396,15 +430,20 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         Box(Modifier.size(0.dp)) {
             for (tab in tabs) {
                 key(tab.id) {
-                    EditorScreen(
-                        file = tab.file,
-                        shortcuts = shortcuts,
-                        navigation = navigation,
-                        onClose = { closeTab(tab.id) },
-                        host = tab.host,
-                        focused = tab === focusedTab,
-                        closeRequested = tab.closeRequested
-                    )
+                    if (tab.loaded) {
+                        EditorScreen(
+                            file = tab.file,
+                            shortcuts = shortcuts,
+                            navigation = navigation,
+                            onClose = { closeTab(tab.id) },
+                            host = tab.host,
+                            focused = tab === focusedTab,
+                            closeRequested = tab.closeRequested
+                        )
+                    } else if (tab.closeRequested.value) {
+                        // Never read, so nothing to save: it just goes.
+                        androidx.compose.runtime.LaunchedEffect(Unit) { closeTab(tab.id) }
+                    }
                 }
             }
         }

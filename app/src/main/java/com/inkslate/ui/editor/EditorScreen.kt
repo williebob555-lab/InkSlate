@@ -155,7 +155,7 @@ fun EditorScreen(
     var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var pageDims by remember { mutableStateOf<List<PageDim?>>(emptyList()) }
     var renderFailed by remember { mutableStateOf(false) }
-    var layout by remember { mutableStateOf(PageLayout.VERTICAL) }
+    var layout by remember { mutableStateOf(if (com.inkslate.AppFlavor.musicView) PageLayout.SINGLE else PageLayout.VERTICAL) }
     var strokesLoaded by remember { mutableStateOf(false) }
     var positionRestored by remember { mutableStateOf(false) }
     /**
@@ -363,7 +363,8 @@ fun EditorScreen(
             // on screen, because the saved position describes a document that no longer exists.
             if (previous == null && tools.rememberView) {
                 readingPosition.load(file.absolutePath)?.let { saved ->
-                    saved.layout?.let { if (it != layout) layout = it }
+                    if (!com.inkslate.AppFlavor.musicView) saved.layout?.let { if (it != layout) layout = it }
+                    if (com.inkslate.AppFlavor.musicView) pendingCamera = null
                     pendingCamera = saved.camera
                     pendingPage = saved.page
                 }
