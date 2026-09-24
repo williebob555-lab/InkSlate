@@ -29,6 +29,8 @@ import java.io.File
 private sealed interface MsStep {
     data object Explain : MsStep
     data object Choose : MsStep
+    data object ChooseBackup : MsStep
+    data class Unpacking(val backup: File, val note: String) : MsStep
     data class Working(val folder: File, val note: String) : MsStep
     data class Done(val result: MobileSheetsImport.Result, val copied: Int) : MsStep
     data class Failed(val message: String) : MsStep
@@ -39,8 +41,8 @@ private sealed interface MsStep {
  * bookmarks, and every setlist in its order.
  */
 @Composable
-internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit) {
-    var step by remember { mutableStateOf<MsStep>(MsStep.Explain) }
+internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit, backup: File? = null) {
+    var step by remember { mutableStateOf<MsStep>(if (backup != null) MsStep.Unpacking(backup, "Opening the backup...") else MsStep.Explain) }
 
     when (val s = step) {
         MsStep.Explain -> SheetDialog(
@@ -48,17 +50,44 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit) {
             onDismiss = onClose,
             buttons = {
                 TextButton(onClick = onClose) { Text("Cancel") }
-                TextButton(onClick = { step = MsStep.Choose }) { Text("Choose its folder") }
+                TextButton(onClick = { step = MsStep.Choose }) { Text("Its folder") }
+                TextButton(onClick = { step = MsStep.ChooseBackup }) { Text("A backup (.msb)") }
             }
         ) {
             Text(
-                "In MobileSheets, open its settings and turn on \"Expose Database File\". It then " +
-                    "keeps its database, mobilesheets.db, in its storage folder beside your music.\n\n" +
-                    "Then choose that folder here. If it is not already inside your music folder, " +
-                    "the music is copied in, so it syncs like everything else. Running this again " +
-                    "later only adds what is new.",
+                "Either of two things from MobileSheets works:\n\n" +
+                    "A backup - MobileSheets' \"Backup library\" makes a .msb file. Put it anywhere " +
+                    "you can reach and choose it here; the music inside is unpacked into your music folder.\n\n" +
+                    "Its folder - with \"Expose Database File\" on in MobileSheets' settings, its " +
+                    "storage folder holds mobilesheets.db beside the music.\n\n" +
+                    "Songs that MobileSheets kept once per instrument (\"24K Magic - Trombone 1\", " +
+                    "\"24K Magic - Electric Bass\") become one song with a part for each. Running this " +
+                    "again later only adds what is new.",
                 style = MaterialTheme.typography.bodyMedium
             )
+        }
+
+        MsStep.ChooseBackup -> FilePickerDialog(
+            title = "Choose the MobileSheets backup",
+            start = state.root ?: state.platform.startFolder,
+            extensions = setOf("msb"),
+            onChosen = { step = MsStep.Unpacking(it, "Opening the backup...") },
+            onDismiss = onClose
+        )
+
+        is MsStep.Unpacking -> {
+            LaunchedEffect(s.backup) {
+                step = withContext(Dispatchers.IO) {
+                    unpackBackup(state, s.backup) { note -> state.platform.onMain { step = MsStep.Unpacking(s.backup, note) } }
+                }
+            }
+            SheetDialog(title = "Import from MobileSheets", onDismiss = {}, buttons = {}) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(24.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(s.note)
+                }
+            }
         }
 
         MsStep.Choose -> FolderPickerDialog(
@@ -77,7 +106,7 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit) {
 
         is MsStep.Working -> {
             LaunchedEffect(s.folder) {
-                step = withContext(Dispatchers.IO) { runImport(state, s.folder) { note -> step = MsStep.Working(s.folder, note) } }
+                step = withContext(Dispatchers.IO) { runImport(state, s.folder, { note -> state.platform.onMain { step = MsStep.Working(s.folder, note) } }) }
             }
             SheetDialog(title = "Import from MobileSheets", onDismiss = {}, buttons = {}) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -113,11 +142,32 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit) {
     }
 }
 
-private fun runImport(state: SheetsState, msFolder: File, progress: (String) -> Unit): MsStep {
+/**
+ * A backup: its music unpacked into the music folder's "MobileSheets" folder (which then syncs),
+ * its database beside the library's own records, and then the same import as for a folder.
+ */
+private fun unpackBackup(state: SheetsState, backup: File, progress: (String) -> Unit): MsStep {
+    val root = state.root ?: return MsStep.Failed("Choose your music folder first.")
+    val total = backup.length().coerceAtLeast(1)
+    val msFolder = File(root, "MobileSheets")
+    val db = File(root, ".inksheets/mobilesheets-" + backup.nameWithoutExtension + ".db")
+    val unpacked = runCatching {
+        com.inksheets.core.MsbBackup.extract(backup, db, msFolder, state.platform::openMobileSheets) { read ->
+            progress("Unpacking the music... ${read * 100 / total}%")
+        }
+    }.getOrElse { return MsStep.Failed("The backup could not be read: ${it.message}") }
+    val step = runImport(state, msFolder, progress, database = unpacked.database)
+    if (step is MsStep.Done) state.platform.setPref(backupDoneKey(backup), "true")
+    return step
+}
+
+internal fun backupDoneKey(backup: File) = "msb_done_" + backup.name + "_" + backup.length()
+
+private fun runImport(state: SheetsState, msFolder: File, progress: (String) -> Unit, database: File = File(msFolder, "mobilesheets.db")): MsStep {
     val root = state.root ?: return MsStep.Failed("Choose your music folder first.")
     val library = state.library ?: return MsStep.Failed("Choose your music folder first.")
-    val tables = state.platform.openMobileSheets(File(msFolder, "mobilesheets.db"))
-        ?: return MsStep.Failed("mobilesheets.db could not be opened.")
+    val tables = state.platform.openMobileSheets(database)
+        ?: return MsStep.Failed("The MobileSheets library could not be opened.")
 
     progress("Finding the music...")
     val byName = msFolder.walkTopDown().onEnter { !it.name.startsWith(".") }

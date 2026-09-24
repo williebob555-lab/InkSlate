@@ -67,14 +67,14 @@ compose.desktop {
 
             linux {
                 packageName = "inksheets"
-                iconFile.set(rootProject.file("brand/inkslate-512.png"))
+                iconFile.set(rootProject.file("brand/inksheets-512.png"))
                 shortcut = true
                 menuGroup = "AudioVideo"
                 appCategory = "AudioVideo"
                 rpmLicenseType = "Proprietary"
             }
             windows {
-                iconFile.set(rootProject.file("brand/inkslate.ico"))
+                iconFile.set(rootProject.file("brand/inksheets.ico"))
                 menu = true
                 menuGroup = "InkSheets"
                 shortcut = true
@@ -97,6 +97,11 @@ tasks.withType<Test>().configureEach {
     environment("LOCALAPPDATA", sandbox.absolutePath)
     environment("XDG_DATA_HOME", sandbox.absolutePath)
     systemProperty("user.home", sandbox.absolutePath)
+    System.getProperty("inksheets.msb")?.let {
+        systemProperty("inksheets.msb", it)
+        outputs.upToDateWhen { false }
+    }
+    testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null
     System.getProperty("inksheets.shots")?.let {
         systemProperty("inksheets.shots", it)
         outputs.upToDateWhen { false }

@@ -72,20 +72,31 @@ object MobileSheetsImport {
         var added = 0
         var skipped = 0
 
+        // First every MobileSheets song as it stands: its title, its files, its details.
+        class Found(val msId: Int, val row: Map<String, Any?>, val title: String, val parts: List<Part>)
+        val found = ArrayList<Found>()
         for (row in tables.rows("Songs")) {
             val msId = row.int("Id") ?: continue
+            val rawTitle = row.text("Title")
+            // The instrument is read from the song's own title first ("24K Magic - Trombone 1"),
+            // then from its file's name.
+            val fromTitle = rawTitle?.let { InstrumentReader.read(it) }
             val parts = filesOf[msId].orEmpty().mapNotNull { f ->
                 val path = f.text("Path") ?: return@mapNotNull null
                 val rel = resolve(path)
                 if (rel == null) { missing += path; return@mapNotNull null }
                 val range = pageRange(f.text("PageOrder"))
-                val named = InstrumentReader.readFileName(rel.substringAfterLast('/'))
+                val named = fromTitle ?: InstrumentReader.readFileName(rel.substringAfterLast('/'))
                 Part(
                     file = rel,
                     firstPage = range?.first,
                     lastPage = range?.last,
                     instrument = named?.instrument?.id,
-                    source = if (named != null) InstrumentSource.FILE_NAME else InstrumentSource.UNKNOWN,
+                    source = when {
+                        named == null -> InstrumentSource.UNKNOWN
+                        fromTitle != null -> InstrumentSource.TEXT
+                        else -> InstrumentSource.FILE_NAME
+                    },
                     label = named?.label
                 )
             }
@@ -96,38 +107,71 @@ object MobileSheetsImport {
                 skipped++
                 continue
             }
+            found += Found(msId, row, rawTitle ?: parts.first().file.substringAfterLast('/').substringBeforeLast('.'), parts)
+        }
 
-            val tracks = audioOf[msId].orEmpty().mapNotNull { a ->
-                val rel = a.text("File")?.let(resolve) ?: return@mapNotNull null
-                val looped = (a.int("ABEnabled") ?: 0) != 0
-                AudioTrack(
-                    file = rel,
-                    label = a.text("Title"),
-                    loopStartMs = if (looped) a.int("APosition")?.takeIf { it >= 0 }?.toLong() else null,
-                    loopEndMs = if (looped) a.int("BPosition")?.takeIf { it >= 0 }?.toLong() else null,
-                    speed = (a["TempoSpeed"] as? Number)?.toDouble() ?: 1.0,
-                    pitch = a.int("PitchShift") ?: 0
-                )
+        // MobileSheets keeps each instrument's part as a song of its own - "24K Magic - Electric
+        // Bass" beside "24K Magic - Trombone 1". Here they are one song with two parts, which is
+        // what lets choosing an instrument open the right one. Titles that agree once a
+        // "- Instrument" is taken off go together; songs still alone are then tried without a
+        // bare trailing instrument ("1812 Euph 2" with "1812 Trombone"), which on its own would
+        // wrongly shorten "All About That Bass".
+        val groups = ArrayList<Pair<String, List<Found>>>()
+        val byClean = found.groupBy { Library.sortKey(ImportPlan.cleanTitle(it.title)) }
+        val alone = ArrayList<Found>()
+        for ((_, members) in byClean) {
+            if (members.size > 1) groups += ImportPlan.cleanTitle(members.first().title) to members
+            else alone += members
+        }
+        for ((_, members) in alone.groupBy { Library.sortKey(ImportPlan.withoutTrailingInstrument(ImportPlan.cleanTitle(it.title))) }) {
+            val only = members.first()
+            groups += if (members.size > 1) {
+                ImportPlan.withoutTrailingInstrument(ImportPlan.cleanTitle(only.title)) to members
+            } else {
+                ImportPlan.cleanTitle(only.title).ifEmpty { only.title } to members
             }
-            val marks = bookmarksOf[msId].orEmpty().mapNotNull { b ->
-                val page = b.int("PageNum") ?: return@mapNotNull null
-                Bookmark(label = b.text("Name") ?: "Page ${page + 1}", page = page + 1)
+        }
+
+        for ((title, members) in groups) {
+            val ids = members.map { it.msId }
+            val tracks = ids.flatMap { msId ->
+                audioOf[msId].orEmpty().mapNotNull { a ->
+                    val rel = a.text("File")?.let(resolve) ?: return@mapNotNull null
+                    val looped = (a.int("ABEnabled") ?: 0) != 0
+                    AudioTrack(
+                        file = rel,
+                        label = a.text("Title"),
+                        loopStartMs = if (looped) a.int("APosition")?.takeIf { it >= 0 }?.toLong() else null,
+                        loopEndMs = if (looped) a.int("BPosition")?.takeIf { it >= 0 }?.toLong() else null,
+                        speed = (a["TempoSpeed"] as? Number)?.toDouble() ?: 1.0,
+                        pitch = a.int("PitchShift") ?: 0
+                    )
+                }
+            }.distinctBy { it.file }
+            val marks = ids.flatMap { msId ->
+                bookmarksOf[msId].orEmpty().mapNotNull { b ->
+                    val page = b.int("PageNum") ?: return@mapNotNull null
+                    Bookmark(label = b.text("Name") ?: "Page ${page + 1}", page = page + 1)
+                }
             }
-            val song = library.addSong(row.text("Title") ?: parts.first().file.substringAfterLast('/'), parts) {
-                this.composers = composersOf[msId].orEmpty()
-                this.artists = artistsOf[msId].orEmpty()
-                this.genres = genresOf[msId].orEmpty()
-                this.key = keysOf[msId]?.firstOrNull()
-                this.timeSignature = signaturesOf[msId]?.firstOrNull()
-                this.tempo = temposOf[msId]
-                this.difficulty = row.int("Difficulty")?.takeIf { it > 0 }
-                this.tags = (collectionsOf[msId].orEmpty() + groupsOf[msId].orEmpty() +
-                    row.text("Keywords")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()).distinct()
-                this.notes = notesOf[msId]
+            fun union(of: Map<Int, List<String>>) = ids.flatMap { of[it].orEmpty() }.distinct()
+            val first = members.first().row
+            val song = library.addSong(title, members.flatMap { it.parts }) {
+                this.composers = union(composersOf)
+                this.artists = union(artistsOf)
+                this.genres = union(genresOf)
+                this.key = ids.firstNotNullOfOrNull { keysOf[it]?.firstOrNull() }
+                this.timeSignature = ids.firstNotNullOfOrNull { signaturesOf[it]?.firstOrNull() }
+                this.tempo = ids.firstNotNullOfOrNull { temposOf[it] }
+                this.difficulty = first.int("Difficulty")?.takeIf { it > 0 }
+                this.tags = (union(collectionsOf) + union(groupsOf) + members.flatMap { m ->
+                    m.row.text("Keywords")?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+                }).distinct()
+                this.notes = ids.firstNotNullOfOrNull { notesOf[it] }
                 if (tracks.isNotEmpty()) this.audio = tracks
                 if (marks.isNotEmpty()) this.bookmarks = marks
             }
-            songIds[msId] = song.id
+            ids.forEach { songIds[it] = song.id }
             added++
         }
 

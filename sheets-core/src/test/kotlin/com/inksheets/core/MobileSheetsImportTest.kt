@@ -92,4 +92,40 @@ class MobileSheetsImportTest {
         assertEquals(0, again.setlists)
         assertEquals(2, library.songs.size)
     }
+
+    @Test
+    fun `one song per instrument in MobileSheets becomes one song with parts here`() {
+        val root = tmp.newFolder("Music")
+        listOf("magic-bass.pdf", "magic-tbn.pdf", "bass-song.pdf", "1812-euph.pdf", "1812-tbn.pdf").forEach { File(root, it).writeText("x") }
+        val t = mapOf(
+            "Songs" to listOf(
+                mapOf("Id" to 1, "Title" to "24 K Magic - Electric Bass"),
+                mapOf("Id" to 2, "Title" to "24 K Magic - Trombone 1"),
+                mapOf("Id" to 3, "Title" to "All About That Bass"),
+                mapOf("Id" to 4, "Title" to "1812 Euph 2"),
+                mapOf("Id" to 5, "Title" to "1812 Trombone")
+            ),
+            "Files" to listOf(
+                mapOf("Id" to 1, "SongId" to 1, "Path" to "magic-bass.pdf"),
+                mapOf("Id" to 2, "SongId" to 2, "Path" to "magic-tbn.pdf"),
+                mapOf("Id" to 3, "SongId" to 3, "Path" to "bass-song.pdf"),
+                mapOf("Id" to 4, "SongId" to 4, "Path" to "1812-euph.pdf"),
+                mapOf("Id" to 5, "SongId" to 5, "Path" to "1812-tbn.pdf")
+            ),
+            "Setlists" to listOf(mapOf("Id" to 1, "Name" to "Pep Band"), mapOf("Id" to 2, "Name" to "Pep Band Electric Bass")),
+            "SetlistSong" to listOf(
+                mapOf("Id" to 1, "SetlistId" to 1, "SongId" to 2),
+                mapOf("Id" to 2, "SetlistId" to 2, "SongId" to 1)
+            )
+        )
+        val library = Library(LibraryLog(root, "t"))
+        val result = MobileSheetsImport.run({ t[it].orEmpty() }, library) { it }
+        assertEquals(3, result.songs)
+        val magic = library.songs.first { it.title == "24 K Magic" }
+        assertEquals(setOf("bass-guitar", "trombone"), magic.instruments)
+        assertTrue(library.songs.any { it.title == "All About That Bass" })
+        assertEquals(setOf("euphonium", "trombone"), library.songs.first { it.title == "1812" }.instruments)
+        // Both setlists now point at the one song; the instrument chosen picks the part.
+        assertEquals(listOf(magic.id, magic.id), library.setlists.map { it.entries.single().songId })
+    }
 }

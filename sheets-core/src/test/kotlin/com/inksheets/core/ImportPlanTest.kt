@@ -56,4 +56,13 @@ class ImportPlanTest {
         assertEquals("euphonium-tc", parts[1].instrument)
         assertEquals(InstrumentSource.OCR, parts[1].source)
     }
+
+    @Test
+    fun `a trailing instrument without a separator comes off only when asked`() {
+        assertEquals("1812", ImportPlan.withoutTrailingInstrument("1812 Euph 2"))
+        assertEquals("9 to 5", ImportPlan.withoutTrailingInstrument(ImportPlan.cleanTitle("9 to 5 - Trombones 1-2")))
+        assertEquals("All About That", ImportPlan.withoutTrailingInstrument("All About That Bass"))
+        assertEquals("All About That Bass", ImportPlan.cleanTitle("All About That Bass - Trombone 1"))
+        assertEquals("Mr. Brightside", ImportPlan.cleanTitle("Mr. Brightside - Electric Bass"))
+    }
 }

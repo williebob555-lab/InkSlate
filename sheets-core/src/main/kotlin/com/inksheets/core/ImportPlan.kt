@@ -62,8 +62,31 @@ object ImportPlan {
      * A song title from a file name: extension, instrument, part number and the separators
      * around them removed. "Liberty_Bell - Trombone 2.pdf" -> "Liberty Bell".
      */
-    fun titleOf(fileName: String): String {
-        val base = fileName.substringBeforeLast('.').replace('_', ' ')
+    fun titleOf(fileName: String): String = cleanTitle(fileName.substringBeforeLast('.'))
+
+    /**
+     * A title with a trailing instrument taken off even without a separator: "1812 Euph 2" ->
+     * "1812". Used only to gather parts that would otherwise stay apart - on its own it would turn
+     * "All About That Bass" into "All About That".
+     */
+    fun withoutTrailingInstrument(title: String): String {
+        val words = title.trim().split(Regex("""\s+"""))
+        var end = words.size
+        while (end > 0 && words[end - 1].matches(Regex("""\d+(st|nd|rd|th)?|[IVX]+|&|and""", RegexOption.IGNORE_CASE))) end--
+        for (take in 3 downTo 1) {
+            if (end - take < 1) continue
+            val tail = words.subList(end - take, end).joinToString(" ")
+            val match = InstrumentReader.read(tail) ?: continue
+            if (InstrumentReader.normalise(tail).size == match.strength) {
+                return words.subList(0, end - take).joinToString(" ")
+            }
+        }
+        return title.trim()
+    }
+
+    /** A song title from a name with the instrument (and its separators) taken off. */
+    fun cleanTitle(name: String): String {
+        val base = name.replace('_', ' ')
         // Cut at the instrument, if the name has one after a separator or at its end.
         val pieces = base.split(Regex("""\s+[-–—]\s+|\s*\(\s*|\s*\)\s*"""))
         val kept = pieces.filter { piece ->

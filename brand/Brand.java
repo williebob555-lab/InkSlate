@@ -60,9 +60,47 @@ public final class Brand {
     private static final Color INK_COLOUR = new Color(0x1B, 0x6F, 0xE0);
     private static final float INK_WIDTH = 3.2f;
 
+    // ---- InkSheets ------------------------------------------------------------
+    //
+    // The same page, so the two apps read as one family, with a pair of beamed eighth notes where
+    // InkSlate has its line of handwriting, on a burgundy tile of its own.
+
+    private static final Color SHEETS_BACKGROUND = new Color(0x6E, 0x1E, 0x3A);
+    private static final Color SHEETS_NOTE = new Color(0x6E, 0x1E, 0x3A);
+
+    /** Two note heads, two stems and the beam that joins them, all filled shapes. */
+    private static final String[] NOTES = {
+        ellipse(50.0, 70.0, 5.4, 3.9, -22),
+        ellipse(65.0, 66.0, 5.4, 3.9, -22),
+        "M53.9,69.2 L56.3,69.2 L56.3,47.2 L53.9,47.2 Z",
+        "M68.9,65.2 L71.3,65.2 L71.3,43.2 L68.9,43.2 Z",
+        "M53.9,47.2 L71.3,43.2 L71.3,49.0 L53.9,53.0 Z"
+    };
+
+    /** An ellipse turned by [degrees], as four cubic curves - what both the raster and Android draw. */
+    private static String ellipse(double cx, double cy, double rx, double ry, double degrees) {
+        double k = 0.5522847498, a = Math.toRadians(degrees), cos = Math.cos(a), sin = Math.sin(a);
+        double[][] p = {
+            { rx, 0 }, { rx, ry * k }, { rx * k, ry }, { 0, ry }, { -rx * k, ry }, { -rx, ry * k },
+            { -rx, 0 }, { -rx, -ry * k }, { -rx * k, -ry }, { 0, -ry }, { rx * k, -ry }, { rx, -ry * k }, { rx, 0 }
+        };
+        StringBuilder d = new StringBuilder();
+        for (int i = 0; i < p.length; i++) {
+            double x = cx + p[i][0] * cos - p[i][1] * sin, y = cy + p[i][0] * sin + p[i][1] * cos;
+            String xy = String.format(java.util.Locale.ROOT, "%.2f,%.2f", x, y);
+            if (i == 0) d.append("M").append(xy);
+            else if (i % 3 == 1) d.append(" C").append(xy);
+            else d.append(" ").append(xy);
+        }
+        return d.append(" Z").toString();
+    }
+
     /** Windows draws the icon as given, so the mark carries its own rounded tile. */
     private static final float TILE_INSET = 6f;
     private static final float TILE_RADIUS = 22f;
+
+    /** Which mark is being drawn: InkSlate's, or InkSheets'. */
+    private static boolean sheets = false;
 
     public static void main(String[] args) throws IOException {
         Path root = Path.of(args.length > 0 ? args[0] : ".");
@@ -76,6 +114,14 @@ public final class Brand {
         // Android: the same geometry as vectors, which is what a launcher wants.
         writeAndroidVector(root.resolve("app/src/main/res/drawable/ic_launcher_foreground.xml"));
         writeAndroidColour(root.resolve("app/src/main/res/values/ic_launcher_background.xml"));
+
+        // InkSheets: the same files, for its own installer, package and launcher.
+        sheets = true;
+        writeIco(root.resolve("brand/inksheets.ico"), new int[] { 16, 24, 32, 48, 64, 128, 256 });
+        ImageIO.write(render(512, true), "png", root.resolve("brand/inksheets-512.png").toFile());
+        writeAndroidVector(root.resolve("app/src/inksheets/res/drawable/ic_launcher_foreground.xml"));
+        writeAndroidColour(root.resolve("app/src/inksheets/res/values/ic_launcher_background.xml"));
+        sheets = false;
 
         System.out.println("Brand assets written under " + root.toAbsolutePath());
     }
@@ -94,7 +140,7 @@ public final class Brand {
         g.transform(AffineTransform.getScaleInstance(scale, scale));
 
         if (tile) {
-            g.setColor(BACKGROUND);
+            g.setColor(sheets ? SHEETS_BACKGROUND : BACKGROUND);
             g.fill(new RoundRectangle2D.Float(
                 TILE_INSET, TILE_INSET,
                 108 - TILE_INSET * 2, 108 - TILE_INSET * 2,
@@ -106,9 +152,14 @@ public final class Brand {
         g.setColor(FOLD_SHADE);
         g.fill(parse(FOLD));
 
-        g.setColor(INK_COLOUR);
-        g.setStroke(new BasicStroke(INK_WIDTH, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-        g.draw(parse(INK));
+        if (sheets) {
+            g.setColor(SHEETS_NOTE);
+            for (String note : NOTES) g.fill(parse(note));
+        } else {
+            g.setColor(INK_COLOUR);
+            g.setStroke(new BasicStroke(INK_WIDTH, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.draw(parse(INK));
+        }
 
         g.dispose();
         return image;
@@ -267,10 +318,12 @@ public final class Brand {
             "        android:pathData=\"" + PAGE + "\" />",
             "    <path android:fillColor=\"" + hex(FOLD_SHADE) + "\"",
             "        android:pathData=\"" + FOLD + "\" />",
-            "    <path android:strokeColor=\"" + hex(INK_COLOUR) + "\"",
-            "        android:strokeWidth=\"" + INK_WIDTH + "\" android:fillColor=\"#00000000\"",
-            "        android:strokeLineCap=\"round\" android:strokeLineJoin=\"round\"",
-            "        android:pathData=\"" + INK + "\" />",
+            sheets
+                ? "    <path android:fillColor=\"" + hex(SHEETS_NOTE) + "\"\n        android:pathData=\"" + String.join(" ", NOTES) + "\" />"
+                : "    <path android:strokeColor=\"" + hex(INK_COLOUR) + "\"\n"
+                    + "        android:strokeWidth=\"" + INK_WIDTH + "\" android:fillColor=\"#00000000\"\n"
+                    + "        android:strokeLineCap=\"round\" android:strokeLineJoin=\"round\"\n"
+                    + "        android:pathData=\"" + INK + "\" />",
             "</vector>",
             ""
         ));
@@ -282,7 +335,7 @@ public final class Brand {
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
             "<!-- Generated by brand/Brand.java. Edit the mark there, not here. -->",
             "<resources>",
-            "    <color name=\"ic_launcher_background\">" + hex(BACKGROUND) + "</color>",
+            "    <color name=\"ic_launcher_background\">" + hex(sheets ? SHEETS_BACKGROUND : BACKGROUND) + "</color>",
             "</resources>",
             ""
         ));

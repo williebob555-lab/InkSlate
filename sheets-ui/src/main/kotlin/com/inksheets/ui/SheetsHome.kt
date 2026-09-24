@@ -74,6 +74,12 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     var chooseFolder by remember { mutableStateOf(false) }
     var importMs by remember { mutableStateOf(false) }
     var openShared by remember { mutableStateOf(false) }
+    var backupToImport by remember { mutableStateOf<java.io.File?>(null) }
+    // A MobileSheets backup put in the music folder is noticed and offered, once.
+    val waitingBackup = remember(state.root, state.version) {
+        state.root?.listFiles { f -> f.isFile && f.extension.equals("msb", ignoreCase = true) }
+            ?.firstOrNull { state.platform.pref(backupDoneKey(it)) == null }
+    }
 
     // Scans nobody has read yet are read in the background, a page at a time.
     var reading by remember { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -152,6 +158,19 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
             }
+            waitingBackup?.let { msb ->
+                androidx.compose.material3.Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Found a MobileSheets backup: ${msb.name}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { state.platform.setPref(backupDoneKey(msb), "skipped") ; state.change { } }) { Text("Not now") }
+                        Button(onClick = { backupToImport = msb }) { Text("Import it") }
+                    }
+                }
+            }
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Songs") })
                 Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Setlists") })
@@ -167,6 +186,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
     if (importMs) MobileSheetsDialog(state, onClose = { importMs = false })
+    backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; state.change { } }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     if (chooseFolder) {
