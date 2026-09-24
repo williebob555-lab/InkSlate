@@ -543,6 +543,9 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            PedalSection()
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
             UpdateSection()
 
             Box(Modifier.padding(24.dp))
@@ -953,5 +956,73 @@ private fun SwitchRow(
             )
         }
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+/**
+ * Page-turn pedals and keys: what each key does, and "press a pedal" to set a new one.
+ *
+ * Every pedal pairs as a keyboard, so there is nothing to set up for one that sends the usual
+ * keys; this is for a pedal in a mode that sends something else, or for giving a second pedal a
+ * job other than turning pages.
+ */
+@Composable
+private fun PedalSection() {
+    val context = LocalContext.current
+    var table by remember { mutableStateOf(com.inkslate.data.PedalKeys.table(context)) }
+    var waiting by remember { mutableStateOf(false) }
+    var learned by remember { mutableStateOf<Int?>(null) }
+
+    SectionHeader("Pedals and page keys")
+    Text(
+        "A Bluetooth page-turn pedal pairs as a keyboard. The usual keys already turn pages; " +
+            "to give a pedal another job, press Add and then press the pedal.",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+    )
+    table.entries.sortedBy { it.value.ordinal }.forEach { (code, action) ->
+        ChoiceRow(
+            title = com.inkslate.data.PedalKeys.name(code),
+            current = action.label,
+            options = com.inkslate.core.PerformAction.entries.map { it.label to it } + ("Nothing" to null)
+        ) { chosen ->
+            com.inkslate.data.PedalKeys.bind(context, code, chosen)
+            table = com.inkslate.data.PedalKeys.table(context)
+        }
+    }
+    Row(Modifier.padding(horizontal = 8.dp)) {
+        TextButton(onClick = {
+            waiting = true
+            com.inkslate.data.PedalKeys.learning = { code ->
+                waiting = false
+                learned = code
+            }
+        }) { Text(if (waiting) "Press the pedal now..." else "Add a pedal or key") }
+        TextButton(onClick = {
+            com.inkslate.data.PedalKeys.reset(context)
+            table = com.inkslate.data.PedalKeys.table(context)
+        }) { Text("Reset to the usual keys") }
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { com.inkslate.data.PedalKeys.learning = null }
+    }
+    learned?.let { code ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { learned = null },
+            title = { Text("What should ${com.inkslate.data.PedalKeys.name(code)} do?") },
+            text = {
+                Column {
+                    com.inkslate.core.PerformAction.entries.forEach { action ->
+                        TextButton(onClick = {
+                            com.inkslate.data.PedalKeys.bind(context, code, action)
+                            table = com.inkslate.data.PedalKeys.table(context)
+                            learned = null
+                        }) { Text(action.label) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { learned = null }) { Text("Cancel") } }
+        )
     }
 }

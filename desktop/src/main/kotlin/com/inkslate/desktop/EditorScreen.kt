@@ -1369,6 +1369,28 @@ fun EditorScreen(
         shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
         shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
         shortcuts.shapes = { if (trayOpen) closeTray() else openTray() }
+        // Pedals and page keys. A turn this document cannot make (past its last page) returns
+        // false, and InkSheets takes it as a turn to the next song.
+        com.inkslate.core.Perform.document = { action ->
+            val count = source?.pageCount ?: 0
+            when (action) {
+                com.inkslate.core.PerformAction.NEXT_PAGE ->
+                    (page < count - 1).also { if (it) goToPage(page + 1) }
+                com.inkslate.core.PerformAction.PREVIOUS_PAGE ->
+                    (page > 0).also { if (it) goToPage(page - 1) }
+                com.inkslate.core.PerformAction.FIRST_PAGE -> { goToPage(0); true }
+                com.inkslate.core.PerformAction.LAST_PAGE -> { goToPage(count - 1); true }
+                com.inkslate.core.PerformAction.HALF_PAGE_FORWARD, com.inkslate.core.PerformAction.HALF_PAGE_BACK -> {
+                    // Half the window: the bottom half of what was showing moves to the top, so
+                    // the next lines are there before the last ones have gone.
+                    val before = viewport.offset
+                    val sign = if (action == com.inkslate.core.PerformAction.HALF_PAGE_FORWARD) -1f else 1f
+                    viewport.panBy(0f, sign * viewport.viewSize.height * 0.5f)
+                    viewport.offset != before
+                }
+                else -> false
+            }
+        }
         navigation.back = {
             // Escape steps back out of one thing at a time, innermost first. Focus mode before the
             // document especially: hitting Escape to get the toolbars back and having the document

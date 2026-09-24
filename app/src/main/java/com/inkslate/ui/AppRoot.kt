@@ -236,6 +236,8 @@ fun AppRoot(
         else -> primary
     }
     val focusedTab = tabOf(focusedRef?.tabId)
+    // With no document in front, a pedal has no page to turn; the focused editor sets it again.
+    if (focusedTab == null) com.inkslate.core.Perform.document = null
 
     // Fullscreen belongs to what is in front. Each document comes back the way it was left; the
     // two halves of a split share one, so moving between them never flickers the system bars.

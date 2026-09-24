@@ -1502,6 +1502,26 @@ fun EditorScreen(
 
     BackHandler(enabled = focused) { leave() }
 
+    // Pedals and page keys reach the document in front. A turn it cannot make (past its last
+    // page) returns false, and InkSheets takes that as a turn to the next song in the setlist.
+    if (focused) {
+        com.inkslate.core.Perform.document = { action ->
+            val view = drawingView.value
+            val count = view?.pageCount ?: 0
+            if (view == null) false else when (action) {
+                com.inkslate.core.PerformAction.NEXT_PAGE ->
+                    (page < count - 1).also { if (it) view.goToPage(page + 1) }
+                com.inkslate.core.PerformAction.PREVIOUS_PAGE ->
+                    (page > 0).also { if (it) view.goToPage(page - 1) }
+                com.inkslate.core.PerformAction.FIRST_PAGE -> { view.goToPage(0); true }
+                com.inkslate.core.PerformAction.LAST_PAGE -> { view.goToPage(count - 1); true }
+                com.inkslate.core.PerformAction.HALF_PAGE_FORWARD -> view.scrollByViewFraction(0.5f)
+                com.inkslate.core.PerformAction.HALF_PAGE_BACK -> view.scrollByViewFraction(-0.5f)
+                else -> false
+            }
+        }
+    }
+
     // The ruler is lifted off a document when you move to another one, so the toolbar's ruler
     // button always describes the document it is sitting under.
     LaunchedEffect(focused) {

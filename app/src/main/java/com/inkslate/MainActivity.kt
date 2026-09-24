@@ -49,6 +49,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Pedals first. A page-turn pedal sends arrows or Page Down, and left to the screen those
+     * would move keyboard focus between buttons instead of turning the page - so a key the pedal
+     * table knows is dealt with before anything else sees it, unless a text field is taking typing.
+     */
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        val typing = (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+            ?.isAcceptingText == true
+        if (com.inkslate.data.PedalKeys.handle(this, event, typing)) return true
+        return super.dispatchKeyEvent(event)
+    }
+
     override fun onResume() {
         super.onResume()
         // returning from the system all-files-access screen

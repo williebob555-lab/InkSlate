@@ -1540,6 +1540,20 @@ class DrawingView @JvmOverloads constructor(
 
     val pageCount: Int get() = slots.size
 
+    /**
+     * Scroll by [fraction] of the view's height - positive goes on through the document. For a
+     * half-page turn: the lower half of what was showing moves to the top, so the next lines are
+     * there before the last ones have gone. Returns false when it could not move (at the end).
+     */
+    fun scrollByViewFraction(fraction: Float): Boolean {
+        val before = FloatArray(9).also { pageToView.getValues(it) }
+        pageToView.postTranslate(0f, -height * fraction)
+        clampTranslation(); syncInverse(); invalidate()
+        reportVisiblePages()
+        val after = FloatArray(9).also { pageToView.getValues(it) }
+        return kotlin.math.abs(after[5] - before[5]) > 1f
+    }
+
     private var docBoundsCache: RectF? = null
 
     private fun relayout() {

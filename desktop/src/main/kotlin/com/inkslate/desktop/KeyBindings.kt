@@ -11,7 +11,7 @@ import androidx.compose.ui.input.key.nativeKeyCode
  * had before it became a table, and with the same problem: a shortcut somebody wants is either
  * already there or cannot be had, and there is nowhere to look up what is.
  */
-enum class KeyAction(val label: String) {
+enum class KeyAction(val label: String, val perform: com.inkslate.core.PerformAction? = null) {
     SAVE("Save"),
     UNDO("Undo"),
     REDO("Redo"),
@@ -25,7 +25,20 @@ enum class KeyAction(val label: String) {
     ZOOM_OUT("Zoom out"),
     RESET_ZOOM("Fit the width"),
     SHAPES("Open the shapes tray, with the last shape in hand"),
-    BACK("Close whatever is open")
+    BACK("Close whatever is open"),
+
+    // Page turns and the rest of what a Bluetooth pedal is for. A pedal is a keyboard to the
+    // computer, so it is set up here like any other key: press it where the key goes.
+    NEXT_PAGE("Next page", com.inkslate.core.PerformAction.NEXT_PAGE),
+    PREVIOUS_PAGE("Previous page", com.inkslate.core.PerformAction.PREVIOUS_PAGE),
+    HALF_PAGE_FORWARD("Half a page on", com.inkslate.core.PerformAction.HALF_PAGE_FORWARD),
+    HALF_PAGE_BACK("Half a page back", com.inkslate.core.PerformAction.HALF_PAGE_BACK),
+    FIRST_PAGE("First page", com.inkslate.core.PerformAction.FIRST_PAGE),
+    LAST_PAGE("Last page", com.inkslate.core.PerformAction.LAST_PAGE),
+    NEXT_SONG("Next song in the setlist", com.inkslate.core.PerformAction.NEXT_SONG),
+    PREVIOUS_SONG("Previous song in the setlist", com.inkslate.core.PerformAction.PREVIOUS_SONG),
+    METRONOME("Start or stop the metronome", com.inkslate.core.PerformAction.METRONOME),
+    TUNER("Open the tuner", com.inkslate.core.PerformAction.TUNER)
 }
 
 /** A key with the modifiers held down with it. */
@@ -86,7 +99,23 @@ object KeyBindingStore {
             KeyStroke(Key.Delete.keyCode),
             KeyStroke(Key.Backspace.keyCode)
         ),
-        KeyAction.BACK to listOf(KeyStroke(Key.Escape.keyCode))
+        KeyAction.BACK to listOf(KeyStroke(Key.Escape.keyCode)),
+        // What page-turn pedals send out of the box: AirTurn and PageFlip both default to one of
+        // Page Down/Up or the arrows, depending on the model and its mode.
+        KeyAction.NEXT_PAGE to listOf(
+            KeyStroke(Key.PageDown.keyCode),
+            KeyStroke(Key.DirectionRight.keyCode),
+            KeyStroke(Key.DirectionDown.keyCode)
+        ),
+        KeyAction.PREVIOUS_PAGE to listOf(
+            KeyStroke(Key.PageUp.keyCode),
+            KeyStroke(Key.DirectionLeft.keyCode),
+            KeyStroke(Key.DirectionUp.keyCode)
+        ),
+        KeyAction.FIRST_PAGE to listOf(KeyStroke(Key.MoveHome.keyCode)),
+        KeyAction.LAST_PAGE to listOf(KeyStroke(Key.MoveEnd.keyCode)),
+        KeyAction.NEXT_SONG to listOf(KeyStroke(Key.PageDown.keyCode, ctrl = true)),
+        KeyAction.PREVIOUS_SONG to listOf(KeyStroke(Key.PageUp.keyCode, ctrl = true))
     )
 
     private val state = mutableStateOf(read())

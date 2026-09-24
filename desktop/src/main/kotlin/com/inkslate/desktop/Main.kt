@@ -109,7 +109,9 @@ private fun ui() = application {
                     ctrl = event.isCtrlPressed,
                     shift = event.isShiftPressed
                 )
-                when (KeyBindingStore.actionFor(stroke)) {
+                val bound = KeyBindingStore.actionFor(stroke)
+                val perform = bound?.perform
+                if (perform != null) com.inkslate.core.Perform.run(perform) else when (bound) {
                     KeyAction.SAVE -> shortcuts.fire(shortcuts.save)
                     KeyAction.UNDO -> shortcuts.fire(shortcuts.undo)
                     KeyAction.REDO -> shortcuts.fire(shortcuts.redo)
@@ -124,7 +126,7 @@ private fun ui() = application {
                     KeyAction.RESET_ZOOM -> shortcuts.fire(shortcuts.resetZoom)
                     KeyAction.SHAPES -> shortcuts.fire(shortcuts.shapes)
                     KeyAction.BACK -> shortcuts.fire(navigation.back)
-                    null -> false
+                    else -> false
                 }
             }
         }
