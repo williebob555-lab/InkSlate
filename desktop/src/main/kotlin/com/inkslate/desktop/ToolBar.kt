@@ -393,18 +393,22 @@ fun ToolBar(
                 ToolButton(Icons.Default.TextFields, "Text", cfg.tool == Tool.TEXT) {
                     change { state.edit { it.tool = Tool.TEXT } }
                 }
-                ToolButton(Icons.Default.GridOn, "Table", cfg.tool == Tool.TABLE) {
-                    change { state.edit { it.tool = Tool.TABLE } }
-                }
-                // Symbols are in the tray as well, so one button covers everything put on the
-                // page rather than drawn on it.
-                ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
-                ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
-                    actions.onCapture()
-                }
-                ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
-                ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
-                    actions.onToggleRuler()
+                // Tables, stamps, captures, pictures and the ruler are for homework; music is
+                // marked in pen and text.
+                if (!AppFlavor.musicView) {
+                    ToolButton(Icons.Default.GridOn, "Table", cfg.tool == Tool.TABLE) {
+                        change { state.edit { it.tool = Tool.TABLE } }
+                    }
+                    // Symbols are in the tray as well, so one button covers everything put on the
+                    // page rather than drawn on it.
+                    ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
+                    ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
+                        actions.onCapture()
+                    }
+                    ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
+                    ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
+                        actions.onToggleRuler()
+                    }
                 }
                 if (actions.canPaste) {
                     ToolButton(Icons.Default.ContentPaste, "Paste", false) { actions.onPaste() }
@@ -512,14 +516,16 @@ fun ToolBar(
                         }
                     }
 
-                    Label("Table size")
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Stepper("Rows", state.tableRows) { change { state.tableRows = it } }
-                        Spacer(Modifier.width(12.dp))
-                        Stepper("Cols", state.tableCols) { change { state.tableCols = it } }
+                    if (!AppFlavor.musicView) {
+                        Label("Table size")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Stepper("Rows", state.tableRows) { change { state.tableRows = it } }
+                            Spacer(Modifier.width(12.dp))
+                            Stepper("Cols", state.tableCols) { change { state.tableCols = it } }
+                        }
                     }
 
-                    if (state.rulerVisible) {
+                    if (state.rulerVisible && !AppFlavor.musicView) {
                         Label("Ruler")
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Chip("Snap to 15\u00B0", false) { actions.onSnapRuler() }

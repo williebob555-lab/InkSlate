@@ -95,6 +95,14 @@ class MusicViewUiTest {
             assertTrue("the page should use most of the height (got $height of ${img.height})", height > img.height * 0.8)
             val centre = (left + right) / 2
             assertTrue("the page should be centred (centre $centre of ${img.width})", kotlin.math.abs(centre - img.width / 2) < img.width * 0.03)
+
+            // The Tools button: the pen, marker, eraser and text come back, the homework tools do not.
+            runOnIdle { com.inkslate.core.Perform.workspace!!(com.inkslate.core.PerformAction.FULLSCREEN) }
+            repeat(4) { settle() }
+            ImageIO.write(image(), "png", File(shots, "tools.png"))
+            fun shown(label: String) = onAllNodesWithContentDescription(label, useUnmergedTree = true).fetchSemanticsNodes().size
+            for (label in listOf("Draw", "Marker", "Erase", "Text", "Undo")) assertTrue("$label is there", shown(label) > 0)
+            for (label in listOf("Ruler", "Table", "Shapes", "Capture", "Picture")) assertEquals("$label is not for music", 0, shown(label))
         }
     }
 }
