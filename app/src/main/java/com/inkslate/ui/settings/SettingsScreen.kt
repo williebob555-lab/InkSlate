@@ -118,13 +118,6 @@ fun SettingsScreen(onBack: () -> Unit) {
             Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())
         ) {
             SectionHeader("Saving")
-            Text(
-                "These are the defaults. Any file can override them from the editor, and its own " +
-                    "rules always win.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
 
             ChoiceRow(
                 title = "When I save",
@@ -358,13 +351,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 4.dp)
                     )
-                    Text(
-                        "From the last document you had open. Anything consistently over 16ms " +
-                            "is a dropped frame.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
                     TextButton(onClick = { RenderStats.reset(); statsTick++ }) {
                         Text("Reset counters")
                     }
@@ -479,14 +465,6 @@ fun SettingsScreen(onBack: () -> Unit) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Companion files")
 
-            Text(
-                "Handwriting is stored inside your documents now, so there is nothing to keep " +
-                    "beside them. Any .inkdoc files left over from an earlier version can be " +
-                    "folded into their documents and removed.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
 
             val found = legacy
             when {
@@ -535,12 +513,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            Text(
-                "Logs are also written to Android/data/com.inkslate/files/crash-logs.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-            )
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             PedalSection()
@@ -637,15 +609,6 @@ private fun YourDevicesSection() {
     val nearby = remember(tick, discovery) { AppPeers.discovered }
 
     SectionHeader("Your devices")
-    Text(
-        "When two of your devices are awake and can reach each other, marks made on one appear " +
-            "on the other as they are drawn, and a document written on one is noticed at once by " +
-            "the other. Your files still travel the way they always have; this only carries the " +
-            "handwriting.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
 
     SwitchRow(
         "Talk to my other devices",
@@ -817,12 +780,6 @@ private fun YourDevicesSection() {
             title = { Text("Add a device") },
             text = {
                 Column {
-                    Text(
-                        "Its address - a tailnet name works from anywhere - and the code showing " +
-                            "on its screen.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
@@ -974,13 +931,6 @@ private fun PedalSection() {
     var learned by remember { mutableStateOf<Int?>(null) }
 
     SectionHeader("Pedals and page keys")
-    Text(
-        "A Bluetooth page-turn pedal pairs as a keyboard. The usual keys already turn pages; " +
-            "to give a pedal another job, press Add and then press the pedal.",
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
     table.entries.sortedBy { it.value.ordinal }.forEach { (code, action) ->
         ChoiceRow(
             title = com.inkslate.data.PedalKeys.name(code),

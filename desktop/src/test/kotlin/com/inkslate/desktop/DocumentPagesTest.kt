@@ -165,12 +165,37 @@ class DocumentPagesTest {
     }
 
     @Test
-    fun `an image cannot have its pages rearranged`() {
+    fun `an image cannot have its pages rearranged, only turned`() {
         val notPdf = temp.newFile("photo.png").apply { writeText("not really a png") }
         val result = DocumentPages.rearrange(
             notPdf, InkDocument.create("photo.png", "image", 1, 0L, ""),
-            PagePlan.identity(1)
+            PagePlan.identity(2)
         )
         assertTrue(result.isFailure)
+    }
+
+    @Test
+    fun `a picture turns a quarter, and its marks turn with it and stay inside it`() {
+        for (ext in listOf("png", "jpg")) {
+            val file = File(temp.newFolder(), "Scan.$ext")
+            javax.imageio.ImageIO.write(java.awt.image.BufferedImage(400, 300, java.awt.image.BufferedImage.TYPE_INT_RGB), ext, file)
+            val mark = Stroke(
+                id = "m", kind = Stroke.Kind.FREEHAND, color = 0xFF000000.toInt(), baseWidth = 2f, pageIndex = 0,
+                points = listOf(InkPoint(10f, 20f, 2f), InkPoint(30f, 40f, 2f))
+            )
+            val ink = InkDocument.create("Scan.$ext", ext, 1, 0L, "").withPage(0, listOf(mark), "test")
+            DesktopEmbedder.write(file, ink).getOrThrow()
+
+            val plan = PagePlan.turnedAll(PagePlan.identity(1), setOf(PagePlan.identity(1)[0].uid), 1)
+            val turned = DocumentPages.rearrange(file, ink, plan).getOrThrow()
+
+            val pic = javax.imageio.ImageIO.read(file)
+            assertEquals(ext, 300 to 400, pic.width to pic.height)
+            val read = assertNotNull(DesktopEmbedder.read(file)).let { DesktopEmbedder.read(file)!! }
+            assertEquals(ext, turned.strokesOn(0).single().points, read.strokesOn(0).single().points)
+            // Clockwise: a point near the top-left ends up near the top-right.
+            val first = read.strokesOn(0).single().points[0]
+            assertTrue("$ext: $first", first.x > 250f && first.y < 50f)
+        }
     }
 }

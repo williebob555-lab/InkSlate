@@ -48,6 +48,7 @@ object DocumentPages {
         ink: InkDocument,
         plan: List<PlannedPage>
     ): Result<InkDocument> = runCatching {
+        if (DesktopSources.isImage(source)) return@runCatching turnImage(source, ink, plan)
         require(DesktopSources.isPdf(source)) { "Only PDFs can have their pages rearranged" }
 
         val sizes = HashMap<Int, Pair<Float, Float>>()
@@ -75,6 +76,65 @@ object DocumentPages {
             "${source.name}: rearranged into ${plan.size} page(s)"
         )
         remapped
+    }
+
+    /**
+     * An image is one page: it can be turned, and nothing else. The pixels are turned and written
+     * back in the image's own format, and the marks on it are turned with them and embedded again,
+     * since writing the picture anew leaves out what was stored inside it.
+     */
+    private fun turnImage(source: File, ink: InkDocument, plan: List<PlannedPage>): InkDocument {
+        val only = plan.singleOrNull()
+        require(only != null && only.source == 0) { "A picture is a single page: it can be turned, but not rearranged" }
+        val turns = ((only.quarterTurns % 4) + 4) % 4
+        if (turns == 0) return ink
+        val picture = ImageIO.read(source) ?: error("Could not read ${source.name}")
+        val w = picture.width
+        val h = picture.height
+        val remapped = PagePlan.remapInk(ink, plan) { w.toFloat() to h.toFloat() }
+
+        val format = when (source.extension.lowercase()) {
+            "jpg", "jpeg" -> "jpg"
+            "png" -> "png"
+            "bmp" -> "bmp"
+            "gif" -> "gif"
+            else -> error("${source.extension.uppercase()} pictures cannot be turned here")
+        }
+        val opaque = format == "jpg" || format == "bmp"
+        val (nw, nh) = if (turns % 2 == 1) h to w else w to h
+        val turned = BufferedImage(nw, nh, if (opaque) BufferedImage.TYPE_INT_RGB else BufferedImage.TYPE_INT_ARGB)
+        val g = turned.createGraphics()
+        val at = java.awt.geom.AffineTransform()
+        when (turns) {
+            1 -> { at.translate(h.toDouble(), 0.0); at.quadrantRotate(1) }
+            2 -> { at.translate(w.toDouble(), h.toDouble()); at.quadrantRotate(2) }
+            else -> { at.translate(0.0, w.toDouble()); at.quadrantRotate(3) }
+        }
+        g.drawImage(picture, at, null)
+        g.dispose()
+
+        val tmp = File(source.parentFile, "." + source.name + ".turn")
+        if (format == "jpg") {
+            val writer = ImageIO.getImageWritersByFormatName("jpg").next()
+            val param = writer.defaultWriteParam.apply {
+                compressionMode = javax.imageio.ImageWriteParam.MODE_EXPLICIT
+                compressionQuality = 0.95f
+            }
+            ImageIO.createImageOutputStream(tmp).use { out ->
+                writer.output = out
+                writer.write(null, javax.imageio.IIOImage(turned, null, null), param)
+            }
+            writer.dispose()
+        } else {
+            check(ImageIO.write(turned, format, tmp)) { "Could not write ${source.name}" }
+        }
+        if (!tmp.renameTo(source)) {
+            tmp.copyTo(source, overwrite = true)
+            tmp.delete()
+        }
+        DesktopEmbedder.write(source, remapped).getOrThrow()
+        EventLog.info("pages", "${source.name}: turned ${turns * 90} degrees")
+        return remapped
     }
 
     /**

@@ -805,7 +805,9 @@ class DocumentRepo(private val context: Context) {
         }
         val remapped = PageArrangement.remapInk(doc.ink, plan, sizeOf)
 
-        val result = InkEmbedder.rewritePdf(doc.file, remapped, plan.size) { pdf ->
+        val result = if (!PageSources.isPdf(doc.file)) {
+            turnPicture(doc.file, remapped, plan)
+        } else InkEmbedder.rewritePdf(doc.file, remapped, plan.size) { pdf ->
             PageArrangement.applyToPdf(pdf, plan)
         }
         if (result.isSuccess) {
@@ -825,6 +827,35 @@ class DocumentRepo(private val context: Context) {
             )
         }
         return result
+    }
+
+    /**
+     * A picture is one page: it can be turned, and nothing else. The pixels are turned and written
+     * back in its own format, then the marks - already turned in [remapped] - are embedded again,
+     * since writing the picture anew leaves out what was stored inside it.
+     */
+    private fun turnPicture(file: File, remapped: InkDocument, plan: List<PlannedPage>): Result<Unit> = runCatching {
+        val only = plan.singleOrNull()
+        require(only != null && only.source == 0) { "A picture is a single page: it can be turned, but not rearranged" }
+        val turns = ((only.quarterTurns % 4) + 4) % 4
+        if (turns == 0) return@runCatching
+        val format = when (file.extension.lowercase()) {
+            "jpg", "jpeg" -> android.graphics.Bitmap.CompressFormat.JPEG
+            "png" -> android.graphics.Bitmap.CompressFormat.PNG
+            "webp" -> android.graphics.Bitmap.CompressFormat.WEBP_LOSSLESS
+            else -> error("${file.extension.uppercase()} pictures cannot be turned here")
+        }
+        val picture = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: error("Could not read ${file.name}")
+        val m = android.graphics.Matrix().apply { postRotate(turns * 90f) }
+        val turned = android.graphics.Bitmap.createBitmap(picture, 0, 0, picture.width, picture.height, m, true)
+        val tmp = File(file.parentFile, "." + file.name + ".turn")
+        java.io.FileOutputStream(tmp).use { out -> check(turned.compress(format, 95, out)) { "Could not write ${file.name}" } }
+        picture.recycle(); turned.recycle()
+        if (!tmp.renameTo(file)) {
+            tmp.copyTo(file, overwrite = true)
+            tmp.delete()
+        }
+        InkEmbedder.write(file, remapped).getOrThrow()
     }
 
     // ---- tidying away the old companion files --------------------------------

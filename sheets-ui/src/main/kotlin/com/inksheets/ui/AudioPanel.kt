@@ -1,5 +1,6 @@
 package com.inksheets.ui
 
+import java.io.File
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -143,6 +144,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
     if (picking) {
         AudioFilePicker(
             state,
+            song,
             onChosen = { rel ->
                 save(tracks + AudioTrack(file = rel, label = rel.substringAfterLast('/').substringBeforeLast('.')))
                 selected = tracks.lastIndex
@@ -278,8 +280,29 @@ private fun clock(ms: Long): String {
 
 /** Choosing a recording inside the music folder, so it syncs with the song. */
 @Composable
-private fun AudioFilePicker(state: SheetsState, onChosen: (String) -> Unit, onDismiss: () -> Unit) {
+private fun AudioFilePicker(state: SheetsState, song: Song, onChosen: (String) -> Unit, onDismiss: () -> Unit) {
     val root = state.root ?: return
+    var importing by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf<String?>(null) }
+    if (importing) {
+        // Anywhere at all; what is chosen is copied into the music folder, so it syncs with the song.
+        val home = File(System.getProperty("user.home") ?: "/")
+        val start = listOf(File("/storage/emulated/0/Download"), File(home, "Downloads"), File(home, "Music"), home)
+            .first { it.isDirectory }
+        FilePickerDialog(
+            title = "Import a recording",
+            start = start,
+            extensions = AUDIO_EXTENSIONS,
+            onChosen = { f ->
+                runCatching { importRecording(root, song, f) }
+                    .onSuccess { state.relative(it)?.let(onChosen) }
+                    .onFailure { failed = "${f.name} could not be copied: ${it.message}" }
+            },
+            onDismiss = { importing = false },
+            note = failed ?: "A copy goes into the Recordings folder of your music folder."
+        )
+        return
+    }
     FilePickerDialog(
         title = "Pair a recording",
         start = root,
@@ -287,6 +310,17 @@ private fun AudioFilePicker(state: SheetsState, onChosen: (String) -> Unit, onDi
         extensions = AUDIO_EXTENSIONS,
         onChosen = { f -> state.relative(f)?.let(onChosen) },
         onDismiss = onDismiss,
-        note = "Recordings need to be in the music folder so they sync with the song."
+        extra = { TextButton(onClick = { importing = true }) { Text("Import from elsewhere...") } }
     )
+}
+
+/** Copy a recording into `Recordings/` in the music folder, named for the song, never over another. */
+internal fun importRecording(root: File, song: Song, from: File): File {
+    val dir = File(root, "Recordings").apply { mkdirs() }
+    val base = (song.title + " - " + from.nameWithoutExtension).replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    var target = File(dir, "$base.${from.extension}")
+    var n = 2
+    while (target.exists()) target = File(dir, "$base ($n).${from.extension}").also { n++ }
+    from.copyTo(target)
+    return target
 }

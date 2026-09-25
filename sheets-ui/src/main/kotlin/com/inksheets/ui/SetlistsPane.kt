@@ -88,8 +88,8 @@ internal fun SetlistsPane(state: SheetsState) {
                 TextButton(onClick = { folderId = f.id }) { Text(f.name) }
             }
             Spacer(Modifier.weight(1f))
-            AddButton("Folder") { naming = Naming.NewFolder(folderId) }
-            AddButton("Setlist") { naming = Naming.NewSetlist(folderId) }
+            AddButton("New folder") { naming = Naming.NewFolder(folderId) }
+            AddButton("New setlist") { naming = Naming.NewSetlist(folderId) }
         }
         HorizontalDivider()
 

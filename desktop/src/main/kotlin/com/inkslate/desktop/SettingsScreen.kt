@@ -92,8 +92,6 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
             HorizontalDivider(Modifier.padding(top = 14.dp))
             DeviceSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
-            BindingsSection()
-            HorizontalDivider(Modifier.padding(top = 14.dp))
             StorageSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             DiagnosticsSection()
@@ -123,13 +121,6 @@ private fun SavingSection() {
     }
 
     SectionHeader("Saving")
-    Text(
-        "These are the defaults. Any file can override them from the editor, and its own rules " +
-            "always win.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
 
     ChoiceRow(
         "When I save",
@@ -257,24 +248,6 @@ private fun SavingSection() {
 @Composable
 private fun StylusSection() {
     SectionHeader("Stylus")
-    Text(
-        "If your pen has a barrel button, click the Pen/Finger switch in the toolbar while " +
-            "holding it. That reveals a profile for the button - a second pen, with its own " +
-            "tool, colour and width - and holding the button while drawing uses it.\n\n" +
-            "The switch itself only ever moves between the pen and the finger, so a button " +
-            "profile cannot turn up by accident.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
-    Text(
-        "Pressure comes from the pen where the hardware reports it, and from speed where it does " +
-            "not - which is also what a mouse gets, since a mouse reporting a constant full " +
-            "pressure is the absence of the data rather than the data.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
 }
 
 // ---- shared rows -------------------------------------------------------------
@@ -341,13 +314,6 @@ private fun SwitchRow(
 private fun DeviceSection() {
     SectionHeader("This device")
     Text(
-        "Every mark carries the tag of the machine that made it, so two devices drawing offline " +
-            "cannot mint the same identifier and a sync cannot silently drop one of them.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
-    Text(
         "Device tag  ${DocumentIO.deviceTag()}",
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(start = 16.dp, top = 8.dp)
@@ -370,14 +336,6 @@ private fun StorageSection() {
     }
 
     SectionHeader("Storage")
-    Text(
-        "While a document is open its marks are also written to a scratch copy here, so a crash " +
-            "between two saves does not take the afternoon with it. The documents themselves are " +
-            "wherever you keep them; nothing is copied into the app.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
     Text(
         summary,
         style = MaterialTheme.typography.bodyMedium,
@@ -423,15 +381,6 @@ private fun YourDevicesSection() {
     val nearby = remember(tick, discovery) { DesktopPeers.discovered }
 
     SectionHeader("Your devices")
-    Text(
-        "When two of your devices are awake and can reach each other, marks made on one appear " +
-            "on the other as they are drawn, and a document written on one is noticed at once by " +
-            "the other. Your files still travel the way they always have; this only carries the " +
-            "handwriting.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
 
     SwitchRow(
         title = "Talk to my other devices",
@@ -616,12 +565,6 @@ private fun YourDevicesSection() {
             title = { Text("Add a device") },
             text = {
                 Column {
-                    Text(
-                        "Its address - a tailnet name works from anywhere - and the code showing " +
-                            "on its screen.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
@@ -729,14 +672,6 @@ private fun CompanionFilesSection() {
     val scope = rememberCoroutineScope()
 
     SectionHeader("Companion files")
-    Text(
-        "Handwriting is stored inside your documents now, so there is nothing to keep beside " +
-            "them. Any .inkdoc files left over from an earlier version can be folded into their " +
-            "documents and removed.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp)
-    )
 
     val list = found
     when {
@@ -840,27 +775,6 @@ private fun CompanionFilesSection() {
  * Problems are shown by default and the full log is a click away: a hundred routine "opened,
  * saved" lines are exactly what buries the one line that matters.
  */
-/**
- * Where the bindings live now.
- *
- * They were a list of rows here, which is a screen nobody can reach while they are working - so a
- * binding could only be looked at by putting the document down. They are drawn on the devices they
- * belong to instead, inside the editor.
- */
-@Composable
-private fun BindingsSection() {
-    SectionHeader("What each button does")
-    Text(
-        "Every way of touching a page - each pen button, each mouse button, a finger - can be " +
-            "set to draw with a particular pen, to move the page, to erase, or to undo. It is in " +
-            "the document itself, under the mouse icon at the top, because what a button does is " +
-            "something to check while using it rather than from another screen.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-    )
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DiagnosticsSection() {
@@ -880,13 +794,6 @@ private fun DiagnosticsSection() {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
-            )
-            Text(
-                "From the last document you had open. Anything consistently over 16ms is a " +
-                    "dropped frame.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
             )
             TextButton(onClick = { RenderStats.reset(); tick++ }) { Text("Reset counters") }
         }
@@ -916,15 +823,6 @@ private fun DiagnosticsSection() {
             )
             Text(
                 remember(tick) { PointerDiagnostics.latest },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp)
-            )
-            Text(
-                "The last few marks you drew, newest first. Windows tells a desktop program " +
-                    "nothing about which device drew a mark, so draw one with the mouse and one " +
-                    "with the pen: \"off by\" is how far the ink landed from the cursor, and " +
-                    "comparing the two lines is what tells the pen apart from the mouse.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 6.dp)
@@ -1083,13 +981,6 @@ private fun UpdateSection() {
 
     SectionHeader("Updates")
     Text(
-        "InkSlate is installed by hand, so it cannot update itself in the background. This asks " +
-            "GitHub whether a newer build has been published.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp)
-    )
-    Text(
         "Installed version $installed",
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(start = 16.dp, top = 10.dp)
@@ -1103,12 +994,6 @@ private fun UpdateSection() {
     ) {
         Column(Modifier.weight(1f)) {
             Text("Test builds", style = MaterialTheme.typography.bodyLarge)
-            Text(
-                "Offers the build from the newest change as well as the published releases. It " +
-                    "has had less use than a release.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
         Switch(
             checked = testBuilds,
@@ -1239,11 +1124,11 @@ private fun UpdateSection() {
             )
             Text(
                 if (AppDirs.isLinux) {
-                    "Installing asks for your password, then replaces InkSlate in place. " +
-                        "The new version starts the next time InkSlate is opened."
+                    "Installing asks for your password, then replaces ${AppFlavor.name} in place. " +
+                        "The new version starts the next time ${AppFlavor.name} is opened."
                 } else {
                     "Opening it hands the installer to Windows, which will ask for its own " +
-                        "confirmation. Close InkSlate first: an installer cannot replace files the " +
+                        "confirmation. Close ${AppFlavor.name} first: an installer cannot replace files the " +
                         "running application still has open."
                 },
                 style = MaterialTheme.typography.labelSmall,
@@ -1287,7 +1172,7 @@ private fun UpdateSection() {
         is Phase.Installing -> Busy("Installing...")
 
         is Phase.Installed -> Text(
-            "Version ${current.version} is installed. Close and reopen InkSlate to start using it.",
+            "Version ${current.version} is installed. Close and reopen ${AppFlavor.name} to start using it.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(start = 16.dp, top = 8.dp)
         )
@@ -1313,17 +1198,11 @@ private fun UpdateSection() {
 
     // Always here, not only when something has gone wrong. It is where every build comes from,
     // where the older ones stay, and the one thing to reach for when the app itself cannot.
+    // Both apps are published together, so the downloads page is the same for each.
     TextButton(
-        onClick = { DesktopUpdates.openInBrowser(UpdateCheck.PROJECT_URL) },
+        onClick = { DesktopUpdates.openInBrowser(UpdateCheck.RELEASES_URL) },
         modifier = Modifier.padding(horizontal = 12.dp)
-    ) { Text("InkSlate on GitHub") }
-
-    Text(
-        UpdateCheck.PROJECT_URL,
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-    )
+    ) { Text("${AppFlavor.name} downloads") }
 }
 
 @Composable

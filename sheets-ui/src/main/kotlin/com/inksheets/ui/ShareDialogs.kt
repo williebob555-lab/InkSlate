@@ -48,7 +48,9 @@ internal fun FilePickerDialog(
     onChosen: (File) -> Unit,
     onDismiss: () -> Unit,
     within: File? = null,
-    note: String? = null
+    note: String? = null,
+    /** Another way to choose, beside Cancel - "Import from elsewhere", say. */
+    extra: (@Composable () -> Unit)? = null
 ) {
     var at by remember { mutableStateOf(start.takeIf { it.isDirectory } ?: File(System.getProperty("user.home"))) }
     val entries = remember(at) {
@@ -57,6 +59,7 @@ internal fun FilePickerDialog(
     }
     val canGoUp = at.parentFile != null && (within == null || at.canonicalPath != within.canonicalPath)
     SheetDialog(title = title, onDismiss = onDismiss, wide = true, buttons = {
+        extra?.invoke()
         TextButton(onClick = onDismiss) { Text("Cancel") }
     }) {
         Column {
