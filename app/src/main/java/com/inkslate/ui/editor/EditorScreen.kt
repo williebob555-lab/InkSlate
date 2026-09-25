@@ -889,6 +889,20 @@ fun EditorScreen(
         writeState = WriteState.UNSAVED
     }
 
+    // Markings brought across from another app (InkSheets' MobileSheets import), put on the pages
+    // the first time the document is open here. Nothing happens when they are already on.
+    LaunchedEffect(doc, strokesLoaded) {
+        val d = doc ?: return@LaunchedEffect
+        if (!strokesLoaded || restructuring) return@LaunchedEffect
+        syncPage()
+        com.inkslate.core.Perform.withImported(d.ink, file.absolutePath) { p ->
+            runCatching { d.source.pageDim(p) }.getOrNull()?.let { it.width to it.height }
+        }?.let {
+            EventLog.info("open", "${file.name}: brought in markings from another app")
+            takeIn(it)
+        }
+    }
+
     LaunchedEffect(externalTick) {
         if (externalTick == 0 || doc == null) return@LaunchedEffect
         // Sync writes arrive as a burst - a temporary file, a rename, a timestamp touch - so let

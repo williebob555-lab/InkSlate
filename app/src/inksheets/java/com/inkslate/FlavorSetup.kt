@@ -17,16 +17,32 @@ import java.io.File
 object FlavorSetup {
 
     private var state: SheetsState? = null
-    private var stateContext: Context? = null
+    private var platform: AndroidSheetsPlatform? = null
     private var openFile: ((File) -> Unit)? = null
 
+    /**
+     * The one [SheetsState] for the whole app. There used to be one per context, and a dialog or
+     * the settings screen has a context of its own - so a second state was made, whose companion
+     * picked up following the same leader again: two connections from one tablet, fighting.
+     */
     private fun stateFor(context: Context): SheetsState {
-        state?.takeIf { stateContext === context }?.let { return it }
-        return SheetsState(AndroidSheetsPlatform(context) { f -> openFile?.invoke(f) }).also {
+        val activity = context.activity() ?: context
+        state?.let { existing ->
+            platform?.let { if (it.context !== activity && activity is android.app.Activity) it.context = activity }
+            return existing
+        }
+        val p = AndroidSheetsPlatform(activity) { f -> openFile?.invoke(f) }
+        return SheetsState(p).also {
             state = it
-            stateContext = context
+            platform = p
             pendingLink?.let { link -> pendingLink = null; follow(it, link) }
         }
+    }
+
+    private tailrec fun Context.activity(): android.app.Activity? = when (this) {
+        is android.app.Activity -> this
+        is android.content.ContextWrapper -> baseContext.activity()
+        else -> null
     }
 
     /** A join code scanned with the camera app before the screens were up, kept until they are. */

@@ -133,6 +133,56 @@ class CompanionTest {
     }
 
     @Test
+    fun `a follower whose link died without a goodbye is let go`() {
+        val port = freePort()
+        val leader = CompanionLeader("Stand", port)
+        val log = CopyOnWriteArrayList<String>()
+        leader.onLog = { log += it }
+        assertTrue(leader.start())
+        try {
+            // A tablet that says hello and answers one heartbeat, then its Wi-Fi goes quiet.
+            val ghost = java.net.Socket("127.0.0.1", port)
+            val out = java.io.OutputStreamWriter(ghost.getOutputStream())
+            out.write(CompanionLink.encode(CompanionLink.Hello(name = "Ghost")) + "\n"); out.flush()
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(ghost.getInputStream()))
+            while (true) {
+                val got = CompanionLink.read(reader.readLine()) as? CompanionLink.Line.Ping ?: continue
+                out.write(CompanionLink.pong(got.seq, got.at) + "\n"); out.flush()
+                break
+            }
+            waitFor(4000) { leader.followerCount == 1 }
+            waitFor(CompanionFollower.SILENT_FOR_MS + 5000) { leader.followerCount == 0 }
+            assertEquals(0, leader.followerCount)
+            assertTrue(log.toString(), log.any { "Ghost went silent" in it })
+            ghost.close()
+        } finally {
+            leader.stop()
+        }
+    }
+
+    @Test
+    fun `a leader gone silent is noticed within a few heartbeats and joined again`() {
+        val server = java.net.ServerSocket(0)
+        val accepted = LinkedBlockingQueue<java.net.Socket>()
+        Thread {
+            while (!server.isClosed) runCatching { accepted += server.accept() }
+        }.apply { isDaemon = true; start() }
+        val log = CopyOnWriteArrayList<String>()
+        val f = CompanionFollower("Tablet") { }.apply { onLog = { log += it } }
+        try {
+            assertTrue(f.start(CompanionLink.Leader("Quiet", "127.0.0.1", server.localPort), retryMs = 200))
+            val first = accepted.poll(3, TimeUnit.SECONDS)!!
+            // One heartbeat, then nothing: the follower starts timing it.
+            first.getOutputStream().apply { write((CompanionLink.ping(1, System.currentTimeMillis()) + "\n").toByteArray()); flush() }
+            val second = accepted.poll(CompanionFollower.SILENT_FOR_MS + 5000, TimeUnit.MILLISECONDS)
+            assertNotNull("never reconnected", second)
+            assertTrue(log.toString(), log.any { "nothing arrived for" in it })
+        } finally {
+            f.stop(); server.close()
+        }
+    }
+
+    @Test
     fun `join links carry every address and read back, and bare addresses work too`() {
         val link = CompanionLink.joinLink("Mr. Smith's iPad & stand", listOf("192.168.1.4", "100.70.1.2"), 47820)
         val leader = CompanionLink.parseJoin(link)!!
@@ -149,7 +199,8 @@ class CompanionTest {
     fun `a leader from before kinds is still read as a position`() {
         val old = """{"songId":"s","title":"T","page":3,"leader":"L"}"""
         assertEquals(3, (CompanionLink.read(old) as CompanionLink.Line.Show).showing.page)
-        assertEquals(CompanionLink.Line.Ping, CompanionLink.read(CompanionLink.PING))
+        assertEquals(CompanionLink.Line.Ping(7, 99), CompanionLink.read(CompanionLink.ping(7, 99)))
+        assertEquals(CompanionLink.Line.Ping(), CompanionLink.read("""{"kind":"ping"}"""))
     }
 
     @Test

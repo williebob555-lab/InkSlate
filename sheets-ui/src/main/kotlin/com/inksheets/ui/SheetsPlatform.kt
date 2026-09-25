@@ -77,6 +77,12 @@ interface SheetsPlatform {
     /** A line in the event log (Settings), for things worth keeping but not worth a pop-up. */
     fun log(message: String) {}
 
+    /**
+     * Keep the network quick while playing together - on a tablet, Wi-Fi's power saving holds
+     * back what arrives for seconds at a time. Calls pair up: true, then false.
+     */
+    fun holdNetwork(on: Boolean) {}
+
     /** Where downloads land: where a download of band music is looked for first. */
     val downloadsFolder: File get() = startFolder
 

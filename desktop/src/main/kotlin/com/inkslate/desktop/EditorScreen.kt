@@ -600,6 +600,21 @@ fun EditorScreen(
         dirty = true
     }
 
+    // Markings brought across from another app (InkSheets' MobileSheets import), put on the pages
+    // the first time the document is open here. Nothing happens when they are already on.
+    LaunchedEffect(loadCount) {
+        if (loadCount == 0) return@LaunchedEffect
+        val src = source ?: return@LaunchedEffect
+        val mine = currentInk()
+        com.inkslate.core.Perform.withImported(mine, file.absolutePath) { p ->
+            runCatching { src.pageDim(p) }.getOrNull()?.let { it.width to it.height }
+        }?.let {
+            EventLog.info("open", "${file.name}: brought in markings from another app")
+            ink = mine
+            takeIn(it)
+        }
+    }
+
     /**
      * Look at the file on disk, and hand any change in it to the link.
      *

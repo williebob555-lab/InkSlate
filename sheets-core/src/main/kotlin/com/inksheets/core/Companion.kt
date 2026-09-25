@@ -53,7 +53,10 @@ object CompanionLink {
         val partNo: String? = null,
         val pages: Int = 0,
         /** Whether the leader is sharing its marks with players on the same part. */
-        val shareInk: Boolean = false
+        val shareInk: Boolean = false,
+        /** Numbered in the order sent, and stamped with the leader's clock, to measure delays. */
+        val seq: Long = 0,
+        val at: Long = 0
     )
 
     /** The leader's marks on its part: an InkDocument, serialised. */
@@ -76,7 +79,10 @@ object CompanionLink {
         data class Show(val showing: Showing) : Line
         data class Ink(val share: InkShare) : Line
         data class Joined(val name: String) : Line
-        data object Ping : Line
+        /** The leader is still there. [seq] and [at] as for [Showing]; zero from older leaders. */
+        data class Ping(val seq: Long = 0, val at: Long = 0) : Line
+        /** A follower's answer to a [Ping], carrying the ping's own [at] back for the round trip. */
+        data class Pong(val seq: Long, val at: Long) : Line
     }
 
     enum class Follow(val label: String) {
@@ -98,7 +104,8 @@ object CompanionLink {
     fun encode(s: Showing): String = json.encodeToString(Showing.serializer(), s)
     fun encode(s: InkShare): String = json.encodeToString(InkShare.serializer(), s)
     fun encode(s: Hello): String = json.encodeToString(Hello.serializer(), s)
-    const val PING = """{"kind":"ping"}"""
+    fun ping(seq: Long, at: Long) = """{"kind":"ping","seq":$seq,"at":$at}"""
+    fun pong(seq: Long, at: Long) = """{"kind":"pong","seq":$seq,"at":$at}"""
 
     /** A position, for callers that only know that kind. Anything else reads as null. */
     fun decode(line: String): Showing? = (read(line) as? Line.Show)?.showing
@@ -110,7 +117,11 @@ object CompanionLink {
             null, "show" -> Line.Show(json.decodeFromJsonElement(Showing.serializer(), obj))
             "ink" -> Line.Ink(json.decodeFromJsonElement(InkShare.serializer(), obj))
             "hello" -> Line.Joined(json.decodeFromJsonElement(Hello.serializer(), obj).name)
-            "ping" -> Line.Ping
+            "ping", "pong" -> {
+                val seq = obj["seq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0
+                val at = obj["at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0
+                if (obj["kind"]?.jsonPrimitive?.contentOrNull == "ping") Line.Ping(seq, at) else Line.Pong(seq, at)
+            }
             else -> null
         }
     }.getOrNull()
@@ -221,7 +232,7 @@ object CompanionLink {
  *
  * Made for a whole band on one Wi-Fi: each follower has its own queue and writer thread, so one
  * tablet with a weak signal holds up nobody else, and a reader thread per follower notices at once
- * when one leaves. Joins and departures go to [onLog], never to the screen.
+ * when one leaves. Joins, departures and slow links go to [onLog], never to the screen.
  */
 class CompanionLeader(private val name: String, private val port: Int = CompanionLink.PORT) {
 
@@ -229,6 +240,7 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         val queue = LinkedBlockingDeque<String>()
         @Volatile var name: String = socket.inetAddress?.hostAddress ?: "?"
         @Volatile var open = true
+        val since = System.currentTimeMillis()
     }
 
     private val followers = ConcurrentHashMap.newKeySet<Follower>()
@@ -236,13 +248,14 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     @Volatile private var running = false
     @Volatile private var last: CompanionLink.Showing? = null
     @Volatile private var lastInk: CompanionLink.InkShare? = null
+    private val seq = java.util.concurrent.atomic.AtomicLong()
 
     val followerCount: Int get() = followers.size
 
     /** Called whenever the number of followers changes, off the UI thread. */
     var onFollowers: ((Int) -> Unit)? = null
 
-    /** A line for the event log: who joined, who left. Off the UI thread. */
+    /** A line for the event log: who joined, who left, which link is slow. Off the UI thread. */
     var onLog: ((String) -> Unit)? = null
 
     fun start(): Boolean = runCatching {
@@ -263,18 +276,26 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         Thread({
             val announce = DatagramSocket().apply { broadcast = true }
             val bytes = CompanionLink.announcement(name, port).toByteArray()
-            var tick = 0
             while (running) {
                 runCatching {
                     announce.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), CompanionLink.ANNOUNCE_PORT))
                 }
-                // A ping now and then, so a follower whose Wi-Fi dropped without a word finds out
-                // and reconnects rather than waiting on a dead line.
-                if (++tick % 3 == 0) followers.forEach { it.queue.offer(CompanionLink.PING) }
                 Thread.sleep(1500)
             }
             announce.close()
         }, "companion-announce").apply { isDaemon = true; start() }
+        // A heartbeat of its own, so nothing else slows it: a follower that hears nothing for a
+        // few beats knows the line is dead and reconnects, rather than waiting on it.
+        Thread({
+            while (running) {
+                Thread.sleep(PING_EVERY_MS)
+                val line = CompanionLink.ping(seq.incrementAndGet(), System.currentTimeMillis())
+                followers.forEach { f ->
+                    f.queue.removeIf { it.startsWith("{\"kind\":\"ping\"") }
+                    f.queue.offer(line)
+                }
+            }
+        }, "companion-ping").apply { isDaemon = true; start() }
         true
     }.getOrDefault(false)
 
@@ -286,26 +307,44 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         lastInk?.let { share -> if (last?.shareInk == true) f.queue.offer(CompanionLink.encode(share)) }
         Thread({
             val out = runCatching { OutputStreamWriter(f.socket.getOutputStream(), Charsets.UTF_8) }.getOrNull()
+            var why = "left"
             while (f.open && running && out != null) {
                 val line = runCatching { f.queue.poll(2, TimeUnit.SECONDS) }.getOrNull() ?: continue
-                val ok = runCatching { out.write(line + "\n"); out.flush() }.isSuccess
-                if (!ok) break
+                val began = System.currentTimeMillis()
+                val failure = runCatching { out.write(line + "\n"); out.flush() }.exceptionOrNull()
+                val took = System.currentTimeMillis() - began
+                if (failure != null) { why = "dropped: sending failed (${failure.message ?: failure.javaClass.simpleName})"; break }
+                // A write only waits when the follower has stopped taking what is sent.
+                if (took > 1000) onLog?.invoke("${f.name}: sending took ${took / 100 / 10.0} s - a weak or busy link")
             }
-            leave(f, "the connection dropped")
+            leave(f, why)
         }, "companion-send").apply { isDaemon = true; start() }
         Thread({
-            runCatching {
+            val outcome = runCatching {
                 BufferedReader(InputStreamReader(f.socket.getInputStream(), Charsets.UTF_8)).use { reader ->
                     while (f.open) {
                         val line = reader.readLine() ?: break
-                        (CompanionLink.read(line) as? CompanionLink.Line.Joined)?.let { hello ->
-                            if (hello.name.isNotBlank()) f.name = hello.name
-                            onLog?.invoke("${f.name} is following (${followers.size} now)")
+                        when (val got = CompanionLink.read(line)) {
+                            is CompanionLink.Line.Joined -> {
+                                if (got.name.isNotBlank()) f.name = got.name
+                                onLog?.invoke("${f.name} is following (${followers.size} now)")
+                            }
+                            is CompanionLink.Line.Pong -> {
+                                // This follower answers heartbeats, so one that stops answering is
+                                // gone - even if its goodbye never arrived - and is let go.
+                                if (f.socket.soTimeout == 0) f.socket.soTimeout = CompanionFollower.SILENT_FOR_MS.toInt()
+                                val trip = System.currentTimeMillis() - got.at
+                                if (got.at > 0 && trip > 1500) onLog?.invoke("${f.name}: a heartbeat took ${trip / 100 / 10.0} s there and back")
+                            }
+                            else -> Unit
                         }
                     }
                 }
             }
-            leave(f, "left")
+            leave(f, outcome.exceptionOrNull()?.let { e ->
+                if (e is java.net.SocketTimeoutException) "went silent for ${CompanionFollower.SILENT_FOR_MS / 1000} s"
+                else "dropped (${e.message ?: e.javaClass.simpleName})"
+            } ?: "left")
         }, "companion-hear").apply { isDaemon = true; start() }
     }
 
@@ -313,13 +352,15 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         if (!followers.remove(f)) return
         f.open = false
         runCatching { f.socket.close() }
-        onLog?.invoke("${f.name} $why (${followers.size} following)")
+        val secs = (System.currentTimeMillis() - f.since) / 1000
+        onLog?.invoke("${f.name} $why after ${secs} s (${followers.size} following)")
         onFollowers?.invoke(followers.size)
     }
 
     fun show(showing: CompanionLink.Showing) {
-        val s = showing.copy(leader = name)
-        if (s == last) return
+        val bare = showing.copy(leader = name, seq = 0, at = 0)
+        if (bare == last?.copy(seq = 0, at = 0)) return
+        val s = bare.copy(seq = seq.incrementAndGet(), at = System.currentTimeMillis())
         last = s
         val line = CompanionLink.encode(s)
         followers.forEach { it.queue.offer(line) }
@@ -344,12 +385,20 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         followers.forEach { it.open = false; runCatching { it.socket.close() } }
         followers.clear()
     }
+
+    companion object {
+        const val PING_EVERY_MS = 2_000L
+    }
 }
 
 /**
  * Following: connect to a leader and be told where it is - and stay connected. A dropped
- * connection (the leader's screen went off, the Wi-Fi hiccuped) is tried again every couple of
- * seconds on each of the leader's addresses until [stop], so nobody in the band has to rejoin.
+ * connection (the leader's screen went off, the Wi-Fi hiccuped) is noticed within a few missed
+ * heartbeats and tried again at once, then every couple of seconds, on each of the leader's
+ * addresses until [stop], so nobody in the band has to rejoin.
+ *
+ * Everything that goes wrong is said to [onLog] with its reason and timing - a gap in what arrives,
+ * a message that came late, a line that went quiet - so a flaky link can be read afterwards.
  */
 class CompanionFollower(
     private val myName: String,
@@ -357,9 +406,17 @@ class CompanionFollower(
 ) {
     @Volatile private var socket: Socket? = null
     @Volatile private var wanted: CompanionLink.Leader? = null
+    @Volatile private var out: OutputStreamWriter? = null
 
     /** Told true on connecting and false on losing the connection. Off the UI thread. */
     var onConnected: ((Boolean) -> Unit)? = null
+
+    /** A line for the event log. Off the UI thread. */
+    var onLog: ((String) -> Unit)? = null
+
+    /** When something last arrived from the leader (this device's clock), 0 before anything has. */
+    @Volatile var lastHeard: Long = 0L
+        private set
 
     /**
      * Connect to [leader], trying each address. Blocks until the first attempt is decided and
@@ -370,49 +427,100 @@ class CompanionFollower(
         wanted = leader
         val first = java.util.concurrent.CompletableFuture<Boolean>()
         Thread({
-            var announced = false
+            var failures = 0
             while (wanted === leader) {
+                val tried = ArrayList<String>()
                 val s = leader.hosts.firstNotNullOfOrNull { host ->
+                    val began = System.currentTimeMillis()
                     runCatching {
                         Socket().apply {
                             connect(InetSocketAddress(host, leader.port), 3000)
                             tcpNoDelay = true
-                            // The leader pings every few seconds; silence this long is a dead line.
-                            soTimeout = 15_000
                         }
-                    }.getOrNull()
+                    }.onFailure { tried += "$host: ${it.message ?: it.javaClass.simpleName} after ${System.currentTimeMillis() - began} ms" }
+                        .getOrNull()
                 }
                 if (s == null) {
                     first.complete(false)
+                    if (failures++ % 5 == 0) onLog?.invoke("Could not reach ${leader.name} (${tried.joinToString("; ")})")
                     sleepWhileWanted(leader, retryMs)
                     continue
                 }
+                failures = 0
                 if (wanted !== leader) { runCatching { s.close() }; break }
                 socket = s
-                runCatching {
+                out = runCatching {
                     OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8).apply {
                         write(CompanionLink.encode(CompanionLink.Hello(name = myName)) + "\n"); flush()
                     }
-                }
+                }.getOrNull()
                 first.complete(true)
+                val connectedAt = System.currentTimeMillis()
                 onConnected?.invoke(true)
-                announced = true
-                runCatching {
-                    BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8)).let { reader ->
-                        while (true) {
-                            val line = reader.readLine() ?: break
-                            CompanionLink.read(line)?.let { if (it != CompanionLink.Line.Ping) onLine(it) }
-                        }
-                    }
-                }
+                val why = read(s, leader)
                 runCatching { s.close() }
                 if (socket === s) socket = null
-                if (announced) { onConnected?.invoke(false); announced = false }
-                sleepWhileWanted(leader, retryMs)
+                if (wanted === leader) {
+                    onLog?.invoke("Lost ${leader.name} after ${(System.currentTimeMillis() - connectedAt) / 1000} s: $why")
+                }
+                onConnected?.invoke(false)
+                // Straight back on the first try: most drops are momentary.
+                sleepWhileWanted(leader, 300)
             }
             first.complete(false)
         }, "companion-follow").apply { isDaemon = true; start() }
         return runCatching { first.get(10, TimeUnit.SECONDS) }.getOrDefault(false)
+    }
+
+    /** Read until the line ends; says why it ended. */
+    private fun read(s: Socket, leader: CompanionLink.Leader): String {
+        var lastSeq = 0L
+        // The smallest (arrival - sent) seen: the two clocks' difference plus the quickest the
+        // link has ever been. Anything well above it arrived late.
+        var fastest = Long.MAX_VALUE
+        return runCatching {
+            val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
+            while (true) {
+                val line = reader.readLine() ?: return "the leader closed the connection"
+                val now = System.currentTimeMillis()
+                val quiet = if (lastHeard > 0) now - lastHeard else 0
+                lastHeard = now
+                val got = CompanionLink.read(line) ?: continue
+                val (seq, at) = when (got) {
+                    is CompanionLink.Line.Ping -> got.seq to got.at
+                    is CompanionLink.Line.Show -> got.showing.seq to got.showing.at
+                    else -> 0L to 0L
+                }
+                if (got is CompanionLink.Line.Ping && s.soTimeout == 0) {
+                    // This leader sends a heartbeat, so silence now means a dead line. (One too old
+                    // to send them is never timed out.)
+                    s.soTimeout = SILENT_FOR_MS.toInt()
+                }
+                if (at > 0) {
+                    val transit = now - at
+                    if (transit < fastest) fastest = transit
+                    val late = transit - fastest
+                    if (late > 1500) onLog?.invoke("Message ${seq} from ${leader.name} arrived ${late / 100 / 10.0} s late")
+                }
+                if (quiet > 3 * CompanionLeader.PING_EVERY_MS) onLog?.invoke("Nothing from ${leader.name} for ${quiet / 100 / 10.0} s")
+                if (seq > 0 && got is CompanionLink.Line.Show) {
+                    if (lastSeq > 0 && seq > lastSeq + 1) onLog?.invoke("Skipped from message $lastSeq to $seq")
+                }
+                if (seq > 0) lastSeq = maxOf(lastSeq, seq)
+                if (got is CompanionLink.Line.Ping) {
+                    runCatching { out?.apply { write(CompanionLink.pong(got.seq, got.at) + "\n"); flush() } }
+                } else onLine(got)
+            }
+            @Suppress("UNREACHABLE_CODE") ""
+        }.fold(
+            onSuccess = { it },
+            onFailure = { e ->
+                when (e) {
+                    is java.net.SocketTimeoutException -> "nothing arrived for ${SILENT_FOR_MS / 1000} s"
+                    else -> if (wanted == null) "stopped" else (e.message ?: e.javaClass.simpleName)
+                }
+            }
+        )
     }
 
     private fun sleepWhileWanted(leader: CompanionLink.Leader, ms: Long) {
@@ -425,6 +533,11 @@ class CompanionFollower(
         val s = socket
         socket = null
         runCatching { s?.close() }
+    }
+
+    companion object {
+        /** Four missed heartbeats. */
+        const val SILENT_FOR_MS = 8_000L
     }
 }
 

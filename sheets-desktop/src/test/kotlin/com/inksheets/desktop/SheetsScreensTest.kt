@@ -182,6 +182,7 @@ class SheetsScreensTest {
     fun `leading shows a code to scan, and the count of followers`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
+        state.companion.leadPort = java.net.ServerSocket(0).use { it.localPort }
         try {
             runDesktopComposeUiTest(width = 1000, height = 800) {
                 setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }

@@ -141,6 +141,25 @@ object Perform {
     var mergeInk: ((path: String, ink: InkDocument) -> Boolean)? = null
 
     /**
+     * Marks for [path] that came from elsewhere - another app's markings, brought across - placed
+     * on its pages, whose sizes [pageSize] gives (in points). Set by InkSheets; each editor asks
+     * once a document is open, through [withImported].
+     */
+    @Volatile
+    var importedInk: ((path: String, pageSize: (Int) -> Pair<Float, Float>?) -> List<Stroke>)? = null
+
+    /**
+     * [mine] with the imported marks for [path] added, or null when there are none it lacks. The
+     * marks keep fixed ids and a timestamp from the beginning of time, so opening the document again
+     * adds nothing twice, and one erased here stays erased.
+     */
+    fun withImported(mine: InkDocument, path: String, pageSize: (Int) -> Pair<Float, Float>?): InkDocument? {
+        val extra = runCatching { importedInk?.invoke(path, pageSize) }.getOrNull().orEmpty()
+        if (extra.isEmpty()) return null
+        return mergedInk(mine, mine.copy(pages = extra.groupBy { it.pageIndex.toString() }, deleted = emptyMap()))
+    }
+
+    /**
      * The merge [mergeInk] does, shared by both editors: [incoming]'s marks and erasures onto
      * [mine]. Null when nothing would change, or when the two copies have their pages in
      * different arrangements - merging those would keep only one side's pages.

@@ -23,7 +23,8 @@ import java.util.UUID
 
 /** The tablet's side of [SheetsPlatform]. */
 class AndroidSheetsPlatform(
-    private val context: Context,
+    /** The activity in front; moved on to a new one if the activity is ever recreated. */
+    var context: Context,
     private val openFile: (File) -> Unit
 ) : SheetsPlatform {
 
@@ -79,6 +80,8 @@ class AndroidSheetsPlatform(
                                     android.database.Cursor.FIELD_TYPE_INTEGER -> c.getLong(i)
                                     android.database.Cursor.FIELD_TYPE_FLOAT -> c.getDouble(i)
                                     android.database.Cursor.FIELD_TYPE_STRING -> c.getString(i)
+                                    // Where MobileSheets keeps the points of its markings.
+                                    android.database.Cursor.FIELD_TYPE_BLOB -> c.getBlob(i)
                                     else -> null
                                 }
                             }
@@ -152,6 +155,26 @@ class AndroidSheetsPlatform(
             ?: android.os.Build.MODEL).ifBlank { "Tablet" }
 
     override fun log(message: String) = EventLog.info("sheets", message)
+
+    /** Wi-Fi out of power saving, while leading or following: the lowest-latency lock there is. */
+    private val wifiLock: android.net.wifi.WifiManager.WifiLock? by lazy {
+        runCatching {
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+            val mode = if (android.os.Build.VERSION.SDK_INT >= 29) android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            else @Suppress("DEPRECATION") android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            wifi.createWifiLock(mode, "InkSheets:play-together").apply { setReferenceCounted(false) }
+        }.getOrNull()
+    }
+    private var networkHolds = 0
+
+    override fun holdNetwork(on: Boolean) {
+        networkHolds = (networkHolds + if (on) 1 else -1).coerceAtLeast(0)
+        runCatching {
+            val lock = wifiLock ?: return
+            if (networkHolds > 0 && !lock.isHeld) lock.acquire()
+            if (networkHolds == 0 && lock.isHeld) lock.release()
+        }.onFailure { EventLog.warn("sheets", "Wi-Fi lock: ${it.message}") }
+    }
 
     override val downloadsFolder: File =
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).takeIf { it.isDirectory } ?: startFolder

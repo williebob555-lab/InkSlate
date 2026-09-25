@@ -109,7 +109,13 @@ tasks.withType<Test>().configureEach {
         systemProperty("inksheets.msb", it)
         outputs.upToDateWhen { false }
     }
-    testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null
+    testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null || System.getProperty("inksheets.msdb") != null
+    for (name in listOf("inksheets.msdb", "inksheets.lib")) {
+        System.getProperty(name)?.let {
+            systemProperty(name, it)
+            outputs.upToDateWhen { false }
+        }
+    }
     System.getProperty("inksheets.shots")?.let {
         systemProperty("inksheets.shots", it)
         outputs.upToDateWhen { false }

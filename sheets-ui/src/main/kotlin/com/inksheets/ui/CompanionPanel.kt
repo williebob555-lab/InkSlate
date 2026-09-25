@@ -123,6 +123,10 @@ class Companion(private val state: SheetsState) {
     private var inkTimer: java.util.Timer? = null
     private var lastInkSignature = 0L
 
+    /** The port to lead on. Tests use a free one, so they never meet a real InkSheets on this machine. */
+    var leadPort = CompanionLink.PORT
+    private val reconnectCheck = java.util.Timer("companion-reconnect", true)
+
     /** What the strip shows: "Leading · 2", "Following Stand 1". */
     val status: String?
         get() = when {
@@ -146,13 +150,14 @@ class Companion(private val state: SheetsState) {
     fun lead(): Boolean {
         stopFollowing()
         val name = state.platform.deviceName
-        val l = CompanionLeader(name)
+        val l = CompanionLeader(name, leadPort)
         l.onFollowers = { n -> state.platform.onMain { followers = n } }
         l.onLog = { line -> state.platform.log("Companion: $line") }
         if (!l.start()) return false
         leader = l
         leading = true
-        joinLink = CompanionLink.joinLink(name, NetAddresses.mine())
+        state.platform.holdNetwork(true)
+        joinLink = CompanionLink.joinLink(name, NetAddresses.mine(), leadPort)
         state.platform.log("Companion: leading as $name")
         state.current?.let { announce(state.pageShown.first) }
         lastInkSignature = 0L
@@ -210,6 +215,7 @@ class Companion(private val state: SheetsState) {
         inkTimer = null
         leader?.stop()
         if (leader != null) state.platform.log("Companion: stopped leading")
+        if (leading) state.platform.holdNetwork(false)
         leader = null
         leading = false
         followers = 0
@@ -226,14 +232,26 @@ class Companion(private val state: SheetsState) {
         stopLeading()
         follower?.stop()
         val f = CompanionFollower(state.platform.deviceName) { line -> state.platform.onMain { heard(line) } }
+        f.onLog = { line -> state.platform.log("Companion: $line") }
         f.onConnected = { on ->
             state.platform.onMain {
                 if (follower === f) {
-                    connected = on
-                    state.platform.log("Companion: " + if (on) "connected to ${target.name}" else "lost ${target.name}, reconnecting")
+                    if (on) {
+                        if (!connected) state.platform.log("Companion: connected to ${target.name}")
+                        connected = true
+                    } else {
+                        // Most drops are back within a second; "Reconnecting" only if this one is not.
+                        val lostAt = System.currentTimeMillis()
+                        reconnectCheck.schedule(object : java.util.TimerTask() {
+                            override fun run() = state.platform.onMain {
+                                if (follower === f && (f.lastHeard < lostAt)) connected = false
+                            }
+                        }, 2_000L)
+                    }
                 }
             }
         }
+        if (follower == null) state.platform.holdNetwork(true)
         follower = f
         following = target.name
         connected = false
@@ -248,7 +266,10 @@ class Companion(private val state: SheetsState) {
 
     fun stopFollowing() {
         follower?.stop()
-        if (follower != null) state.platform.log("Companion: stopped following")
+        if (follower != null) {
+            state.platform.log("Companion: stopped following")
+            state.platform.holdNetwork(false)
+        }
         follower = null
         following = null
         connected = false
@@ -299,8 +320,19 @@ class Companion(private val state: SheetsState) {
         val song = CompanionLink.songFor(library, showing)
         if (song == null) { missing = showing.title; return }
         val part = PartChoice.partFor(song, state.profile)
-        val file = part?.let { state.partFile(song, it) }
-        if (part == null || file == null) { missing = showing.title; return }
+        if (part == null) { missing = showing.title; return }
+        // Where the library says, a quick look; a file that has moved means searching the whole
+        // music folder, which is never done on the screen's own thread.
+        val file = state.fileOf(part.file)?.takeIf { it.isFile } ?: run {
+            Thread({
+                val found = runCatching { state.partFile(song, part) }.getOrNull()
+                state.platform.onMain {
+                    if (found == null) missing = showing.title
+                    else if (leaderAt == showing) show(showing, force)
+                }
+            }, "companion-find").apply { isDaemon = true; start() }
+            return
+        }
         missing = null
         val page = pageFor(showing, song, part)
         val now = song.id to page
@@ -346,7 +378,7 @@ class Companion(private val state: SheetsState) {
         val song = state.current ?: return
         val share = pendingInk[song.id] ?: return
         val part = PartChoice.partFor(song, state.profile) ?: return
-        val file = state.partFile(song, part) ?: return
+        val file = state.fileOf(part.file)?.takeIf { it.isFile } ?: return
         if (state.currentPath != file.absolutePath) return
         if (!CompanionLink.samePart(share.instrument, share.partNo, share.pages, part, state.pageShown.second)) return
         val ink = InkDocument.parse(share.ink) ?: return

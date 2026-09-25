@@ -107,6 +107,8 @@ class SheetsState(val platform: SheetsPlatform) {
             pageShown = page to count
             companion.applyPendingInk()
         }
+        // Markings brought across from MobileSheets, handed to a part when it is opened.
+        com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
             currentPath = path
             songAt(path)?.let { if (current?.id != it.id) current = it }
@@ -333,6 +335,31 @@ class SheetsState(val platform: SheetsPlatform) {
     fun songAt(path: String): com.inksheets.core.Song? {
         val rel = relative(File(path)) ?: return null
         return library?.songs?.firstOrNull { s -> s.parts.any { it.file == rel } }
+    }
+
+    // ---- markings from MobileSheets ---------------------------------------------------
+
+    @Volatile private var importedMarks: Map<String, List<com.inksheets.core.ImportedMark>>? = null
+    @Volatile private var importedStamp = -1L
+
+    /** The kept markings changed (an import just ran): read them again when next wanted. */
+    fun importedMarksChanged() { importedMarks = null }
+
+    /**
+     * The markings brought across for the file at [path] - found by its place in the library, or,
+     * for a file that has since moved, by its name when only one file has it.
+     */
+    fun importedMarksFor(path: String): List<com.inksheets.core.ImportedMark> {
+        val base = root ?: return emptyList()
+        val kept = com.inksheets.core.MobileSheetsMarks.fileIn(base)
+        val stamp = kept.lastModified()
+        if (stamp == 0L) return emptyList()
+        val all = importedMarks?.takeIf { importedStamp == stamp }
+            ?: com.inksheets.core.MobileSheetsMarks.load(base).also { importedMarks = it; importedStamp = stamp }
+        val rel = relative(File(path)) ?: return emptyList()
+        all[rel]?.let { return it }
+        val name = rel.substringAfterLast('/')
+        return all.entries.filter { it.key.substringAfterLast('/').equals(name, ignoreCase = true) }.singleOrNull()?.value.orEmpty()
     }
 
     // ---- files that have moved ------------------------------------------------------

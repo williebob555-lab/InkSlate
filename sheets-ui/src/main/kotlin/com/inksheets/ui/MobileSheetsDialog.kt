@@ -32,7 +32,7 @@ private sealed interface MsStep {
     data object ChooseBackup : MsStep
     data class Unpacking(val backup: File, val note: String) : MsStep
     data class Working(val folder: File, val note: String) : MsStep
-    data class Done(val result: MobileSheetsImport.Result, val copied: Int) : MsStep
+    data class Done(val result: MobileSheetsImport.Result, val copied: Int, val marks: Int = 0) : MsStep
     data class Failed(val message: String) : MsStep
 }
 
@@ -124,7 +124,8 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit, backup:
                     "${r.songs} songs and ${r.setlists} setlists came across" +
                         (if (r.skipped > 0) "; ${r.skipped} were already here." else ".") +
                         (if (s.copied > 0) " ${s.copied} files were copied into your music folder." else "") +
-                        " The setlists are in the folder \"${MobileSheetsImport.FOLDER_NAME}\".",
+                        " The setlists are in the folder \"${MobileSheetsImport.FOLDER_NAME}\"." +
+                        (if (s.marks > 0) " ${s.marks} markings came too; each appears on its page when the music is opened." else ""),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 if (r.missing.isNotEmpty()) {
@@ -197,6 +198,15 @@ private fun runImport(state: SheetsState, msFolder: File, progress: (String) -> 
     progress("Bringing the songs across...")
     val result = runCatching { MobileSheetsImport.run(tables, library, resolve) }
         .getOrElse { return MsStep.Failed("The import stopped: ${it.message}") }
+    // MobileSheets keeps its markings in the database, not the PDFs. They are brought across too,
+    // and even when every song was already here - an earlier import did not bring them.
+    progress("Bringing the markings across...")
+    val marks = runCatching { com.inksheets.core.MobileSheetsMarks.read(tables, resolve) }
+        .onFailure { state.platform.log("MobileSheets markings could not be read: ${it.message}") }
+        .getOrDefault(emptyMap())
+    runCatching { com.inksheets.core.MobileSheetsMarks.save(root, marks) }
+        .onFailure { state.platform.log("MobileSheets markings could not be kept: ${it.message}") }
+    state.importedMarksChanged()
     state.change { }   // let the screens see what arrived
-    return MsStep.Done(result, copied)
+    return MsStep.Done(result, copied, marks.values.sumOf { it.size })
 }
