@@ -245,6 +245,7 @@ fun EditorScreen(
     val viewport: Viewport by host::activeViewport
     var page: Int by host::activePage
     var layout by remember { mutableStateOf(if (AppFlavor.musicView) PageLayout.SINGLE else PageLayout.VERTICAL) }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
     var pressureCurveOpen by remember { mutableStateOf(false) }
     var benchRunning by remember { mutableStateOf(false) }
@@ -1081,7 +1082,7 @@ fun EditorScreen(
         page = clamped
         // Music is read a whole page at a time: fitted, centred, nothing off the edge.
         if (AppFlavor.musicView) {
-            paperBox(clamped)?.let { viewport.fit(it, padding = 8f); return }
+            paperBox(clamped)?.let { viewport.fitClear(it, padding = 8f, lane = STRIP_LANE_DP * density); return }
         }
         val origins = com.inkslate.core.PageArranger.arrange(extents, layout, clamped)
         origins.getOrNull(clamped)?.let { (x, y) -> viewport.goTo(x, y) }
@@ -1367,8 +1368,11 @@ fun EditorScreen(
     }
 
     // Where the reader is, for another tablet following this one.
-    LaunchedEffect(focused, page) {
-        if (focused) com.inkslate.core.Perform.onPage?.invoke(file.absolutePath, page)
+    LaunchedEffect(focused, page, source?.pageCount) {
+        if (focused) {
+            com.inkslate.core.Perform.onPage?.invoke(file.absolutePath, page)
+            com.inkslate.core.Perform.onPosition?.invoke(page, source?.pageCount ?: 0)
+        }
     }
 
     // Hand the window's key handler something to call. Re-assigned on each composition so the
@@ -1400,6 +1404,8 @@ fun EditorScreen(
         com.inkslate.core.Perform.jumpTo = { path, target ->
             if (path == file.absolutePath) goToPage(target)
         }
+        com.inkslate.core.Perform.openPages = { pagesOpen = true }
+        com.inkslate.core.Perform.recentre = { goToPage(page) }
         com.inkslate.core.Perform.document = { action ->
             val count = source?.pageCount ?: 0
             when (action) {
@@ -1676,7 +1682,9 @@ fun EditorScreen(
 
     val bottomBar: @Composable () -> Unit = {
         Column {
-            source?.let { src ->
+            // Music has its page number and overview on the strip beside the page, and turns by
+            // swipe, pedal or the strip - not a second row of arrows here.
+            if (!AppFlavor.musicView) source?.let { src ->
                 PageBar(
                     page = page,
                     pageCount = src.pageCount,
@@ -1851,6 +1859,9 @@ fun EditorScreen(
                     onEditText = { editingText = it },
                     canvas = ink.canvas,
                     rulerOwner = host,
+                    // Music with the tools put away: a sideways swipe turns the page. With them out,
+                    // the page moves as it always has, for marking it up.
+                    onSwipe = if (AppFlavor.musicView && immersive) { dir -> goToPage(page + dir) } else null,
                     images = { id ->
                         loadedImages[id] ?: images.load(id)?.also { loadedImages[id] = it }
                     },
@@ -2416,3 +2427,6 @@ private fun PageBar(
         }
     }
 }
+
+/** The room kept clear beside a page of music for the action strip, so it never covers a note. */
+const val STRIP_LANE_DP = 64f

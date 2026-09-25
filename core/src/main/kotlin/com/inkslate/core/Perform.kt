@@ -109,6 +109,18 @@ object Perform {
     /** Told the page (0-based) whenever the document in front changes page. For companion mode. */
     @Volatile
     var onPage: ((path: String, page: Int) -> Unit)? = null
+
+    /** Told the page (0-based) and how many there are, whenever either changes in front. */
+    @Volatile
+    var onPosition: ((page: Int, count: Int) -> Unit)? = null
+
+    /** Open the page overview of the document in front; set by whichever editor has focus. */
+    @Volatile
+    var openPages: (() -> Unit)? = null
+
+    /** Fit the page in front back to the screen, whole and centred. */
+    @Volatile
+    var recentre: (() -> Unit)? = null
 }
 
 /**

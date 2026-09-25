@@ -45,6 +45,8 @@ internal object SharedMetronome {
     var engine: Metronome? = null
     var running by mutableStateOf(false)
     var beat by mutableStateOf(-1)
+    /** The tempo, shown on the strip beside the metronome button. */
+    var bpm by mutableStateOf(com.inksheets.core.Metronome.Settings().bpm)
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -60,6 +62,7 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
     fun use(s: Metronome.Settings) {
         settings = s
         engine.settings = s
+        SharedMetronome.bpm = s.bpm
     }
 
     fun start() {

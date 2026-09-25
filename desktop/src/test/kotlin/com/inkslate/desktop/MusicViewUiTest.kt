@@ -101,8 +101,8 @@ class MusicViewUiTest {
             repeat(4) { settle() }
             ImageIO.write(image(), "png", File(shots, "tools.png"))
             fun shown(label: String) = onAllNodesWithContentDescription(label, useUnmergedTree = true).fetchSemanticsNodes().size
-            for (label in listOf("Draw", "Marker", "Erase", "Text", "Undo")) assertTrue("$label is there", shown(label) > 0)
-            for (label in listOf("Ruler", "Table", "Shapes", "Capture", "Picture")) assertEquals("$label is not for music", 0, shown(label))
+            for (label in listOf("Draw", "Marker", "Erase", "Text", "Shapes", "Undo")) assertTrue("$label is there", shown(label) > 0)
+            for (label in listOf("Ruler", "Table", "Capture", "Picture", "Previous page")) assertEquals("$label is not for music", 0, shown(label))
         }
     }
 }

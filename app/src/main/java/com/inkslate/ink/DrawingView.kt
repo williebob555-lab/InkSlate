@@ -2112,6 +2112,11 @@ class DrawingView @JvmOverloads constructor(
      */
     fun restoreCamera(state: FloatArray): Boolean {
         if (state.size < 3) return false
+        // Music is always shown whole: a zoom left from last time would cut the page off.
+        if (fitWholePage && layout == PageLayout.SINGLE) {
+            if (slots.isNotEmpty() && width > 0 && height > 0) fitToScreen()
+            return true
+        }
         if (slots.isEmpty() || width == 0 || height == 0) {
             // Not measured yet. Hold on to it rather than refusing: the caller has no better
             // moment to try, and onSizeChanged does.
@@ -2160,12 +2165,25 @@ class DrawingView @JvmOverloads constructor(
     fun fitToScreen() {
         if (width == 0 || height == 0 || slots.isEmpty()) return
         val b = docBounds()
-        val s = min((width - 24f) / b.width(), (height - 24f) / b.height())
+        var w = width.toFloat()
+        var h = height.toFloat()
+        var s = min((w - 24f) / b.width(), (h - 24f) / b.height())
+        // Music keeps a lane clear for the action strip - down the side in landscape, along the
+        // bottom in portrait - unless the margin the fit leaves is already that wide.
+        val lane = stripLaneDp * resources.displayMetrics.density
+        if (fitWholePage && lane > 0f) {
+            val side = w >= h
+            val spare = if (side) (w - b.width() * s) / 2f else (h - b.height() * s) / 2f
+            if (spare < lane) {
+                if (side) w -= lane else h -= lane
+                s = min((w - 24f) / b.width(), (h - 24f) / b.height())
+            }
+        }
         minScale = s * 0.35f
         pageToView.reset(); pageToView.postScale(s, s)
         pageToView.postTranslate(
-            (width - b.width() * s) / 2f - b.left * s,
-            (height - b.height() * s) / 2f - b.top * s
+            (w - b.width() * s) / 2f - b.left * s,
+            (h - b.height() * s) / 2f - b.top * s
         )
         // no clamp here: fitting is an explicit request to centre
         syncInverse(); invalidate(); onTransformChanged?.invoke(); reportVisiblePages()
@@ -4351,6 +4369,9 @@ class DrawingView @JvmOverloads constructor(
         @JvmStatic
         @Volatile
         var fitWholePage: Boolean = false
+
+        /** Room kept clear beside a fitted page for buttons laid over it, in dp. */
+        var stripLaneDp: Float = 0f
 
         /** How much of the width at each side counts as "the side". */
         const val EDGE_TAP_SHARE = 0.18f

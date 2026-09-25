@@ -1510,8 +1510,11 @@ fun EditorScreen(
     BackHandler(enabled = focused) { leave() }
 
     // Where the reader is, for another tablet following this one.
-    LaunchedEffect(focused, page) {
-        if (focused) com.inkslate.core.Perform.onPage?.invoke(file.absolutePath, page)
+    LaunchedEffect(focused, page, doc?.pageCount) {
+        if (focused) {
+            com.inkslate.core.Perform.onPage?.invoke(file.absolutePath, page)
+            com.inkslate.core.Perform.onPosition?.invoke(page, doc?.pageCount ?: 0)
+        }
     }
 
     // Pedals and page keys reach the document in front. A turn it cannot make (past its last
@@ -1525,6 +1528,8 @@ fun EditorScreen(
         com.inkslate.core.Perform.jumpTo = { path, target ->
             if (path == file.absolutePath) drawingView.value?.goToPage(target)
         }
+        com.inkslate.core.Perform.openPages = { pagesOpen = true }
+        com.inkslate.core.Perform.recentre = { drawingView.value?.fitToScreen() }
         com.inkslate.core.Perform.document = { action ->
             val view = drawingView.value
             val count = view?.pageCount ?: 0
@@ -1738,7 +1743,7 @@ fun EditorScreen(
             // navigationBarsPadding keeps the toolbar clear of the gesture bar, which
             // otherwise sits directly on top of the tool buttons
             Column(Modifier.navigationBarsPadding()) {
-                if (d.pageCount > 1 || PageSources.isPdf(d.file)) {
+                if (!com.inkslate.AppFlavor.musicView && (d.pageCount > 1 || PageSources.isPdf(d.file))) {
                     PageBar(
                         page = page,
                         pageCount = d.pageCount,

@@ -84,11 +84,26 @@ private fun ui() = application {
         }
     }
 
-    // Saved as it settles rather than on every pixel of a drag.
+    // Saved as it settles rather than on every pixel of a drag. Not while covering the screen:
+    // that is a mode, and the window comes back from it as it was.
     LaunchedEffect(state) {
         snapshotFlow { Triple(state.size, state.position, state.placement) }
             .debounce(400)
-            .collect { WindowMemory.remember(state) }
+            .collect { if (state.placement != androidx.compose.ui.window.WindowPlacement.Fullscreen) WindowMemory.remember(state) }
+    }
+
+    // The whole screen, taskbar and title bar included, and back to how it was.
+    LaunchedEffect(state) {
+        var before = state.placement
+        snapshotFlow { AppFlavor.windowFullscreen }.collect { whole ->
+            val full = androidx.compose.ui.window.WindowPlacement.Fullscreen
+            if (whole && state.placement != full) {
+                before = state.placement
+                state.placement = full
+            } else if (!whole && state.placement == full) {
+                state.placement = before
+            }
+        }
     }
     val shortcuts = remember { Shortcuts() }
     val navigation = remember { NavigationHooks() }

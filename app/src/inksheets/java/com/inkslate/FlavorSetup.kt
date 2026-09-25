@@ -32,6 +32,7 @@ object FlavorSetup {
         AppFlavor.fingerPans = true
         AppFlavor.musicView = true
         com.inkslate.ink.DrawingView.fitWholePage = true
+        com.inkslate.ink.DrawingView.stripLaneDp = 64f
         AppFlavor.home = { open, openSettings ->
             openFile = open
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)

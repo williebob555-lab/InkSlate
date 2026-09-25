@@ -1,5 +1,26 @@
 package com.inksheets.ui
 
+import kotlin.math.roundToInt
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.toMutableStateList
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -67,7 +88,8 @@ import com.inkslate.core.PerformAction
 fun BoxScope.ActionStrip(state: SheetsState) {
     var collapsed by remember { mutableStateOf(state.platform.pref(K_COLLAPSED) == "true") }
     var menu by remember { mutableStateOf(false) }
-    var shown by remember { mutableStateOf(state.stripActions()) }
+    val shown = state.strip
+    var customising by remember { mutableStateOf(false) }
 
     // Practice time: counted while a song is open in front of you, half a minute at a time.
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -80,37 +102,42 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
     }
 
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = 3.dp,
-        shadowElevation = 2.dp,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-        modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(0.dp),
-            modifier = Modifier.verticalScroll(rememberScrollState())
-        ) {
+    // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
+    // the bottom of a portrait one - so it sits in blank space and never over the music.
+    BoxWithConstraints(Modifier.matchParentSize()) {
+        val side = maxWidth >= maxHeight
+        val items: @Composable () -> Unit = {
             if (!collapsed) {
                 if (SelfRecorder.recording) {
-                    Text("● Rec", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+                    Text("● Rec", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
                 }
                 state.companion.status?.let { status ->
-                    Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp, start = 6.dp, end = 6.dp))
+                    Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
                 }
-                // Where in a setlist this song is, when one is being played, and the way to put the
-                // whole set away.
+                // Which page, and the way to every page: tap for the overview.
+                val (page, count) = state.pageShown
+                if (count > 0) {
+                    Text(
+                        "${page + 1}/$count",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { Perform.openPages?.invoke() }
+                            .padding(horizontal = 6.dp, vertical = 8.dp)
+                    )
+                }
+                IconButton(onClick = { Perform.recentre?.invoke() }, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Default.CenterFocusStrong, "Fit the page to the screen")
+                }
+                // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
                     val total = state.library?.setlist(setlistId)?.entries?.size ?: 0
                     Text(
-                        "${index + 1}/$total",
+                        "Song ${index + 1}/$total",
                         style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(top = 6.dp)
+                        modifier = Modifier.padding(4.dp)
                     )
-                    IconButton(onClick = { state.closeSetlist() }, modifier = Modifier.size(36.dp)) {
-                        Icon(Icons.Default.Close, "Close the setlist")
-                    }
                 }
                 var lastGroup = -1
                 for (action in shown) {
@@ -119,7 +146,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     if (action == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty()) continue
                     val group = groupOf(action)
                     if (lastGroup >= 0 && group != lastGroup) {
-                        HorizontalDivider(Modifier.width(24.dp).padding(vertical = 2.dp))
+                        if (side) HorizontalDivider(Modifier.width(24.dp).padding(vertical = 2.dp))
+                        else VerticalDivider(Modifier.height(24.dp).padding(horizontal = 2.dp))
                     }
                     lastGroup = group
                     val lit = (action == PerformAction.METRONOME && SharedMetronome.running) ||
@@ -131,10 +159,22 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     ) {
                         Icon(iconOf(action, Perform.on(PerformAction.FULLSCREEN)), action.label)
                     }
+                    // The tempo right under the button: one tap to change it, never a menu away.
+                    if (action == PerformAction.METRONOME) {
+                        Text(
+                            "♩ ${SharedMetronome.bpm.roundToInt()}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { state.metronomeOpen = true }
+                                .padding(horizontal = 6.dp, vertical = 6.dp)
+                        )
+                    }
                 }
                 Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Buttons") }
-                    StripMenu(state, menu, onDismiss = { menu = false }, onChanged = { shown = state.stripActions() })
+                    IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Default.MoreVert, "Buttons") }
+                    StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true })
                 }
             }
             IconButton(onClick = {
@@ -144,8 +184,28 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 Icon(if (collapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess, if (collapsed) "Show buttons" else "Hide buttons")
             }
         }
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            tonalElevation = 3.dp,
+            shadowElevation = 2.dp,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+            modifier = Modifier.align(if (side) Alignment.CenterEnd else Alignment.BottomCenter).padding(6.dp)
+        ) {
+            if (side) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(vertical = 4.dp)
+                ) { items() }
+            } else {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp)
+                ) { items() }
+            }
+        }
     }
 
+    if (customising) StripEditor(state, onClose = { customising = false })
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -154,7 +214,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 }
 
 @Composable
-private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onChanged: () -> Unit) {
+private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onCustomise: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         state.current?.let { song ->
             DropdownMenuItem(
@@ -168,29 +228,96 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
             leadingIcon = { Icon(Icons.Default.Devices, null) },
             onClick = { onDismiss(); state.companionOpen = true }
         )
-        DropdownMenuItem(
-            text = { Text("Metronome settings...") },
-            leadingIcon = { Icon(Icons.Default.Timer, null) },
-            onClick = { onDismiss(); state.metronomeOpen = true }
-        )
         HorizontalDivider()
         DropdownMenuItem(
-            text = { Text("Tap the sides of the page to turn it") },
-            leadingIcon = { Checkbox(checked = state.edgeTaps, onCheckedChange = null) },
-            onClick = { state.edgeTaps = !state.edgeTaps }
+            text = { Text("Customise buttons...") },
+            leadingIcon = { Icon(Icons.Default.Tune, null) },
+            onClick = { onDismiss(); onCustomise() }
         )
-        HorizontalDivider()
-        Text("Buttons", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
-        val chosen = state.stripActions()
-        PerformAction.entries.forEach { action ->
-            DropdownMenuItem(
-                text = { Text(action.label) },
-                leadingIcon = { Checkbox(checked = action in chosen, onCheckedChange = null) },
-                onClick = {
-                    state.setStripActions(if (action in chosen) chosen - action else (chosen + action).sortedWith(compareBy({ groupOf(it) }, { it.ordinal })))
-                    onChanged()
+    }
+}
+
+/**
+ * The strip, laid out to be changed: its buttons in order, each dragged by its handle to a new
+ * place or taken off with its cross, and every other action below, added with a tap.
+ */
+@Composable
+private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
+    SheetDialog(title = "Buttons on the strip", onDismiss = onClose) {
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clickable { state.edgeTaps = !state.edgeTaps }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Tap the sides of the page to turn it", Modifier.weight(1f))
+                Switch(checked = state.edgeTaps, onCheckedChange = { state.edgeTaps = it })
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+
+            Text("On the strip - drag to reorder", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+            val order = remember(state.strip) { state.strip.toMutableStateList() }
+            var dragging by remember { mutableStateOf<PerformAction?>(null) }
+            var dragBy by remember { mutableStateOf(0f) }
+            val rowPx = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+            Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                order.forEach { action ->
+                    val lifted = dragging == action
+                    androidx.compose.runtime.key(action) {
+                        Row(
+                            (if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = dragBy }
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(8.dp))
+                            else Modifier).fillMaxWidth().height(48.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.DragHandle, "Drag to reorder",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .pointerInput(action) {
+                                        detectDragGestures(
+                                            onDragStart = { dragging = action; dragBy = 0f },
+                                            onDragEnd = { dragging = null; dragBy = 0f; state.setStripActions(order.toList()) },
+                                            onDragCancel = { dragging = null; dragBy = 0f; state.setStripActions(order.toList()) }
+                                        ) { change, amount ->
+                                            change.consume()
+                                            dragBy += amount.y
+                                            val from = order.indexOf(action)
+                                            val to = (from + (dragBy / rowPx).toInt()).coerceIn(0, order.lastIndex)
+                                            if (to != from) {
+                                                order.add(to, order.removeAt(from))
+                                                dragBy -= (to - from) * rowPx
+                                            }
+                                        }
+                                    }
+                                    .padding(12.dp)
+                            )
+                            Icon(iconOf(action, false), null, Modifier.padding(end = 12.dp))
+                            Text(action.label, Modifier.weight(1f))
+                            IconButton(onClick = { state.setStripActions(order - action) }) {
+                                Icon(Icons.Default.Close, "Take off the strip")
+                            }
+                        }
+                    }
                 }
-            )
+            }
+            val rest = PerformAction.entries.filter { it !in order }
+            if (rest.isNotEmpty()) {
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                Text("Add a button", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 4.dp)
+                ) {
+                    rest.forEach { action ->
+                        AssistChip(
+                            onClick = { state.setStripActions(order + action) },
+                            label = { Text(action.label) },
+                            leadingIcon = { Icon(iconOf(action, false), null, Modifier.size(18.dp)) }
+                        )
+                    }
+                }
+            }
         }
     }
 }

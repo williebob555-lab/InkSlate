@@ -1,6 +1,8 @@
 package com.inkslate.desktop
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import java.io.File
 
 /**
@@ -39,6 +41,16 @@ object AppFlavor {
 
     /** Told when Home is pressed in the tab row, before Home shows. */
     var onHome: (() -> Unit)? = null
+
+    /**
+     * Whether the window should cover the whole screen - taskbar and title bar too. Music does
+     * whenever a song is in front; InkSlate does in its fullscreen mode.
+     */
+    var windowFullscreen by androidx.compose.runtime.mutableStateOf(false)
+
+    /** A finger tap at either side of a page of music turns it. */
+    @Volatile
+    var edgeTaps: Boolean = false
 
     /** Told the files in the tab row, in order, whenever a tab is dragged to a new place. */
     var onTabsMoved: ((List<File>) -> Unit)? = null

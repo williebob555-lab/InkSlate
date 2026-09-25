@@ -159,6 +159,24 @@ class Viewport {
         )
     }
 
+    /**
+     * [fit], keeping a [lane] clear down the right side (a landscape view) or along the bottom (a
+     * portrait one) for buttons. When the margin left by fitting is already that wide nothing
+     * changes and the page stays centred; otherwise it is fitted into what the lane leaves.
+     */
+    fun fitClear(box: Box, padding: Float, lane: Float) {
+        fit(box, padding)
+        if (lane <= 0f || viewSize.width <= 0f || viewSize.height <= 0f) return
+        val side = viewSize.width >= viewSize.height
+        val spare = if (side) (viewSize.width - box.width * scale) / 2f else (viewSize.height - box.height * scale) / 2f
+        if (spare >= lane) return
+        val w = if (side) viewSize.width - lane else viewSize.width
+        val h = if (side) viewSize.height else viewSize.height - lane
+        val s = min((w - padding * 2f) / box.width, (h - padding * 2f) / box.height).coerceIn(MIN_SCALE, MAX_SCALE)
+        scale = s
+        offset = Offset(box.centerX - w / (2f * s), box.centerY - h / (2f * s))
+    }
+
     /** Fit the width of [box], leaving the top where it is - how a page is usually read. */
     fun fitWidth(box: Box, padding: Float = 24f) {
         if (viewSize.width <= 0f || box.width <= 0f) return

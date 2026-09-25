@@ -62,13 +62,19 @@ class SheetsState(val platform: SheetsPlatform) {
         }
     private var edgeTapsState by mutableStateOf(platform.pref(K_EDGE_TAPS) != "false")
 
-    /** The actions on the strip over the page. */
-    fun stripActions(): List<com.inkslate.core.PerformAction> =
+    /** The actions on the strip over the page, in order. Held as state so every screen showing it follows a change. */
+    var strip by mutableStateOf(
         platform.pref(K_STRIP)?.split(',')?.mapNotNull { n -> com.inkslate.core.PerformAction.entries.firstOrNull { it.name == n } }
             ?: DEFAULT_STRIP
+    )
+        private set
 
-    fun setStripActions(actions: List<com.inkslate.core.PerformAction>) =
-        platform.setPref(K_STRIP, actions.joinToString(",") { it.name })
+    fun stripActions(): List<com.inkslate.core.PerformAction> = strip
+
+    fun setStripActions(actions: List<com.inkslate.core.PerformAction>) {
+        strip = actions.distinct()
+        platform.setPref(K_STRIP, strip.joinToString(",") { it.name })
+    }
 
     /** The setlist being played through, and where in it: what "next song" means. */
     var playing by mutableStateOf<Pair<String, Int>?>(null)
@@ -90,6 +96,7 @@ class SheetsState(val platform: SheetsPlatform) {
         }
         // Whichever song is in front is "the song": the one the play button plays and the one a
         // leading tablet tells its followers about.
+        com.inkslate.core.Perform.onPosition = { page, count -> pageShown = page to count }
         com.inkslate.core.Perform.onPage = { path, page ->
             songAt(path)?.let { if (current?.id != it.id) current = it }
             companion.pageTurned(page)
@@ -125,6 +132,9 @@ class SheetsState(val platform: SheetsPlatform) {
         platform.openSet(tabs, focus)
         companion.pageTurned(0)
     }
+
+    /** The page in front (0-based) and how many the part has, for the strip. */
+    var pageShown by mutableStateOf(0 to 0)
 
     /** What Home shows: the songs (0) or the setlists (1), and in Setlists the folder and setlist open. */
     var homeTab by mutableStateOf(0)

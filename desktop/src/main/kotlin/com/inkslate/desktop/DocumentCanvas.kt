@@ -169,8 +169,14 @@ fun DocumentCanvas(
     canvas: com.inkslate.core.InkCanvas? = null,
     /** Which document this is, so the workspace's one ruler shows only on the one it lies on. */
     rulerOwner: Any? = null,
+    /**
+     * Set when a sideways swipe turns the page rather than moving it: +1 for the next page, -1 for
+     * the one before. A quick finger swipe, or two fingers across a trackpad.
+     */
+    onSwipe: ((Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val swipe by rememberUpdatedState(onSwipe)
     val extents = remember(source, source.pageCount) {
         (0 until source.pageCount).map {
             val d = source.pageDim(it)
@@ -483,7 +489,45 @@ fun DocumentCanvas(
             // Where the drawing surface sits in the window, which is what lets a pointer reading
             // be carried out to the screen and compared with the cursor. See PointerDiagnostics.
             .onGloballyPositioned { PointerDiagnostics.canvasAt(it.positionInWindow()) }
-            .pointerInput(Unit) { wheel(viewport) }
+            .pointerInput(Unit) { awaitPointerEventScope { wheelLoop(viewport) { swipe } } }
+            // A finger flicked sideways turns the page. Only watched, never consumed: the finger
+            // still moves the page as it goes, and the turn fits the new page afterwards.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    var start: Offset? = null
+                    var startedAt = 0L
+                    var fingers = 0
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val touches = event.changes.filter { it.type == PointerType.Touch }
+                        if (touches.isEmpty()) continue
+                        val down = touches.count { it.pressed }
+                        if (start == null && down == 1 && touches.any { it.pressed && !it.previousPressed }) {
+                            start = touches.first { it.pressed }.position
+                            startedAt = System.currentTimeMillis()
+                            fingers = 1
+                        }
+                        fingers = maxOf(fingers, down)
+                        if (down == 0 && start != null) {
+                            val end = touches.first().position
+                            val dx = end.x - start.x
+                            val dy = end.y - start.y
+                            val quick = System.currentTimeMillis() - startedAt < SWIPE_MS
+                            val turn = swipe
+                            if (turn != null && fingers == 1 && quick && abs(dx) > SWIPE_MIN_PX && abs(dx) > 2 * abs(dy)) {
+                                turn(if (dx < 0) 1 else -1)
+                            } else if (turn != null && AppFlavor.edgeTaps && fingers == 1 &&
+                                System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < TAP_SLOP_PX && abs(dy) < TAP_SLOP_PX
+                            ) {
+                                // A tap at a side of the page turns it, like a pedal would.
+                                val w = viewport.viewSize.width
+                                if (end.x < w * EDGE_SHARE) turn(-1) else if (end.x > w * (1 - EDGE_SHARE)) turn(1)
+                            }
+                            start = null
+                        }
+                    }
+                }
+            }
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
@@ -1107,11 +1151,20 @@ private suspend fun PointerInputScope.middleDragPan(viewport: Viewport, tools: T
  * a scroll as a change with a delta rather than as a gesture, so this reads events directly and
  * turns each notch into either a zoom ratio or a velocity.
  */
-private suspend fun AwaitPointerEventScope.wheelLoop(viewport: Viewport) {
+private suspend fun AwaitPointerEventScope.wheelLoop(
+    viewport: Viewport,
+    swipe: () -> ((Int) -> Unit)? = { null }
+) {
     // A trackpad that has just spoken is still a trackpad a moment later, even on an event that
     // happens to look like a wheel's. Without this a two-finger drag zooms every so often, which
     // is worse than it never working.
     var glassSeenAt = 0L
+    // Two fingers sideways across a trackpad, while swipes turn pages: how far they have gone
+    // this gesture, and whether this gesture has already turned one. One swipe, one page.
+    var across = 0f
+    var down = 0f
+    var turned = false
+    var lastScrollAt = 0L
 
     while (true) {
         val event = awaitPointerEvent()
@@ -1124,6 +1177,9 @@ private suspend fun AwaitPointerEventScope.wheelLoop(viewport: Viewport) {
         val now = System.currentTimeMillis()
         if (twoFingered(event, sideways)) glassSeenAt = now
         val trackpad = now - glassSeenAt < GLASS_MEMORY_MS
+        if (now - lastScrollAt > SWIPE_PAUSE_MS) { across = 0f; down = 0f; turned = false }
+        lastScrollAt = now
+        val turn = swipe()
 
         val shift = event.keyboardModifiers.isShiftPressed
         val ctrl = event.keyboardModifiers.isCtrlPressed
@@ -1138,6 +1194,18 @@ private suspend fun AwaitPointerEventScope.wheelLoop(viewport: Viewport) {
             // Two fingers on a trackpad move the page the way two fingers on the glass do: both
             // directions at once, following the fingers, with no throw of their own - the fingers
             // are still there to keep moving it.
+            trackpad && turn != null -> {
+                across += sideways
+                down += notches
+                if (!turned && abs(across) > TRACKPAD_SWIPE_NOTCHES && abs(across) > 1.5f * abs(down)) {
+                    turned = true
+                    turn(if (across > 0) 1 else -1)
+                } else if (abs(down) > abs(across)) {
+                    viewport.stop()
+                    viewport.panBy(0f, -notches * Viewport.PAN_PER_NOTCH, freely = true)
+                }
+            }
+
             trackpad -> {
                 viewport.stop()
                 viewport.panBy(
@@ -1179,6 +1247,19 @@ private fun zoomFor(notches: Float): Float =
 /** How long a trackpad is still assumed to be the thing scrolling. */
 private const val GLASS_MEMORY_MS = 600L
 
+/** A finger swipe that turns a page: this far sideways, this quickly. */
+private const val SWIPE_MIN_PX = 90f
+private const val SWIPE_MS = 600L
+
+/** A tap that turns a page: this short, this still, and in this share of the width at a side. */
+private const val TAP_MS = 300L
+private const val TAP_SLOP_PX = 14f
+private const val EDGE_SHARE = 0.18f
+
+/** Two fingers on a trackpad: this many notches sideways turn a page; this long still ends it. */
+private const val TRACKPAD_SWIPE_NOTCHES = 2.5f
+private const val SWIPE_PAUSE_MS = 250L
+
 /**
  * Whether this scroll came from two fingers rather than a wheel.
  *
@@ -1191,10 +1272,6 @@ private fun twoFingered(event: PointerEvent, sideways: Float): Boolean {
     val awt = event.nativeEvent as? java.awt.event.MouseWheelEvent ?: return false
     val turned = awt.preciseWheelRotation
     return kotlin.math.abs(turned - Math.round(turned)) > 0.01
-}
-
-private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.wheel(viewport: Viewport) {
-    awaitPointerEventScope { wheelLoop(viewport) }
 }
 
 /** How close a click has to be to a handle, and how big one is drawn, in screen pixels. */

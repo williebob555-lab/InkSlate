@@ -127,6 +127,10 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
 
     override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)
 
+    override fun setEdgeTaps(on: Boolean) {
+        com.inkslate.desktop.AppFlavor.edgeTaps = on
+    }
+
     override fun openSet(parts: List<Pair<File, String>>, focus: Int) {
         com.inkslate.desktop.AppFlavor.openSet?.invoke(parts, focus) ?: parts.getOrNull(focus)?.let { openFile(it.first) }
     }
