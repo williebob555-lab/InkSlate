@@ -21,6 +21,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Highlight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -104,8 +106,10 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
         }
         val room = if (side) maxHeight else maxWidth
-        val extras = 150.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp)
-        val btn = ((room - extras) / (visible + 2).coerceAtLeast(1)).coerceIn(34.dp, 44.dp)
+        val named = state.stripLabels
+        val labelRoom = if (named && side) 12.dp else 0.dp
+        val extras = 120.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp)
+        val btn = ((room - extras) / (visible + 3).coerceAtLeast(1) - labelRoom).coerceIn(32.dp, 44.dp)
         val items: @Composable () -> Unit = {
             if (!collapsed) {
                 if (SelfRecorder.recording) {
@@ -114,22 +118,21 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 state.companion.status?.let { status ->
                     Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
                 }
-                // Which page, and the way to every page: tap for the overview.
+                // Which page, and the way to every page: the page editor, one tap away.
                 val (page, count) = state.pageShown
                 if (count > 0) {
-                    Text(
-                        "${page + 1}/$count",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary,
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .clickable { Perform.openPages?.invoke() }
-                            .padding(horizontal = 6.dp, vertical = 8.dp)
-                    )
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Text("${page + 1}/$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                        if (named) Text("Pages", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp)
+                    }
                 }
-                IconButton(onClick = { Perform.recentre?.invoke() }, modifier = Modifier.size(btn)) {
-                    Icon(Icons.Default.CenterFocusStrong, "Fit the page to the screen")
-                }
+                StripButton(Icons.Default.CenterFocusStrong, "Fit", "Fit the page to the screen", btn, named) { Perform.recentre?.invoke() }
                 // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
                     val total = state.library?.setlist(setlistId)?.entries?.size ?: 0
@@ -152,13 +155,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     lastGroup = group
                     val lit = (action == PerformAction.METRONOME && SharedMetronome.running) ||
                         (action != PerformAction.FULLSCREEN && Perform.on(action))
-                    IconButton(
-                        onClick = { Perform.run(action) },
-                        colors = if (lit) IconButtonDefaults.filledTonalIconButtonColors() else IconButtonDefaults.iconButtonColors(),
-                        modifier = Modifier.size(btn)
-                    ) {
-                        Icon(iconOf(action, Perform.on(PerformAction.FULLSCREEN)), action.label)
-                    }
+                    val fullscreen = Perform.on(PerformAction.FULLSCREEN)
+                    StripButton(iconOf(action, fullscreen), shortName(action, fullscreen), action.label, btn, named, lit) { Perform.run(action) }
                     // The tempo right under the button: one tap to change it, never a menu away.
                     if (action == PerformAction.METRONOME) {
                         Text(
@@ -173,7 +171,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     }
                 }
                 Box {
-                    IconButton(onClick = { menu = true }, modifier = Modifier.size(btn)) { Icon(Icons.Default.MoreVert, "Buttons") }
+                    StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }
                     StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true })
                 }
             }
@@ -252,8 +250,26 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
                 Modifier.fillMaxWidth().clickable { state.edgeTaps = !state.edgeTaps }.padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Tap the sides of the page to turn it", Modifier.weight(1f))
+                Text("Tap or swipe the page to turn it", Modifier.weight(1f))
                 Switch(checked = state.edgeTaps, onCheckedChange = { state.edgeTaps = it })
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable { state.stripLabels = !state.stripLabels }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Names under the buttons", Modifier.weight(1f))
+                Switch(checked = state.stripLabels, onCheckedChange = { state.stripLabels = it })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                Text("Show the turn", Modifier.weight(1f))
+                for ((style, label) in listOf("slide" to "Slide", "fade" to "Fade", "none" to "None")) {
+                    androidx.compose.material3.FilterChip(
+                        selected = state.turnStyle == style,
+                        onClick = { state.turnStyle = style },
+                        label = { Text(label) },
+                        modifier = Modifier.padding(start = 6.dp)
+                    )
+                }
             }
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
 
@@ -325,6 +341,57 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
     }
 }
 
+/**
+ * One of the strip's buttons: its icon, and its name under it - so what it does is never a guess.
+ * [description] is what a screen reader says.
+ */
+@Composable
+private fun StripButton(
+    icon: ImageVector,
+    name: String,
+    description: String,
+    size: androidx.compose.ui.unit.Dp,
+    named: Boolean,
+    lit: Boolean = false,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick).padding(horizontal = 2.dp, vertical = 1.dp)
+    ) {
+        Box(
+            Modifier.size(size).then(
+                if (lit) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier
+            ),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, description) }
+        if (named) {
+            Text(name, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1, lineHeight = 11.sp)
+        }
+    }
+}
+
+/** A button's name under it: a word or two. */
+private fun shortName(action: PerformAction, fullscreen: Boolean): String = when (action) {
+    PerformAction.NEXT_PAGE -> "Next"
+    PerformAction.PREVIOUS_PAGE -> "Back"
+    PerformAction.HALF_PAGE_FORWARD -> "Half on"
+    PerformAction.HALF_PAGE_BACK -> "Half back"
+    PerformAction.FIRST_PAGE -> "First"
+    PerformAction.LAST_PAGE -> "Last"
+    PerformAction.NEXT_SONG -> "Next song"
+    PerformAction.PREVIOUS_SONG -> "Last song"
+    PerformAction.METRONOME -> "Metronome"
+    PerformAction.TUNER -> "Tuner"
+    PerformAction.PLAY_AUDIO -> "Recording"
+    PerformAction.PEN -> "Pen"
+    PerformAction.HIGHLIGHTER -> "Highlight"
+    PerformAction.ERASER -> "Eraser"
+    PerformAction.UNDO -> "Undo"
+    PerformAction.REDO -> "Redo"
+    PerformAction.FULLSCREEN -> if (fullscreen) "All tools" else "Hide tools"
+}
+
 /** Page turns, pen tools, songs, sound, the screen: a thin rule between each. */
 private fun groupOf(action: PerformAction): Int = when (action) {
     PerformAction.PEN, PerformAction.HIGHLIGHTER, PerformAction.ERASER, PerformAction.UNDO, PerformAction.REDO -> 1
@@ -347,11 +414,11 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
     PerformAction.TUNER -> Icons.Default.GraphicEq
     PerformAction.PLAY_AUDIO -> if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayCircle
     PerformAction.PEN -> Icons.Default.Edit
-    PerformAction.HIGHLIGHTER -> Icons.Default.BorderColor
+    PerformAction.HIGHLIGHTER -> Icons.Default.Highlight
     PerformAction.ERASER -> Icons.Default.CleaningServices
     PerformAction.UNDO -> Icons.AutoMirrored.Filled.Undo
     PerformAction.REDO -> Icons.AutoMirrored.Filled.Redo
-    PerformAction.FULLSCREEN -> if (fullscreen) Icons.Default.Construction else Icons.Default.Fullscreen
+    PerformAction.FULLSCREEN -> if (fullscreen) Icons.Default.Construction else Icons.Default.Close
 }
 
 private const val K_COLLAPSED = "sheets_strip_collapsed"

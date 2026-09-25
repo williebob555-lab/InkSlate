@@ -51,11 +51,19 @@ internal fun AddMusicDialog(state: SheetsState, onClose: () -> Unit) {
     var way by remember { mutableStateOf<String?>(null) }
     when (way) {
         "download" -> return BulkImportDialog(state, onClose)
-        "folder" -> return ImportDialog(state, onClose)
+        "folder" -> return FolderCheckDialog(state, onClose)
         "scan" -> return ScanDialog(state, onClose)
     }
     SheetDialog(title = "Add music", onDismiss = onClose) {
         Column {
+            AddWay(Icons.Default.FolderOpen, "Files from anywhere",
+                "Pick PDFs, pictures or recordings from another app, Google Drive or Downloads. They go into your music folder's Inbox and are filed for you."
+            ) {
+                state.platform.pickFiles { files ->
+                    if (files.isNotEmpty()) Thread({ state.takeIn(files) }, "take-in").apply { isDaemon = true; start() }
+                }
+                onClose()
+            }
             AddWay(Icons.Default.Download, "A download",
                 "A zip or a folder of parts, from your band's website or anywhere. Songs, parts and setlists are sorted for you."
             ) { way = "download" }
@@ -65,7 +73,7 @@ internal fun AddMusicDialog(state: SheetsState, onClose: () -> Unit) {
                 ) { way = "scan" }
             }
             AddWay(Icons.Default.FolderOpen, "Already in my music folder",
-                "Files you put in the library folder yourself, or that arrived from another device."
+                "Anything put in the music folder - by you, the file manager or another device - is added by itself within seconds. Check now."
             ) { way = "folder" }
         }
     }
@@ -91,9 +99,9 @@ private fun AddWay(icon: ImageVector, title: String, detail: String, onClick: ()
  * songs with their parts, and a setlist for each concert folder - and bring it in.
  */
 @Composable
-internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit) {
+internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit, start: File? = null) {
     val root = state.root ?: return
-    var chosen by remember { mutableStateOf<File?>(null) }
+    var chosen by remember { mutableStateOf(start) }
     var plan by remember { mutableStateOf<BulkImport.Plan?>(null) }
     var source by remember { mutableStateOf<BulkImport.Source?>(null) }
     var inPlace by remember { mutableStateOf<String?>(null) }
@@ -102,7 +110,9 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit) {
     var result by remember { mutableStateOf<BulkImport.Result?>(null) }
     var working by remember { mutableStateOf(false) }
     var makeSetlists by remember { mutableStateOf(true) }
-    val skipped = remember { mutableStateListOf<String>() }
+    // The songs as the person wants them, and as they were worked out, for "Automatic".
+    val groups = remember { mutableStateListOf<ReviewGroup>() }
+    var automatic by remember { mutableStateOf<List<ReviewGroup>>(emptyList()) }
 
     val file = chosen
     if (file == null) {
@@ -148,7 +158,13 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit) {
             }
         }
         outcome.fold(
-            onSuccess = { (src, here, planned) -> source = src; inPlace = here; plan = planned },
+            onSuccess = { (src, here, planned) ->
+                source = src; inPlace = here; plan = planned
+                automatic = planned.songs.map { song ->
+                    ReviewGroup(song.title, song.parts.map { part -> reviewItem(part) }, into = existingFor(state, song.title))
+                }
+                groups.clear(); groups += automatic
+            },
             onFailure = { failed = it.message ?: "It could not be read." }
         )
     }
@@ -164,16 +180,18 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit) {
                 TextButton(onClick = onClose) { Text("Done") }
             } else {
                 TextButton(onClick = onClose) { Text("Cancel") }
-                val count = p?.songs?.count { it.title !in skipped } ?: 0
+                val count = groups.count { !it.skip }
                 TextButton(
                     enabled = count > 0 && !working,
                     onClick = {
-                        val plan0 = p ?: return@TextButton
+                        val plan0 = p?.let { reviewed(it, groups) } ?: return@TextButton
                         val src = source ?: return@TextButton
                         working = true
                         Thread({
                             val r = runCatching {
-                                BulkImport.apply(plan0, src, state.library!!, root, makeSetlists, skipped.toSet(), inPlace)
+                                state.importing++
+                                try { BulkImport.apply(plan0, src, state.library!!, root, makeSetlists, emptySet(), inPlace) }
+                                finally { state.importing-- }
                             }
                             // The unpacked copy of a zip has done its job.
                             if (!file.isDirectory) File(state.platform.cacheFolder, "inksheets-import").deleteRecursively()
@@ -220,31 +238,7 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit) {
                     Switch(checked = makeSetlists, onCheckedChange = { makeSetlists = it })
                 }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                    items(p.songs, key = { it.title }) { s ->
-                        Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 2.dp)) {
-                            Checkbox(
-                                checked = s.title !in skipped,
-                                onCheckedChange = { if (it) skipped.remove(s.title) else skipped.add(s.title) }
-                            )
-                            Column(Modifier.weight(1f).padding(top = 4.dp)) {
-                                val have = state.library?.songs?.any { Library.matchKey(it.title) == Library.matchKey(s.title) } == true
-                                Text(s.title + if (have) "  (already have - new parts are added)" else "", style = MaterialTheme.typography.titleSmall)
-                                val names = s.parts.map { part ->
-                                    part.instrument?.let { Instruments.byId[it]?.name }?.let { name ->
-                                        name + (com.inksheets.core.CompanionLink.partNumber(part.label)?.let { " $it" } ?: "")
-                                    } ?: "a part to be read"
-                                }
-                                Text(
-                                    names.joinToString(", ") + if (s.audio.isNotEmpty()) "  ·  ${s.audio.size} recording" + (if (s.audio.size > 1) "s" else "") else "",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2, overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
+                ImportReview(state, groups, automatic)
                 if (p.songs.any { s -> s.parts.any { it.instrument == null } }) {
                     Text(
                         "Parts not yet named are read from the page in the background once they are in.",
@@ -309,6 +303,7 @@ internal fun ScanDialog(state: SheetsState, onClose: () -> Unit) {
                 pdf.copyTo(target)
                 val rel = state.relative(target) ?: return@TextButton
                 val part = (guess ?: ImportPlan.PlannedPart(rel, null, com.inksheets.core.InstrumentSource.UNKNOWN, null)).copy(file = rel).toPart()
+                    .copy(id = Library.partIdFor(rel))
                 state.change {
                     val existing = songs.firstOrNull { Library.matchKey(it.title) == Library.matchKey(title) }
                     if (existing != null) editSong(existing.id) { parts = existing.parts + part }
@@ -337,6 +332,68 @@ internal fun ScanDialog(state: SheetsState, onClose: () -> Unit) {
             if (state.library?.songs?.any { Library.matchKey(it.title) == Library.matchKey(title) } == true) {
                 Text("Added as another part of the song you already have.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
             }
+        }
+    }
+}
+
+
+/** A part of a download as the review shows it: its file, and what it was read as. */
+private fun reviewItem(part: ImportPlan.PlannedPart): ReviewItem {
+    val name = part.file.substringAfterLast('/')
+    val instrument = part.instrument?.let { Instruments.byId[it]?.name }?.let { n ->
+        n + (com.inksheets.core.CompanionLink.partNumber(part.label)?.let { " $it" } ?: "")
+    } ?: "instrument to be read"
+    return ReviewItem(part.file, "$name - $instrument", ImportPlan.readableName(name))
+}
+
+/**
+ * The plan as the person left it in the review: its songs regrouped, retitled, left out or sent
+ * to songs already here - and its setlists pointing at the songs their files ended up in.
+ */
+private fun reviewed(plan: BulkImport.Plan, groups: List<ReviewGroup>): BulkImport.Plan {
+    val partByFile = plan.songs.flatMap { it.parts }.associateBy { it.file }
+    val songOfFile = plan.songs.flatMap { s -> s.parts.map { it.file to s } }.toMap()
+    val keyOfFile = HashMap<String, String>()
+    val songs = groups.mapIndexedNotNull { i, g ->
+        if (g.skip) return@mapIndexedNotNull null
+        val key = "g$i"
+        g.items.forEach { keyOfFile[it.key] = key }
+        val audio = g.items.mapNotNull { songOfFile[it.key] }.distinct().flatMap { it.audio }.distinct()
+        BulkImport.Song(g.title, g.items.mapNotNull { partByFile[it.key] }, audio, into = g.into, apart = g.apart, key = key)
+    }
+    val setlists = plan.setlists.map { list ->
+        val keys = list.songTitles.mapNotNull { title ->
+            plan.songs.firstOrNull { it.title == title }?.parts?.firstNotNullOfOrNull { keyOfFile[it.file] }
+        }.distinct()
+        BulkImport.SetlistPlan(list.name, keys)
+    }
+    return BulkImport.Plan(plan.name, songs, setlists)
+}
+
+
+/** The music folder looked at now, rather than in a few seconds. */
+@Composable
+private fun FolderCheckDialog(state: SheetsState, onClose: () -> Unit) {
+    var report by remember { mutableStateOf<com.inksheets.core.LibraryScan.Report?>(null) }
+    LaunchedEffect(Unit) { report = withContext(Dispatchers.IO) { state.scanFolder() } ?: com.inksheets.core.LibraryScan.Report() }
+    SheetDialog(title = "Your music folder", onDismiss = onClose) {
+        val r = report
+        if (r == null) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(24.dp))
+                Spacer(Modifier.width(12.dp))
+                Text("Looking...")
+            }
+        } else {
+            Text(
+                if (!r.changed) "Everything in it is already in the library."
+                else listOfNotNull(
+                    r.added.size.takeIf { it > 0 }?.let { "$it files added" },
+                    r.moved.size.takeIf { it > 0 }?.let { "$it moved files followed" },
+                    r.removed.size.takeIf { it > 0 }?.let { "$it removed" },
+                    r.merged.size.takeIf { it > 0 }?.let { "$it put together" }
+                ).joinToString(", ") + ". Details are in Settings, under Library health."
+            )
         }
     }
 }

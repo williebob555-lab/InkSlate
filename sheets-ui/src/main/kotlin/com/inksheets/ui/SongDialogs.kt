@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -49,6 +50,10 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
     var tempo by remember { mutableStateOf(song.tempo?.toString().orEmpty()) }
     var tags by remember { mutableStateOf((song.genres + song.tags).joinToString(", ")) }
     val parts = remember { mutableStateListOf(*song.parts.toTypedArray()) }
+    var colour by remember { mutableStateOf(song.color) }
+    var choosingColour by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf<Part?>(null) }
+    var splitting by remember { mutableStateOf<Part?>(null) }
 
     fun list(text: String) = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
@@ -69,6 +74,7 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                         this.tempo = tempo.trim().toIntOrNull()
                         this.tags = list(tags)
                         this.parts = parts.toList()
+                        if (colour != song.color) this.color = colour
                     }
                 }
                 onClose()
@@ -87,13 +93,21 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                 Box(Modifier.weight(1f)) { Field("Tempo", tempo) { tempo = it.filter(Char::isDigit) } }
             }
             Field("Tags and genres", tags) { tags = it }
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                Text("Colour", Modifier.weight(1f))
+                ColourBar(colour)
+                TextButton(onClick = { choosingColour = true }) { Text(if (colour == null) "Choose" else "Change") }
+            }
 
             Spacer(Modifier.size(12.dp))
             Text("Parts", style = MaterialTheme.typography.titleMedium)
             parts.forEachIndexed { i, part ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(part.file.substringAfterLast('/'), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            part.file.substringAfterLast('/') + (part.firstPage?.let { f -> "  ·  pages $f" + (part.lastPage?.takeIf { it != f }?.let { "-$it" } ?: "") } ?: ""),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
                         val how = when (part.source) {
                             InstrumentSource.TEXT, InstrumentSource.OCR -> "read from the page: ${part.label.orEmpty()}"
                             InstrumentSource.FILE_NAME -> "read from the file name"
@@ -105,9 +119,43 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                     InstrumentPicker(part.instrument) { chosen ->
                         parts[i] = part.copy(instrument = chosen, source = InstrumentSource.PERSON)
                     }
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
+                        androidx.compose.material3.IconButton(onClick = { menu = true }) {
+                            Icon(androidx.compose.material.icons.Icons.Default.MoreVert, "Part options")
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Show the pages...") },
+                                onClick = { menu = false; onClose(); state.showPages(song, part) }
+                            )
+                            DropdownMenuItem(text = { Text("Move to another song...") }, onClick = { menu = false; moving = part })
+                            if (parts.size > 1) {
+                                DropdownMenuItem(text = { Text("Make it a song of its own...") }, onClick = { menu = false; splitting = part })
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    if (choosingColour) {
+        ColourDialog("Colour", colour, onChosen = { colour = it; choosingColour = false }, onDismiss = { choosingColour = false })
+    }
+    moving?.let { part ->
+        PickSongDialog(
+            state, title = "Move this part to which song?", exclude = song.id, near = song.title,
+            onChosen = { to -> state.movePart(part.id, to.id); moving = null; onClose() },
+            onDismiss = { moving = null }
+        )
+    }
+    splitting?.let { part ->
+        AskName(
+            title = "A song of its own, called", initial = song.title, confirm = "Make it",
+            onDone = { name -> state.splitPart(part.id, name); splitting = null; onClose() },
+            onDismiss = { splitting = null }
+        )
     }
 }
 

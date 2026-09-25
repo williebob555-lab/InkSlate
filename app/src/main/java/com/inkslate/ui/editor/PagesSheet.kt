@@ -136,7 +136,9 @@ fun PagesSheet(
     onGoToPage: (Int) -> Unit,
     onApply: (List<PlannedPage>) -> Unit,
     onExport: (pages: List<Int>) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** More actions for the picked pages, from the app this runs in. */
+    extraActions: (@Composable (pages: List<Int>, close: () -> Unit) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var plan by remember(pageCount) { mutableStateOf(PageArrangement.identity(pageCount)) }
@@ -345,6 +347,9 @@ fun PagesSheet(
                             pickedAt.none { plan[it].isNew },
                         onClick = { onExport(pickedAt.map { plan[it].source }.sorted()) }
                     ) { Icon(Icons.Default.Share, "Export") }
+                    if (extraActions != null && !changed && pickedAt.isNotEmpty() && pickedAt.none { plan[it].isNew }) {
+                        extraActions(pickedAt.map { plan[it].source }.sorted(), onDismiss)
+                    }
                     val everything = pickedAt.size == plan.size
                     IconButton(
                         onClick = {

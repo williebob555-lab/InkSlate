@@ -2434,6 +2434,9 @@ fun EditorScreen(
                     exportOpen = true
                 },
                 onDismiss = { pagesOpen = false },
+                extraActions = com.inkslate.AppFlavor.pagesActions?.let { actions ->
+                    { pages, close -> actions(d.file.absolutePath, pages, close) }
+                },
                 onApply = { plan ->
                     pagesOpen = false
                     scope.launch {

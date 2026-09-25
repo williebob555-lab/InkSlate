@@ -32,6 +32,8 @@ private sealed interface MsStep {
     data object ChooseBackup : MsStep
     data class Unpacking(val backup: File, val note: String) : MsStep
     data class Working(val folder: File, val note: String) : MsStep
+    data class Review(val ctx: MsContext) : MsStep
+    data class Applying(val ctx: MsContext, val groups: List<ReviewGroup>, val note: String) : MsStep
     data class Done(val result: MobileSheetsImport.Result, val copied: Int, val marks: Int = 0) : MsStep
     data class Failed(val message: String) : MsStep
 }
@@ -43,6 +45,11 @@ private sealed interface MsStep {
 @Composable
 internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit, backup: File? = null) {
     var step by remember { mutableStateOf<MsStep>(if (backup != null) MsStep.Unpacking(backup, "Opening the backup...") else MsStep.Explain) }
+    // While music is being brought in, the folder scan waits rather than filing it its own way.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        state.importing++
+        onDispose { state.importing-- }
+    }
 
     when (val s = step) {
         MsStep.Explain -> SheetDialog(
@@ -117,6 +124,56 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit, backup:
             }
         }
 
+        is MsStep.Review -> {
+            val automatic = remember(s.ctx) {
+                s.ctx.planned.groups.map { g ->
+                    ReviewGroup(g.title, g.members.map { reviewItem(it) }, into = g.into)
+                }
+            }
+            val groups = remember(s.ctx) { androidx.compose.runtime.mutableStateListOf<ReviewGroup>().apply { addAll(automatic) } }
+            SheetDialog(
+                title = "Songs from MobileSheets",
+                onDismiss = onClose,
+                wide = true,
+                buttons = {
+                    TextButton(onClick = onClose) { Text("Cancel") }
+                    val count = groups.count { !it.skip }
+                    TextButton(onClick = { step = MsStep.Applying(s.ctx, groups.toList(), "Bringing the songs across...") }) {
+                        Text(if (count == 0) "Just the setlists and markings" else "Bring $count songs across")
+                    }
+                }
+            ) {
+                Column {
+                    if (s.ctx.planned.groups.isEmpty()) {
+                        Text("Every song is already here. The setlists and markings will still be brought up to date.")
+                    } else {
+                        Text(
+                            "${s.ctx.planned.groups.size} songs, from ${s.ctx.planned.groups.sumOf { it.members.size }} in MobileSheets" +
+                                (if (s.ctx.planned.skipped > 0) "; ${s.ctx.planned.skipped} already here." else "."),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        ImportReview(state, groups, automatic)
+                    }
+                }
+            }
+        }
+
+        is MsStep.Applying -> {
+            LaunchedEffect(s) {
+                step = withContext(Dispatchers.IO) {
+                    applyImport(state, s.ctx, s.groups) { note -> state.platform.onMain { if (step is MsStep.Applying) step = s.copy(note = note) } }
+                }
+                if (step is MsStep.Done) backup?.let { state.platform.setPref(backupDoneKey(it), "true") }
+            }
+            SheetDialog(title = "Import from MobileSheets", onDismiss = {}, buttons = {}) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(24.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text(s.note)
+                }
+            }
+        }
+
         is MsStep.Done -> SheetDialog(title = "Imported", onDismiss = onClose) {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 val r = s.result
@@ -157,9 +214,7 @@ private fun unpackBackup(state: SheetsState, backup: File, progress: (String) ->
             progress("Unpacking the music... ${read * 100 / total}%")
         }
     }.getOrElse { return MsStep.Failed("The backup could not be read: ${it.message}") }
-    val step = runImport(state, msFolder, progress, database = unpacked.database)
-    if (step is MsStep.Done) state.platform.setPref(backupDoneKey(backup), "true")
-    return step
+    return runImport(state, msFolder, progress, database = unpacked.database)
 }
 
 internal fun backupDoneKey(backup: File) = "msb_done_" + backup.name + "_" + backup.length()
@@ -195,8 +250,37 @@ private fun runImport(state: SheetsState, msFolder: File, progress: (String) -> 
         }
     }
 
-    progress("Bringing the songs across...")
-    val result = runCatching { MobileSheetsImport.run(tables, library, resolve) }
+    progress("Working out the songs...")
+    val planned = runCatching { MobileSheetsImport.plan(tables, library, resolve) }
+        .getOrElse { return MsStep.Failed("The import stopped: ${it.message}") }
+    return MsStep.Review(MsContext(tables, resolve, planned, copied))
+}
+
+/** A MobileSheets import worked out and waiting for the person's look. */
+internal class MsContext(
+    val tables: MobileSheetsImport.Tables,
+    val resolve: (String) -> String?,
+    val planned: MobileSheetsImport.Planned,
+    val copied: Int
+)
+
+private fun reviewItem(c: MobileSheetsImport.Candidate): ReviewItem {
+    val instruments = c.parts.map { p -> p.instrument?.let { com.inksheets.core.Instruments.byId[it]?.name } ?: "instrument to be read" }.distinct()
+    return ReviewItem("ms${c.msId}", "${c.title} - ${instruments.joinToString(", ")}", c.title)
+}
+
+/** Make the reviewed songs, then the setlists and markings. */
+private fun applyImport(state: SheetsState, ctx: MsContext, groups: List<ReviewGroup>, progress: (String) -> Unit): MsStep {
+    val root = state.root ?: return MsStep.Failed("Choose your music folder first.")
+    val library = state.library ?: return MsStep.Failed("Choose your music folder first.")
+    val tables = ctx.tables
+    val resolve = ctx.resolve
+    val copied = ctx.copied
+    val byKey = ctx.planned.groups.flatMap { it.members }.associateBy { "ms${it.msId}" }
+    val chosen = groups.filter { !it.skip }.map { g ->
+        MobileSheetsImport.Group(g.title, g.items.mapNotNull { byKey[it.key] }, into = g.into, apart = g.apart)
+    }
+    val result = runCatching { MobileSheetsImport.apply(tables, library, resolve, ctx.planned, chosen) }
         .getOrElse { return MsStep.Failed("The import stopped: ${it.message}") }
     // MobileSheets keeps its markings in the database, not the PDFs. They are brought across too,
     // and even when every song was already here - an earlier import did not bring them.

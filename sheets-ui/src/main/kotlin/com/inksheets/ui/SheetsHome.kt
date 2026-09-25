@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Minimize
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
@@ -91,9 +93,8 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     var reading by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     LaunchedEffect(state.library) {
         if (state.library == null) return@LaunchedEffect
-        // Files moved around the music folder are found again before anything else.
-        withContext(Dispatchers.IO) { runCatching { state.relinkMoved() } }
-        if (!state.platform.canRecognise) return@LaunchedEffect
+        // The folder is the library: what is in it now, before anything else.
+        withContext(Dispatchers.IO) { state.scanFolder() }
         withContext(Dispatchers.IO) {
             runCatching {
                 state.readUnknownParts { done, of -> reading = if (done < of) done to of else null }
@@ -104,8 +105,17 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
 
     // Edits from other devices arrive through the synced folder; look for them now and then.
     LaunchedEffect(state.library) {
+        var ticks = 0
         while (true) {
             withContext(Dispatchers.IO) { runCatching { state.refresh() } }
+            // The folder itself every so often: music added, moved or deleted on any device - or
+            // by the file manager - shows up here without anyone asking.
+            if (++ticks % 4 == 0) {
+                val report = withContext(Dispatchers.IO) { state.scanFolder() }
+                if (report?.added?.isNotEmpty() == true) {
+                    withContext(Dispatchers.IO) { runCatching { state.readUnknownParts() } }
+                }
+            }
             delay(3_000)
         }
     }
@@ -149,6 +159,11 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                         // The window covers the whole screen, title bar and all, so it closes from here.
                         if (state.platform.canQuit) {
                             HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Minimise") },
+                                leadingIcon = { Icon(Icons.Default.Minimize, null) },
+                                onClick = { more = false; state.platform.minimise() }
+                            )
                             DropdownMenuItem(
                                 text = { Text("Quit InkSheets") },
                                 leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null) },
@@ -205,6 +220,8 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) AddMusicDialog(state, onClose = { showImport = false })
+    // A zip shared or dropped from outside: straight to the bulk import's review.
+    state.downloadWaiting?.let { zip -> BulkImportDialog(state, onClose = { state.downloadWaiting = null }, start = zip) }
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -271,9 +288,29 @@ private fun SongsPane(state: SheetsState) {
     val sort = SongSort.valueOf(sortName)
     var withRecording by rememberSaveable { mutableStateOf(false) }
     var notInSet by rememberSaveable { mutableStateOf(false) }
+    var noInstrument by rememberSaveable { mutableStateOf(false) }
+    var noTempo by rememberSaveable { mutableStateOf(false) }
+    var missingOnly by rememberSaveable { mutableStateOf(false) }
+    var merging by remember { mutableStateOf<Song?>(null) }
+    var colouring by remember { mutableStateOf<Song?>(null) }
 
     val version = state.version
-    val songs = remember(version, state.profileId, query, sort, withRecording, notInSet) {
+    // What each filter would pick out of the whole library - a filter that would show nothing,
+    // or everything, is not offered.
+    val counts = remember(version) {
+        val lib = state.library
+        val all = lib?.songs.orEmpty()
+        val inSets = lib?.setlists.orEmpty().flatMap { l -> l.entries.map { it.songId } }.toSet()
+        FilterCounts(
+            total = all.size,
+            recording = all.count { it.audio.isNotEmpty() },
+            notInSet = all.count { it.id !in inSets },
+            noInstrument = all.count { s -> s.parts.any { it.instrument == null } },
+            noTempo = all.count { it.tempo == null },
+            missing = all.filter { s -> s.parts.any { state.fileOf(it.file)?.isFile == false } }.map { it.id }.toSet()
+        )
+    }
+    val songs = remember(version, state.profileId, query, sort, withRecording, notInSet, noInstrument, noTempo, missingOnly) {
         val lib = state.library
         val all = lib?.songs.orEmpty()
         val inSets = if (notInSet) lib?.setlists.orEmpty().flatMap { l -> l.entries.map { it.songId } }.toSet() else emptySet()
@@ -282,8 +319,13 @@ private fun SongsPane(state: SheetsState) {
             (q.isEmpty() || (listOf(s.title) + s.composers + s.arrangers + s.artists + s.genres + s.tags)
                 .any { it.lowercase().contains(q) }) &&
                 (!withRecording || s.audio.isNotEmpty()) &&
-                (!notInSet || s.id !in inSets)
+                (!notInSet || s.id !in inSets) &&
+                (!noInstrument || s.parts.any { it.instrument == null }) &&
+                (!noTempo || s.tempo == null) &&
+                (!missingOnly || s.id in counts.missing)
         }
+        // Filling in details is for every song, not only the chosen instrument's.
+        if (noInstrument || noTempo || missingOnly) return@remember matching.map { it to PartChoice.Fit.YES }
         val listed = PartChoice.songsFor(matching, state.profile)
         when (sort) {
             SongSort.AZ -> listed
@@ -312,8 +354,23 @@ private fun SongsPane(state: SheetsState) {
                 androidx.compose.material3.FilterChip(selected = sort == o, onClick = { sortName = o.name }, label = { Text(o.label) })
             }
             androidx.compose.material3.VerticalDivider(Modifier.height(24.dp).padding(horizontal = 4.dp))
-            androidx.compose.material3.FilterChip(selected = withRecording, onClick = { withRecording = !withRecording }, label = { Text("Has a recording") })
-            androidx.compose.material3.FilterChip(selected = notInSet, onClick = { notInSet = !notInSet }, label = { Text("In no setlist") })
+            fun useful(n: Int, on: Boolean) = on || (n in 1 until counts.total)
+            if (useful(counts.recording, withRecording)) {
+                androidx.compose.material3.FilterChip(selected = withRecording, onClick = { withRecording = !withRecording }, label = { Text("Has a recording") })
+            }
+            if (useful(counts.notInSet, notInSet)) {
+                androidx.compose.material3.FilterChip(selected = notInSet, onClick = { notInSet = !notInSet }, label = { Text("In no setlist") })
+            }
+            // Details worth filling in, offered only while some are missing.
+            if (counts.noInstrument > 0 || noInstrument) {
+                androidx.compose.material3.FilterChip(selected = noInstrument, onClick = { noInstrument = !noInstrument }, label = { Text("No instrument (${counts.noInstrument})") })
+            }
+            if (counts.noTempo > 0 || noTempo) {
+                androidx.compose.material3.FilterChip(selected = noTempo, onClick = { noTempo = !noTempo }, label = { Text("No tempo (${counts.noTempo})") })
+            }
+            if (counts.missing.isNotEmpty() || missingOnly) {
+                androidx.compose.material3.FilterChip(selected = missingOnly, onClick = { missingOnly = !missingOnly }, label = { Text("File missing (${counts.missing.size})") })
+            }
         }
         if (songs.isEmpty()) {
             Text(
@@ -360,11 +417,17 @@ private fun SongsPane(state: SheetsState) {
                         SongRow(
                             song = song,
                             unsure = fit == PartChoice.Fit.UNKNOWN,
+                            missing = song.id in counts.missing,
                             onOpen = { state.stopPlaying(); openSong(state, song) },
                             onEdit = { editing = song },
                             onAddToSetlist = { addingToSetlist = song },
                             onRecordings = { recordingsFor = song },
-                            onDelete = { state.change { deleteSong(song.id) } }
+                            onColour = { colouring = song },
+                            onMerge = { merging = song },
+                            onDelete = { state.removeSong(song) },
+                            trailing = if (noInstrument || noTempo) {
+                                { TextButton(onClick = { editing = song }) { Text("Fill in") } }
+                            } else null
                         )
                         HorizontalDivider()
                     }
@@ -393,6 +456,16 @@ private fun SongsPane(state: SheetsState) {
     }
 
     editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    colouring?.let { song ->
+        ColourDialog("Colour for ${song.title}", song.color, onChosen = { state.setSongColor(song.id, it); colouring = null }, onDismiss = { colouring = null })
+    }
+    merging?.let { song ->
+        PickSongDialog(
+            state, title = "Put \u201C${song.title}\u201D into which song?", exclude = song.id, near = song.title,
+            onChosen = { into -> state.mergeSongs(song.id, into.id); merging = null },
+            onDismiss = { merging = null }
+        )
+    }
     recordingsFor?.let { song -> AudioDialog(state, song, onClose = { recordingsFor = null }) }
     addingToSetlist?.let { song ->
         SetlistChooserDialog(
@@ -425,12 +498,17 @@ internal fun SongRow(
     onAddToSetlist: (() -> Unit)? = null,
     onRecordings: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
+    onColour: (() -> Unit)? = null,
+    onMerge: (() -> Unit)? = null,
+    missing: Boolean = false,
     trailing: (@Composable () -> Unit)? = null
 ) {
+    val tint = song.color?.let { androidx.compose.ui.graphics.Color(it).copy(alpha = 0.10f) } ?: androidx.compose.ui.graphics.Color.Transparent
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().background(tint).clickable(onClick = onOpen).padding(start = 6.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        ColourBar(song.color)
         Column(Modifier.weight(1f)) {
             Text(song.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val detail = listOfNotNull(
@@ -440,6 +518,9 @@ internal fun SongRow(
             ).joinToString("  ·  ")
             if (detail.isNotEmpty()) {
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (missing) {
+                Text("A file is not on this device", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
             val instruments = song.instruments.mapNotNull { Instruments.byId[it]?.name }.sorted()
             if (instruments.isNotEmpty() || unsure) {
@@ -465,10 +546,12 @@ internal fun SongRow(
                             onClick = { menu = false; it() }
                         )
                     }
+                    onColour?.let { DropdownMenuItem(text = { Text("Colour...") }, onClick = { menu = false; it() }) }
+                    onMerge?.let { DropdownMenuItem(text = { Text("Put into another song...") }, onClick = { menu = false; it() }) }
                     onDelete?.let {
                         var confirm by remember { mutableStateOf(false) }
                         DropdownMenuItem(
-                            text = { Text(if (confirm) "Tap again to remove" else "Remove from library", fontWeight = if (confirm) FontWeight.Bold else null) },
+                            text = { Text(if (confirm) "Tap again: it goes to the Trash for 30 days" else "Remove from library", fontWeight = if (confirm) FontWeight.Bold else null) },
                             onClick = { if (confirm) { menu = false; it() } else confirm = true }
                         )
                     }
@@ -531,6 +614,11 @@ internal fun howLongAgo(at: Long, never: String): String {
         else -> "Longer ago"
     }
 }
+
+/** How many songs each filter would pick out, to offer only the filters that would do something. */
+private data class FilterCounts(
+    val total: Int, val recording: Int, val notInSet: Int, val noInstrument: Int, val noTempo: Int, val missing: Set<String>
+)
 
 /** How the song list is ordered. */
 internal enum class SongSort(val label: String) {

@@ -74,7 +74,14 @@ data class Song(
     val bookmarks: List<Bookmark> = emptyList(),
     val created: Long = 0,
     /** When it was last opened, on any device; 0 for never. */
-    val opened: Long = 0
+    val opened: Long = 0,
+    /** A colour to pick the song out by (ARGB), or null for the theme's own. */
+    val color: Int? = null,
+    /**
+     * Set when a person split this song off from another of the same name: two different pieces
+     * both called "Overture". The library never puts it back together with its namesake.
+     */
+    val apart: Boolean = false
 ) {
     /** The instruments this song has parts for. */
     val instruments: Set<String> get() = parts.flatMap { listOfNotNull(it.instrument) + it.also }.toSet()
@@ -98,7 +105,9 @@ data class Setlist(
     val order: Double = 0.0,
     val notes: String? = null,
     /** When it is performed, for sorting a year's concerts; ISO date or null. */
-    val date: String? = null
+    val date: String? = null,
+    /** A colour to pick the setlist out by (ARGB), or null for the theme's own. */
+    val color: Int? = null
 )
 
 /**
@@ -153,7 +162,10 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     @get:Synchronized
     val songs: List<Song>
-        get() = state.live(SONG).map { (id, f) -> song(id, f) }.sortedBy { sortKey(it.title) }
+        get() {
+            val parts = partIndex()
+            return state.live(SONG).map { (id, f) -> song(id, f, parts) }.sortedBy { sortKey(it.title) }
+        }
 
     @get:Synchronized
     val setlists: List<Setlist>
@@ -166,7 +178,176 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
             .sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
 
     fun song(id: String): Song? = synchronized(this) {
-        state.live(SONG)[id]?.let { song(id, it) }
+        state.live(SONG)[id]?.let { song(id, it, partIndex()) }
+    }
+
+    // ---- parts, each a record of its own -----------------------------------------------
+
+    /**
+     * Every live part, by the song it belongs to, in order.
+     *
+     * Parts used to be one list on their song, so two devices each adding a part at the same time
+     * wrote two lists, and the later one won - the other part was simply gone. Each part is now a
+     * record of its own (kind [PART]), so adding, moving or removing one never touches another.
+     */
+    private fun partIndex(): Map<String, List<Part>> =
+        state.live(PART).mapNotNull { (id, f) ->
+            val song = f.string("song") ?: return@mapNotNull null
+            val file = f.string("file") ?: return@mapNotNull null
+            Triple(song, f.string("order")?.toDoubleOrNull() ?: 0.0, Part(
+                id = id, file = file,
+                firstPage = f.string("firstPage")?.toDoubleOrNull()?.toInt(),
+                lastPage = f.string("lastPage")?.toDoubleOrNull()?.toInt(),
+                instrument = f.string("instrument"),
+                source = f.string("source")?.let { v -> InstrumentSource.entries.firstOrNull { it.name == v } } ?: InstrumentSource.UNKNOWN,
+                label = f.string("label"),
+                also = f.list("also", STRING_LIST)
+            ))
+        }.groupBy({ it.first }, { it.second to it.third })
+            .mapValues { (_, list) -> list.sortedWith(compareBy({ it.first }, { it.second.id })).map { it.second } }
+
+    /** A song's parts: its part records, and any from the older list form not yet made into records. */
+    private fun partsOf(songId: String, fields: Map<String, JsonElement>, index: Map<String, List<Part>>): List<Part> {
+        val records = index[songId].orEmpty()
+        val legacy = fields.list("parts", PART_LIST).filter { state.fields(PART, it.id) == null }
+        return records + legacy
+    }
+
+    /** The song a part record belongs to, and whether it is live. */
+    fun partHome(partId: String): Pair<String?, Boolean> = synchronized(this) {
+        val f = state.fields(PART, partId) ?: return null to false
+        val song = (f["song"]?.value as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+        val deleted = (f[Op.DELETED]?.value as? JsonPrimitive)?.content == "true"
+        song to !deleted
+    }
+
+    /** When a part record was deleted, or null when it never was (or has been brought back). */
+    fun partDeletedAt(partId: String): Long? = synchronized(this) {
+        val f = state.fields(PART, partId) ?: return null
+        val d = f[Op.DELETED] ?: return null
+        if ((d.value as? JsonPrimitive)?.content != "true") return null
+        d.at.ms
+    }
+
+    /**
+     * Make [wanted] the parts of [songId]: new ones added, changed ones rewritten field by field,
+     * and ones no longer wanted removed - but only those still recorded as this song's, so a part
+     * just moved to another song is not taken away from it.
+     */
+    fun setParts(songId: String, wanted: List<Part>) {
+        val current = song(songId)?.parts.orEmpty()
+        val wantedIds = wanted.map { it.id }.toSet()
+        for (p in current) {
+            if (p.id in wantedIds) continue
+            val (home, _) = partHome(p.id)
+            if (home == null || home == songId) edit(PART, p.id) { put("song", songId); put("file", p.file); put(Op.DELETED, true) }
+        }
+        wanted.forEachIndexed { index, p -> writePart(songId, p, index.toDouble()) }
+    }
+
+    /** Write one part's record, only the fields that differ from what is recorded. */
+    fun writePart(songId: String, p: Part, order: Double? = null) = synchronized(this) {
+        val f = state.fields(PART, p.id)
+        fun same(field: String, v: JsonElement): Boolean = f?.get(field)?.value == v
+        val want = linkedMapOf<String, JsonElement>(
+            "song" to JsonPrimitive(songId),
+            "file" to JsonPrimitive(p.file),
+            "firstPage" to (p.firstPage?.let(::JsonPrimitive) ?: JsonNull),
+            "lastPage" to (p.lastPage?.let(::JsonPrimitive) ?: JsonNull),
+            "instrument" to (p.instrument?.let(::JsonPrimitive) ?: JsonNull),
+            "source" to JsonPrimitive(p.source.name),
+            "label" to (p.label?.let(::JsonPrimitive) ?: JsonNull),
+            "also" to json.encodeToJsonElement(STRING_LIST, p.also),
+            Op.DELETED to JsonPrimitive(false)
+        )
+        if (f == null || f["order"] == null) want["order"] = JsonPrimitive(order ?: System.currentTimeMillis().toDouble())
+        val changed = want.filter { (k, v) -> !same(k, v) }
+        if (changed.isNotEmpty()) edit(PART, p.id) { changed.forEach { (k, v) -> put(k, v) } }
+    }
+
+    /** Remove a part. */
+    fun deletePart(partId: String) = edit(PART, partId) { put(Op.DELETED, true) }
+
+    /**
+     * Turn every song's parts in the older list form into part records, keeping their ids - which
+     * every device already shares, so devices doing this at once write the same records. Returns
+     * how many were moved over.
+     */
+    fun migrateParts(): Int {
+        var moved = 0
+        val pending = synchronized(this) {
+            state.live(SONG).map { (id, f) -> id to f.list("parts", PART_LIST).filter { state.fields(PART, it.id) == null } }
+                .filter { it.second.isNotEmpty() }
+        }
+        for ((songId, legacy) in pending) {
+            legacy.forEachIndexed { i, p -> writePart(songId, p, i.toDouble()); moved++ }
+        }
+        return moved
+    }
+
+    /**
+     * The song called [title], made if there is none: found by its title with case, punctuation
+     * and a leading article ignored. A new one's id comes from the title itself, so two devices
+     * that each find the same new music make the same song rather than two.
+     */
+    fun ensureSong(title: String): Song {
+        val key = matchKey(title)
+        songs.firstOrNull { !it.apart && matchKey(it.title) == key }?.let { return it }
+        val id = songIdFor(title)
+        edit(SONG, id) {
+            put("title", title)
+            put("created", System.currentTimeMillis())
+            put(Op.DELETED, false)
+        }
+        return song(id)!!
+    }
+
+    /**
+     * Put all of [fromId]'s parts and recordings into [intoId], point its setlist entries there,
+     * and remove it. For two songs that are one piece.
+     */
+    fun mergeSongs(fromId: String, intoId: String) {
+        if (fromId == intoId) return
+        val from = song(fromId) ?: return
+        val into = song(intoId) ?: return
+        from.parts.forEach { writePart(intoId, it) }
+        val audio = into.audio + from.audio.filter { a -> into.audio.none { it.file == a.file } }
+        editSong(intoId) {
+            if (audio != into.audio) this.audio = audio
+            if (into.composers.isEmpty() && from.composers.isNotEmpty()) composers = from.composers
+            if (into.arrangers.isEmpty() && from.arrangers.isNotEmpty()) arrangers = from.arrangers
+            if (into.tempo == null && from.tempo != null) tempo = from.tempo
+            if (into.key == null && from.key != null) key = from.key
+            if (into.timeSignature == null && from.timeSignature != null) timeSignature = from.timeSignature
+            if (into.color == null && from.color != null) color = from.color
+        }
+        for (list in setlists) {
+            if (list.entries.none { it.songId == fromId }) continue
+            // A setlist that already has the song keeps it once, where it was.
+            val next = if (list.entries.any { it.songId == intoId }) list.entries.filter { it.songId != fromId }
+            else list.entries.map { if (it.songId == fromId) it.copy(songId = intoId) else it }
+            editSetlist(list.id) { entries = next }
+        }
+        deleteSong(fromId)
+    }
+
+    /**
+     * Move one part to [songId]. When [songId] is null the part becomes a song of its own, named
+     * [title] and kept apart from any song of the same name.
+     */
+    fun movePart(partId: String, songId: String?, title: String? = null): String? {
+        val from = songs.firstOrNull { s -> s.parts.any { it.id == partId } } ?: return null
+        val part = from.parts.first { it.id == partId }
+        val target = songId ?: newId().also { id ->
+            edit(SONG, id) {
+                put("title", title ?: from.title)
+                put("created", System.currentTimeMillis())
+                put("apart", true)
+            }
+        }
+        writePart(target, part)
+        if (from.parts.size == 1 && from.audio.isEmpty()) deleteSong(from.id)
+        return target
     }
 
     fun setlist(id: String): Setlist? = setlists.firstOrNull { it.id == id }
@@ -211,16 +392,21 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     fun addSong(title: String, parts: List<Part> = emptyList(), setup: SongEdit.() -> Unit = {}): Song {
         val id = newId()
+        var wanted: List<Part>? = null
         edit(SONG, id) {
             put("title", title)
-            put("parts", parts, PART_LIST)
             put("created", System.currentTimeMillis())
-            SongEdit(this).setup()
+            wanted = SongEdit(this).apply(setup).partsWanted
         }
+        (wanted ?: parts).forEachIndexed { i, p -> writePart(id, p, i.toDouble()) }
         return song(id)!!
     }
 
-    fun editSong(id: String, change: SongEdit.() -> Unit) = edit(SONG, id) { SongEdit(this).change() }
+    fun editSong(id: String, change: SongEdit.() -> Unit) {
+        var wanted: List<Part>? = null
+        edit(SONG, id) { wanted = SongEdit(this).apply(change).partsWanted }
+        wanted?.let { setParts(id, it) }
+    }
 
     fun addFolder(name: String, parentId: String? = null): Folder {
         val id = newId()
@@ -281,6 +467,12 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     }
 
     fun deleteSong(id: String) = edit(SONG, id) { put(Op.DELETED, true) }
+
+    /** Bring back a song that was removed (from the library's Trash). */
+    fun restoreSong(id: String) = edit(SONG, id) { put(Op.DELETED, false) }
+
+    /** Bring back a removed part, in the song it was in. */
+    fun restorePart(partId: String) = edit(PART, partId) { put(Op.DELETED, false) }
 
     /** Note that [id] was opened just now, for "Recently opened". */
     fun markOpened(id: String, at: Long = System.currentTimeMillis()) = edit(SONG, id) { put("opened", at) }
@@ -389,7 +581,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     // ---- decoding --------------------------------------------------------------
 
-    private fun song(id: String, f: Map<String, JsonElement>) = Song(
+    private fun song(id: String, f: Map<String, JsonElement>, index: Map<String, List<Part>>) = Song(
         id = id,
         title = f.string("title") ?: "Untitled",
         composers = f.list("composers", STRING_LIST),
@@ -402,11 +594,13 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         tempo = f.string("tempo")?.toDoubleOrNull()?.toInt(),
         difficulty = f.string("difficulty")?.toDoubleOrNull()?.toInt(),
         notes = f.string("notes"),
-        parts = f.list("parts", PART_LIST),
+        parts = partsOf(id, f, index),
         audio = f.list("audio", AUDIO_LIST),
         bookmarks = f.list("bookmarks", BOOKMARK_LIST),
         created = f.string("created")?.toLongOrNull() ?: 0,
-        opened = f.string("opened")?.toLongOrNull() ?: 0
+        opened = f.string("opened")?.toLongOrNull() ?: 0,
+        color = f.string("color")?.toDoubleOrNull()?.toLong()?.toInt(),
+        apart = f.string("apart") == "true"
     )
 
     private fun setlist(id: String, f: Map<String, JsonElement>) = Setlist(
@@ -416,7 +610,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         entries = f.list("entries", ENTRY_LIST),
         order = f.string("order")?.toDoubleOrNull() ?: 0.0,
         notes = f.string("notes"),
-        date = f.string("date")
+        date = f.string("date"),
+        color = f.string("color")?.toDoubleOrNull()?.toLong()?.toInt()
     )
 
     private fun folder(id: String, f: Map<String, JsonElement>) = Folder(
@@ -462,6 +657,17 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         const val FOLDER = "folder"
         const val PRACTICE = "practice"
         const val PROFILE = "profile"
+        const val PART = "part"
+
+        /** The id a song found by title is given: the same on every device for the same title. */
+        fun songIdFor(title: String): String = "s-" + digest(matchKey(title))
+
+        /** The id a part found in the music folder is given: the same on every device for the same file. */
+        fun partIdFor(relativePath: String): String = "p-" + digest(relativePath.lowercase())
+
+        private fun digest(text: String): String =
+            java.security.MessageDigest.getInstance("SHA-1").digest(text.toByteArray())
+                .take(10).joinToString("") { "%02x".format(it) }
 
         internal val STRING_LIST = ListSerializer(String.serializer())
         internal val PART_LIST = ListSerializer(Part.serializer())
@@ -495,7 +701,11 @@ class SongEdit internal constructor(private val edit: Library.Edit) {
     var tempo: Int? = null; set(v) { field = v; edit.put("tempo", v) }
     var difficulty: Int? = null; set(v) { field = v; edit.put("difficulty", v) }
     var notes: String? = null; set(v) { field = v; edit.put("notes", v) }
-    var parts: List<Part>? = null; set(v) { field = v; edit.put("parts", v.orEmpty(), Library.PART_LIST) }
+    /** The song's parts, all together: written as a part record each, never as one list. */
+    var parts: List<Part>? = null; set(v) { field = v; partsWanted = v.orEmpty() }
+    internal var partsWanted: List<Part>? = null
+    var color: Int? = null; set(v) { field = v; edit.put("color", v) }
+    var apart: Boolean? = null; set(v) { field = v; edit.put("apart", v ?: false) }
     var audio: List<AudioTrack>? = null; set(v) { field = v; edit.put("audio", v.orEmpty(), Library.AUDIO_LIST) }
     var bookmarks: List<Bookmark>? = null; set(v) { field = v; edit.put("bookmarks", v.orEmpty(), Library.BOOKMARK_LIST) }
 }
@@ -507,4 +717,5 @@ class SetlistEdit internal constructor(private val edit: Library.Edit) {
     var order: Double? = null; set(v) { field = v; edit.put("order", v) }
     var notes: String? = null; set(v) { field = v; edit.put("notes", v) }
     var date: String? = null; set(v) { field = v; edit.put("date", v) }
+    var color: Int? = null; set(v) { field = v; edit.put("color", v) }
 }

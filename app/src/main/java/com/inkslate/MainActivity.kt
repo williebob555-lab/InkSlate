@@ -126,6 +126,14 @@ class MainActivity : ComponentActivity() {
             com.inkslate.AppFlavor.onLink?.invoke(link.toString())
             return
         }
+        // InkSheets files shared music into its library rather than opening it as a document.
+        val shared: List<Uri> = when (intent?.action) {
+            Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
+            Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM).orEmpty()
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            else -> emptyList()
+        }
+        if (shared.isNotEmpty() && com.inkslate.AppFlavor.onIncomingFiles?.invoke(shared) == true) return
         val uri = when (intent?.action) {
             Intent.ACTION_VIEW, Intent.ACTION_EDIT -> intent.data
             Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)

@@ -1,5 +1,7 @@
 package com.inkslate.desktop
 
+import java.io.File
+
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -56,8 +58,14 @@ fun runAs(name: String, setup: () -> Unit) {
 @OptIn(ExperimentalComposeUiApi::class, kotlinx.coroutines.FlowPreview::class)
 private fun ui() = application {
     // Where it was left, rather than the middle of the screen at a fixed size every time.
-    val state = remember { WindowMemory.restore() }
+    val state = remember {
+        WindowMemory.restore().also {
+            // Straight to the whole screen, so the window never shows a frame first.
+            if (AppFlavor.alwaysFullscreen) it.placement = androidx.compose.ui.window.WindowPlacement.Fullscreen
+        }
+    }
     AppFlavor.quit = ::exitApplication
+    AppFlavor.minimise = { state.isMinimized = true }
 
     // The screen can change shape under the window - the machine folds into a tablet and the
     // display turns - and the toolkit has no event for it, so it is looked at rather than waited
@@ -113,6 +121,9 @@ private fun ui() = application {
         onCloseRequest = ::exitApplication,
         state = state,
         title = AppFlavor.name,
+        // A music stand has no frame: no title bar and no border, ever. Quit and minimise are in
+        // the app's own menu.
+        undecorated = AppFlavor.alwaysFullscreen,
         onKeyEvent = { event ->
             // Looked up rather than decided here. What a key does is a table now, on the same
             // terms as what a button does - see KeyBindingStore - so a shortcut can be moved, and
@@ -147,6 +158,21 @@ private fun ui() = application {
             }
         }
     ) {
+        // Files dragged onto the window, for an app that takes them (InkSheets files them).
+        androidx.compose.runtime.LaunchedEffect(window) {
+            val take = AppFlavor.onFilesDropped ?: return@LaunchedEffect
+            window.dropTarget = java.awt.dnd.DropTarget(window, object : java.awt.dnd.DropTargetAdapter() {
+                override fun drop(event: java.awt.dnd.DropTargetDropEvent) {
+                    runCatching {
+                        event.acceptDrop(java.awt.dnd.DnDConstants.ACTION_COPY)
+                        @Suppress("UNCHECKED_CAST")
+                        val files = event.transferable.getTransferData(java.awt.datatransfer.DataFlavor.javaFileListFlavor) as List<File>
+                        take(files)
+                        event.dropComplete(true)
+                    }.onFailure { event.dropComplete(false) }
+                }
+            })
+        }
         // Windows tells the toolkit nothing about pens or fingers, so the window's own message
         // loop is read directly. Retried for a moment because the drawing surface is created a
         // little after the window is, and it is one of the windows that has to be hooked.

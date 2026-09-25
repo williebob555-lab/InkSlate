@@ -174,9 +174,15 @@ fun DocumentCanvas(
      * the one before. A quick finger swipe, or two fingers across a trackpad.
      */
     onSwipe: ((Int) -> Unit)? = null,
+    /** True while a finger should turn pages rather than move them: a fitted page of music. */
+    atRest: () -> Boolean = { false },
+    /** Put a fitted page of music back where it belongs after a drag that did not turn it. */
+    recentre: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val swipe by rememberUpdatedState(onSwipe)
+    val resting by rememberUpdatedState(atRest)
+    val settle by rememberUpdatedState(recentre)
     val extents = remember(source, source.pageCount) {
         (0 until source.pageCount).map {
             val d = source.pageDim(it)
@@ -513,6 +519,7 @@ fun DocumentCanvas(
                     var start: Offset? = null
                     var startedAt = 0L
                     var fingers = 0
+                    var fitted = false
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         val touches = event.changes.filter { it.type == PointerType.Touch }
@@ -522,6 +529,7 @@ fun DocumentCanvas(
                             start = touches.first { it.pressed }.position
                             startedAt = System.currentTimeMillis()
                             fingers = 1
+                            fitted = resting()
                         }
                         fingers = maxOf(fingers, down)
                         if (down == 0 && start != null) {
@@ -530,14 +538,21 @@ fun DocumentCanvas(
                             val dy = end.y - start.y
                             val quick = System.currentTimeMillis() - startedAt < SWIPE_MS
                             val turn = swipe
-                            if (turn != null && fingers == 1 && quick && abs(dx) > SWIPE_MIN_PX && abs(dx) > 2 * abs(dy)) {
+                            val w = viewport.viewSize.width
+                            // A quick flick, or on a fitted page any drag a good way across.
+                            val swiped = abs(dx) > 1.5f * abs(dy) &&
+                                ((quick && abs(dx) > SWIPE_MIN_PX) || (fitted && abs(dx) > w * FITTED_SWIPE_SHARE))
+                            val tapped = System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < TAP_SLOP_PX && abs(dy) < TAP_SLOP_PX
+                            if (turn != null && fingers == 1 && swiped) {
                                 turn(if (dx < 0) 1 else -1)
-                            } else if (turn != null && AppFlavor.edgeTaps && fingers == 1 &&
-                                System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < TAP_SLOP_PX && abs(dy) < TAP_SLOP_PX
-                            ) {
-                                // A tap at a side of the page turns it, like a pedal would.
-                                val w = viewport.viewSize.width
-                                if (end.x < w * EDGE_SHARE) turn(-1) else if (end.x > w * (1 - EDGE_SHARE)) turn(1)
+                            } else if (turn != null && AppFlavor.edgeTaps && fingers == 1 && tapped) {
+                                // A tap turns the page like a pedal would: at the sides, or on a
+                                // fitted page anywhere - the left half back, the right half on.
+                                val share = if (fitted) 0.5f else EDGE_SHARE
+                                if (end.x < w * share) turn(-1) else if (end.x >= w * (1 - share)) turn(1)
+                            } else if (turn != null && fitted && fingers == 1 && !tapped) {
+                                // Dragged, but not far enough to turn: the page goes back.
+                                settle()
                             }
                             start = null
                         }
@@ -1274,6 +1289,9 @@ private const val SWIPE_MS = 600L
 private const val TAP_MS = 300L
 private const val TAP_SLOP_PX = 14f
 private const val EDGE_SHARE = 0.18f
+
+/** On a fitted page of music, a drag this share of the width across turns it, however slow. */
+private const val FITTED_SWIPE_SHARE = 0.15f
 
 /** Two fingers on a trackpad: this many notches sideways turn a page; this long still ends it. */
 private const val TRACKPAD_SWIPE_NOTCHES = 2.5f

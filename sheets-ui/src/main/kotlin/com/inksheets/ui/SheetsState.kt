@@ -69,6 +69,22 @@ class SheetsState(val platform: SheetsPlatform) {
         }
     private var edgeTapsState by mutableStateOf(platform.pref(K_EDGE_TAPS) != "false")
 
+    /** Whether the strip's buttons have their names under them. On unless turned off. */
+    var stripLabels: Boolean
+        get() = stripLabelsState
+        set(on) { stripLabelsState = on; platform.setPref(K_STRIP_LABELS, on.toString()) }
+    private var stripLabelsState by mutableStateOf(platform.pref(K_STRIP_LABELS) != "false")
+
+    /** How a page turn is shown: "slide" (the default), "fade" or "none". */
+    var turnStyle: String
+        get() = turnStyleState
+        set(style) {
+            turnStyleState = style
+            platform.setPref(K_TURN, style)
+            platform.setTurnStyle(style)
+        }
+    private var turnStyleState by mutableStateOf(platform.pref(K_TURN) ?: "slide")
+
     /** The actions on the strip over the page, in order. Held as state so every screen showing it follows a change. */
     var strip by mutableStateOf(
         platform.pref(K_STRIP)?.split(',')?.mapNotNull { n -> com.inkslate.core.PerformAction.entries.firstOrNull { it.name == n } }
@@ -89,6 +105,7 @@ class SheetsState(val platform: SheetsPlatform) {
 
     init {
         platform.setEdgeTaps(edgeTapsState)
+        platform.setTurnStyle(turnStyleState)
         platform.pref(K_LIBRARY)?.let(::File)?.takeIf { it.isDirectory }?.let(::open)
         // Song turns and the metronome from a pedal, whatever screen is in front.
         com.inkslate.core.Perform.app = { action ->
@@ -111,6 +128,7 @@ class SheetsState(val platform: SheetsPlatform) {
         com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
             currentPath = path
+            if (pagesWanted == path) { pagesWanted = null; com.inkslate.core.Perform.openPages?.invoke() }
             songAt(path)?.let { if (current?.id != it.id) current = it }
             companion.pageTurned(page)
         }
@@ -254,7 +272,6 @@ class SheetsState(val platform: SheetsPlatform) {
      * and none of them has to read that page again. Slow: run it off the UI thread.
      */
     fun readUnknownParts(onProgress: (done: Int, of: Int) -> Unit = { _, _ -> }) {
-        if (!platform.canRecognise) return
         val lib = library ?: return
         val tried = platform.pref(K_TRIED).orEmpty().split(',').filter { it.isNotEmpty() }.toMutableSet()
         val todo = lib.songs.flatMap { song ->
@@ -264,7 +281,10 @@ class SheetsState(val platform: SheetsPlatform) {
             onProgress(i, todo.size)
             val file = partFile(song, part) ?: return@forEachIndexed
             if (!file.isFile) return@forEachIndexed
-            val text = runCatching { platform.recognise(file, part.firstPage ?: 1) }.getOrNull()
+            // The page's own words where it has them; a scan read where it does not.
+            val text = runCatching { platform.pageText(file, part.firstPage ?: 1) }.getOrNull()
+                ?.takeIf { com.inksheets.core.InstrumentReader.read(it) != null }
+                ?: if (platform.canRecognise) runCatching { platform.recognise(file, part.firstPage ?: 1) }.getOrNull() else null
             val match = text?.let { com.inksheets.core.InstrumentReader.read(it) }
             if (match != null) {
                 // Read the song again at the moment of writing: another part may have changed.
@@ -322,6 +342,162 @@ class SheetsState(val platform: SheetsPlatform) {
     fun refresh() {
         val lib = library ?: return
         if (lib.refresh()) version = lib.version
+    }
+
+    // ---- keeping the library in step with the folder ------------------------------------
+
+    /** What the last look at the music folder found and did. */
+    var lastScan by mutableStateOf<com.inksheets.core.LibraryScan.Report?>(null)
+        private set
+
+    /** Recent things the folder scan did, newest first, for Library health. This device's only. */
+    val scanHistory = androidx.compose.runtime.mutableStateListOf<String>()
+
+    /** Imports in progress: the scan waits, so it does not file half-copied music its own way. */
+    @Volatile var importing = 0
+
+    private fun scanner(): com.inksheets.core.LibraryScan? {
+        val base = root ?: return null
+        val lib = library ?: return null
+        val name = "scan-" + Integer.toHexString(base.absolutePath.hashCode()) + ".json"
+        return com.inksheets.core.LibraryScan(base, lib, File(platform.localFolder, name))
+    }
+
+    /**
+     * Look at the music folder and bring the library into line: new files added, moved ones
+     * followed, deleted ones removed, doubles put together. Slow-ish: off the UI thread.
+     * [allowMassRemoval] is the person confirming a removal that was held back.
+     */
+    fun scanFolder(allowMassRemoval: Boolean = false): com.inksheets.core.LibraryScan.Report? {
+        if (importing > 0) return null
+        runCatching { trash()?.purge() }
+        val report = runCatching { scanner()?.run(allowMassRemoval) }
+            .onFailure { platform.log("Library scan failed: ${it.message}") }
+            .getOrNull() ?: return null
+        platform.onMain {
+            lastScan = report
+            if (report.changed) {
+                val stamp = java.text.SimpleDateFormat("MMM d HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+                val lines = report.added.map { "Added $it" } + report.moved.map { (a, b) -> "Followed $a to $b" } +
+                    report.removed.map { "Removed $it" } + report.merged.map { "Put together $it" }
+                lines.forEach { scanHistory.add(0, "$stamp  $it") }
+                while (scanHistory.size > 200) scanHistory.removeAt(scanHistory.lastIndex)
+                version = library?.version ?: version
+            }
+        }
+        if (report.changed) {
+            platform.log("Library scan: ${report.added.size} added, ${report.moved.size} moved, ${report.removed.size} removed, ${report.merged.size} put together")
+        }
+        if (report.heldBack > 0) platform.log("Library scan: held back removing ${report.heldBack} parts - too many at once")
+        return report
+    }
+
+    // ---- removing, merging, splitting ---------------------------------------------------
+
+    fun trash(): com.inksheets.core.LibraryTrash? = root?.let { r -> library?.let { com.inksheets.core.LibraryTrash(r, it) } }
+
+    /** Take a song out of the library: its files go to the library's Trash for 30 days. */
+    fun removeSong(song: com.inksheets.core.Song) {
+        importing++
+        try { runCatching { trash()?.remove(song) }.onFailure { platform.log("Could not remove ${song.title}: ${it.message}") } }
+        finally { importing-- }
+        change { }
+    }
+
+    fun restore(entry: com.inksheets.core.LibraryTrash.Entry) {
+        importing++
+        try { trash()?.restore(entry) } finally { importing-- }
+        change { }
+    }
+
+    /** Put [from] into [into]: one piece, two entries in the library. */
+    fun mergeSongs(from: String, into: String) = change { mergeSongs(from, into) }
+
+    /** Move a part to another song. */
+    fun movePart(partId: String, toSong: String) = change { movePart(partId, toSong) }
+
+    /** Make a part a song of its own, called [title], never put back with its namesake. */
+    fun splitPart(partId: String, title: String) = change { movePart(partId, null, title) }
+
+    fun setSongColor(songId: String, color: Int?) = change { editSong(songId) { this.color = color } }
+    fun setSetlistColor(setlistId: String, color: Int?) = change { editSetlist(setlistId) { this.color = color } }
+
+    /**
+     * Some pages of the file at [path] as a part of their own - one instrument's pages of a band
+     * pack - in the song the file belongs to, or in a new song called [newSong].
+     */
+    fun partFromPages(path: String, pages: List<Int>, instrument: String?, newSong: String?) {
+        val lib = library ?: return
+        val rel = relative(File(path)) ?: return
+        if (pages.isEmpty()) return
+        val first = pages.min() + 1
+        val last = pages.max() + 1
+        val part = com.inksheets.core.Part(
+            id = com.inksheets.core.Library.partIdFor("$rel#$first-$last"), file = rel,
+            firstPage = first, lastPage = last, instrument = instrument,
+            source = if (instrument != null) com.inksheets.core.InstrumentSource.PERSON else com.inksheets.core.InstrumentSource.UNKNOWN,
+            label = instrument?.let { com.inksheets.core.Instruments.byId[it]?.name }
+        )
+        change {
+            val home = if (newSong != null) addSong(newSong, emptyList()) { apart = true }.id else songAt(path)?.id ?: ensureSong(com.inksheets.core.ImportPlan.songTitle(rel)).id
+            writePart(home, part)
+        }
+    }
+
+    /** A part to show the pages of once its editor is in front. */
+    @Volatile var pagesWanted: String? = null
+
+    /** Open [part]'s file and its page overview. */
+    fun showPages(song: com.inksheets.core.Song, part: com.inksheets.core.Part) {
+        val file = partFile(song, part) ?: return
+        pagesWanted = file.absolutePath
+        current = song
+        platform.openPart(song, part, file)
+    }
+
+    // ---- music arriving from outside ---------------------------------------------------
+
+    /** A zip handed in from outside, waiting for the bulk import to be shown for it. */
+    var downloadWaiting by mutableStateOf<File?>(null)
+
+    /**
+     * Files handed to InkSheets from outside - shared from another app, picked, dropped on the
+     * window. Music and recordings are copied into the library's Inbox folder, where the folder
+     * scan files them like anything else; a zip opens the bulk import. Off the UI thread.
+     */
+    fun takeIn(files: List<File>): Int {
+        val base = root ?: return 0
+        val inbox = File(base, "Inbox")
+        var n = 0
+        for (f in files) {
+            val ext = f.extension.lowercase()
+            when {
+                ext == "zip" -> platform.onMain { downloadWaiting = f }
+                ext in com.inksheets.core.LibraryScan.MUSIC || ext in com.inksheets.core.LibraryScan.SOUND -> {
+                    inbox.mkdirs()
+                    var target = File(inbox, f.name)
+                    var i = 2
+                    while (target.exists() && target.length() != f.length()) target = File(inbox, f.nameWithoutExtension + " ($i)." + f.extension).also { i++ }
+                    if (!target.exists()) runCatching { f.copyTo(target) }.onSuccess { n++ }
+                }
+            }
+        }
+        if (n > 0) {
+            platform.log("Took in $n files to Inbox")
+            scanFolder()
+        }
+        return n
+    }
+
+    /** Parts whose file is not on this device. */
+    fun missingParts(): List<Pair<com.inksheets.core.Song, com.inksheets.core.Part>> =
+        runCatching { scanner()?.missing() }.getOrNull().orEmpty()
+
+    /** Remove every part whose file is not on this device - the person asked. */
+    fun removeMissing(): Int {
+        val n = runCatching { scanner()?.removeMissing() }.getOrNull() ?: 0
+        platform.onMain { version = library?.version ?: version }
+        return n
     }
 
     /** Make a change and let the screens know. */
@@ -441,6 +617,8 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_PROFILE = "sheets_profile"
         private const val K_TRIED = "sheets_ocr_tried"
         private const val K_EDGE_TAPS = "sheets_edge_taps"
+        private const val K_TURN = "sheets_turn_style"
+        private const val K_STRIP_LABELS = "sheets_strip_labels"
         private const val K_STRIP = "sheets_strip"
 
         /**

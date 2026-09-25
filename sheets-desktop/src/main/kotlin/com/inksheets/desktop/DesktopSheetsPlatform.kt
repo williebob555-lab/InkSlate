@@ -131,6 +131,10 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.edgeTaps = on
     }
 
+    override fun setTurnStyle(style: String) {
+        com.inkslate.desktop.AppFlavor.turnAnimation = style
+    }
+
     override fun openSet(parts: List<Pair<File, String>>, focus: Int) {
         com.inkslate.desktop.AppFlavor.openSet?.invoke(parts, focus) ?: parts.getOrNull(focus)?.let { openFile(it.first) }
     }
@@ -147,6 +151,7 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Laptop"
 
     override fun log(message: String) = EventLog.info("sheets", message)
+    override val localFolder: File get() = com.inkslate.desktop.AppDirs.dir("library")
 
     override val downloadsFolder: File =
         File(System.getProperty("user.home"), "Downloads").takeIf { it.isDirectory } ?: startFolder
@@ -156,8 +161,18 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override fun writePng(width: Int, height: Int, argb: IntArray, to: File): Boolean =
         com.inkslate.desktop.ClipboardQr.writePng(width, height, argb, to)
 
+    override fun pickFiles(onResult: (List<File>) -> Unit) {
+        val dialog = java.awt.FileDialog(null as java.awt.Frame?, "Add music", java.awt.FileDialog.LOAD).apply {
+            isMultipleMode = true
+            directory = downloadsFolder.absolutePath
+        }
+        dialog.isVisible = true
+        onResult(dialog.files.orEmpty().toList())
+    }
+
     override val canQuit: Boolean get() = com.inkslate.desktop.AppFlavor.quit != null
     override fun quit() { com.inkslate.desktop.AppFlavor.quit?.invoke() }
+    override fun minimise() { com.inkslate.desktop.AppFlavor.minimise?.invoke() }
 
     private companion object {
         const val K_DEVICE = "sheets_device"

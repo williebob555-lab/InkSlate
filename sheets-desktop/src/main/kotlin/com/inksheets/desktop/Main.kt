@@ -27,4 +27,6 @@ fun main() = runAs("InkSheets") {
     AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(state) }
     AppFlavor.onTabsMoved = { state.tabsMoved(it) }
     AppFlavor.onHomeShown = { home -> state.homeInFront = home }
+    AppFlavor.onFilesDropped = { files -> Thread({ state.takeIn(files) }, "take-in").apply { isDaemon = true; start() } }
+    AppFlavor.pagesActions = { path, pages, close -> com.inksheets.ui.MusicPageActions(state, path, pages, close) }
 }

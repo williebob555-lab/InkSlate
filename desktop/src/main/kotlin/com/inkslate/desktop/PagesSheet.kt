@@ -101,7 +101,9 @@ fun PagesSheet(
     onGoToPage: (Int) -> Unit,
     /** Export these pages of the document as it stands on disk. */
     onExport: (pages: List<Int>) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** More actions for the picked pages, from the app this runs in. */
+    extraActions: (@androidx.compose.runtime.Composable (pages: List<Int>, close: () -> Unit) -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val pageSize = remember(source) { source.pageDim(0) }
@@ -316,6 +318,9 @@ fun PagesSheet(
                     enabled = !changed && pickedAt.isNotEmpty() && pickedAt.none { plan[it].isNew },
                     onClick = { onExport(pickedAt.map { plan[it].source }.sorted()) }
                 ) { Icon(Icons.Default.Share, "Export") }
+                if (extraActions != null && !changed && pickedAt.isNotEmpty() && pickedAt.none { plan[it].isNew }) {
+                    extraActions(pickedAt.map { plan[it].source }.sorted(), onDismiss)
+                }
                 IconButton(
                     onClick = {
                         if (pickedAt.size == plan.size) {

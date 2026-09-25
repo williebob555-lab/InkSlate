@@ -135,7 +135,7 @@ object SetlistBundle {
             val ids = manifest.songs.map { b ->
                 val parts = b.parts.mapNotNull { p ->
                     extract(p.file)?.let { rel ->
-                        Part(file = rel, instrument = p.instrument, firstPage = p.firstPage, lastPage = p.lastPage,
+                        Part(id = Library.partIdFor(rel), file = rel, instrument = p.instrument, firstPage = p.firstPage, lastPage = p.lastPage,
                             source = if (p.instrument != null) InstrumentSource.PERSON else InstrumentSource.UNKNOWN)
                     }
                 }

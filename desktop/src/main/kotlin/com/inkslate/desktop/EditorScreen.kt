@@ -87,6 +87,7 @@ import com.inkslate.core.Tool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -244,6 +245,12 @@ fun EditorScreen(
     // means the view last touched - the one the bars above and below are showing.
     val viewport: Viewport by host::activeViewport
     var page: Int by host::activePage
+
+    // A page turn in music, shown: the new page slides in from the side it came from, or fades up.
+    val turnAnim = remember { androidx.compose.animation.core.Animatable(0f) }
+    var turnDir by remember { mutableStateOf(0) }
+    // The scale music was last fitted at; closer than this, a finger reads up close rather than turning.
+    var fittedScale by remember { mutableStateOf(0f) }
     var layout by remember { mutableStateOf(if (AppFlavor.musicView) PageLayout.SINGLE else PageLayout.VERTICAL) }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
     var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
@@ -1094,10 +1101,22 @@ fun EditorScreen(
             val d = src.pageDim(it)
             com.inkslate.core.PageExtent(d.width, d.height)
         }
+        val from = page
         page = clamped
         // Music is read a whole page at a time: fitted, centred, nothing off the edge.
         if (AppFlavor.musicView) {
-            paperBox(clamped)?.let { viewport.fitClear(it, padding = 8f, lane = STRIP_LANE_DP * density); return }
+            if (clamped != from && AppFlavor.turnAnimation != "none") {
+                turnDir = if (clamped > from) 1 else -1
+                scope.launch {
+                    turnAnim.snapTo(1f)
+                    turnAnim.animateTo(0f, androidx.compose.animation.core.tween(260, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                }
+            }
+            paperBox(clamped)?.let {
+                viewport.fitClear(it, padding = 8f, lane = STRIP_LANE_DP * density)
+                fittedScale = viewport.scale
+                return
+            }
         }
         val origins = com.inkslate.core.PageArranger.arrange(extents, layout, clamped)
         origins.getOrNull(clamped)?.let { (x, y) -> viewport.goTo(x, y) }
@@ -1854,6 +1873,20 @@ fun EditorScreen(
             } else {
                 DocumentCanvas(
                     source = src,
+                    modifier = Modifier.graphicsLayer {
+                        val p = turnAnim.value
+                        if (p > 0f) {
+                            if (AppFlavor.turnAnimation == "fade") {
+                                alpha = 1f - p * 0.9f
+                            } else {
+                                translationX = turnDir * p * size.width * 0.45f
+                                alpha = 1f - p * 0.7f
+                            }
+                        }
+                    },
+                    // A fitted page of music: a finger turns it rather than moving it.
+                    atRest = { AppFlavor.musicView && fittedScale > 0f && view.viewport.scale <= fittedScale * 1.05f },
+                    recentre = { goToPage(page) },
                     viewport = view.viewport,
                     layout = layout,
                     currentPage = view.page,
@@ -1887,7 +1920,13 @@ fun EditorScreen(
                     rulerOwner = host,
                     // Music with the tools put away: a sideways swipe turns the page. With them out,
                     // the page moves as it always has, for marking it up.
-                    onSwipe = if (AppFlavor.musicView && immersive) { dir -> goToPage(page + dir) } else null,
+                    // Music: a sideways swipe or a tap turns the page whether or not the tools are
+                    // out - the pen writes, the finger turns. Past the last page it is the next song.
+                    onSwipe = if (AppFlavor.musicView) { dir ->
+                        com.inkslate.core.Perform.run(
+                            if (dir > 0) com.inkslate.core.PerformAction.NEXT_PAGE else com.inkslate.core.PerformAction.PREVIOUS_PAGE
+                        )
+                    } else null,
                     images = { id ->
                         loadedImages[id] ?: images.load(id)?.also { loadedImages[id] = it }
                     },
@@ -2288,7 +2327,10 @@ fun EditorScreen(
                     exportPreset = pages
                     exportOpen = true
                 },
-                onDismiss = { pagesOpen = false }
+                onDismiss = { pagesOpen = false },
+                extraActions = AppFlavor.pagesActions?.let { actions ->
+                    { pages, close -> actions(file.absolutePath, pages, close) }
+                }
             )
         }
     }

@@ -69,6 +69,7 @@ internal fun SetlistsPane(state: SheetsState) {
     var openSetlist by state::setlistShown
     var naming by remember { mutableStateOf<Naming?>(null) }
     var sharing by remember { mutableStateOf<String?>(null) }
+    var colouring by remember { mutableStateOf<Setlist?>(null) }
 
     val version = state.version
     val library = state.library ?: return
@@ -130,6 +131,16 @@ internal fun SetlistsPane(state: SheetsState) {
                 .padding(12.dp)
         )
     }
+    // The whole row picks a setlist or folder up, not only its handle.
+    val rowOrigins = remember { HashMap<Carried, Offset>() }
+    fun Modifier.carryable(what: Carried) = onGloballyPositioned { rowOrigins[what] = it.boundsInRoot().topLeft }
+        .dragAnywhere(
+            what to targets,
+            onStart = { at -> carrying = what; carriedBy = Offset.Zero; carriedAt = (rowOrigins[what] ?: Offset.Zero) + at },
+            onDrag = { amount -> carriedBy += amount; carriedAt += amount },
+            onEnd = { drop() },
+            onCancel = { carrying = null; carriedBy = Offset.Zero }
+        )
     fun Modifier.carried(what: Carried) = if (carrying == what)
         zIndex(1f).graphicsLayer { translationX = carriedBy.x; translationY = carriedBy.y; alpha = 0.85f }
             .background(liftedColour) else this
@@ -163,7 +174,7 @@ internal fun SetlistsPane(state: SheetsState) {
         LazyColumn(Modifier.fillMaxSize()) {
             items(folders, key = { "f" + it.id }) { f ->
                 val me = Carried.Dir(f.id)
-                Row(Modifier.carried(me).target(f.id).lit(f.id), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.carried(me).target(f.id).lit(f.id).carryable(me), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         ListRow(
                             icon = { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary) },
@@ -182,15 +193,21 @@ internal fun SetlistsPane(state: SheetsState) {
             }
             items(setlists, key = { "s" + it.id }) { s ->
                 val me = Carried.Set(s.id)
-                Row(Modifier.carried(me), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.carried(me).carryable(me), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
                 ListRow(
-                    icon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, null) },
+                    icon = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ColourBar(s.color)
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = s.color?.let { androidx.compose.ui.graphics.Color(it) } ?: androidx.compose.material3.LocalContentColor.current)
+                        }
+                    },
                     title = s.name,
                     detail = listOfNotNull(s.date, "${s.entries.size} songs").joinToString("  ·  "),
                     onClick = { openSetlist = s.id },
                     menu = listOf(
                         "Share with bandmates..." to { sharing = s.id },
+                        "Colour..." to { colouring = s },
                         "Rename" to { naming = Naming.RenameSetlist(s) },
                         "Delete" to { state.change { deleteSetlist(s.id) } }
                     )
@@ -204,6 +221,9 @@ internal fun SetlistsPane(state: SheetsState) {
     }
 
     sharing?.let { id -> ShareSetlistDialog(state, id, onClose = { sharing = null }) }
+    colouring?.let { s ->
+        ColourDialog("Colour for ${s.name}", s.color, onChosen = { state.setSetlistColor(s.id, it); colouring = null }, onDismiss = { colouring = null })
+    }
     naming?.let { n ->
         NameDialog(
             title = n.title,
@@ -269,7 +289,9 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         // Grab a song by its handle, or hold it anywhere, and drag it to its new place; it is
         // written when let go.
         val listState = rememberLazyListState()
-        val order = remember(setlist.entries) { setlist.entries.toMutableStateList() }
+        // A song removed from the library is not shown, but keeps its place: brought back from the
+        // trash, it is back where it was.
+        val order = remember(setlist.entries, version) { setlist.entries.filter { songs[it.songId] != null }.toMutableStateList() }
         var dragging by remember { mutableStateOf<String?>(null) }
         var dragBy by remember { mutableStateOf(0f) }
         fun dragTo(delta: Float) {
@@ -302,13 +324,13 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                     else Modifier)
                         // Anywhere on the song, not only its handle: hold it, then drag. A quick
                         // swipe still scrolls the list and a tap still opens the song.
-                        .pointerInput(entry.id) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { dragging = entry.id; dragBy = 0f },
-                                onDragEnd = { dropped() },
-                                onDragCancel = { dropped() }
-                            ) { change, amount -> change.consume(); dragTo(amount.y) }
-                        }
+                        .dragAnywhere(
+                            entry.id,
+                            onStart = { dragging = entry.id; dragBy = 0f },
+                            onDrag = { dragTo(it.y) },
+                            onEnd = { dropped() },
+                            onCancel = { dropped() }
+                        )
                 ) {
                     val handle: @Composable () -> Unit = {
                         Icon(
@@ -338,7 +360,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                         SongRow(
                             song = song,
                             unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
-                            onOpen = { state.playSetlist(setlist.id, index) },
+                            onOpen = { state.playSetlist(setlist.id, setlist.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0)) },
                             trailing = {
                                 Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
                                 IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {

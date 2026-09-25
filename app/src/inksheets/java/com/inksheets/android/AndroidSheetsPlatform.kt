@@ -65,6 +65,15 @@ class AndroidSheetsPlatform(
 
     override fun setEdgeTaps(on: Boolean) {
         com.inkslate.ink.DrawingView.edgeTapTurns = on
+        com.inkslate.ink.DrawingView.swipeTurns = on
+    }
+
+    override fun setTurnStyle(style: String) {
+        com.inkslate.ink.DrawingView.turnAnimation = when (style) {
+            "fade" -> com.inkslate.ink.DrawingView.TURN_FADE
+            "none" -> com.inkslate.ink.DrawingView.TURN_NONE
+            else -> com.inkslate.ink.DrawingView.TURN_SLIDE
+        }
     }
 
     override fun openMobileSheets(db: File): com.inksheets.core.MobileSheetsImport.Tables? = runCatching {
@@ -180,6 +189,7 @@ class AndroidSheetsPlatform(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).takeIf { it.isDirectory } ?: startFolder
 
     override val cacheFolder: File get() = context.cacheDir
+    override val localFolder: File get() = File(context.filesDir, "library")
 
     /** Google's code scanner: its own camera screen, no camera permission for this app to ask. */
     override val canScanQr: Boolean = true
@@ -256,8 +266,37 @@ class AndroidSheetsPlatform(
         }.onFailure { EventLog.warn("sheets", "Scanner failed: ${it.message}"); onResult(null) }
     }
 
-    private companion object {
-        const val K_DEVICE = "sheets_device"
+    override fun pickFiles(onResult: (List<File>) -> Unit) {
+        val activity = context as? androidx.activity.ComponentActivity ?: return onResult(emptyList())
+        runCatching {
+            var launcher: androidx.activity.result.ActivityResultLauncher<Array<String>>? = null
+            launcher = activity.activityResultRegistry.register(
+                "inksheets-pick-" + System.nanoTime(),
+                androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+            ) { uris ->
+                launcher?.unregister()
+                Thread({
+                    val files = uris.mapNotNull { copyIn(context, it) }
+                    onMain { onResult(files) }
+                }, "pick-copy").apply { isDaemon = true; start() }
+            }
+            launcher.launch(arrayOf("application/pdf", "image/*", "audio/*", "application/zip"))
+        }.onFailure { EventLog.warn("sheets", "Could not pick files: ${it.message}"); onResult(emptyList()) }
+    }
+
+    companion object {
+        private const val K_DEVICE = "sheets_device"
+
+        /** A copy of what [uri] points at, under its own name, in the app's cache. */
+        fun copyIn(context: Context, uri: android.net.Uri): File? = runCatching {
+            val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                ?: uri.lastPathSegment?.substringAfterLast('/') ?: "shared-${System.currentTimeMillis()}"
+            val dir = File(context.cacheDir, "incoming-${System.nanoTime()}").apply { mkdirs() }
+            val out = File(dir, name.replace('/', '_'))
+            context.contentResolver.openInputStream(uri)?.use { input -> out.outputStream().use { input.copyTo(it) } } ?: return null
+            out
+        }.onFailure { EventLog.warn("sheets", "Could not take in a shared file: ${it.message}") }.getOrNull()
     }
 }
 

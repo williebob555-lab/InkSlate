@@ -26,7 +26,13 @@ object BulkImport {
         val title: String,
         /** Parts, with [ImportPlan.PlannedPart.file] relative to the download's root. */
         val parts: List<ImportPlan.PlannedPart>,
-        val audio: List<String>
+        val audio: List<String>,
+        /** A song already in the library to add these to, instead of making one. */
+        val into: String? = null,
+        /** Kept apart from any other song of the same name (split by the person). */
+        val apart: Boolean = false,
+        /** What setlists call it; its title unless the person made two of one name. */
+        val key: String = title
     )
 
     data class SetlistPlan(val name: String, val songTitles: List<String>)
@@ -182,28 +188,30 @@ object BulkImport {
         val ids = HashMap<String, String>()
         for (song in plan.songs) {
             if (song.title in skip) continue
-            val parts = song.parts.map { it.copy(file = placed(it.file)).toPart() }
+            // Each file's part has the id the folder scan would give it, so the two agree.
+            val parts = song.parts.map { planned ->
+                val rel = placed(planned.file)
+                planned.copy(file = rel).toPart().copy(id = Library.partIdFor(rel))
+            }
             val audio = song.audio.map { AudioTrack(file = placed(it)) }
-            val existing = library.songs.firstOrNull { Library.matchKey(it.title) == Library.matchKey(song.title) }
-            if (existing != null) {
-                val newParts = parts.filter { p -> existing.parts.none { it.file == p.file } }
-                val newAudio = audio.filter { a -> existing.audio.none { it.file == a.file } }
-                if (newParts.isNotEmpty() || newAudio.isNotEmpty()) {
-                    library.editSong(existing.id) {
-                        this.parts = existing.parts + newParts
-                        this.audio = existing.audio + newAudio
-                    }
-                }
+            val existing = song.into?.let { library.song(it) }
+                ?: if (song.apart) null else library.songs.firstOrNull { !it.apart && Library.matchKey(it.title) == Library.matchKey(song.title) }
+            val target = if (existing != null) {
                 matched++
-                ids[song.title] = existing.id
+                existing
             } else {
                 added++
-                ids[song.title] = library.addSong(song.title, parts) { if (audio.isNotEmpty()) this.audio = audio }.id
+                if (song.apart) library.addSong(song.title, emptyList()) { apart = true } else library.ensureSong(song.title)
             }
+            parts.forEach { library.writePart(target.id, it) }
+            val have = library.song(target.id)?.audio.orEmpty()
+            val newAudio = audio.filter { a -> have.none { it.file == a.file } }
+            if (newAudio.isNotEmpty()) library.editSong(target.id) { this.audio = have + newAudio }
+            ids[song.key] = target.id
         }
         var setlists = 0
         if (makeSetlists) {
-            val wanted = plan.setlists.map { s -> s.name to s.songTitles.mapNotNull(ids::get) }.filter { it.second.isNotEmpty() }
+            val wanted = plan.setlists.map { s -> s.name to s.songTitles.mapNotNull(ids::get).distinct() }.filter { it.second.isNotEmpty() }
             val folder = if (wanted.size > 1) {
                 library.foldersIn(null).firstOrNull { it.name == plan.name } ?: library.addFolder(plan.name)
             } else null

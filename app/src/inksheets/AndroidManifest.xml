@@ -14,6 +14,16 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="inksheets" android:host="join" />
             </intent-filter>
+            <!-- Music shared from another app, one file or many, and downloads of whole folders. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="application/zip" />
+            </intent-filter>
         </activity>
     </application>
 </manifest>

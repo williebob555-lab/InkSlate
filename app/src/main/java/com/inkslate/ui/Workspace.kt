@@ -284,6 +284,10 @@ fun TabStrip(
                 leading = { Icon(Icons.Default.Home, null, modifier = Modifier.size(18.dp)) },
                 label = "Home"
             )
+            // Opening another document sits beside Home, where it is found, not after the last tab.
+            IconButton(onClick = onNewTab) {
+                Icon(Icons.Default.Add, "Open another document")
+            }
             Row(
                 Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically
@@ -314,9 +318,6 @@ fun TabStrip(
                         onCloseAll = onCloseAll
                     )
                 }
-            }
-            IconButton(onClick = onNewTab) {
-                Icon(Icons.Default.Add, "Open another document")
             }
             if (onLeaveFullscreen != null) {
                 IconButton(onClick = onLeaveFullscreen) {

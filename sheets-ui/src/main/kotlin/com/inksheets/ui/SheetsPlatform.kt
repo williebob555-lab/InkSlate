@@ -50,6 +50,9 @@ interface SheetsPlatform {
     /** Turn tap-the-side-to-turn-the-page on or off in the editor, where it can do that. */
     fun setEdgeTaps(on: Boolean) {}
 
+    /** How a page turn is shown: "slide", "fade" or "none". */
+    fun setTurnStyle(style: String) {}
+
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
 
@@ -73,6 +76,9 @@ interface SheetsPlatform {
 
     /** A player for a song's recordings; null where there is none. */
     fun audioPlayer(): AudioPlayer? = null
+
+    /** This device's own folder, never synced: what it remembers of the music folder lives here. */
+    val localFolder: File get() = File(System.getProperty("user.home"), ".inksheets-local")
 
     /** A line in the event log (Settings), for things worth keeping but not worth a pop-up. */
     fun log(message: String) {}
@@ -104,6 +110,12 @@ interface SheetsPlatform {
     /** Hand a picture to the share sheet (or show it in the file manager). */
     fun shareImage(png: File) = share(png)
 
+    /**
+     * Choose files from anywhere the system can reach - another app, Google Drive, Downloads -
+     * and hand back copies of them (in [cacheFolder]); empty if cancelled.
+     */
+    fun pickFiles(onResult: (List<File>) -> Unit) { onResult(emptyList()) }
+
     /** Whether [scanPages] can photograph pages here. */
     val canScanPages: Boolean get() = false
 
@@ -122,6 +134,7 @@ interface SheetsPlatform {
     /** Whether the app can be closed from its own menu (a window with no title bar to close it by). */
     val canQuit: Boolean get() = false
     fun quit() {}
+    fun minimise() {}
 }
 
 /**

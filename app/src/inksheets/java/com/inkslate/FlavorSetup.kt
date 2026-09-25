@@ -66,6 +66,20 @@ object FlavorSetup {
         AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(stateFor(LocalContext.current)) }
         AppFlavor.onTabsMoved = { state?.tabsMoved(it) }
         AppFlavor.onHomeShown = { home -> state?.homeInFront = home }
+        AppFlavor.pagesActions = { path, pages, close ->
+            com.inksheets.ui.MusicPageActions(stateFor(LocalContext.current), path, pages, close)
+        }
+        AppFlavor.onIncomingFiles = { uris ->
+            val s = state
+            val context = s?.platform?.let { (it as? AndroidSheetsPlatform)?.context }
+            if (s == null || context == null || s.root == null) false else {
+                Thread({
+                    val files = uris.mapNotNull { AndroidSheetsPlatform.copyIn(context, it) }
+                    s.takeIn(files)
+                }, "take-in").apply { isDaemon = true; start() }
+                true
+            }
+        }
         AppFlavor.onLink = { link -> state?.let { follow(it, link) } ?: run { pendingLink = link } }
         AppFlavor.paneOverlay = {
             ActionStrip(stateFor(LocalContext.current))

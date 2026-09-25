@@ -50,8 +50,20 @@ object AppFlavor {
      */
     var alwaysFullscreen: Boolean = false
 
+    /**
+     * Extra actions in a document's Pages panel, for the pages picked there (0-based, in the
+     * document as it is on disk). InkSheets makes a part, or a new song, of some pages.
+     */
+    var pagesActions: (@Composable (path: String, pages: List<Int>, close: () -> Unit) -> Unit)? = null
+
     /** Told whether Home is what is on screen, whenever that changes. */
     var onHomeShown: ((Boolean) -> Unit)? = null
+
+    /**
+     * Files shared to the app from another (the share sheet, "Open with"). True when the app took
+     * them itself; false to open them as documents, as InkSlate does.
+     */
+    var onIncomingFiles: ((List<android.net.Uri>) -> Boolean)? = null
 
     /** A link for the app itself arrived (a join code scanned with the camera app). */
     var onLink: ((String) -> Unit)? = null

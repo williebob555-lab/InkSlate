@@ -171,7 +171,7 @@ class SheetsScreensTest {
                 }
             }
             waitForIdle()
-            for (action in listOf("Previous page", "Undo", "Show or hide the tools", "Buttons")) {
+            for (action in listOf("Previous page", "Undo", "Show or hide the tools", "More, and changing these buttons")) {
                 onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
             }
             shoot("action-strip-short", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())

@@ -54,11 +54,25 @@ object AppFlavor {
     /** The window covers the whole screen all the time, Home included - InkSheets on a music stand. */
     var alwaysFullscreen: Boolean = false
 
+    /**
+     * Extra actions in a document's Pages panel, for the pages picked there (0-based, in the
+     * document as it is on disk). InkSheets makes a part, or a new song, of some pages.
+     */
+    var pagesActions: (@Composable (path: String, pages: List<Int>, close: () -> Unit) -> Unit)? = null
+
     /** Told whether Home is what is on screen, whenever that changes. */
     var onHomeShown: ((Boolean) -> Unit)? = null
 
-    /** Close the app; set once the window is up. */
+    /** Files dropped on the window; null where the app does nothing with them. */
+    var onFilesDropped: ((List<File>) -> Unit)? = null
+
+    /** Close the app, and put its window away; set once the window is up. */
     var quit: (() -> Unit)? = null
+    var minimise: (() -> Unit)? = null
+
+    /** How a page turn in music is shown: "slide", "fade" or "none". */
+    @Volatile
+    var turnAnimation: String = "slide"
 
     /** A finger tap at either side of a page of music turns it. */
     @Volatile

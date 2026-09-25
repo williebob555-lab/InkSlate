@@ -1062,6 +1062,69 @@ class DrawingView @JvmOverloads constructor(
     private var smoothedY = Float.NaN
     private var lastWidth = Float.NaN
     private var lastX = 0f
+
+    // ---- turning pages with a finger, and showing the turn ------------------------------
+
+    /** The scale the page was last fitted at; a page nearer than this is being read up close. */
+    private var fittedScale = 0f
+
+    /** A finger drag on a fitted page of music: it turns the page rather than moving it. */
+    private var turnDrag = false
+    private var turnDragX = 0f
+
+    /** How far the page had been dragged when a swipe turned it, so the turn carries on from there. */
+    private var swipeCarry: Float? = null
+
+    private class TurnAnim(val from: Bitmap, val dir: Int, val carry: Float, val startNs: Long)
+    private var turnAnim: TurnAnim? = null
+    private var turnShot: Bitmap? = null
+
+    /**
+     * Whether a finger on the page turns pages rather than moving it: music, one page at a time,
+     * fitted to the screen. Zoomed in to read something small, the finger moves the page as usual.
+     */
+    private fun turnsWithFinger(): Boolean =
+        swipeTurns && fitWholePage && layout == PageLayout.SINGLE && fittedScale > 0f &&
+            currentScale() <= fittedScale * 1.05f
+
+    /** What is on screen now, kept to animate away from. Reuses one bitmap the size of the view. */
+    private fun snapshot(): Bitmap? = runCatching {
+        if (width <= 0 || height <= 0) return null
+        val shot = turnShot?.takeIf { it.width == width && it.height == height && !it.isRecycled }
+            ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { turnShot?.recycle(); turnShot = it }
+        turnAnim = null
+        draw(android.graphics.Canvas(shot))
+        shot
+    }.getOrNull()
+
+    override fun draw(canvas: android.graphics.Canvas) {
+        val anim = turnAnim
+        if (anim == null) { super.draw(canvas); return }
+        val raw = ((System.nanoTime() - anim.startNs) / 1_000_000f) / TURN_MS
+        val t = raw.coerceIn(0f, 1f)
+        val eased = 1f - (1f - t) * (1f - t) * (1f - t)
+        val w = width.toFloat()
+        when (turnAnimation) {
+            TURN_FADE -> {
+                super.draw(canvas)
+                turnPaint.alpha = ((1f - eased) * 255).toInt()
+                canvas.drawBitmap(anim.from, 0f, 0f, turnPaint)
+            }
+            else -> {
+                // The new page comes in from the side being turned to; the old one leaves by the
+                // other, the two moving together as one strip - from wherever a swipe left them.
+                val start = anim.dir * w + anim.carry
+                val newAt = start * (1f - eased)
+                val oldAt = newAt - anim.dir * w - anim.carry
+                canvas.save(); canvas.translate(newAt, 0f); super.draw(canvas); canvas.restore()
+                turnPaint.alpha = 255
+                canvas.drawBitmap(anim.from, oldAt, 0f, turnPaint)
+            }
+        }
+        if (t < 1f) postInvalidateOnAnimation() else turnAnim = null
+    }
+
+    private val turnPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private var lastY = 0f
     private var gesturing = false
 
@@ -1522,6 +1585,15 @@ class DrawingView @JvmOverloads constructor(
 
     fun goToPage(index: Int) {
         val target = index.coerceIn(0, maxOf(0, slots.size - 1))
+        // Show the turn, where the app asks for it: the page on screen now is kept, and slides or
+        // fades away as the new one arrives - so which way the music went is never in doubt.
+        val carry = swipeCarry ?: 0f
+        swipeCarry = null
+        if (turnAnimation != TURN_NONE && layout == PageLayout.SINGLE && target != currentPage && isLaidOut && slots.isNotEmpty()) {
+            snapshot()?.let { shot ->
+                turnAnim = TurnAnim(shot, if (target > currentPage) 1 else -1, carry, System.nanoTime())
+            }
+        }
         currentPage = target
         syncCurrentDims()
         if (layout == PageLayout.SINGLE) {
@@ -2180,6 +2252,7 @@ class DrawingView @JvmOverloads constructor(
             }
         }
         minScale = s * 0.35f
+        fittedScale = s
         pageToView.reset(); pageToView.postScale(s, s)
         pageToView.postTranslate(
             (w - b.width() * s) / 2f - b.left * s,
@@ -2822,7 +2895,9 @@ class DrawingView @JvmOverloads constructor(
                 val tapped = pending
                 if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0) {
                     val at = event.x / width
-                    if (at < EDGE_TAP_SHARE || at > 1f - EDGE_TAP_SHARE) {
+                    // On a fitted page of music any tap turns: the left half back, the right on.
+                    val share = if (turnsWithFinger()) 0.5f else EDGE_TAP_SHARE
+                    if (at < share || at >= 1f - share) {
                         discardPending()
                         com.inkslate.core.Perform.run(
                             if (at > 0.5f) com.inkslate.core.PerformAction.NEXT_PAGE
@@ -2926,6 +3001,8 @@ class DrawingView @JvmOverloads constructor(
             Tool.PAN -> {
                 // nothing to set up: the drag itself is the gesture
                 stopFling()
+                turnDrag = !isStylus && turnsWithFinger()
+                turnDragX = 0f
             }
             Tool.REGION -> {
                 liveKind = StrokeKind.RECT
@@ -3055,6 +3132,16 @@ class DrawingView @JvmOverloads constructor(
         }
 
         when {
+            t == Tool.PAN && turnDrag -> {
+                // A fitted page of music follows the finger sideways only, to be turned or let go.
+                val dx = e.x - lastX
+                turnDragX += dx
+                pageToView.postTranslate(dx, 0f)
+                lastX = e.x; lastY = e.y
+                syncInverse()
+                invalidate()
+                return
+            }
             t == Tool.PAN -> {
                 val before = reachOnScreen()
                 pageToView.postTranslate(e.x - lastX, e.y - lastY)
@@ -3276,6 +3363,31 @@ class DrawingView @JvmOverloads constructor(
         if (rulerGrab != 0) {
             rulerGrab = 0
             drawingPointerId = -1
+            parent?.requestDisallowInterceptTouchEvent(false)
+            return
+        }
+        if (t == Tool.PAN && turnDrag) {
+            turnDrag = false
+            val (vx, _) = releaseVelocity()
+            val far = width * SWIPE_TURN_SHARE
+            val dir = when {
+                cancelled -> 0
+                turnDragX < -far || (vx < -SWIPE_TURN_SPEED && turnDragX < -24f) -> 1
+                turnDragX > far || (vx > SWIPE_TURN_SPEED && turnDragX > 24f) -> -1
+                else -> 0
+            }
+            val dragged = turnDragX
+            turnDragX = 0f
+            val turned = dir != 0 && run {
+                swipeCarry = dragged
+                com.inkslate.core.Perform.run(
+                    if (dir > 0) com.inkslate.core.PerformAction.NEXT_PAGE else com.inkslate.core.PerformAction.PREVIOUS_PAGE
+                ).also { swipeCarry = null }
+            }
+            // Not far enough, or nowhere to turn to: the page goes back where it was.
+            if (!turned && dragged != 0f) settleBack(dragged)
+            drawingPointerId = -1
+            drawingIsStylus = false
             parent?.requestDisallowInterceptTouchEvent(false)
             return
         }
@@ -4264,6 +4376,22 @@ class DrawingView @JvmOverloads constructor(
         postInvalidateOnAnimation()
     }
 
+    /** A page let go part-way through a swipe slides back into place. */
+    private fun settleBack(dragged: Float) {
+        var moved = 0f
+        android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 160
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener {
+                val want = -dragged * (it.animatedValue as Float)
+                pageToView.postTranslate(want - moved, 0f)
+                moved = want
+                syncInverse(); invalidate()
+            }
+            start()
+        }
+    }
+
     private fun stopFling() {
         if (!scroller.isFinished) scroller.abortAnimation()
     }
@@ -4375,6 +4503,27 @@ class DrawingView @JvmOverloads constructor(
 
         /** How much of the width at each side counts as "the side". */
         const val EDGE_TAP_SHARE = 0.18f
+
+        /**
+         * A finger swiped across a fitted page turns it instead of moving it (InkSheets). The pen
+         * still writes; zoomed in, the finger still moves the page.
+         */
+        @JvmStatic
+        @Volatile
+        var swipeTurns: Boolean = false
+
+        /** How a page turn is shown: [TURN_NONE], [TURN_SLIDE] or [TURN_FADE]. */
+        @JvmStatic
+        @Volatile
+        var turnAnimation: Int = 0
+        const val TURN_NONE = 0
+        const val TURN_SLIDE = 1
+        const val TURN_FADE = 2
+        private const val TURN_MS = 260f
+
+        /** A swipe this far across the view, or this quick, turns the page. */
+        private const val SWIPE_TURN_SHARE = 0.18f
+        private const val SWIPE_TURN_SPEED = 900f
 
         /** Placeholder id for the stroke being drawn right now; never persisted. */
         const val LIVE_ID = "live"
