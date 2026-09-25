@@ -139,7 +139,15 @@ jobs:
           INKSLATE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           INKSLATE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           INKSLATE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --stacktrace
+        # Run logs need a login to read; annotations do not. So the reason a build failed is
+        # copied into one, where it can be read from anywhere.
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/apk.log" || {
+            grep -A 25 "What went wrong" "$RUNNER_TEMP/apk.log" | head -40 | tr '\n' ' ' | sed 's/^/::error title=APK build::/'
+            echo
+            exit 1
+          }
 
       - name: Name the APK after its version
         run: |
