@@ -2032,9 +2032,10 @@ fun EditorScreen(
                                 }
                             }
                             view.onVisiblePagesChanged = { visible ->
-                                // pad by one page either side so scrolling does not reveal blanks
+                                // pad by one page either side so scrolling does not reveal blanks;
+                                // music, turned a page at a time and often quickly, two ahead
                                 val lo = (visible.minOrNull() ?: 0) - 1
-                                val hi = (visible.maxOrNull() ?: 0) + 1
+                                val hi = (visible.maxOrNull() ?: 0) + if (com.inkslate.AppFlavor.musicView) 2 else 1
                                 slot.wantedPages = (lo..hi).filter { it in 0 until (doc?.pageCount ?: 1) }
                             }
                             view.onCurrentPageChanged = { slot.page = it }

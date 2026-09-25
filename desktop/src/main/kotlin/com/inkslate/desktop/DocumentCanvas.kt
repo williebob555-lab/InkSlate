@@ -421,10 +421,26 @@ fun DocumentCanvas(
         if (near.isNotEmpty()) {
             val first = near.min()
             val last = near.max()
-            rasters.keys.filter { it < first - 1 || it > last + 1 }
+            rasters.keys.filter { it < first - 1 || it > last + AHEAD }
                 .forEach { rasters.remove(it) }
             overviews.keys.filter { it < first - 4 || it > last + 4 }
                 .forEach { overviews.remove(it) }
+        }
+
+        // A page at a time, the next pages are drawn before they are asked for - whole, at the
+        // sharpness this one is shown at - so a turn, however quick, lands on a finished page
+        // rather than on blank paper waiting for it.
+        if (layout == PageLayout.SINGLE && canvas == null && !cropMargins) {
+            for (i in listOf(currentPage + 1, currentPage - 1) + (2..AHEAD).map { currentPage + it }) {
+                if (i !in extents.indices || i in rasters) continue
+                val e = extents[i]
+                if (e.width <= 0f || e.height <= 0f) continue
+                val across = RasterLadder.rungFor((e.width * scale).roundToInt()).coerceAtMost(MAX_TILE_PX)
+                val bmp = withContext(Dispatchers.IO) {
+                    runCatching { source.render(i, across) }.getOrNull()
+                } ?: continue
+                rasters[i] = PageTile(InkBox(0f, 0f, e.width, e.height), bmp)
+            }
         }
     }
 
@@ -1243,6 +1259,9 @@ private suspend fun AwaitPointerEventScope.wheelLoop(
 
 private fun zoomFor(notches: Float): Float =
     Math.pow(Viewport.ZOOM_PER_NOTCH.toDouble(), -notches.toDouble()).toFloat()
+
+/** How many pages ahead are drawn in advance, a page at a time. */
+private const val AHEAD = 2
 
 /** How long a trackpad is still assumed to be the thing scrolling. */
 private const val GLASS_MEMORY_MS = 600L
