@@ -57,6 +57,7 @@ fun runAs(name: String, setup: () -> Unit) {
 private fun ui() = application {
     // Where it was left, rather than the middle of the screen at a fixed size every time.
     val state = remember { WindowMemory.restore() }
+    AppFlavor.quit = ::exitApplication
 
     // The screen can change shape under the window - the machine folds into a tablet and the
     // display turns - and the toolkit has no event for it, so it is looked at rather than waited

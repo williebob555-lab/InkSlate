@@ -313,6 +313,9 @@ fun AppRoot(
     // of a split leaves it as it is, since the document still on screen is where you were.
     val lastFront = remember { arrayOf(emptyList<String>()) }
     val frontKey = if (homeShown) "" else listOfNotNull(primaryTab?.id, secondaryTab?.id).joinToString("|")
+    androidx.compose.runtime.LaunchedEffect(homeShown || primaryTab == null) {
+        com.inkslate.AppFlavor.onHomeShown?.invoke(homeShown || primaryTab == null)
+    }
     LaunchedEffect(frontKey, tools.fullscreenOnHome, tabs.isEmpty()) {
         val front = listOfNotNull(primaryTab, secondaryTab)
         val stayed = front.any { it.id in lastFront[0] }

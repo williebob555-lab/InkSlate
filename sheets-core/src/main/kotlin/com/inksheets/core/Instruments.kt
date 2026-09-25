@@ -41,7 +41,7 @@ object Instruments {
         Instrument("bass-trombone", "Bass Trombone", listOf("bass trombone")),
         Instrument("baritone-bc", "Baritone B.C.", listOf("baritone", "baritone bc", "baritone horn", "baritone horn bc")),
         Instrument("baritone-tc", "Baritone T.C.", listOf("baritone tc", "baritone horn tc"), transpose = 14, clef = "treble"),
-        Instrument("euphonium", "Euphonium", listOf("euphonium", "euphonium bc")),
+        Instrument("euphonium", "Euphonium", listOf("euphonium", "euphonium bc", "tenor tuba")),
         Instrument("euphonium-tc", "Euphonium T.C.", listOf("euphonium tc"), transpose = 14, clef = "treble"),
         Instrument("tuba", "Tuba", listOf("tuba", "bb tuba", "eb tuba", "sousaphone")),
         Instrument("bass-guitar", "Bass Guitar", listOf("bass guitar", "electric bass", "e bass", "bass", "bass gtr")),
@@ -54,6 +54,9 @@ object Instruments {
         Instrument("english-horn", "English Horn", listOf("english horn", "cor anglais"), transpose = 7, clef = "treble"),
         Instrument("bassoon", "Bassoon", listOf("bassoon")),
         Instrument("clarinet", "Clarinet", listOf("clarinet", "bb clarinet"), transpose = 2, clef = "treble"),
+        Instrument("alto-clarinet", "Alto Clarinet", listOf("alto clarinet", "eb alto clarinet"), transpose = 9, clef = "treble"),
+        Instrument("contra-clarinet", "Contrabass Clarinet", listOf("contrabass clarinet", "contra alto clarinet", "contra clarinet"), transpose = 26, clef = "treble"),
+        Instrument("soprano-sax", "Soprano Saxophone", listOf("soprano saxophone", "soprano sax"), transpose = 2, clef = "treble"),
         Instrument("bass-clarinet", "Bass Clarinet", listOf("bass clarinet"), transpose = 14, clef = "treble"),
         Instrument("alto-sax", "Alto Saxophone", listOf("alto saxophone", "alto sax", "eb alto saxophone"), transpose = 9, clef = "treble"),
         Instrument("tenor-sax", "Tenor Saxophone", listOf("tenor saxophone", "tenor sax"), transpose = 14, clef = "treble"),
@@ -61,7 +64,14 @@ object Instruments {
         Instrument("guitar", "Guitar", listOf("guitar", "electric guitar", "acoustic guitar"), transpose = 12, clef = "treble"),
         Instrument("piano", "Piano", listOf("piano", "keyboard", "keys")),
         Instrument("drums", "Drum Set", listOf("drums", "drum set", "drumset", "drum kit")),
-        Instrument("percussion", "Percussion", listOf("percussion", "mallets", "timpani", "snare drum", "bass drum")),
+        Instrument(
+            "percussion", "Percussion",
+            listOf(
+                "percussion", "mallets", "mallet percussion", "timpani", "snare drum", "snare", "bass drum",
+                "bells", "orchestra bells", "glockenspiel", "xylophone", "marimba", "vibraphone", "chimes",
+                "auxiliary percussion", "crash cymbals", "suspended cymbal", "tambourine", "triangle"
+            )
+        ),
         Instrument("violin", "Violin", listOf("violin"), clef = "treble"),
         Instrument("viola", "Viola", listOf("viola"), clef = "alto"),
         Instrument("cello", "Cello", listOf("cello", "violoncello")),
@@ -107,7 +117,15 @@ object InstrumentReader {
         "bar" to "baritone", "bari" to "bari", "barit" to "baritone", "baritones" to "baritone",
         "tba" to "tuba", "tubas" to "tuba",
         "tpt" to "trumpet", "trp" to "trumpet", "trumpets" to "trumpet",
-        "hn" to "horn", "hns" to "horn", "horns" to "horn",
+        "hn" to "horn", "hns" to "horn", "horns" to "horn", "hrn" to "horn",
+        "btbn" to "bass trombone", "btb" to "bass trombone",
+        "aux" to "auxiliary", "timp" to "timpani", "glock" to "glockenspiel", "xylo" to "xylophone",
+        "vibes" to "vibraphone", "mar" to "marimba", "tamb" to "tambourine",
+        "cor" to "horn", "flugel" to "flugelhorn", "crnt" to "cornet", "cnt" to "cornet",
+        "ssx" to "soprano saxophone", "asx" to "alto saxophone", "tsx" to "tenor saxophone", "bsx" to "baritone saxophone",
+        "euphs" to "euphonium", "tbns" to "trombone", "tpts" to "trumpet", "cls" to "clarinet", "fls" to "flute",
+        "bcl" to "bass clarinet", "acl" to "alto clarinet", "tuba's" to "tuba",
+        "contra" to "contra", "drumset" to "drum set", "drumkit" to "drum kit",
         "cl" to "clarinet", "clar" to "clarinet", "clarinets" to "clarinet",
         "fl" to "flute", "flutes" to "flute", "picc" to "piccolo",
         "bsn" to "bassoon", "ob" to "oboe",
@@ -122,23 +140,33 @@ object InstrumentReader {
 
     /** Find the instrument named in [text], or null when none is. */
     fun read(text: String, among: List<Instrument> = Instruments.all): Match? {
-        val lines = text.lines().filter { it.isNotBlank() }
+        // " - " and brackets part a title from a part name as a line break does:
+        // "All About That Bass - Trombone 1" is not a bass trombone.
+        val lines = text.lines().flatMap { it.split(Regex("""\s+[-–—]\s+|[()\[\]]""")) }.filter { it.isNotBlank() }
         var best: Match? = null
+        var bestScore = -1
         for (line in lines) {
             val words = normalise(line)
             if (words.isEmpty()) continue
+            // A line that is nothing but a part name beats one where the name is a word in a title.
+            val pure = words.all { w -> w in nameWords || w.matches(Regex("""\d+(st|nd|rd|th)?|i{1,3}|iv|v|and|in|part""")) }
             for (instrument in among) {
                 for (name in instrument.names) {
-                    val nameWords = name.split(' ')
-                    if (!containsRun(words, nameWords)) continue
-                    val strength = nameWords.size
-                    if (best == null || strength > best.strength) {
-                        best = Match(instrument, line.trim(), strength)
+                    val run = name.split(' ')
+                    if (!containsRun(words, run)) continue
+                    val score = run.size * 10 + if (pure) 5 else 0
+                    if (score > bestScore) {
+                        bestScore = score
+                        best = Match(instrument, line.trim(), run.size)
                     }
                 }
             }
         }
         return best
+    }
+
+    private val nameWords: Set<String> by lazy {
+        Instruments.all.flatMap { i -> i.names.flatMap { it.split(' ') } }.toSet() + setOf("bb", "eb", "f", "c", "tc", "bc")
     }
 
     /** Read the instrument from a file name: "Liberty Bell - Trombone 2.pdf". */
@@ -150,7 +178,11 @@ object InstrumentReader {
      * "Treble Clef"/"T.C." made "tc", and B-flat written any way made "bb".
      */
     fun normalise(line: String): List<String> {
-        val cleaned = line.lowercase()
+        val cleaned = line
+            // "LibertyBell_Tbn1": a capital after a small letter, and a number stuck to a word,
+            // start new words - otherwise "Tbn1" is one word that names nothing.
+            .replace(Regex("""([a-z])([A-Z])"""), "$1 $2")
+            .lowercase()
             .replace("♭", "b")
             .replace(Regex("""\bt\.\s*c\.?"""), " tc ")
             .replace(Regex("""\bb\.\s*c\.?"""), " bc ")
@@ -158,19 +190,50 @@ object InstrumentReader {
             .replace(Regex("""bass\s+clef"""), " bc ")
             .replace(Regex("""\bb-?flat\b"""), " bb ")
             .replace(Regex("""\be-?flat\b"""), " eb ")
+            .replace(Regex("""([a-z])(\d)"""), "$1 $2")
+            .replace(Regex("""(\d)(?!(st|nd|rd|th)\b)([a-z])"""), "$1 $3")
             .replace(Regex("""[^a-z0-9]+"""), " ")
         val words = cleaned.split(' ').filter { it.isNotBlank() }
             .map { abbreviations[it] ?: it }
             .flatMap { it.split(' ') }
-        // "bari sax" is the saxophone; "bari" alone, on a brass part, is the horn.
+        // "bari sax" is the saxophone; "bari" alone, on a brass part, is the horn. "B. Tbn." is
+        // the bass trombone, as "B. Cl." is the bass clarinet.
         return words.mapIndexed { i, w ->
             when {
-                w == "bari" && words.getOrNull(i + 1)?.startsWith("sax") == true -> "baritone"
                 w == "bari" -> "baritone"
                 w == "sax" -> "saxophone"
+                w == "b" && words.getOrNull(i + 1) in setOf("trombone", "clarinet") -> "bass"
                 else -> w
             }
         }
+    }
+
+    /**
+     * Every instrument a part is printed for, in the order printed: "Trombone / Euphonium B.C. /
+     * Bassoon" gives all three. Read from the one line that names the part best (as [read]
+     * chooses it), so a title elsewhere on the page adds nothing. A longer name hides a shorter
+     * one inside it: "Bass Trombone" is not also a trombone.
+     */
+    fun readAll(text: String, among: List<Instrument> = Instruments.all): List<Instrument> {
+        val best = read(text, among) ?: return emptyList()
+        val words = normalise(best.label)
+        data class Hit(val instrument: Instrument, val start: Int, val length: Int)
+        val hits = ArrayList<Hit>()
+        for (instrument in among) for (name in instrument.names) {
+            val run = name.split(' ')
+            if (run.size > words.size) continue
+            for (start in 0..words.size - run.size) {
+                if (run.indices.all { words[start + it] == run[it] }) hits += Hit(instrument, start, run.size)
+            }
+        }
+        val taken = BooleanArray(words.size)
+        val kept = ArrayList<Hit>()
+        for (h in hits.sortedByDescending { it.length }) {
+            if ((h.start until h.start + h.length).any { taken[it] }) continue
+            (h.start until h.start + h.length).forEach { taken[it] = true }
+            kept += h
+        }
+        return kept.sortedBy { it.start }.map { it.instrument }.distinct()
     }
 
     private fun containsRun(words: List<String>, run: List<String>): Boolean {

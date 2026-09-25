@@ -24,5 +24,7 @@ kotlin {
 
 dependencies {
     api(libs.kotlinx.serialization.json)
+    // QR codes for joining devices: drawing one, and reading one from a pasted picture. Pure Java.
+    implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
 }

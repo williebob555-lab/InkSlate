@@ -51,6 +51,15 @@ object AppFlavor {
      */
     var windowFullscreen by androidx.compose.runtime.mutableStateOf(false)
 
+    /** The window covers the whole screen all the time, Home included - InkSheets on a music stand. */
+    var alwaysFullscreen: Boolean = false
+
+    /** Told whether Home is what is on screen, whenever that changes. */
+    var onHomeShown: ((Boolean) -> Unit)? = null
+
+    /** Close the app; set once the window is up. */
+    var quit: (() -> Unit)? = null
+
     /** A finger tap at either side of a page of music turns it. */
     @Volatile
     var edgeTaps: Boolean = false

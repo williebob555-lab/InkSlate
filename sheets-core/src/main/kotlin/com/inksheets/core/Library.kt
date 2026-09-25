@@ -31,7 +31,12 @@ data class Part(
     val instrument: String? = null,
     val source: InstrumentSource = InstrumentSource.UNKNOWN,
     /** The words the instrument was read from ("Trombone 2", "Euph. T.C."), shown with a guess. */
-    val label: String? = null
+    val label: String? = null,
+    /**
+     * Other instruments the same part is printed for - a flexible-band "Trombone / Euphonium /
+     * Bassoon" part serves all three, so it shows for any of them.
+     */
+    val also: List<String> = emptyList()
 )
 
 /** A recording paired with a song, and the loop last used in it. */
@@ -72,7 +77,7 @@ data class Song(
     val opened: Long = 0
 ) {
     /** The instruments this song has parts for. */
-    val instruments: Set<String> get() = parts.mapNotNull { it.instrument }.toSet()
+    val instruments: Set<String> get() = parts.flatMap { listOfNotNull(it.instrument) + it.also }.toSet()
 }
 
 /** One place in a setlist. The same song can be in a setlist more than once, each its own entry. */
@@ -467,6 +472,13 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         /** "The Liberty Bell" files under L, as a printed index would have it. */
         fun sortKey(title: String): String =
             title.trim().lowercase().removePrefix("the ").removePrefix("a ").removePrefix("an ")
+
+        /**
+         * A title as two copies of one song are matched by: case, punctuation and a leading
+         * article ignored, so "Sleigh-Ride", "SLEIGH RIDE" and "The Sleigh Ride" are one song.
+         */
+        fun matchKey(title: String): String =
+            sortKey(title.lowercase().replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim())
     }
 }
 

@@ -42,4 +42,10 @@ object AppFlavor {
 
     /** Drawn over the document in front, in the corner of its pane. */
     var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
+
+    /** Told whether Home is what is on screen, whenever that changes. */
+    var onHomeShown: ((Boolean) -> Unit)? = null
+
+    /** A link for the app itself arrived (a join code scanned with the camera app). */
+    var onLink: ((String) -> Unit)? = null
 }

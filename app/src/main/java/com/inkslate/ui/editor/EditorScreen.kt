@@ -1528,6 +1528,20 @@ fun EditorScreen(
         com.inkslate.core.Perform.jumpTo = { path, target ->
             if (path == file.absolutePath) drawingView.value?.goToPage(target)
         }
+        // A leading tablet's marks, for a player on the same part - see Perform.mergeInk.
+        com.inkslate.core.Perform.inkOf = { path ->
+            if (path != file.absolutePath || restructuring) null else { syncPage(); doc?.ink }
+        }
+        com.inkslate.core.Perform.mergeInk = { path, incoming ->
+            val d = doc
+            if (path != file.absolutePath || d == null || !strokesLoaded || restructuring) false else {
+                syncPage()
+                if (d.ink.layout != incoming.layout) false else {
+                    com.inkslate.core.Perform.mergedInk(d.ink, incoming)?.let { takeIn(it) }
+                    true
+                }
+            }
+        }
         com.inkslate.core.Perform.openPages = { pagesOpen = true }
         com.inkslate.core.Perform.recentre = { drawingView.value?.fitToScreen() }
         com.inkslate.core.Perform.document = { action ->

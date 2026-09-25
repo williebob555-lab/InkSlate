@@ -14,6 +14,8 @@ import java.io.File
 fun main() = runAs("InkSheets") {
     AppFlavor.fingerPans = true
     AppFlavor.musicView = true
+    // A music stand, not a window among windows: the whole screen, Home too. Quit is in the menu.
+    AppFlavor.alwaysFullscreen = true
     var openFile: ((File) -> Unit)? = null
     val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }) }
     AppFlavor.home = { open, openSettings ->
@@ -24,4 +26,5 @@ fun main() = runAs("InkSheets") {
     AppFlavor.onHome = { state.backToSetlist() }
     AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(state) }
     AppFlavor.onTabsMoved = { state.tabsMoved(it) }
+    AppFlavor.onHomeShown = { home -> state.homeInFront = home }
 }

@@ -159,34 +159,35 @@ private fun <T> OverrideRow(
     var open by remember { mutableStateOf(false) }
     val overridden = currentLabel != null
 
-    Box {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    if (overridden) "Overridden" else "Default: $inheritedLabel",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (overridden) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                if (overridden) "Overridden" else "Default: $inheritedLabel",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (overridden) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        // The menu opens from the button, not from the far edge of the row.
+        Box {
             TextButton(onClick = { open = true }) {
                 Text(currentLabel ?: "Use default")
             }
-        }
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text("Use default ($inheritedLabel)") },
-                onClick = { onPick(null); open = false }
-            )
-            options.forEach { (label, value) ->
+            DropdownMenu(open, onDismissRequest = { open = false }) {
                 DropdownMenuItem(
-                    text = { Text(label) },
-                    onClick = { onPick(value); open = false }
+                    text = { Text("Use default ($inheritedLabel)") },
+                    onClick = { onPick(null); open = false }
                 )
+                options.forEach { (label, value) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = { onPick(value); open = false }
+                    )
+                }
             }
         }
     }

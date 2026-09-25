@@ -50,7 +50,10 @@ internal fun FilePickerDialog(
     within: File? = null,
     note: String? = null,
     /** Another way to choose, beside Cancel - "Import from elsewhere", say. */
-    extra: (@Composable () -> Unit)? = null
+    extra: (@Composable () -> Unit)? = null,
+    /** Choosing the folder being looked at, rather than a file in it, labelled so. */
+    folderLabel: String? = null,
+    onFolder: ((File) -> Unit)? = null
 ) {
     var at by remember { mutableStateOf(start.takeIf { it.isDirectory } ?: File(System.getProperty("user.home"))) }
     val entries = remember(at) {
@@ -61,6 +64,7 @@ internal fun FilePickerDialog(
     SheetDialog(title = title, onDismiss = onDismiss, wide = true, buttons = {
         extra?.invoke()
         TextButton(onClick = onDismiss) { Text("Cancel") }
+        if (onFolder != null) TextButton(onClick = { onFolder(at) }) { Text(folderLabel ?: "Use this folder") }
     }) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {

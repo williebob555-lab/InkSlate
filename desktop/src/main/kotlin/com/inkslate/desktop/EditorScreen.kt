@@ -1404,6 +1404,17 @@ fun EditorScreen(
         com.inkslate.core.Perform.jumpTo = { path, target ->
             if (path == file.absolutePath) goToPage(target)
         }
+        // A leading tablet's marks, for a player on the same part - see Perform.mergeInk.
+        com.inkslate.core.Perform.inkOf = { path -> if (path == file.absolutePath) currentInk() else null }
+        com.inkslate.core.Perform.mergeInk = { path, incoming ->
+            if (path != file.absolutePath) false else {
+                val mine = currentInk()
+                if (mine.layout != incoming.layout) false else {
+                    com.inkslate.core.Perform.mergedInk(mine, incoming)?.let { merged -> ink = mine; takeIn(merged) }
+                    true
+                }
+            }
+        }
         com.inkslate.core.Perform.openPages = { pagesOpen = true }
         com.inkslate.core.Perform.recentre = { goToPage(page) }
         com.inkslate.core.Perform.document = { action ->

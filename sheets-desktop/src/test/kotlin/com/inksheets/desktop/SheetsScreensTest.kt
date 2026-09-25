@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inksheets.core.Part
 import com.inksheets.core.Song
@@ -153,6 +154,70 @@ class SheetsScreensTest {
             shoot("action-strip", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
         com.inkslate.core.Perform.document = null
+    }
+
+    @Test
+    fun `on a short screen every strip button is on screen, none scrolled away`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        state.setStripActions(com.inkslate.core.PerformAction.entries.toList())
+        runDesktopComposeUiTest(width = 1000, height = 420) {
+            setContent {
+                MaterialTheme {
+                    androidx.compose.foundation.layout.Box(
+                        androidx.compose.ui.Modifier.fillMaxSize()
+                            .background(androidx.compose.ui.graphics.Color(0xFFF4F1EA))
+                    ) { ActionStrip(state) }
+                }
+            }
+            waitForIdle()
+            for (action in listOf("Previous page", "Undo", "Show or hide the tools", "Buttons")) {
+                onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
+            }
+            shoot("action-strip-short", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+        }
+    }
+
+    @Test
+    fun `leading shows a code to scan, and the count of followers`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        try {
+            runDesktopComposeUiTest(width = 1000, height = 800) {
+                setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
+                state.companionOpen = true
+                waitForIdle()
+                shoot("play-together", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                onNodeWithText("Lead from this device").performClick()
+                waitForIdle()
+                onNodeWithText("Scan to follow Test stand").assertExists()
+                onNodeWithText("Nobody following yet").assertExists()
+                shoot("leading", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+            }
+        } finally {
+            state.companion.stopLeading()
+        }
+    }
+
+    @Test
+    fun `adding music offers a download, or what is in the folder`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        runDesktopComposeUiTest(width = 1000, height = 800) {
+            setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
+            onNodeWithContentDescriptionSafe("Add music")
+            waitForIdle()
+            onNodeWithText("A download").assertExists()
+            onNodeWithText("Already in my music folder").assertExists()
+            shoot("add-music", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+        }
+    }
+
+    /** A node fully inside the window: a strip that scrolled would leave some half off it. */
+    private fun androidx.compose.ui.test.SemanticsNodeInteraction.assertIsDisplayedFully(width: Float, height: Float) {
+        assertIsDisplayed()
+        val bounds = fetchSemanticsNode().boundsInRoot
+        assertTrue("$bounds is cut off", bounds.top >= 0f && bounds.bottom <= height && bounds.right <= width)
     }
 
     @Test

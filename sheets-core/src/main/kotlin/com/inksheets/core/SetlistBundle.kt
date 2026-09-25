@@ -140,7 +140,7 @@ object SetlistBundle {
                     }
                 }
                 val audio = b.audio.mapNotNull { a -> extract(a.file)?.let { AudioTrack(file = it, label = a.label) } }
-                val existing = library.songs.firstOrNull { Library.sortKey(it.title) == Library.sortKey(b.title) }
+                val existing = library.songs.firstOrNull { Library.matchKey(it.title) == Library.matchKey(b.title) }
                 if (existing != null) {
                     // Already here: add what is new, keep what the person has.
                     val newParts = parts.filter { p -> existing.parts.none { it.file == p.file } }
@@ -187,16 +187,16 @@ object SetlistBundle {
         fun titleOf(entry: ZipEntry): String {
             val file = entry.name.substringAfterLast('/')
             val unnumbered = file.replace(Regex("""^\s*\d{1,3}(\s*[.)_-]\s*|\s+)"""), "")
-            return ImportPlan.withoutTrailingInstrument(ImportPlan.titleOf(unnumbered.ifBlank { file }))
+            return ImportPlan.songTitle(entry.name.substringBeforeLast('/', "").let { if (it.isEmpty()) "" else "$it/" } + unnumbered.ifBlank { file })
         }
         val byTitle = LinkedHashMap<String, MutableList<ZipEntry>>()
-        music.forEach { byTitle.getOrPut(Library.sortKey(titleOf(it))) { ArrayList() } += it }
+        music.forEach { byTitle.getOrPut(Library.matchKey(titleOf(it))) { ArrayList() } += it }
         val songs = byTitle.values.map { entries ->
             val title = titleOf(entries.first())
             BundleSong(
                 title = title,
                 parts = entries.map { e -> BundlePart(e.name, InstrumentReader.readFileName(e.name.substringAfterLast('/'))?.instrument?.id) },
-                audio = sound.filter { Library.sortKey(titleOf(it)) == Library.sortKey(title) }.map { BundleAudio(it.name) }
+                audio = sound.filter { Library.matchKey(titleOf(it)) == Library.matchKey(title) }.map { BundleAudio(it.name) }
             )
         }
         return Manifest(name, songs)

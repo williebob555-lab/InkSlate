@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.zIndex
@@ -265,7 +266,8 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
             AddButton("Songs") { adding = true }
         }
         HorizontalDivider()
-        // Grab a song by its handle and drag it to its new place; it is written when let go.
+        // Grab a song by its handle, or hold it anywhere, and drag it to its new place; it is
+        // written when let go.
         val listState = rememberLazyListState()
         val order = remember(setlist.entries) { setlist.entries.toMutableStateList() }
         var dragging by remember { mutableStateOf<String?>(null) }
@@ -295,9 +297,18 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                 val song = songs[entry.songId]
                 val lifted = dragging == entry.id
                 Column(
-                    if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = dragBy }
+                    (if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = dragBy }
                         .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                    else Modifier
+                    else Modifier)
+                        // Anywhere on the song, not only its handle: hold it, then drag. A quick
+                        // swipe still scrolls the list and a tap still opens the song.
+                        .pointerInput(entry.id) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { dragging = entry.id; dragBy = 0f },
+                                onDragEnd = { dropped() },
+                                onDragCancel = { dropped() }
+                            ) { change, amount -> change.consume(); dragTo(amount.y) }
+                        }
                 ) {
                     val handle: @Composable () -> Unit = {
                         Icon(

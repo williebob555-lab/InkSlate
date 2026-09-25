@@ -151,6 +151,88 @@ class AndroidSheetsPlatform(
         (android.provider.Settings.Global.getString(context.contentResolver, "device_name")
             ?: android.os.Build.MODEL).ifBlank { "Tablet" }
 
+    override fun log(message: String) = EventLog.info("sheets", message)
+
+    override val downloadsFolder: File =
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).takeIf { it.isDirectory } ?: startFolder
+
+    override val cacheFolder: File get() = context.cacheDir
+
+    /** Google's code scanner: its own camera screen, no camera permission for this app to ask. */
+    override val canScanQr: Boolean = true
+
+    override fun scanQr(onResult: (String?) -> Unit) = com.inkslate.ui.QrBits.scan(context, onResult)
+
+    /** The clipboard's text - or a QR code in a picture copied from a chat. */
+    override fun readClipboard(): String? = com.inkslate.ui.QrBits.readClipboard(context)
+
+    override fun copyImage(png: File): Boolean = runCatching {
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", png)
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        clipboard.setPrimaryClip(android.content.ClipData.newUri(context.contentResolver, "InkSheets join code", uri))
+        true
+    }.onFailure { EventLog.warn("sheets", "Could not copy the picture: ${it.message}") }.getOrDefault(false)
+
+    override fun shareImage(png: File) {
+        runCatching {
+            val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", png)
+            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(android.content.Intent.createChooser(send, "Send the join code").apply {
+                if (context !is Activity) addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        }.onFailure { EventLog.warn("sheets", "Could not share the picture: ${it.message}") }
+    }
+
+    override fun writePng(width: Int, height: Int, argb: IntArray, to: File): Boolean = runCatching {
+        val bitmap = android.graphics.Bitmap.createBitmap(argb, width, height, android.graphics.Bitmap.Config.ARGB_8888)
+        to.parentFile?.mkdirs()
+        to.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        true
+    }.getOrDefault(false)
+
+    /** Google's document scanner: finds each page's edges, straightens it, and hands back a PDF. */
+    override val canScanPages: Boolean get() = context is androidx.activity.ComponentActivity
+
+    override fun scanPages(onResult: (File?) -> Unit) {
+        val activity = context as? androidx.activity.ComponentActivity ?: return onResult(null)
+        runCatching {
+            val options = com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.Builder()
+                .setGalleryImportAllowed(true)
+                .setResultFormats(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+                .setScannerMode(com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+                .build()
+            val scanner = com.google.mlkit.vision.documentscanner.GmsDocumentScanning.getClient(options)
+            var launcher: androidx.activity.result.ActivityResultLauncher<androidx.activity.result.IntentSenderRequest>? = null
+            launcher = activity.activityResultRegistry.register(
+                "inksheets-scan-" + System.nanoTime(),
+                androidx.activity.result.contract.ActivityResultContracts.StartIntentSenderForResult()
+            ) { result ->
+                launcher?.unregister()
+                val scan = com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+                val pdf = scan?.pdf?.uri
+                if (result.resultCode != Activity.RESULT_OK || pdf == null) return@register onResult(null)
+                val out = File(context.cacheDir, "scan-${System.currentTimeMillis()}.pdf")
+                val copied = runCatching {
+                    context.contentResolver.openInputStream(pdf)?.use { input -> out.outputStream().use { input.copyTo(it) } }
+                    out.isFile && out.length() > 0
+                }.getOrDefault(false)
+                onResult(if (copied) out else null)
+            }
+            scanner.getStartScanIntent(activity)
+                .addOnSuccessListener { sender -> launcher.launch(androidx.activity.result.IntentSenderRequest.Builder(sender).build()) }
+                .addOnFailureListener {
+                    EventLog.warn("sheets", "Scanner unavailable: ${it.message}")
+                    launcher.unregister()
+                    onResult(null)
+                }
+        }.onFailure { EventLog.warn("sheets", "Scanner failed: ${it.message}"); onResult(null) }
+    }
+
     private companion object {
         const val K_DEVICE = "sheets_device"
     }

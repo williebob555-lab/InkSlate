@@ -127,6 +127,10 @@ dependencies {
     // account or Play services, so it works on a sideloaded install; it adds a few MB to InkSheets
     // only.
     "inksheetsImplementation"("com.google.mlkit:text-recognition:16.0.1")
+    // Joining a leader by its QR code, and photographing paper music: both Google's own camera
+    // screens from Play services, so the app asks for no camera permission of its own.
+    implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    "inksheetsImplementation"("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

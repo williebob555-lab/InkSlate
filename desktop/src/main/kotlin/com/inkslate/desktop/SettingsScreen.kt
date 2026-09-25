@@ -262,26 +262,27 @@ private fun <T> ChoiceRow(
     onPick: (T) -> Unit
 ) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                subtitle?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            subtitle?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            TextButton(onClick = { open = true }) { Text(current) }
         }
-        DropdownMenu(open, onDismissRequest = { open = false }) {
-            options.forEach { (label, value) ->
-                DropdownMenuItem(text = { Text(label) }, onClick = { onPick(value); open = false })
+        // The menu opens from the button, not from the far edge of the row.
+        Box {
+            TextButton(onClick = { open = true }) { Text(current) }
+            DropdownMenu(open, onDismissRequest = { open = false }) {
+                options.forEach { (label, value) ->
+                    DropdownMenuItem(text = { Text(label) }, onClick = { onPick(value); open = false })
+                }
             }
         }
     }
@@ -381,7 +382,45 @@ private fun YourDevicesSection() {
     val statuses = remember(tick, enabled) { DesktopPeers.statuses() }
     val nearby = remember(tick, discovery) { DesktopPeers.discovered }
 
+    /** Pair from a scanned or pasted code: every address it lists is tried in turn. */
+    fun pairFrom(text: String?) {
+        val link = text?.let(com.inkslate.core.PairLink::parse)
+        if (link == null) {
+            message = if (text == null) null else "That is not a pairing code. Show one with \u201CPair a device to this one\u201D on the other device."
+            return
+        }
+        address = link.hosts.first()
+        code = link.code
+        adding = true
+        working = true
+        scope.launch {
+            var result: Result<com.inkslate.core.peer.PeerService.Peer> = Result.failure(IllegalStateException("no address answered"))
+            for (host in link.hosts) {
+                result = withContext(Dispatchers.IO) { DesktopPeers.pairWith(host, link.port, link.code) }
+                if (result.isSuccess) break
+            }
+            working = false
+            message = result.fold(onSuccess = { "Paired with ${it.name}" }, onFailure = { "Could not pair: ${it.message}" })
+            if (result.isSuccess) {
+                adding = false
+                enabled = true
+            }
+            tick++
+        }
+    }
+
     SectionHeader("Your devices")
+
+    // What this is, said once where it lives: people kept finding the section and not knowing.
+    Text(
+        "Links your own tablet and computer so handwriting appears on the other one as you " +
+            "write, while the same file is open on both. The files themselves still travel " +
+            "through your synced folder; this just makes the ink live." +
+            if (AppFlavor.musicView) " Playing along with other people is different - that is \u201CPlay together\u201D on the Home screen, and needs no pairing." else "",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+    )
 
     SwitchRow(
         title = "Talk to my other devices",
@@ -522,7 +561,7 @@ private fun YourDevicesSection() {
                 DesktopPeers.offerPairing(fresh)
             }) { Text("Pair a device to this one") }
             TextButton(onClick = { address = ""; code = ""; adding = true }) {
-                Text("Add by address")
+                Text("Add a device")
             }
         }
 
@@ -543,10 +582,21 @@ private fun YourDevicesSection() {
             text = {
                 Column {
                     Text(
-                        "On the other device, open Settings, choose \"Add by address\", and enter " +
-                            "this machine's address along with the code below. The code works for " +
-                            "the next five minutes."
+                        "On the other device, open Settings, choose \"Add a device\", and scan " +
+                            "this code - or type this machine's address and the number below. It " +
+                            "works for the next five minutes."
                     )
+                    val link = com.inkslate.core.PairLink.of(
+                        "inkslate", DesktopPeers.name(), com.inkslate.core.NetAddresses.mine(), DesktopPeers.port(), shown
+                    )
+                    Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        QrCodeImage(link, 180.dp)
+                        Column(Modifier.padding(start = 16.dp)) {
+                            Text("Scan this from the other device's \u201CAdd a device\u201D.", style = MaterialTheme.typography.bodySmall)
+                            Text("Or type:", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
+                            Text(com.inkslate.core.NetAddresses.mine().joinToString("\n"), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                     Text(
                         shown,
                         style = MaterialTheme.typography.headlineMedium,
@@ -566,6 +616,9 @@ private fun YourDevicesSection() {
             title = { Text("Add a device") },
             text = {
                 Column {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(enabled = !working, onClick = { pairFrom(ClipboardQr.read()) }) { Text("Paste a code") }
+                    }
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },

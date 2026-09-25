@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
@@ -129,7 +130,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                             onClick = { more = false; chooseFolder = true }
                         )
                         DropdownMenuItem(
-                            text = { Text("Companion (lead or follow)...") },
+                            text = { Text("Play together (lead or follow)...") },
                             leadingIcon = { Icon(Icons.Default.Devices, null) },
                             onClick = { more = false; state.companionOpen = true }
                         )
@@ -145,11 +146,21 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                             leadingIcon = { Icon(Icons.Default.Settings, null) },
                             onClick = { more = false; onOpenSettings() }
                         )
+                        // The window covers the whole screen, title bar and all, so it closes from here.
+                        if (state.platform.canQuit) {
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Quit InkSheets") },
+                                leadingIcon = { Icon(Icons.Default.PowerSettingsNew, null) },
+                                onClick = { more = false; state.platform.quit() }
+                            )
+                        }
                     }
                 }
             }
         )
 
+        FollowBanner(state)
         if (state.library == null) {
             Welcome(onChoose = { chooseFolder = true })
         } else {
@@ -193,7 +204,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
 
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
-    if (showImport) ImportDialog(state, onClose = { showImport = false })
+    if (showImport) AddMusicDialog(state, onClose = { showImport = false })
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })

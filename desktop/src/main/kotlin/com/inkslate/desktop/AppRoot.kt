@@ -286,8 +286,9 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         }
         snapshotFlow { immersiveState.value }.collect { on -> front.forEach { it.fullscreen = on } }
     }
-    val wholeScreen = !homeShown && focusedTab != null && (AppFlavor.musicView || immersive)
+    val wholeScreen = AppFlavor.alwaysFullscreen || (!homeShown && focusedTab != null && (AppFlavor.musicView || immersive))
     androidx.compose.runtime.SideEffect { AppFlavor.windowFullscreen = wholeScreen }
+    androidx.compose.runtime.LaunchedEffect(homeShown || focusedTab == null) { AppFlavor.onHomeShown?.invoke(homeShown || focusedTab == null) }
 
     // Which of each document's views its bars follow: the one on screen, and for the document
     // the keyboard is in, the one last touched.

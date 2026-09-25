@@ -121,6 +121,40 @@ object Perform {
     /** Fit the page in front back to the screen, whole and centred. */
     @Volatile
     var recentre: (() -> Unit)? = null
+
+    // ---- handwriting shared with other tablets --------------------------------------
+
+    /**
+     * The handwriting on [path] as it is this moment, if it is the document in front; set by
+     * whichever editor has focus. A leading tablet reads it to share its marks with players on
+     * the same part. Called on the UI thread.
+     */
+    @Volatile
+    var inkOf: ((path: String) -> InkDocument?)? = null
+
+    /**
+     * Merge handwriting from another tablet into [path], if it is the document in front. Only its
+     * pages and erasures are taken; the document keeps its own identity and everything already on
+     * it. False when [path] is not in front or the two are laid out differently. UI thread.
+     */
+    @Volatile
+    var mergeInk: ((path: String, ink: InkDocument) -> Boolean)? = null
+
+    /**
+     * The merge [mergeInk] does, shared by both editors: [incoming]'s marks and erasures onto
+     * [mine]. Null when nothing would change, or when the two copies have their pages in
+     * different arrangements - merging those would keep only one side's pages.
+     */
+    fun mergedInk(mine: InkDocument, incoming: InkDocument): InkDocument? {
+        if (mine.layout != incoming.layout) return null
+        val merged = mine.mergeWith(
+            incoming.copy(
+                docId = mine.docId, source = mine.source, bookmarks = emptyList(), bookmarksRemoved = emptyMap(),
+                canvas = null, structureHistory = mine.structureHistory, pageSizes = emptyList()
+            )
+        )
+        return if (merged.pages == mine.pages && merged.deleted == mine.deleted) null else merged
+    }
 }
 
 /**

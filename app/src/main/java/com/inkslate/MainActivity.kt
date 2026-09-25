@@ -107,6 +107,11 @@ class MainActivity : ComponentActivity() {
     // ---- open-with from other apps -------------------------------------------
 
     private fun handleIncoming(intent: Intent?) {
+        // A link for the app itself - InkSheets' join code, scanned with the camera app.
+        intent?.data?.takeIf { intent.action == Intent.ACTION_VIEW && it.scheme == "inksheets" }?.let { link ->
+            com.inkslate.AppFlavor.onLink?.invoke(link.toString())
+            return
+        }
         val uri = when (intent?.action) {
             Intent.ACTION_VIEW, Intent.ACTION_EDIT -> intent.data
             Intent.ACTION_SEND -> intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)

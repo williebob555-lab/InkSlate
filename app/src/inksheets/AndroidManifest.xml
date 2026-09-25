@@ -2,4 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- The tuner listens through the microphone. Asked for only when the tuner is opened. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <application>
+        <!-- Scanning a leader's join code with the tablet's own camera app opens InkSheets and follows. -->
+        <activity android:name="com.inkslate.MainActivity" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="inksheets" android:host="join" />
+            </intent-filter>
+        </activity>
+    </application>
 </manifest>

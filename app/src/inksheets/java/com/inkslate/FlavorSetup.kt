@@ -25,7 +25,15 @@ object FlavorSetup {
         return SheetsState(AndroidSheetsPlatform(context) { f -> openFile?.invoke(f) }).also {
             state = it
             stateContext = context
+            pendingLink?.let { link -> pendingLink = null; follow(it, link) }
         }
+    }
+
+    /** A join code scanned with the camera app before the screens were up, kept until they are. */
+    private var pendingLink: String? = null
+
+    private fun follow(state: SheetsState, link: String) {
+        com.inksheets.core.CompanionLink.parseJoin(link)?.let { leader -> state.companion.followLeader(leader) { } }
     }
 
     fun install(app: Application) {
@@ -40,6 +48,8 @@ object FlavorSetup {
         AppFlavor.onHome = { state?.backToSetlist() }
         AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(stateFor(LocalContext.current)) }
         AppFlavor.onTabsMoved = { state?.tabsMoved(it) }
+        AppFlavor.onHomeShown = { home -> state?.homeInFront = home }
+        AppFlavor.onLink = { link -> state?.let { follow(it, link) } ?: run { pendingLink = link } }
         AppFlavor.paneOverlay = {
             ActionStrip(stateFor(LocalContext.current))
         }

@@ -73,6 +73,49 @@ interface SheetsPlatform {
 
     /** A player for a song's recordings; null where there is none. */
     fun audioPlayer(): AudioPlayer? = null
+
+    /** A line in the event log (Settings), for things worth keeping but not worth a pop-up. */
+    fun log(message: String) {}
+
+    /** Where downloads land: where a download of band music is looked for first. */
+    val downloadsFolder: File get() = startFolder
+
+    /** Whether [scanQr] can use a camera here. */
+    val canScanQr: Boolean get() = false
+
+    /** Scan a QR code with the camera; [onResult] hears its text, or null if cancelled. */
+    fun scanQr(onResult: (String?) -> Unit) { onResult(null) }
+
+    /**
+     * What is on the clipboard, as text: its text, or the text of a QR code in a picture on it
+     * (a screenshot of another device's code, say). Null when neither.
+     */
+    fun readClipboard(): String? = null
+
+    /** Put the picture in [png] on the clipboard, to paste into a message. False where that cannot be done. */
+    fun copyImage(png: File): Boolean = false
+
+    /** Hand a picture to the share sheet (or show it in the file manager). */
+    fun shareImage(png: File) = share(png)
+
+    /** Whether [scanPages] can photograph pages here. */
+    val canScanPages: Boolean get() = false
+
+    /**
+     * Photograph pages with the camera - the edges of each found and the page straightened - and
+     * hand back one PDF of them, or null if cancelled. On the UI thread.
+     */
+    fun scanPages(onResult: (File?) -> Unit) { onResult(null) }
+
+    /** Write ARGB pixels as a PNG file; false where that cannot be done. */
+    fun writePng(width: Int, height: Int, argb: IntArray, to: File): Boolean = false
+
+    /** Somewhere for files made only to be copied or shared, like a QR code's picture. */
+    val cacheFolder: File get() = File(System.getProperty("java.io.tmpdir"))
+
+    /** Whether the app can be closed from its own menu (a window with no title bar to close it by). */
+    val canQuit: Boolean get() = false
+    fun quit() {}
 }
 
 /**

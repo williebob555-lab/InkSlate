@@ -44,6 +44,13 @@ class SheetsState(val platform: SheetsPlatform) {
     /** The song opened last - what the strip's recording button plays. */
     var current by mutableStateOf<com.inksheets.core.Song?>(null)
 
+    /** The file of the part in front, as the editor last reported it. */
+    var currentPath by mutableStateOf<String?>(null)
+        private set
+
+    /** Whether Home is what is on screen, rather than a song. Set by the workspace. */
+    var homeInFront by mutableStateOf(true)
+
     /** Leading or following other tablets. */
     val companion = Companion(this)
     var companionOpen by mutableStateOf(false)
@@ -96,8 +103,12 @@ class SheetsState(val platform: SheetsPlatform) {
         }
         // Whichever song is in front is "the song": the one the play button plays and the one a
         // leading tablet tells its followers about.
-        com.inkslate.core.Perform.onPosition = { page, count -> pageShown = page to count }
+        com.inkslate.core.Perform.onPosition = { page, count ->
+            pageShown = page to count
+            companion.applyPendingInk()
+        }
         com.inkslate.core.Perform.onPage = { path, page ->
+            currentPath = path
             songAt(path)?.let { if (current?.id != it.id) current = it }
             companion.pageTurned(page)
         }

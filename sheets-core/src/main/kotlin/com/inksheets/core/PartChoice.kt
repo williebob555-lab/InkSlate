@@ -15,7 +15,7 @@ object PartChoice {
     /** How well [song] fits [profile]; everything fits when no instrument is chosen. */
     fun fit(song: Song, profile: InstrumentProfile?): Fit {
         if (profile == null || song.parts.isEmpty()) return Fit.YES
-        if (song.parts.any { it.instrument in profile.instruments }) return Fit.YES
+        if (song.parts.any { p -> p.instrument in profile.instruments || p.also.any { it in profile.instruments } }) return Fit.YES
         if (song.parts.any { it.instrument == null }) return Fit.UNKNOWN
         return Fit.NO
     }
@@ -28,6 +28,10 @@ object PartChoice {
         if (profile != null) {
             for (instrument in profile.instruments) {
                 song.parts.firstOrNull { it.instrument == instrument }?.let { return it }
+            }
+            // A part printed for several instruments, one of them yours.
+            for (instrument in profile.instruments) {
+                song.parts.firstOrNull { instrument in it.also }?.let { return it }
             }
             song.parts.firstOrNull { it.instrument == null }?.let { return it }
         }

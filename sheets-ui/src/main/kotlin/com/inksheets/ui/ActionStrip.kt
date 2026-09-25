@@ -96,6 +96,16 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     // the bottom of a portrait one - so it sits in blank space and never over the music.
     BoxWithConstraints(Modifier.matchParentSize()) {
         val side = maxWidth >= maxHeight
+        // Every button has to be on screen at once - never a strip to scroll. The buttons shrink
+        // to fit a short screen, and only if that is not enough does the strip wrap to a second
+        // column (or row).
+        val visible = shown.count { a ->
+            !((a == PerformAction.NEXT_SONG || a == PerformAction.PREVIOUS_SONG) && state.playing == null) &&
+                !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
+        }
+        val room = if (side) maxHeight else maxWidth
+        val extras = 150.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp)
+        val btn = ((room - extras) / (visible + 2).coerceAtLeast(1)).coerceIn(34.dp, 44.dp)
         val items: @Composable () -> Unit = {
             if (!collapsed) {
                 if (SelfRecorder.recording) {
@@ -117,7 +127,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                             .padding(horizontal = 6.dp, vertical = 8.dp)
                     )
                 }
-                IconButton(onClick = { Perform.recentre?.invoke() }, modifier = Modifier.size(44.dp)) {
+                IconButton(onClick = { Perform.recentre?.invoke() }, modifier = Modifier.size(btn)) {
                     Icon(Icons.Default.CenterFocusStrong, "Fit the page to the screen")
                 }
                 // Where in a setlist this song is, when one is being played.
@@ -145,7 +155,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     IconButton(
                         onClick = { Perform.run(action) },
                         colors = if (lit) IconButtonDefaults.filledTonalIconButtonColors() else IconButtonDefaults.iconButtonColors(),
-                        modifier = Modifier.size(44.dp)
+                        modifier = Modifier.size(btn)
                     ) {
                         Icon(iconOf(action, Perform.on(PerformAction.FULLSCREEN)), action.label)
                     }
@@ -163,7 +173,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     }
                 }
                 Box {
-                    IconButton(onClick = { menu = true }, modifier = Modifier.size(44.dp)) { Icon(Icons.Default.MoreVert, "Buttons") }
+                    IconButton(onClick = { menu = true }, modifier = Modifier.size(btn)) { Icon(Icons.Default.MoreVert, "Buttons") }
                     StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true })
                 }
             }
@@ -181,18 +191,21 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
             modifier = Modifier.align(if (side) Alignment.CenterEnd else Alignment.BottomCenter).padding(6.dp)
         ) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             if (side) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.verticalScroll(rememberScrollState()).padding(vertical = 4.dp)
+                androidx.compose.foundation.layout.FlowColumn(
+                    itemHorizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(vertical = 4.dp)
                 ) { items() }
             } else {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp)
+                androidx.compose.foundation.layout.FlowRow(
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp)
                 ) { items() }
             }
         }
+        // Following, and wandered off: the way back to the leader, top centre.
+        BackToLeader(state, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
     }
 
     if (customising) StripEditor(state, onClose = { customising = false })
@@ -214,7 +227,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
             )
         }
         DropdownMenuItem(
-            text = { Text("Companion (lead or follow)...") },
+            text = { Text("Play together (lead or follow)...") },
             leadingIcon = { Icon(Icons.Default.Devices, null) },
             onClick = { onDismiss(); state.companionOpen = true }
         )

@@ -146,6 +146,19 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override val deviceName: String =
         runCatching { java.net.InetAddress.getLocalHost().hostName }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Laptop"
 
+    override fun log(message: String) = EventLog.info("sheets", message)
+
+    override val downloadsFolder: File =
+        File(System.getProperty("user.home"), "Downloads").takeIf { it.isDirectory } ?: startFolder
+
+    override fun readClipboard(): String? = com.inkslate.desktop.ClipboardQr.read()
+    override fun copyImage(png: File): Boolean = com.inkslate.desktop.ClipboardQr.copyImage(png)
+    override fun writePng(width: Int, height: Int, argb: IntArray, to: File): Boolean =
+        com.inkslate.desktop.ClipboardQr.writePng(width, height, argb, to)
+
+    override val canQuit: Boolean get() = com.inkslate.desktop.AppFlavor.quit != null
+    override fun quit() { com.inkslate.desktop.AppFlavor.quit?.invoke() }
+
     private companion object {
         const val K_DEVICE = "sheets_device"
     }
