@@ -153,6 +153,8 @@ class CompanionTest {
             waitFor(4000) { leader.followerCount == 1 }
             waitFor(CompanionFollower.SILENT_FOR_MS + 5000) { leader.followerCount == 0 }
             assertEquals(0, leader.followerCount)
+            // The count drops a moment before the line is logged.
+            waitFor { log.any { "Ghost went silent" in it } }
             assertTrue(log.toString(), log.any { "Ghost went silent" in it })
             ghost.close()
         } finally {
