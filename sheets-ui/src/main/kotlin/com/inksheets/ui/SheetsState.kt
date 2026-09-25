@@ -129,6 +129,7 @@ class SheetsState(val platform: SheetsPlatform) {
         playing = setlistId to index
         frontEntry = entry.id
         current = song
+        noteOpened(song)
         platform.openSet(tabs, focus)
         companion.pageTurned(0)
     }
@@ -202,6 +203,11 @@ class SheetsState(val platform: SheetsPlatform) {
         playSetlist(id, now)
     }
     private var frontEntry: String? = null
+
+    /** For "Recently opened". Never in the way of opening: a failure to note it is only lost. */
+    fun noteOpened(song: com.inksheets.core.Song) {
+        runCatching { change { markOpened(song.id) } }
+    }
 
     /** Put the setlist away: its tabs are saved and closed, and it is no longer being played. */
     fun closeSetlist() {

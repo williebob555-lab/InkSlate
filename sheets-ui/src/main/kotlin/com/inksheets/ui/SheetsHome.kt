@@ -1,5 +1,8 @@
 package com.inksheets.ui
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -253,23 +256,30 @@ private fun SongsPane(state: SheetsState) {
     var editing by remember { mutableStateOf<Song?>(null) }
     var addingToSetlist by remember { mutableStateOf<Song?>(null) }
     var recordingsFor by remember { mutableStateOf<Song?>(null) }
-    var byPractice by rememberSaveable { mutableStateOf(false) }
+    var sortName by rememberSaveable { mutableStateOf(SongSort.AZ.name) }
+    val sort = SongSort.valueOf(sortName)
+    var withRecording by rememberSaveable { mutableStateOf(false) }
+    var notInSet by rememberSaveable { mutableStateOf(false) }
 
     val version = state.version
-    val practice = remember(version) {
+    val songs = remember(version, state.profileId, query, sort, withRecording, notInSet) {
         val lib = state.library
-        lib?.songs.orEmpty().associate { it.id to lib!!.practiceOf(it.id) }
-    }
-    val songs = remember(version, state.profileId, query, byPractice) {
-        val all = state.library?.songs.orEmpty()
+        val all = lib?.songs.orEmpty()
+        val inSets = if (notInSet) lib?.setlists.orEmpty().flatMap { l -> l.entries.map { it.songId } }.toSet() else emptySet()
         val q = query.trim().lowercase()
-        val matching = if (q.isEmpty()) all else all.filter { s ->
-            (listOf(s.title) + s.composers + s.arrangers + s.artists + s.genres + s.tags)
-                .any { it.lowercase().contains(q) }
+        val matching = all.filter { s ->
+            (q.isEmpty() || (listOf(s.title) + s.composers + s.arrangers + s.artists + s.genres + s.tags)
+                .any { it.lowercase().contains(q) }) &&
+                (!withRecording || s.audio.isNotEmpty()) &&
+                (!notInSet || s.id !in inSets)
         }
         val listed = PartChoice.songsFor(matching, state.profile)
-        // "Needs practice": the least recently practised first, never-practised at the very top.
-        if (byPractice) listed.sortedBy { (s, _) -> practice[s.id]?.lastDay ?: "" } else listed
+        when (sort) {
+            SongSort.AZ -> listed
+            SongSort.OPENED -> listed.sortedByDescending { it.first.opened }
+            SongSort.ADDED -> listed.sortedByDescending { it.first.created }
+            SongSort.COMPOSER -> listed.sortedWith(compareBy({ it.first.composers.firstOrNull()?.lowercase() ?: "\uFFFF" }, { com.inksheets.core.Library.sortKey(it.first.title) }))
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -281,9 +291,18 @@ private fun SongsPane(state: SheetsState) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
-        Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            androidx.compose.material3.FilterChip(selected = !byPractice, onClick = { byPractice = false }, label = { Text("A to Z") })
-            androidx.compose.material3.FilterChip(selected = byPractice, onClick = { byPractice = true }, label = { Text("Needs practice") })
+        // How the list is ordered, then what it is narrowed to.
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SongSort.entries.forEach { o ->
+                androidx.compose.material3.FilterChip(selected = sort == o, onClick = { sortName = o.name }, label = { Text(o.label) })
+            }
+            androidx.compose.material3.VerticalDivider(Modifier.height(24.dp).padding(horizontal = 4.dp))
+            androidx.compose.material3.FilterChip(selected = withRecording, onClick = { withRecording = !withRecording }, label = { Text("Has a recording") })
+            androidx.compose.material3.FilterChip(selected = notInSet, onClick = { notInSet = !notInSet }, label = { Text("In no setlist") })
         }
         if (songs.isEmpty()) {
             Text(
@@ -293,10 +312,15 @@ private fun SongsPane(state: SheetsState) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        // In groups, not one long stack: A to Z under letters, "needs practice" under how long ago.
-        val groups = remember(songs, byPractice, practice) {
+        // In groups, not one long stack: under letters, how long ago, or who wrote it.
+        val groups = remember(songs, sort) {
             songs.groupBy { (song, _) ->
-                if (byPractice) practiceGroup(practice[song.id]?.lastDay) else letterOf(song.title)
+                when (sort) {
+                    SongSort.AZ -> letterOf(song.title)
+                    SongSort.OPENED -> howLongAgo(song.opened, never = "Never opened")
+                    SongSort.ADDED -> howLongAgo(song.created, never = "Earlier")
+                    SongSort.COMPOSER -> song.composers.firstOrNull() ?: "No composer"
+                }
             }.toList()
         }
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
@@ -324,7 +348,6 @@ private fun SongsPane(state: SheetsState) {
                     items(members, key = { it.first.id }) { (song, fit) ->
                         SongRow(
                             song = song,
-                            practice = practice[song.id],
                             unsure = fit == PartChoice.Fit.UNKNOWN,
                             onOpen = { state.stopPlaying(); openSong(state, song) },
                             onEdit = { editing = song },
@@ -337,7 +360,7 @@ private fun SongsPane(state: SheetsState) {
                 }
             }
             // The letters down the side: tap one to go straight there.
-            if (!byPractice && groups.size > 1) {
+            if (sort == SongSort.AZ && groups.size > 1) {
                 Column(
                     Modifier.fillMaxHeight().padding(horizontal = 4.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.SpaceEvenly,
@@ -373,6 +396,7 @@ private fun SongsPane(state: SheetsState) {
 internal fun openSong(state: SheetsState, song: Song) {
     val part = PartChoice.partFor(song, state.profile) ?: return
     state.current = song
+    state.noteOpened(song)
     val file = state.partFile(song, part) ?: return
     // A part partway into a band pack opens at its own first page.
     part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
@@ -385,7 +409,6 @@ internal fun openSong(state: SheetsState, song: Song) {
 internal fun SongRow(
     song: Song,
     unsure: Boolean,
-    practice: com.inksheets.core.Library.Practice? = null,
     onOpen: () -> Unit,
     onEdit: (() -> Unit)? = null,
     onAddToSetlist: (() -> Unit)? = null,
@@ -402,8 +425,7 @@ internal fun SongRow(
             val detail = listOfNotNull(
                 song.composers.joinToString(", ").takeIf { it.isNotEmpty() },
                 song.key?.let { "in $it" },
-                song.tempo?.let { "♩=$it" },
-                practice?.takeIf { it.totalSeconds >= 60 }?.let { p -> "practised ${duration(p.totalSeconds)}" + (p.lastDay?.let { ", " + ago(it) } ?: "") }
+                song.tempo?.let { "♩=$it" }
             ).joinToString("  ·  ")
             if (detail.isNotEmpty()) {
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -480,36 +502,26 @@ internal fun AddButton(label: String, onClick: () -> Unit) {
     }
 }
 
-internal fun duration(seconds: Long): String {
-    val m = seconds / 60
-    return if (m < 60) "${m}m" else "${m / 60}h ${m % 60}m"
-}
-
-internal fun ago(isoDay: String): String {
-    val days = runCatching {
-        java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(isoDay), java.time.LocalDate.now())
-    }.getOrNull() ?: return isoDay
-    return when {
-        days <= 0L -> "today"
-        days == 1L -> "yesterday"
-        else -> "$days days ago"
-    }
-}
-
 /** The letter a title files under, as a printed index has it: "The Liberty Bell" under L, numbers under #. */
 internal fun letterOf(title: String): String {
     val c = com.inksheets.core.Library.sortKey(title).firstOrNull { it.isLetterOrDigit() } ?: return "#"
     return if (c.isLetter()) c.uppercaseChar().toString() else "#"
 }
 
-/** Which "needs practice" group a song falls in, by the day it was last practised. */
-internal fun practiceGroup(lastDay: String?): String {
-    val days = lastDay?.let {
-        runCatching { java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.parse(it), java.time.LocalDate.now()) }.getOrNull()
-    } ?: return "Never practised"
+/** Which "how long ago" group a moment falls in; [never] for none. */
+internal fun howLongAgo(at: Long, never: String): String {
+    if (at <= 0L) return never
+    val days = (System.currentTimeMillis() - at) / 86_400_000L
     return when {
-        days > 30 -> "Over a month ago"
-        days > 7 -> "This month"
-        else -> "This week"
+        days < 1 -> "Today"
+        days < 7 -> "This week"
+        days < 31 -> "This month"
+        days < 365 -> "This year"
+        else -> "Longer ago"
     }
+}
+
+/** How the song list is ordered. */
+internal enum class SongSort(val label: String) {
+    AZ("A to Z"), OPENED("Recently opened"), ADDED("Recently added"), COMPOSER("Composer")
 }

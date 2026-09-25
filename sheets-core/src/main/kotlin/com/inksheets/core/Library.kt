@@ -67,7 +67,9 @@ data class Song(
     val parts: List<Part> = emptyList(),
     val audio: List<AudioTrack> = emptyList(),
     val bookmarks: List<Bookmark> = emptyList(),
-    val created: Long = 0
+    val created: Long = 0,
+    /** When it was last opened, on any device; 0 for never. */
+    val opened: Long = 0
 ) {
     /** The instruments this song has parts for. */
     val instruments: Set<String> get() = parts.mapNotNull { it.instrument }.toSet()
@@ -274,6 +276,9 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     }
 
     fun deleteSong(id: String) = edit(SONG, id) { put(Op.DELETED, true) }
+
+    /** Note that [id] was opened just now, for "Recently opened". */
+    fun markOpened(id: String, at: Long = System.currentTimeMillis()) = edit(SONG, id) { put("opened", at) }
     fun deleteSetlist(id: String) = edit(SETLIST, id) { put(Op.DELETED, true) }
 
     /**
@@ -395,7 +400,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         parts = f.list("parts", PART_LIST),
         audio = f.list("audio", AUDIO_LIST),
         bookmarks = f.list("bookmarks", BOOKMARK_LIST),
-        created = f.string("created")?.toLongOrNull() ?: 0
+        created = f.string("created")?.toLongOrNull() ?: 0,
+        opened = f.string("opened")?.toLongOrNull() ?: 0
     )
 
     private fun setlist(id: String, f: Map<String, JsonElement>) = Setlist(

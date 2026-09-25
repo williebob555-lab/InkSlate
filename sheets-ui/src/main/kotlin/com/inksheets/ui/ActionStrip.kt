@@ -91,16 +91,6 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     val shown = state.strip
     var customising by remember { mutableStateOf(false) }
 
-    // Practice time: counted while a song is open in front of you, half a minute at a time.
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(30_000)
-            val song = state.current ?: continue
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching { state.change { addPractice(song.id, java.time.LocalDate.now().toString(), 30) } }
-            }
-        }
-    }
 
     // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
     // the bottom of a portrait one - so it sits in blank space and never over the music.
