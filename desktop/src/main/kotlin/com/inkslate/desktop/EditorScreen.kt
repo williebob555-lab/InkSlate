@@ -1113,7 +1113,7 @@ fun EditorScreen(
                 }
             }
             paperBox(clamped)?.let {
-                viewport.fitClear(it, padding = 8f, lane = STRIP_LANE_DP * density, laneOnLeft = AppFlavor.stripOnLeft)
+                viewport.fitClear(it, padding = 8f, lane = AppFlavor.stripLaneDp * density, laneOnLeft = AppFlavor.stripOnLeft)
                 fittedScale = viewport.scale
                 return
             }

@@ -135,6 +135,10 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.stripOnLeft = left
     }
 
+    override fun setStripLane(open: Boolean) {
+        com.inkslate.desktop.AppFlavor.stripLaneDp = if (open) 64f else 0f
+    }
+
     override fun setTurnStyle(style: String) {
         com.inkslate.desktop.AppFlavor.turnAnimation = style
     }

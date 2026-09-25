@@ -65,7 +65,10 @@ class AndroidSheetsPlatform(
 
     override fun setEdgeTaps(on: Boolean) {
         com.inkslate.ink.DrawingView.edgeTapTurns = on
-        com.inkslate.ink.DrawingView.swipeTurns = on
+    }
+
+    override fun setStripLane(open: Boolean) {
+        com.inkslate.ink.DrawingView.stripLaneDp = if (open) 64f else 0f
     }
 
     override fun setStripSide(left: Boolean) {

@@ -1075,7 +1075,34 @@ class DrawingView @JvmOverloads constructor(
     /** How far the page had been dragged when a swipe turned it, so the turn carries on from there. */
     private var swipeCarry: Float? = null
 
-    private class TurnAnim(val from: Bitmap, val dir: Int, val carry: Float, val startNs: Long)
+    private class TurnAnim(
+        val from: Bitmap, val dir: Int, val carry: Float, val startNs: Long,
+        /** Shown as a fade whatever the setting - a song arriving with no direction to it. */
+        val fade: Boolean = false,
+        /** The picture is this turn's own, let go when it ends. */
+        val owned: Boolean = false
+    )
+
+    /** A finger on a page of music with its tools away: a tap or a swipe, still to be told apart. */
+    private class FingerTurn(val downX: Float, val downY: Float, val at: Long) {
+        var moved = false
+        var sideways = false
+        var lastY = downY
+    }
+    private var fingerTurn: FingerTurn? = null
+
+    /** What one song leaves on screen for the next to turn away from. */
+    private class Handoff(val shot: Bitmap, val dir: Int, val at: Long)
+
+    /** How far the page has followed a finger sideways, before the swipe is decided. */
+    private var dragOffset = 0f
+    private var settle: android.animation.ValueAnimator? = null
+
+    /** What the song before this one left on screen, shown until this one's page is drawn. */
+    private var arriving: Handoff? = null
+
+    /** This view has just handed its picture on to the next song. */
+    private var handedOff = false
     private var turnAnim: TurnAnim? = null
     private var turnShot: Bitmap? = null
 
@@ -1104,13 +1131,37 @@ class DrawingView @JvmOverloads constructor(
     }.getOrNull()
 
     override fun draw(canvas: android.graphics.Canvas) {
+        arriving?.let { arr ->
+            val ready = hasBitmap(currentPage)
+            val fresh = android.os.SystemClock.uptimeMillis() - arr.at < HANDOFF_MS
+            val fits = arr.shot.width == width && arr.shot.height == height
+            if (!ready && fresh && fits && turnAnim == null) {
+                // The last song stays on screen until this one can be shown - never a blank flash.
+                canvas.drawBitmap(arr.shot, 0f, 0f, null)
+                postInvalidateDelayed(50)
+                return
+            }
+            arriving = null
+            if (ready && fits && turnAnimation != TURN_NONE) {
+                turnAnim = TurnAnim(arr.shot, if (arr.dir == 0) 1 else arr.dir, 0f, System.nanoTime(), fade = arr.dir == 0, owned = true)
+            } else {
+                arr.shot.recycle()
+            }
+        }
         val anim = turnAnim
-        if (anim == null) { super.draw(canvas); return }
+        if (anim == null) {
+            if (dragOffset != 0f) {
+                canvas.save(); canvas.translate(dragOffset, 0f); super.draw(canvas); canvas.restore()
+            } else {
+                super.draw(canvas)
+            }
+            return
+        }
         val raw = ((System.nanoTime() - anim.startNs) / 1_000_000f) / TURN_MS
         val t = raw.coerceIn(0f, 1f)
         val eased = 1f - (1f - t) * (1f - t) * (1f - t)
         val w = width.toFloat()
-        when (turnAnimation) {
+        when (if (anim.fade) TURN_FADE else turnAnimation) {
             TURN_FADE -> {
                 super.draw(canvas)
                 turnPaint.alpha = ((1f - eased) * 255).toInt()
@@ -1127,7 +1178,11 @@ class DrawingView @JvmOverloads constructor(
                 canvas.drawBitmap(anim.from, oldAt, 0f, turnPaint)
             }
         }
-        if (t < 1f) postInvalidateOnAnimation() else { turnAnim = null; reportVisiblePages(); scheduleDetail(); postInvalidateOnAnimation() }
+        if (t < 1f) postInvalidateOnAnimation() else {
+            turnAnim = null
+            if (anim.owned) anim.from.recycle()
+            reportVisiblePages(); scheduleDetail(); postInvalidateOnAnimation()
+        }
     }
 
     private val turnPaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -1516,7 +1571,11 @@ class DrawingView @JvmOverloads constructor(
         applyCanvasToSlots()
         if (currentPage >= slots.size) currentPage = maxOf(0, slots.size - 1)
         relayout()
-        if (resetView) fitWidth() else { clampTranslation(); syncInverse(); invalidate() }
+        if (resetView) {
+            // Music opens on the whole page, centred - never a first frame at its width that then
+            // jumps into place.
+            if (fitWholePage && layout == PageLayout.SINGLE) fitToScreen() else fitWidth()
+        } else { clampTranslation(); syncInverse(); invalidate() }
         reportVisiblePages()
     }
 
@@ -1600,6 +1659,8 @@ class DrawingView @JvmOverloads constructor(
                 turnAnim = TurnAnim(shot, if (target > currentPage) 1 else -1, carry, System.nanoTime())
             }
         }
+        settle?.cancel()
+        dragOffset = 0f
         currentPage = target
         syncCurrentDims()
         if (layout == PageLayout.SINGLE) {
@@ -1719,7 +1780,114 @@ class DrawingView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         model.attach(this)
+        // The song turned to: take over what the last one left on screen.
+        handoff?.let { h ->
+            handoff = null
+            if (android.os.SystemClock.uptimeMillis() - h.at < HANDOFF_MS) { arriving?.shot?.recycle(); arriving = h } else h.shot.recycle()
+        }
+        handedOff = false
     }
+
+    /**
+     * Another song is taking this one's place ([dir] +1 the next, -1 the one before, 0 neither):
+     * what is on screen now is kept for it to show until its own page is drawn, then turned away
+     * from - so moving through a set looks like turning a page, never a blank flash.
+     */
+    fun handOff(dir: Int) {
+        if (!fitWholePage || width <= 0 || height <= 0 || turnAnimation == TURN_NONE && !hasBitmap(currentPage)) return
+        val shot = runCatching {
+            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { draw(android.graphics.Canvas(it)) }
+        }.getOrNull() ?: return
+        handoff?.shot?.recycle()
+        handoff = Handoff(shot, dir, android.os.SystemClock.uptimeMillis())
+        handedOff = true
+    }
+
+    /**
+     * A finger on a page of music with its tools away. Anywhere on the right half a tap turns on,
+     * on the left half back; a swipe drags the page with the finger and, far or quick enough,
+     * turns it the way it was pushed. Up and down still moves a page read up close.
+     */
+    private fun onFingerTurn(e: MotionEvent, action: Int): Boolean {
+        when (action) {
+            MotionEvent.ACTION_DOWN -> {
+                settle?.cancel()
+                fingerTurn = FingerTurn(e.x, e.y, System.currentTimeMillis())
+                parent?.requestDisallowInterceptTouchEvent(true)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val f = fingerTurn ?: return true
+                val dx = e.x - f.downX
+                val dy = e.y - f.downY
+                if (!f.moved && hypot(dx, dy) > tapSlopPx) {
+                    f.moved = true
+                    f.sideways = abs(dx) > abs(dy)
+                    f.lastY = e.y
+                }
+                if (!f.moved) return true
+                if (f.sideways) {
+                    dragOffset = dx
+                    invalidate()
+                } else if (zoomedIn()) {
+                    pageToView.postTranslate(0f, e.y - f.lastY)
+                    clampTranslation(); syncInverse(); scheduleDetail(); reportVisiblePages(); invalidate()
+                }
+                f.lastY = e.y
+            }
+            MotionEvent.ACTION_UP -> {
+                val f = fingerTurn ?: return true
+                fingerTurn = null
+                parent?.requestDisallowInterceptTouchEvent(false)
+                val (vx, _) = releaseVelocity()
+                if (!f.moved) {
+                    if (edgeTapTurns && width > 0 && System.currentTimeMillis() - f.at < TAP_TURN_MS) {
+                        turnBy(if (e.x >= width / 2f) 1 else -1)
+                    }
+                    return true
+                }
+                if (!f.sideways) return true
+                val dx = e.x - f.downX
+                val far = width * SWIPE_TURN_SHARE
+                val dir = when {
+                    dx < -far || (vx < -SWIPE_TURN_SPEED && dx < -tapSlopPx) -> 1
+                    dx > far || (vx > SWIPE_TURN_SPEED && dx > tapSlopPx) -> -1
+                    else -> 0
+                }
+                if (dir == 0) settleBack() else turnBy(dir)
+            }
+            MotionEvent.ACTION_CANCEL -> { fingerTurn = null; settleBack() }
+        }
+        return true
+    }
+
+    /** Turn a page (or on to the next song) from a tap or a swipe, carrying on from a drag. */
+    private fun turnBy(dir: Int) {
+        swipeCarry = dragOffset
+        handedOff = false
+        com.inkslate.core.Perform.run(
+            if (dir > 0) com.inkslate.core.PerformAction.NEXT_PAGE else com.inkslate.core.PerformAction.PREVIOUS_PAGE
+        )
+        if (swipeCarry != null) {
+            // Not a page of this song. Another song has taken over, or there was nowhere to go -
+            // then the page goes back to where it belongs.
+            swipeCarry = null
+            if (handedOff) dragOffset = 0f else postDelayed({ if (!handedOff && fingerTurn == null) settleBack() }, 150)
+        }
+    }
+
+    /** A page dragged part way and let go goes back where it was. */
+    private fun settleBack() {
+        settle?.cancel()
+        if (dragOffset == 0f) return
+        settle = android.animation.ValueAnimator.ofFloat(dragOffset, 0f).apply {
+            duration = 180
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { dragOffset = it.animatedValue as Float; invalidate() }
+            start()
+        }
+    }
+
+    private val tapSlopPx = 12f * resources.displayMetrics.density
 
     fun strokesSnapshot(): List<Stroke> = ArrayList(strokes)
     fun isEmpty(): Boolean = strokes.isEmpty()
@@ -2260,13 +2428,11 @@ class DrawingView @JvmOverloads constructor(
         val lane = stripLaneDp * resources.displayMetrics.density
         var laneShift = 0f
         if (fitWholePage && lane > 0f) {
-            // Always down a side: a strip along the bottom wraps into two rows of buttons.
-            val spare = (w - b.width() * s) / 2f
-            if (spare < lane) {
-                w -= lane
-                if (stripOnLeft) laneShift = lane
-                s = min((w - 24f) / b.width(), (h - 24f) / b.height())
-            }
+            // Always down a side, and always the same room kept whatever the page's shape: every
+            // page of every song then sits in the same place, so flipping through never jumps.
+            w -= lane
+            if (stripOnLeft) laneShift = lane
+            s = min((w - 24f) / b.width(), (h - 24f) / b.height())
         }
         minScale = s * 0.35f
         fittedScale = s
@@ -2827,6 +2993,14 @@ class DrawingView @JvmOverloads constructor(
         val touchWantsToPan = touchConfig.tool == Tool.PAN
         if ((drawingIsStylus || hasStylusPointer(event)) && isFinger && !touchWantsToPan) {
             return true
+        }
+
+        // Music with its tools away: a finger only ever turns pages, whatever it is set to do
+        // with the tools out. The pen still writes.
+        if (!isStylus && toolType != MotionEvent.TOOL_TYPE_MOUSE &&
+            (fingerTurn != null || (action == MotionEvent.ACTION_DOWN && turnsWithFinger()))
+        ) {
+            return onFingerTurn(event, action)
         }
 
         // Swap configs before anything reads them, so the very first sample of a stroke already
@@ -3557,6 +3731,7 @@ class DrawingView @JvmOverloads constructor(
         // A held touch never happened, so a second finger arriving costs nothing at all: no mark
         // on the page, and no cleared selection to get back.
         discardPending()
+        if (fingerTurn != null) { fingerTurn = null; settleBack() }
         gestureConfig = null
 
         // A part-drawn placement box is discarded, but the item stays armed: a pinch in the
@@ -4545,6 +4720,12 @@ class DrawingView @JvmOverloads constructor(
         /** A swipe this far across the view, or this quick, turns the page. */
         private const val SWIPE_TURN_SHARE = 0.18f
         private const val SWIPE_TURN_SPEED = 900f
+
+        /** A tap that turns the page is shorter than this. */
+        private const val TAP_TURN_MS = 450L
+
+        @Volatile private var handoff: Handoff? = null
+        private const val HANDOFF_MS = 1500L
 
         /** Placeholder id for the stroke being drawn right now; never persisted. */
         const val LIVE_ID = "live"

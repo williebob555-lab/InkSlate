@@ -144,6 +144,16 @@ fun AppRoot(
 
     /** Put [id] in front of you: move to it where it already is, or show it in the pane in use. */
     fun selectTab(id: String) {
+        // Music: the song on screen is handed to the one coming, which shows it until its own page
+        // is drawn and then turns away from it - the way a page turns, with no blank between.
+        if (com.inkslate.AppFlavor.musicView && !homeShown) {
+            val shownId = primary?.tabId
+            val from = tabs.indexOfFirst { it.id == shownId }
+            val to = tabs.indexOfFirst { it.id == id }
+            if (from >= 0 && to >= 0 && from != to) {
+                tabs[from].host.activeView.view?.handOff(if (to > from) 1 else -1)
+            }
+        }
         homeShown = false
         tabOf(id)?.loaded = true
         // A setlist's next and previous songs are read now, while this one is played, so turning

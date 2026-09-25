@@ -93,7 +93,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     var menu by remember { mutableStateOf(false) }
     val shown = state.strip
     var customising by remember { mutableStateOf(false) }
-
+    // Folded away, the strip is one button in the corner and the page has the whole width.
+    androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
 
     // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
     // the bottom of a portrait one - so it sits in blank space and never over the music.
@@ -180,6 +181,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             IconButton(onClick = {
                 collapsed = !collapsed
                 state.platform.setPref(K_COLLAPSED, collapsed.toString())
+                state.platform.setStripLane(!collapsed)
+                Perform.recentre?.invoke()
             }, modifier = Modifier.size(36.dp)) {
                 Icon(if (collapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess, if (collapsed) "Show buttons" else "Hide buttons")
             }
@@ -189,7 +192,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             tonalElevation = 3.dp,
             shadowElevation = 2.dp,
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-            modifier = Modifier.align(if (state.stripOnLeft) Alignment.CenterStart else Alignment.CenterEnd).padding(6.dp)
+            // In the bottom corner, the fold button last - folded away, it is all there is, out of
+            // the music's way.
+            modifier = Modifier.align(if (state.stripOnLeft) Alignment.BottomStart else Alignment.BottomEnd).padding(6.dp)
         ) {
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             if (side) {
@@ -277,7 +282,7 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
                 Modifier.fillMaxWidth().clickable { state.edgeTaps = !state.edgeTaps }.padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Tap or swipe the page to turn it", Modifier.weight(1f))
+                Text("Tap the page to turn it (right half on, left half back)", Modifier.weight(1f))
                 Switch(checked = state.edgeTaps, onCheckedChange = { state.edgeTaps = it })
             }
             Row(

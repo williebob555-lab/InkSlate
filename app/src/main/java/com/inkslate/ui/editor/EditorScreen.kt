@@ -1584,10 +1584,12 @@ fun EditorScreen(
             val view = drawingView.value
             val count = view?.pageCount ?: 0
             if (view == null) false else when (action) {
+                // The view's own page, never a copy of it that may be a turn behind: two quick
+                // turns must be two pages, not one twice or three.
                 com.inkslate.core.PerformAction.NEXT_PAGE ->
-                    (page < count - 1).also { if (it) view.goToPage(page + 1) }
+                    (view.currentPage < count - 1).also { if (it) view.goToPage(view.currentPage + 1) }
                 com.inkslate.core.PerformAction.PREVIOUS_PAGE ->
-                    (page > 0).also { if (it) view.goToPage(page - 1) }
+                    (view.currentPage > 0).also { if (it) view.goToPage(view.currentPage - 1) }
                 com.inkslate.core.PerformAction.FIRST_PAGE -> { view.goToPage(0); true }
                 com.inkslate.core.PerformAction.LAST_PAGE -> { view.goToPage(count - 1); true }
                 com.inkslate.core.PerformAction.UNDO -> { view.undo(); dirty = true; true }

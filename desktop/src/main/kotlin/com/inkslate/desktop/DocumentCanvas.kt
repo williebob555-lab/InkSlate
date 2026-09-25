@@ -461,6 +461,9 @@ fun DocumentCanvas(
         snapshotFlow { viewport.offset to viewport.scale }
             .debounce(120)
             .collect {
+                // A fitted page of music is the page it was turned to. Reading it back off the
+                // camera mid-turn could name the one beside it, and the next turn would skip one.
+                if (resting()) return@collect
                 val centre = viewport.screenToDoc(
                     Offset(viewport.viewSize.width / 2f, viewport.viewSize.height / 3f)
                 )
@@ -1191,7 +1194,11 @@ private suspend fun AwaitPointerEventScope.wheelLoop(
     // this gesture, and whether this gesture has already turned one. One swipe, one page.
     var across = 0f
     var down = 0f
-    var turned = false
+    // The way the last turn went (+1/-1), 0 for none yet this gesture, and when it was made. After
+    // a turn, more of the same way is the same swipe - or the trackpad's own coasting after the
+    // fingers lift - and turns nothing more; the other way is a new swipe straight away.
+    var turned = 0
+    var turnedAt = 0L
     var lastScrollAt = 0L
 
     while (true) {
@@ -1205,7 +1212,7 @@ private suspend fun AwaitPointerEventScope.wheelLoop(
         val now = System.currentTimeMillis()
         if (twoFingered(event, sideways)) glassSeenAt = now
         val trackpad = now - glassSeenAt < GLASS_MEMORY_MS
-        if (now - lastScrollAt > SWIPE_PAUSE_MS) { across = 0f; down = 0f; turned = false }
+        if (now - lastScrollAt > SWIPE_PAUSE_MS) { across = 0f; down = 0f; turned = 0 }
         lastScrollAt = now
         val turn = swipe()
 
@@ -1223,12 +1230,17 @@ private suspend fun AwaitPointerEventScope.wheelLoop(
             // directions at once, following the fingers, with no throw of their own - the fingers
             // are still there to keep moving it.
             trackpad && turn != null -> {
-                across += sideways
-                down += notches
-                if (!turned && abs(across) > TRACKPAD_SWIPE_NOTCHES && abs(across) > 1.5f * abs(down)) {
-                    turned = true
-                    turn(if (across > 0) 1 else -1)
-                } else if (abs(down) > abs(across)) {
+                val way = if (sideways > 0f) 1 else if (sideways < 0f) -1 else 0
+                if (turned != 0 && way == -turned && now - turnedAt > REVERSE_AFTER_MS) {
+                    // Back the other way: a new swipe, counted from here.
+                    across = 0f; down = 0f; turned = 0
+                }
+                if (turned == 0) { across += sideways; down += notches }
+                if (turned == 0 && abs(across) > TRACKPAD_SWIPE_NOTCHES && abs(across) > 1.5f * abs(down)) {
+                    turned = if (across > 0) 1 else -1
+                    turnedAt = now
+                    turn(turned)
+                } else if (turned == 0 && abs(down) > abs(across)) {
                     viewport.stop()
                     viewport.panBy(0f, -notches * Viewport.PAN_PER_NOTCH, freely = true)
                 }
@@ -1293,6 +1305,9 @@ private const val FITTED_SWIPE_SHARE = 0.15f
 /** Two fingers on a trackpad: this many notches sideways turn a page; this long still ends it. */
 private const val TRACKPAD_SWIPE_NOTCHES = 2.5f
 private const val SWIPE_PAUSE_MS = 250L
+
+/** A trackpad swipe back the other way this soon after a turn is the fingers settling, not a swipe. */
+private const val REVERSE_AFTER_MS = 120L
 
 /**
  * Whether this scroll came from two fingers rather than a wheel.
