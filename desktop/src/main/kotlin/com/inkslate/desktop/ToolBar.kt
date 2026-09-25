@@ -545,29 +545,32 @@ fun ToolBar(
                         }
                     }
 
-                    Label("Scrolling")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Chip(
-                            if (state.flingEnabled) "Momentum: on" else "Momentum: off",
-                            state.flingEnabled
-                        ) {
-                            change { state.flingEnabled = !state.flingEnabled }
-                        }
-                    }
-                    if (state.flingEnabled) {
-                        SliderRow(
-                            label = "Flick distance",
-                            value = state.flingScale,
-                            range = 0.5f..3.5f,
-                            display = {
-                                when {
-                                    it < 0.9f -> "Short"
-                                    it < 1.6f -> "Normal"
-                                    it < 2.5f -> "Long"
-                                    else -> "Very long"
-                                }
+                    // Music turns a page at a time; there is nothing to fling.
+                    if (!AppFlavor.musicView) {
+                        Label("Scrolling")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Chip(
+                                if (state.flingEnabled) "Momentum: on" else "Momentum: off",
+                                state.flingEnabled
+                            ) {
+                                change { state.flingEnabled = !state.flingEnabled }
                             }
-                        ) { v -> change { state.flingScale = v } }
+                        }
+                        if (state.flingEnabled) {
+                            SliderRow(
+                                label = "Flick distance",
+                                value = state.flingScale,
+                                range = 0.5f..3.5f,
+                                display = {
+                                    when {
+                                        it < 0.9f -> "Short"
+                                        it < 1.6f -> "Normal"
+                                        it < 2.5f -> "Long"
+                                        else -> "Very long"
+                                    }
+                                }
+                            ) { v -> change { state.flingScale = v } }
+                        }
                     }
 
                     Label("Input")
