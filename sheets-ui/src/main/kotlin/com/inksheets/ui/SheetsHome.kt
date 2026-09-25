@@ -68,13 +68,12 @@ import kotlinx.coroutines.withContext
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
+fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fillMaxSize()) {
     var tab by state::homeTab
     var showMetronome by remember { mutableStateOf(false) }
     var showTuner by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     var chooseFolder by remember { mutableStateOf(false) }
-    var importMs by remember { mutableStateOf(false) }
     var openShared by remember { mutableStateOf(false) }
     var backupToImport by remember { mutableStateOf<java.io.File?>(null) }
     var backupsLookedAt by remember { mutableStateOf(0) }
@@ -122,7 +121,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                     IconButton(onClick = { more = true }) { Icon(Icons.Default.MoreVert, "More") }
                     DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
                         DropdownMenuItem(
-                            text = { Text("Music folder...") },
+                            text = { Text("Change library...") },
                             leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
                             onClick = { more = false; chooseFolder = true }
                         )
@@ -136,11 +135,6 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
                                 text = { Text("Open a shared setlist...") },
                                 leadingIcon = { Icon(Icons.Default.LibraryAdd, null) },
                                 onClick = { more = false; openShared = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Import from MobileSheets...") },
-                                leadingIcon = { Icon(Icons.Default.LibraryAdd, null) },
-                                onClick = { more = false; importMs = true }
                             )
                         }
                         DropdownMenuItem(
@@ -197,13 +191,12 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) ImportDialog(state, onClose = { showImport = false })
-    if (importMs) MobileSheetsDialog(state, onClose = { importMs = false })
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     if (chooseFolder) {
         FolderPickerDialog(
-            title = "Choose your music folder",
+            title = "Choose your library folder",
             start = state.root ?: state.platform.startFolder,
             onChosen = { state.open(it); chooseFolder = false },
             onDismiss = { chooseFolder = false }

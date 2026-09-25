@@ -42,6 +42,9 @@ object AppFlavor {
     /** Told when Home is pressed in the tab row, before Home shows. */
     var onHome: (() -> Unit)? = null
 
+    /** What an app built on this one adds at the top of Settings - InkSheets' one-off imports. */
+    var settingsSection: (@Composable () -> Unit)? = null
+
     /**
      * Whether the window should cover the whole screen - taskbar and title bar too. Music does
      * whenever a song is in front; InkSlate does in its fullscreen mode.

@@ -79,10 +79,10 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
         SharedMetronome.beat = -1
     }
 
-    SheetDialog(title = "Metronome", onDismiss = onClose) {
+    FloatingPanel(title = "Metronome", onClose = onClose) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
             // The beat, big enough to catch from the corner of an eye over a loud band.
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 repeat(settings.beatsPerBar) { b ->
                     val lit = SharedMetronome.running && SharedMetronome.beat == b
                     val colour by animateColorAsState(
@@ -92,37 +92,31 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
                             else -> MaterialTheme.colorScheme.surfaceVariant
                         }
                     )
-                    Box(Modifier.size(22.dp).background(colour, CircleShape))
+                    Box(Modifier.size(16.dp).background(colour, CircleShape))
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Text("${settings.bpm.roundToInt()}", fontSize = 56.sp, fontWeight = FontWeight.Light)
-            Text("beats per minute", style = MaterialTheme.typography.labelMedium)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { use(settings.copy(bpm = (settings.bpm - 5).coerceAtLeast(20.0))) }) { Text("−5") }
-                TextButton(onClick = { use(settings.copy(bpm = (settings.bpm - 1).coerceAtLeast(20.0))) }) { Text("−1") }
-                TextButton(onClick = { use(settings.copy(bpm = (settings.bpm + 1).coerceAtMost(300.0))) }) { Text("+1") }
-                TextButton(onClick = { use(settings.copy(bpm = (settings.bpm + 5).coerceAtMost(300.0))) }) { Text("+5") }
+                TextButton(onClick = { use(settings.copy(bpm = (settings.bpm - 1).coerceAtLeast(20.0))) }) { Text("−") }
+                Text("${settings.bpm.roundToInt()}", fontSize = 36.sp, fontWeight = FontWeight.Light)
+                TextButton(onClick = { use(settings.copy(bpm = (settings.bpm + 1).coerceAtMost(300.0))) }) { Text("+") }
             }
             Slider(
                 value = settings.bpm.toFloat(),
                 onValueChange = { use(settings.copy(bpm = it.roundToInt().toDouble())) },
                 valueRange = 20f..300f
             )
-            Text("Beats in a bar", style = MaterialTheme.typography.labelMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(2, 3, 4, 5, 6, 7).forEach { n ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Beats", style = MaterialTheme.typography.labelMedium)
+                listOf(2, 3, 4, 6).forEach { n ->
                     FilterChip(selected = settings.beatsPerBar == n, onClick = { use(settings.copy(beatsPerBar = n)) }, label = { Text("$n") })
                 }
             }
-            Text("Clicks per beat", style = MaterialTheme.typography.labelMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 listOf(1 to "♩", 2 to "♫", 3 to "3", 4 to "♬").forEach { (n, label) ->
                     FilterChip(selected = settings.subdivision == n, onClick = { use(settings.copy(subdivision = n)) }, label = { Text(label) })
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     val now = System.currentTimeMillis()
                     taps += now
@@ -189,12 +183,12 @@ internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
     }
     val note = hz?.let { Tuner.note(it, if (transposed) instrument?.transpose ?: 0 else 0, a4) }
 
-    SheetDialog(title = "Tuner", onDismiss = onClose) {
+    FloatingPanel(title = "Tuner", onClose = onClose) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
             val n = note
             Text(
                 n?.let { "${it.name}${it.octave}" } ?: "–",
-                fontSize = 72.sp, fontWeight = FontWeight.Light, textAlign = TextAlign.Center
+                fontSize = 48.sp, fontWeight = FontWeight.Light, textAlign = TextAlign.Center
             )
             if (n != null && transposed && instrument != null && instrument.transpose != 0) {
                 Text("concert ${n.concertName}", style = MaterialTheme.typography.labelMedium)
@@ -211,7 +205,6 @@ internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
                 },
                 color = if (inTune) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(12.dp))
             if (instrument != null && instrument.transpose != 0) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     FilterChip(selected = transposed, onClick = { transposed = true }, label = { Text("As ${instrument.name} reads") })

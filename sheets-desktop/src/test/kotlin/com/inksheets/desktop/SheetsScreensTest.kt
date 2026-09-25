@@ -124,7 +124,8 @@ class SheetsScreensTest {
             setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
             onNodeWithContentDescriptionSafe("Metronome")
             waitForIdle()
-            onNodeWithText("beats per minute").assertExists()
+            onNodeWithText("Tap").assertExists()
+            onNodeWithText("Start").assertExists()
             shoot("metronome", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
     }

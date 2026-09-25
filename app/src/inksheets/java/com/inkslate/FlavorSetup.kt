@@ -38,6 +38,7 @@ object FlavorSetup {
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)
         }
         AppFlavor.onHome = { state?.backToSetlist() }
+        AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(stateFor(LocalContext.current)) }
         AppFlavor.onTabsMoved = { state?.tabsMoved(it) }
         AppFlavor.paneOverlay = {
             ActionStrip(stateFor(LocalContext.current))

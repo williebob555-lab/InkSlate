@@ -117,6 +117,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         Column(
             Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())
         ) {
+            com.inkslate.AppFlavor.settingsSection?.let { it(); HorizontalDivider(Modifier.padding(top = 14.dp)) }
             SectionHeader("Saving")
 
             ChoiceRow(

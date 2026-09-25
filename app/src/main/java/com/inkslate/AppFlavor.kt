@@ -34,6 +34,9 @@ object AppFlavor {
     /** Told when Home is pressed in the tab row, before Home shows. */
     var onHome: (() -> Unit)? = null
 
+    /** What an app built on this one adds at the top of Settings - InkSheets' one-off imports. */
+    var settingsSection: (@Composable () -> Unit)? = null
+
     /** Told the files in the tab row, in order, whenever a tab is dragged to a new place. */
     var onTabsMoved: ((List<File>) -> Unit)? = null
 

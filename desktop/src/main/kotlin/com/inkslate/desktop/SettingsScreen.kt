@@ -82,6 +82,7 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) {
+            AppFlavor.settingsSection?.let { it(); HorizontalDivider(Modifier.padding(top = 14.dp)) }
             SavingSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             YourDevicesSection()
