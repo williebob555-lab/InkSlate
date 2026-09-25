@@ -21,4 +21,5 @@ fun main() = runAs("InkSheets") {
         SheetsHome(state, onOpenSettings = openSettings)
     }
     AppFlavor.paneOverlay = { ActionStrip(state) }
+    AppFlavor.onHome = { state.backToSetlist() }
 }

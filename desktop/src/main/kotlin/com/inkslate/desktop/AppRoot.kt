@@ -323,7 +323,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                     focusedId = focusedTab?.id,
                     primaryId = primaryTab?.id,
                     secondaryId = secondaryTab?.id,
-                    onHome = { homeShown = true },
+                    onHome = { AppFlavor.onHome?.invoke(); homeShown = true },
                     onSelect = ::selectTab,
                     onOpenInSplit = ::openInSplit,
                     onCloseSplit = ::closeSplit,

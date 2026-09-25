@@ -197,4 +197,16 @@ class LibraryTest {
 
     private fun Library.ownLogSize(): Long =
         File(tmp.root, "tablet/.inksheets/log/tablet.jsonl").length()
+
+    @Test
+    fun `setlists and folders are alphabetical within their folder`() {
+        val (_, lib) = device("tablet")
+        val band = lib.addFolder("Jazz Band")
+        lib.addFolder("2025", band.id); lib.addFolder("2024", band.id)
+        lib.addSetlist("Spring Concert", band.id)
+        lib.addSetlist("the Autumn Show", band.id)
+        lib.addSetlist("Gig", band.id)
+        assertEquals(listOf("the Autumn Show", "Gig", "Spring Concert"), lib.setlistsIn(band.id).map { it.name })
+        assertEquals(listOf("2024", "2025"), lib.foldersIn(band.id).map { it.name })
+    }
 }

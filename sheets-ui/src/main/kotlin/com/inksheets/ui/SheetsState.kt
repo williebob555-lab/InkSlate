@@ -125,6 +125,23 @@ class SheetsState(val platform: SheetsPlatform) {
         companion.pageTurned(0)
     }
 
+    /** What Home shows: the songs (0) or the setlists (1), and in Setlists the folder and setlist open. */
+    var homeTab by mutableStateOf(0)
+    var setlistFolder by mutableStateOf<String?>(null)
+    var setlistShown by mutableStateOf<String?>(null)
+
+    /**
+     * Home, pressed while playing a set: the set is put away as "Close set" would, and Home opens
+     * on that setlist, in its folder, rather than on the song list.
+     */
+    fun backToSetlist() {
+        val (id, _) = playing ?: return
+        closeSetlist()
+        homeTab = 1
+        setlistShown = id
+        setlistFolder = library?.setlist(id)?.folderId
+    }
+
     /** Put the setlist away: its tabs are saved and closed, and it is no longer being played. */
     fun closeSetlist() {
         playing = null

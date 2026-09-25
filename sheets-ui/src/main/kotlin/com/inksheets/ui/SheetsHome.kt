@@ -69,7 +69,7 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
-    var tab by rememberSaveable { mutableStateOf(0) }
+    var tab by state::homeTab
     var showMetronome by remember { mutableStateOf(false) }
     var showTuner by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }

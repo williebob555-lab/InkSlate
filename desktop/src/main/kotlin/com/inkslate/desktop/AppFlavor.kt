@@ -37,6 +37,9 @@ object AppFlavor {
     var openSet: ((parts: List<Pair<File, String>>, focus: Int) -> Unit)? = null
     var closeSet: (() -> Unit)? = null
 
+    /** Told when Home is pressed in the tab row, before Home shows. */
+    var onHome: (() -> Unit)? = null
+
     /** Drawn over the document in front, in the corner of its pane. */
     var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
 }

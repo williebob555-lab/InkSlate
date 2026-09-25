@@ -381,7 +381,7 @@ fun AppRoot(
                         splitAvailable = splitAvailable,
                         stacked = splitStacked,
                         onMoveTab = { from, to -> tabs.add(to, tabs.removeAt(from)) },
-                        onHome = { homeShown = true },
+                        onHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true },
                         onSelect = ::selectTab,
                         onOpenInSplit = ::openInSplit,
                         onCloseSplit = ::closeSplit,

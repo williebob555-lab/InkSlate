@@ -36,6 +36,7 @@ object FlavorSetup {
             openFile = open
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)
         }
+        AppFlavor.onHome = { state?.backToSetlist() }
         AppFlavor.paneOverlay = {
             ActionStrip(stateFor(LocalContext.current))
         }

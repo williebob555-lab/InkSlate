@@ -151,12 +151,12 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     @get:Synchronized
     val setlists: List<Setlist>
         get() = state.live(SETLIST).map { (id, f) -> setlist(id, f) }
-            .sortedWith(compareBy({ it.order }, { sortKey(it.name) }))
+            .sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
 
     @get:Synchronized
     val folders: List<Folder>
         get() = saneFolders(state.live(FOLDER).map { (id, f) -> folder(id, f) })
-            .sortedWith(compareBy({ it.order }, { sortKey(it.name) }))
+            .sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
 
     fun song(id: String): Song? = synchronized(this) {
         state.live(SONG)[id]?.let { song(id, it) }

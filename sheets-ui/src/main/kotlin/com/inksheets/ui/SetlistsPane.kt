@@ -52,8 +52,9 @@ import com.inksheets.core.Setlist
  */
 @Composable
 internal fun SetlistsPane(state: SheetsState) {
-    var folderId by rememberSaveable { mutableStateOf<String?>(null) }
-    var openSetlist by rememberSaveable { mutableStateOf<String?>(null) }
+    // Held by the state, so leaving a set by Home can land back inside it.
+    var folderId by state::setlistFolder
+    var openSetlist by state::setlistShown
     var naming by remember { mutableStateOf<Naming?>(null) }
     var sharing by remember { mutableStateOf<String?>(null) }
 
