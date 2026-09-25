@@ -498,7 +498,11 @@ fun AppRoot(
                     }
                 }
 
-                if (focusedTab != null) HostBar(focusedTab.host) { it.bottomBar }
+                // In the music view, hidden tools means all of them - the page bar and the paint
+                // tray too - so the page has the whole screen; the Tools button brings them back.
+                if (focusedTab != null && !(com.inkslate.AppFlavor.musicView && immersive.isFullscreen)) {
+                    HostBar(focusedTab.host) { it.bottomBar }
+                }
                 }
             }
 

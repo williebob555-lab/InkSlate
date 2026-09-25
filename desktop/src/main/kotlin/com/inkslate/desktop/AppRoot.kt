@@ -421,7 +421,9 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                 }
             }
 
-            if (focusedTab != null) HostBar(focusedTab.host) { it.bottomBar }
+            // In the music view, hidden tools means all of them - the page bar and the paint tray
+            // too - so the page has the whole window; the Tools button brings them all back.
+            if (focusedTab != null && !(AppFlavor.musicView && immersive)) HostBar(focusedTab.host) { it.bottomBar }
         }
 
         // Every open document, whether or not any of it is on screen. Each keeps its marks, its
