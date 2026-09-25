@@ -22,4 +22,5 @@ fun main() = runAs("InkSheets") {
     }
     AppFlavor.paneOverlay = { ActionStrip(state) }
     AppFlavor.onHome = { state.backToSetlist() }
+    AppFlavor.onTabsMoved = { state.tabsMoved(it) }
 }

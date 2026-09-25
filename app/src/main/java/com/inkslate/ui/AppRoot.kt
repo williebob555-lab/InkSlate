@@ -380,7 +380,10 @@ fun AppRoot(
                         secondaryId = secondaryTab?.id,
                         splitAvailable = splitAvailable,
                         stacked = splitStacked,
-                        onMoveTab = { from, to -> tabs.add(to, tabs.removeAt(from)) },
+                        onMoveTab = { from, to ->
+                            tabs.add(to, tabs.removeAt(from))
+                            com.inkslate.AppFlavor.onTabsMoved?.invoke(tabs.filter { !it.closeRequested.value }.map { it.file })
+                        },
                         onHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true },
                         onSelect = ::selectTab,
                         onOpenInSplit = ::openInSplit,

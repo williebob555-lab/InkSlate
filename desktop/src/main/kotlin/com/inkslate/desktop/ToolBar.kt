@@ -395,13 +395,13 @@ fun ToolBar(
                 }
                 // Tables, stamps, captures, pictures and the ruler are for homework; music is
                 // marked in pen and text.
+                ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
                 if (!AppFlavor.musicView) {
                     ToolButton(Icons.Default.GridOn, "Table", cfg.tool == Tool.TABLE) {
                         change { state.edit { it.tool = Tool.TABLE } }
                     }
                     // Symbols are in the tray as well, so one button covers everything put on the
                     // page rather than drawn on it.
-                    ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
                     ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
                         actions.onCapture()
                     }

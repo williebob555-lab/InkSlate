@@ -472,6 +472,7 @@ fun ToolBar(
                 }
                 // Tables, captures, rulers, stamps and pictures are for homework; music is
                 // marked in pen and text.
+                ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
                 if (!com.inkslate.AppFlavor.musicView) {
                     ToolButton(Icons.Default.GridOn, "Table", false) {
                         actions.onInsertTable(state.tableRows, state.tableCols)
@@ -484,7 +485,6 @@ fun ToolBar(
                     }
                     // Symbols are in the tray as well, so one button covers everything you put on
                     // the page rather than draw on it.
-                    ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
                     ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
                     ToolButton(Icons.Default.PhotoCamera, "Photo", false) { actions.onTakePhoto() }
                 }

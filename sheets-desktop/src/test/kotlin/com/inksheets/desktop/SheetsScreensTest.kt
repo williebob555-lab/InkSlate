@@ -23,6 +23,7 @@ import com.inksheets.ui.SheetsHome
 import com.inksheets.ui.SheetsPlatform
 import com.inksheets.ui.SheetsState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -55,7 +56,11 @@ class SheetsScreensTest {
         override val microphone: Microphone? = null
         override fun onMain(block: () -> Unit) = block()
         override val deviceName = "Test stand"
+        override fun openSet(parts: List<Pair<File, String>>, focus: Int) { tabs = parts.map { it.second }; closed = false }
+        override fun closeSet() { closed = true }
     }
+    private var tabs: List<String> = emptyList()
+    private var closed = false
 
     private fun shoot(name: String, image: java.awt.image.BufferedImage) {
         val dir = System.getProperty("inksheets.shots") ?: return
@@ -170,4 +175,40 @@ class SheetsScreensTest {
 
     private fun androidx.compose.ui.test.ComposeUiTest.onNodeWithContentDescriptionSafe(label: String) =
         onNode(androidx.compose.ui.test.hasContentDescription(label)).performClick()
+
+    @Test
+    fun `tab order and setlist order follow each other, and Home puts the set away`() {
+        val root = tmp.newFolder("Music")
+        listOf("A.pdf", "B.pdf", "C.pdf").forEach { File(root, it).writeText("x") }
+        val state = SheetsState(FakePlatform(root))
+        lateinit var setId: String
+        state.change {
+            val ids = listOf("Alpha", "Bravo", "Charlie").map { t -> addSong(t, listOf(Part(file = "${t.first()}.pdf"))).id }
+            setId = addSetlist("Gig").id
+            ids.forEach { addToSetlist(setId, it) }
+        }
+        state.playSetlist(setId, 1)
+        assertEquals(listOf("Alpha", "Bravo", "Charlie"), tabs)
+
+        // Dragging Charlie's tab to the front reorders the setlist; Bravo is still the one playing.
+        state.tabsMoved(listOf("C.pdf", "A.pdf", "B.pdf").map { File(root, it) })
+        val titles = { state.library!!.setlist(setId)!!.entries.map { e -> state.library!!.song(e.songId)!!.title } }
+        assertEquals(listOf("Charlie", "Alpha", "Bravo"), titles())
+        assertEquals(setId to 2, state.playing)
+
+        // Dragging in the list reorders the open tabs, keeping Bravo in front.
+        val entries = state.library!!.setlist(setId)!!.entries
+        state.reorderSetlist(setId, listOf(entries[2].id, entries[0].id, entries[1].id))
+        state.setlistReordered(setId)
+        assertEquals(listOf("Bravo", "Charlie", "Alpha"), titles())
+        assertEquals(listOf("Bravo", "Charlie", "Alpha"), tabs)
+        assertEquals(setId to 0, state.playing)
+
+        // Home: the set is closed and Home opens on it.
+        state.backToSetlist()
+        assertTrue(closed)
+        assertEquals(null, state.playing)
+        assertEquals(1, state.homeTab)
+        assertEquals(setId, state.setlistShown)
+    }
 }

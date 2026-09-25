@@ -330,7 +330,10 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                     onCloseTab = { id -> tabOf(id)?.closeRequested?.value = true },
                     onCloseOthers = ::closeOthers,
                     onCloseAll = ::closeAll,
-                    onMoveTab = { from, to -> tabs.add(to, tabs.removeAt(from)) },
+                    onMoveTab = { from, to ->
+                        tabs.add(to, tabs.removeAt(from))
+                        AppFlavor.onTabsMoved?.invoke(tabs.filter { !it.closeRequested.value }.map { it.file })
+                    },
                     onNewTab = { homeShown = true; screen = Screen.Home },
                     onLeaveFullscreen = if (immersive && !homeShown) {
                         { immersive = false }

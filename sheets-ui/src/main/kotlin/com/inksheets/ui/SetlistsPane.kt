@@ -1,6 +1,13 @@
 package com.inksheets.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.toMutableStateList
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,8 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
@@ -182,33 +188,80 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
             AddButton("Songs") { adding = true }
         }
         HorizontalDivider()
-        LazyColumn(Modifier.fillMaxSize()) {
-            itemsIndexed(setlist.entries, key = { _, e -> e.id }) { index, entry ->
+        // Grab a song by its handle and drag it to its new place; it is written when let go.
+        val listState = rememberLazyListState()
+        val order = remember(setlist.entries) { setlist.entries.toMutableStateList() }
+        var dragging by remember { mutableStateOf<String?>(null) }
+        var dragBy by remember { mutableStateOf(0f) }
+        fun dragTo(delta: Float) {
+            val id = dragging ?: return
+            dragBy += delta
+            val items = listState.layoutInfo.visibleItemsInfo
+            val me = items.firstOrNull { it.key == id } ?: return
+            val centre = me.offset + me.size / 2 + dragBy
+            val over = items.firstOrNull { it.key != id && it.index in order.indices && centre > it.offset && centre < it.offset + it.size } ?: return
+            val from = order.indexOfFirst { it.id == id }
+            if (from < 0) return
+            order.add(over.index, order.removeAt(from))
+            dragBy -= (over.offset - me.offset)
+        }
+        fun dropped() {
+            if (dragging != null) {
+                state.reorderSetlist(setlist.id, order.map { it.id })
+                state.setlistReordered(setlist.id)
+            }
+            dragging = null
+            dragBy = 0f
+        }
+        LazyColumn(Modifier.fillMaxSize(), state = listState) {
+            itemsIndexed(order, key = { _, e -> e.id }) { index, entry ->
                 val song = songs[entry.songId]
-                if (song == null) {
-                    ListRow(icon = {}, title = "(removed from the library)", detail = null, onClick = {}, menu = listOf(
-                        "Take out of setlist" to { state.change { removeFromSetlist(setlist.id, entry.id) } }
-                    ))
-                } else {
-                    SongRow(
-                        song = song,
-                        unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
-                        onOpen = { state.playSetlist(setlist.id, index) },
-                        trailing = {
-                            Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
-                            IconButton(onClick = { state.change { moveInSetlist(setlist.id, entry.id, index - 1) } }, enabled = index > 0) {
-                                Icon(Icons.Default.ArrowUpward, "Earlier")
+                val lifted = dragging == entry.id
+                Column(
+                    if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = dragBy }
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    else Modifier
+                ) {
+                    val handle: @Composable () -> Unit = {
+                        Icon(
+                            Icons.Default.DragHandle, "Drag to reorder",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .pointerInput(entry.id) {
+                                    detectDragGestures(
+                                        onDragStart = { dragging = entry.id; dragBy = 0f },
+                                        onDragEnd = { dropped() },
+                                        onDragCancel = { dropped() }
+                                    ) { change, amount -> change.consume(); dragTo(amount.y) }
+                                }
+                                .padding(12.dp)
+                        )
+                    }
+                    if (song == null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                ListRow(icon = {}, title = "(removed from the library)", detail = null, onClick = {}, menu = listOf(
+                                    "Take out of setlist" to { state.change { removeFromSetlist(setlist.id, entry.id) } }
+                                ))
                             }
-                            IconButton(onClick = { state.change { moveInSetlist(setlist.id, entry.id, index + 1) } }, enabled = index < setlist.entries.lastIndex) {
-                                Icon(Icons.Default.ArrowDownward, "Later")
-                            }
-                            IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {
-                                Icon(Icons.Default.Close, "Take out of setlist")
-                            }
+                            handle()
                         }
-                    )
+                    } else {
+                        SongRow(
+                            song = song,
+                            unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
+                            onOpen = { state.playSetlist(setlist.id, index) },
+                            trailing = {
+                                Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
+                                IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {
+                                    Icon(Icons.Default.Close, "Take out of setlist")
+                                }
+                                handle()
+                            }
+                        )
+                    }
+                    HorizontalDivider()
                 }
-                HorizontalDivider()
             }
         }
     }

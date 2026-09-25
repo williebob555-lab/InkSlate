@@ -466,8 +466,11 @@ private fun DocumentTabChip(
                         modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary
                     )
                 }
-                IconButton(onClick = onClose, modifier = Modifier.size(20.dp)) {
-                    Icon(Icons.Default.Close, "Close ${tab.file.name}", modifier = Modifier.size(14.dp))
+                // Music closes as a set, from Home, not a tab at a time.
+                if (!com.inkslate.AppFlavor.musicView) {
+                    IconButton(onClick = onClose, modifier = Modifier.size(20.dp)) {
+                        Icon(Icons.Default.Close, "Close ${tab.file.name}", modifier = Modifier.size(14.dp))
+                    }
                 }
             },
         )

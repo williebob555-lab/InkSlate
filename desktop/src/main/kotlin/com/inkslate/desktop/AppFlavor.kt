@@ -40,6 +40,9 @@ object AppFlavor {
     /** Told when Home is pressed in the tab row, before Home shows. */
     var onHome: (() -> Unit)? = null
 
+    /** Told the files in the tab row, in order, whenever a tab is dragged to a new place. */
+    var onTabsMoved: ((List<File>) -> Unit)? = null
+
     /** Drawn over the document in front, in the corner of its pane. */
     var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
 }

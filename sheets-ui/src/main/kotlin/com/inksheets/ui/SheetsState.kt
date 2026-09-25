@@ -120,6 +120,7 @@ class SheetsState(val platform: SheetsPlatform) {
             }
         }
         playing = setlistId to index
+        frontEntry = entry.id
         current = song
         platform.openSet(tabs, focus)
         companion.pageTurned(0)
@@ -135,12 +136,62 @@ class SheetsState(val platform: SheetsPlatform) {
      * on that setlist, in its folder, rather than on the song list.
      */
     fun backToSetlist() {
-        val (id, _) = playing ?: return
+        val (id, _) = playing ?: return closeSetlist()
         closeSetlist()
         homeTab = 1
         setlistShown = id
         setlistFolder = library?.setlist(id)?.folderId
     }
+
+    /** The file each entry of [setlistId] opens, with your instrument's part; null where none. */
+    private fun entryFiles(setlistId: String): List<Pair<String, File?>> {
+        val lib = library ?: return emptyList()
+        return lib.setlist(setlistId)?.entries.orEmpty().map { e ->
+            e.id to lib.song(e.songId)?.let { s -> com.inksheets.core.PartChoice.partFor(s, profile)?.let { partFile(s, it) } }
+        }
+    }
+
+    /**
+     * The tab row was rearranged while a set is open: the setlist takes the same order. Entries
+     * sharing a file keep their order among themselves; ones with no tab stay where they are last.
+     */
+    fun tabsMoved(files: List<File>) {
+        val (id, index) = playing ?: return
+        val before = entryFiles(id)
+        if (before.isEmpty()) return
+        val rank = files.map { it.absolutePath }
+        val after = before.withIndex().sortedWith(compareBy(
+            { (_, e) -> e.second?.absolutePath?.let(rank::indexOf)?.takeIf { it >= 0 } ?: Int.MAX_VALUE },
+            { it.index }
+        )).map { it.value.first }
+        if (after == before.map { it.first }) return
+        val playingEntry = before.getOrNull(index)?.first
+        reorderSetlist(id, after)
+        playing = id to (after.indexOf(playingEntry).takeIf { it >= 0 } ?: index)
+    }
+
+    /**
+     * Put a setlist's entries in [entryIds] order - from dragging a song in the list. If the set is
+     * open, its tabs follow.
+     */
+    fun reorderSetlist(setlistId: String, entryIds: List<String>) {
+        val lib = library ?: return
+        val entries = lib.setlist(setlistId)?.entries ?: return
+        val byId = entries.associateBy { it.id }
+        val ordered = entryIds.mapNotNull(byId::get) + entries.filter { it.id !in entryIds }
+        if (ordered.map { it.id } == entries.map { it.id }) return
+        change { editSetlist(setlistId) { this.entries = ordered } }
+    }
+
+    /** After the list was dragged: the open set's tabs take the new order, the same song in front. */
+    fun setlistReordered(setlistId: String) {
+        val (id, index) = playing ?: return
+        if (id != setlistId) return
+        val front = frontEntry ?: return
+        val now = library?.setlist(id)?.entries?.indexOfFirst { it.id == front }?.takeIf { it >= 0 } ?: index
+        playSetlist(id, now)
+    }
+    private var frontEntry: String? = null
 
     /** Put the setlist away: its tabs are saved and closed, and it is no longer being played. */
     fun closeSetlist() {

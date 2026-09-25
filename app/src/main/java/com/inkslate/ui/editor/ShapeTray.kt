@@ -157,19 +157,22 @@ fun ShapeTray(
                             if (armed == k) onDisarm() else onArm(k)
                         }
                     }
-                    item(key = "divider") {
-                        Box(Modifier.width(1.dp).height(36.dp).background(MaterialTheme.colorScheme.outlineVariant))
-                    }
-                    items(shelf.trayKinds(), key = { it.name }) { k ->
-                        TrayTile(k, shelf.optionsFor(k), armed == k, { onSettingsFor(k) }) {
-                            if (armed == k) onDisarm() else onArm(k)
+                    // Music needs lines, boxes and ovals; the graphs and symbols are for homework.
+                    if (!com.inkslate.AppFlavor.musicView) {
+                        item(key = "divider") {
+                            Box(Modifier.width(1.dp).height(36.dp).background(MaterialTheme.colorScheme.outlineVariant))
                         }
-                    }
-                    item(key = "all") {
-                        IconButton(onClick = onOpenLibrary) { Icon(Icons.Default.Apps, "All shapes and stamps") }
-                    }
-                    item(key = "symbols") {
-                        IconButton(onClick = { onShowSymbols(true) }) { Icon(Icons.Default.Functions, "Symbols") }
+                        items(shelf.trayKinds(), key = { it.name }) { k ->
+                            TrayTile(k, shelf.optionsFor(k), armed == k, { onSettingsFor(k) }) {
+                                if (armed == k) onDisarm() else onArm(k)
+                            }
+                        }
+                        item(key = "all") {
+                            IconButton(onClick = onOpenLibrary) { Icon(Icons.Default.Apps, "All shapes and stamps") }
+                        }
+                        item(key = "symbols") {
+                            IconButton(onClick = { onShowSymbols(true) }) { Icon(Icons.Default.Functions, "Symbols") }
+                        }
                     }
                 }
             }

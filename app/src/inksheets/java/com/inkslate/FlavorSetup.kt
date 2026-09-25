@@ -37,6 +37,7 @@ object FlavorSetup {
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)
         }
         AppFlavor.onHome = { state?.backToSetlist() }
+        AppFlavor.onTabsMoved = { state?.tabsMoved(it) }
         AppFlavor.paneOverlay = {
             ActionStrip(stateFor(LocalContext.current))
         }
