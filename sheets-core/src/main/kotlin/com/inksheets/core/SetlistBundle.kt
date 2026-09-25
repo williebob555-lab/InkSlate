@@ -8,17 +8,24 @@ import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
 /**
- * A setlist in one file, to hand to someone else: `Spring Concert.inksheets`.
+ * A setlist in one file, to hand to someone else: `Spring Concert.zip`.
  *
- * A zip holding the setlist's order, each song's details and every file its parts and
- * recordings use. A bandmate opens it and gets the songs and the setlist in their own library;
- * their instrument filter then shows them their own parts. The files go exactly as they are on
- * disk - and InkSheets keeps handwriting inside the PDF it is drawn on, so a part you have marked
- * up arrives marked up.
+ * Nothing in it needs this app. The parts are the PDFs (or pictures) themselves, named in set
+ * order - "01 The Liberty Bell - Trombone.pdf" - the recordings are the recordings, and
+ * `Setlist.txt` lists the songs in order for anyone to read. A small `setlist.json` beside them
+ * carries the details a list of files cannot (instruments, tempo, page ranges), so InkSheets
+ * brings it in whole; without it, a zip of numbered PDFs imports just as well, song by file name.
+ * InkSheets keeps handwriting inside the PDF it is drawn on, so a marked-up part arrives marked up.
  */
 object SetlistBundle {
 
-    const val EXTENSION = "inksheets"
+    const val EXTENSION = "zip"
+
+    /** What was written before plain zips; still read. */
+    const val OLD_EXTENSION = "inksheets"
+
+    private val MUSIC = setOf("pdf", "png", "jpg", "jpeg", "webp")
+    private val SOUND = setOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff")
 
     @Serializable
     data class BundlePart(val file: String, val instrument: String? = null, val firstPage: Int? = null, val lastPage: Int? = null)
@@ -46,20 +53,45 @@ object SetlistBundle {
     /** Write [setlistId] to [out]. Returns how many files went in. */
     fun export(library: Library, root: File, setlistId: String, out: File): Int {
         val setlist = library.setlist(setlistId) ?: error("No such setlist")
-        val stored = LinkedHashMap<String, String>()   // library path -> path in the zip
-        fun store(rel: String): String = stored.getOrPut(rel) { "files/${stored.size}-${rel.substringAfterLast('/')}" }
+        val stored = LinkedHashMap<String, String>()   // library path -> name in the zip
+        val taken = HashSet<String>()
+        // Named for a person reading the zip: its place in the set, the song, and what it is.
+        fun store(rel: String, name: String): String = stored.getOrPut(rel) {
+            val ext = rel.substringAfterLast('.', "").lowercase()
+            val base = name.map { if (it in "\\/:*?\"<>|") '_' else it }.joinToString("").trim()
+            var candidate = "$base.$ext"
+            var n = 2
+            while (!taken.add(candidate.lowercase())) candidate = "$base ($n).$ext".also { n++ }
+            candidate
+        }
 
-        val songs = setlist.entries.mapNotNull { library.song(it.songId) }.map { s ->
+        val present = setlist.entries.mapNotNull { library.song(it.songId) }
+        val width = present.size.toString().length.coerceAtLeast(2)
+        val songs = present.mapIndexed { i, s ->
+            val number = (i + 1).toString().padStart(width, '0')
+            val parts = s.parts.filter { File(root, it.file).isFile }
             BundleSong(
                 title = s.title, composers = s.composers, arrangers = s.arrangers, key = s.key,
                 timeSignature = s.timeSignature, tempo = s.tempo,
-                parts = s.parts.filter { File(root, it.file).isFile }
-                    .map { BundlePart(store(it.file), it.instrument, it.firstPage, it.lastPage) },
-                audio = s.audio.filter { File(root, it.file).isFile }.map { BundleAudio(store(it.file), it.label) }
+                parts = parts.map { p ->
+                    val what = p.instrument?.let { Instruments.byId[it]?.name ?: it }
+                        ?: if (parts.size > 1) File(p.file).nameWithoutExtension else null
+                    BundlePart(store(p.file, "$number ${s.title}" + (what?.let { " - $it" } ?: "")), p.instrument, p.firstPage, p.lastPage)
+                },
+                audio = s.audio.filter { File(root, it.file).isFile }.map { a ->
+                    BundleAudio(store(a.file, "$number ${s.title} - " + (a.label ?: "recording")), a.label)
+                }
             )
+        }
+        val list = buildString {
+            append(setlist.name).append("\n\n")
+            present.forEachIndexed { i, s -> append(i + 1).append(". ").append(s.title).append('\n') }
         }
         out.parentFile?.mkdirs()
         ZipOutputStream(out.outputStream().buffered()).use { zip ->
+            zip.putNextEntry(ZipEntry("Setlist.txt"))
+            zip.write(list.toByteArray())
+            zip.closeEntry()
             zip.putNextEntry(ZipEntry("setlist.json"))
             zip.write(json.encodeToString(Manifest.serializer(), Manifest(setlist.name, songs)).toByteArray())
             zip.closeEntry()
@@ -83,7 +115,7 @@ object SetlistBundle {
         ZipFile(bundle).use { zip ->
             val manifest = zip.getEntry("setlist.json")?.let { e ->
                 json.decodeFromString(Manifest.serializer(), zip.getInputStream(e).readBytes().decodeToString())
-            } ?: error("This is not a shared setlist.")
+            } ?: guessed(zip, bundle.nameWithoutExtension)
             val safeName = manifest.name.map { if (it in "\\/:*?\"<>|") ' ' else it }.joinToString("").trim().ifEmpty { "Setlist" }
             val base = "Shared/$safeName"
 
@@ -141,4 +173,32 @@ object SetlistBundle {
     }
 
     const val SHARED_FOLDER = "Shared with me"
+
+    /**
+     * A zip with no details in it - someone's folder of parts, zipped: a song per title, in the
+     * order the files are named, each file a part, the instrument read from its name.
+     */
+    private fun guessed(zip: ZipFile, name: String): Manifest {
+        val files = zip.entries().toList().filter { !it.isDirectory && !it.name.substringAfterLast('/').startsWith(".") }
+            .sortedBy { it.name.lowercase() }
+        val music = files.filter { it.name.substringAfterLast('.').lowercase() in MUSIC }
+        require(music.isNotEmpty()) { "There is no music in this zip." }
+        val sound = files.filter { it.name.substringAfterLast('.').lowercase() in SOUND }
+        fun titleOf(entry: ZipEntry): String {
+            val file = entry.name.substringAfterLast('/')
+            val unnumbered = file.replace(Regex("""^\s*\d{1,3}(\s*[.)_-]\s*|\s+)"""), "")
+            return ImportPlan.withoutTrailingInstrument(ImportPlan.titleOf(unnumbered.ifBlank { file }))
+        }
+        val byTitle = LinkedHashMap<String, MutableList<ZipEntry>>()
+        music.forEach { byTitle.getOrPut(Library.sortKey(titleOf(it))) { ArrayList() } += it }
+        val songs = byTitle.values.map { entries ->
+            val title = titleOf(entries.first())
+            BundleSong(
+                title = title,
+                parts = entries.map { e -> BundlePart(e.name, InstrumentReader.readFileName(e.name.substringAfterLast('/'))?.instrument?.id) },
+                audio = sound.filter { Library.sortKey(titleOf(it)) == Library.sortKey(title) }.map { BundleAudio(it.name) }
+            )
+        }
+        return Manifest(name, songs)
+    }
 }

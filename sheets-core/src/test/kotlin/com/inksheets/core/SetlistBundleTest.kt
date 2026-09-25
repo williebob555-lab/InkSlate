@@ -29,7 +29,7 @@ class SetlistBundleTest {
         me.addToSetlist(set.id, liberty.id)
         me.addToSetlist(set.id, anthem.id)
 
-        val bundle = File(tmp.root, "Spring Concert.inksheets")
+        val bundle = File(tmp.root, "Spring Concert.zip")
         assertEquals(3, SetlistBundle.export(me, mine, set.id, bundle))
 
         val theirs = tmp.newFolder("theirs")
@@ -47,5 +47,41 @@ class SetlistBundleTest {
         val folder = them.foldersIn(null).single { it.name == SetlistBundle.SHARED_FOLDER }
         val imported = them.setlistsIn(folder.id).single()
         assertEquals(listOf(got.id, had.id), imported.entries.map { it.songId })
+    }
+
+    @Test
+    fun `the zip is plain files, named in set order, with the list to read`() {
+        val mine = tmp.newFolder("mine")
+        File(mine, "a.pdf").writeText("tbn")
+        File(mine, "b.pdf").writeText("anthem")
+        val me = Library(LibraryLog(mine, "me"))
+        val liberty = me.addSong("The Liberty Bell", listOf(Part(file = "a.pdf", instrument = "trombone")))
+        val anthem = me.addSong("Anthem", listOf(Part(file = "b.pdf")))
+        val set = me.addSetlist("Gig")
+        me.addToSetlist(set.id, liberty.id)
+        me.addToSetlist(set.id, anthem.id)
+        val zip = File(tmp.root, "Gig.zip")
+        SetlistBundle.export(me, mine, set.id, zip)
+        val names = java.util.zip.ZipFile(zip).use { z -> z.entries().toList().map { it.name } }
+        assertEquals(listOf("Setlist.txt", "setlist.json", "01 The Liberty Bell - Trombone.pdf", "02 Anthem.pdf"), names)
+        val list = java.util.zip.ZipFile(zip).use { z -> z.getInputStream(z.getEntry("Setlist.txt")).readBytes().decodeToString() }
+        assertTrue(list, list.contains("1. The Liberty Bell") && list.contains("2. Anthem"))
+    }
+
+    @Test
+    fun `any zip of numbered parts imports as a setlist, parts gathered by song`() {
+        val zip = File(tmp.root, "Pep Band.zip")
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { z ->
+            for (n in listOf("01 Sweet Caroline - Trombone.pdf", "01 Sweet Caroline - Euphonium.pdf", "02 Hey Baby - Trombone.pdf", "1812 Overture.pdf")) {
+                z.putNextEntry(java.util.zip.ZipEntry("parts/$n")); z.write(n.toByteArray()); z.closeEntry()
+            }
+        }
+        val theirs = tmp.newFolder("theirs")
+        val them = Library(LibraryLog(theirs, "them"))
+        val result = SetlistBundle.import(them, theirs, zip)
+        assertEquals("Pep Band", result.setlist.name)
+        val titles = result.setlist.entries.map { them.song(it.songId)!!.title }
+        assertEquals(listOf("Sweet Caroline", "Hey Baby", "1812 Overture"), titles)
+        assertEquals(setOf("trombone", "euphonium"), them.songs.first { it.title == "Sweet Caroline" }.instruments)
     }
 }

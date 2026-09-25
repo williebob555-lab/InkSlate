@@ -115,9 +115,9 @@ internal fun ShareSetlistDialog(state: SheetsState, setlistId: String, onClose: 
             else -> r.fold(
                 onSuccess = { file ->
                     Text(
-                        "Saved as ${file.name} in the music folder's \"Shared setlists\". Send it to " +
-                            "your bandmates; in InkSheets they choose Open a shared setlist, and their " +
-                            "instrument filter shows them their own parts.",
+                        "Saved as ${file.name} in the music folder's \"Shared setlists\": the parts as " +
+                            "PDFs numbered in set order, the recordings, and the list of songs. Anyone can " +
+                            "open it; in InkSheets, Open a shared setlist brings it in whole.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 },
@@ -127,7 +127,7 @@ internal fun ShareSetlistDialog(state: SheetsState, setlistId: String, onClose: 
     }
 }
 
-/** Open a `.inksheets` file someone sent. */
+/** Open a zip of a setlist someone sent - or any zip of parts. */
 @Composable
 internal fun OpenSharedDialog(state: SheetsState, onClose: () -> Unit) {
     var chosen by remember { mutableStateOf<File?>(null) }
@@ -137,10 +137,10 @@ internal fun OpenSharedDialog(state: SheetsState, onClose: () -> Unit) {
         FilePickerDialog(
             title = "Open a shared setlist",
             start = state.platform.startFolder,
-            extensions = setOf(SetlistBundle.EXTENSION),
+            extensions = setOf(SetlistBundle.EXTENSION, SetlistBundle.OLD_EXTENSION),
             onChosen = { chosen = it },
             onDismiss = onClose,
-            note = "A .${SetlistBundle.EXTENSION} file sent to you - look in Downloads."
+            note = "A zip of parts sent to you - look in Downloads."
         )
         return
     }
