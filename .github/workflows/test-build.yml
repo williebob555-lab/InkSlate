@@ -131,6 +131,19 @@ jobs:
       - name: Run the tests
         run: ./gradlew :core:test :sheets-core:test :app:testInkslateDebugUnitTest :desktop:test :sheets-desktop:test --stacktrace
 
+      # Run logs need a login to read; annotations do not. Each failed test is named in one.
+      - name: Name the failed tests
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, re, html
+          for f in glob.glob('**/build/test-results/**/*.xml', recursive=True):
+              s = open(f, encoding='utf-8', errors='replace').read()
+              for m in re.finditer(r'<testcase name="([^"]*)" classname="([^"]*)"[^>]*>\s*<failure message="([^"]*)"', s):
+                  msg = html.unescape(m.group(3)).replace('\n', ' ')[:900]
+                  print(f"::error title={m.group(2).split('.')[-1]}::{html.unescape(m.group(1))}: {msg}")
+          PY
+
       - name: Build the signed APK
         env:
           INKSLATE_VERSION_NAME: ${{ needs.version.outputs.name }}
