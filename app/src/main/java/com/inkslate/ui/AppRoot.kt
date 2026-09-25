@@ -316,6 +316,10 @@ fun AppRoot(
     androidx.compose.runtime.LaunchedEffect(homeShown || primaryTab == null) {
         com.inkslate.AppFlavor.onHomeShown?.invoke(homeShown || primaryTab == null)
     }
+    // InkSheets hides the system bars from the first frame, Home and all.
+    LaunchedEffect(Unit) {
+        if (com.inkslate.AppFlavor.alwaysFullscreen) immersive.set(immersive.isFullscreen)
+    }
     LaunchedEffect(frontKey, tools.fullscreenOnHome, tabs.isEmpty()) {
         val front = listOfNotNull(primaryTab, secondaryTab)
         val stayed = front.any { it.id in lastFront[0] }

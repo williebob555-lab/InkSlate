@@ -43,6 +43,13 @@ object AppFlavor {
     /** Drawn over the document in front, in the corner of its pane. */
     var paneOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null
 
+    /**
+     * The status and navigation bars stay hidden everywhere, Home included - InkSheets on a music
+     * stand. A swipe from the edge still shows them for a moment. Whether a document's own tools
+     * are showing is separate, and still follows fullscreen as before.
+     */
+    var alwaysFullscreen: Boolean = false
+
     /** Told whether Home is what is on screen, whenever that changes. */
     var onHomeShown: ((Boolean) -> Unit)? = null
 

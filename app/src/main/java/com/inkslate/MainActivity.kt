@@ -67,6 +67,20 @@ class MainActivity : ComponentActivity() {
         storageGranted = hasStorageAccess()
     }
 
+    /**
+     * InkSheets keeps the system bars hidden, but Android brings them back when another window -
+     * a dialog, the keyboard, another app - has had the focus. Hide them again on the way back.
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && com.inkslate.AppFlavor.alwaysFullscreen) {
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply {
+                systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)

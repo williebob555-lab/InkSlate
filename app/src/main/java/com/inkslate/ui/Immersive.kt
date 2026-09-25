@@ -31,7 +31,7 @@ class ImmersiveController internal constructor(
     fun set(fullscreen: Boolean) {
         val c = controller ?: return
         isFullscreen = fullscreen
-        if (fullscreen) {
+        if (fullscreen || com.inkslate.AppFlavor.alwaysFullscreen) {
             c.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             c.hide(WindowInsetsCompat.Type.systemBars())
