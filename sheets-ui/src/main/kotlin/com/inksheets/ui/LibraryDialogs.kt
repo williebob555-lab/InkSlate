@@ -118,3 +118,50 @@ internal fun AskName(title: String, initial: String, confirm: String, onDone: (S
         OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
     }
 }
+
+
+/** The open tabs kept as a setlist: its name and a colour, then made. */
+@Composable
+internal fun SaveTabsDialog(state: SheetsState) {
+    val files = state.savingTabs ?: return
+    var name by remember { mutableStateOf("") }
+    var colour by remember { mutableStateOf<Int?>(null) }
+    val songs = remember(files, state.version) { files.mapNotNull { state.songAt(it.absolutePath)?.title } }
+    SheetDialog(
+        title = "Save the open songs as a setlist",
+        onDismiss = { state.savingTabs = null },
+        buttons = {
+            androidx.compose.material3.TextButton(onClick = { state.savingTabs = null }) { Text("Cancel") }
+            androidx.compose.material3.TextButton(enabled = name.isNotBlank() && songs.isNotEmpty(), onClick = {
+                state.setlistFromFiles(name.trim(), colour, files)
+                state.savingTabs = null
+            }) { Text("Save") }
+        }
+    ) {
+        Column {
+            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Setlist name") }, modifier = Modifier.fillMaxWidth())
+            Text("Colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(
+                    Modifier.size(32.dp).border(2.dp, if (colour == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline, CircleShape)
+                        .clickable { colour = null },
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Default.Block, "No colour", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                for (c in MARK_COLOURS) {
+                    Box(
+                        Modifier.size(32.dp).background(Color(c), CircleShape)
+                            .then(if (c == colour) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier)
+                            .clickable { colour = c }
+                    )
+                }
+            }
+            Text(
+                songs.joinToString("  ·  ").ifEmpty { "None of the open tabs is a song in the library." },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 10.dp)
+            )
+        }
+    }
+}

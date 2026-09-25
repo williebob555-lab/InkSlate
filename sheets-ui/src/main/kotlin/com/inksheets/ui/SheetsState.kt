@@ -15,6 +15,9 @@ import java.io.File
  */
 class SheetsState(val platform: SheetsPlatform) {
 
+    /** The thread watching the library; declared first, as [open] runs during construction. */
+    @Volatile private var watcher: Thread? = null
+
     var root by mutableStateOf<File?>(null)
         private set
 
@@ -59,6 +62,28 @@ class SheetsState(val platform: SheetsPlatform) {
     var audioOpen by mutableStateOf(false)
     var metronomeOpen by mutableStateOf(false)
 
+    /** Open tabs being kept as a new setlist: asking its name and colour. */
+    var savingTabs by mutableStateOf<List<File>?>(null)
+
+    /** Make a setlist of the songs these files are parts of, in this order. */
+    fun setlistFromFiles(name: String, color: Int?, files: List<File>): com.inksheets.core.Setlist? {
+        val lib = library ?: return null
+        val songs = files.mapNotNull { songAt(it.absolutePath) }.distinctBy { it.id }
+        var made: com.inksheets.core.Setlist? = null
+        change {
+            val list = addSetlist(name)
+            editSetlist(list.id) {
+                entries = songs.map { com.inksheets.core.SetlistEntry(songId = it.id) }
+                if (color != null) this.color = color
+            }
+            made = setlist(list.id)
+        }
+        return made
+    }
+
+    /** Asking whether to clear every mark on the part in front. */
+    var clearingMarks by mutableStateOf(false)
+
     /** Whether a finger tap at the side of the page turns it. On unless turned off. */
     var edgeTaps: Boolean
         get() = edgeTapsState
@@ -68,6 +93,12 @@ class SheetsState(val platform: SheetsPlatform) {
             platform.setEdgeTaps(on)
         }
     private var edgeTapsState by mutableStateOf(platform.pref(K_EDGE_TAPS) != "false")
+
+    /** The strip sits down the left side of the page rather than the right. */
+    var stripOnLeft: Boolean
+        get() = stripOnLeftState
+        set(on) { stripOnLeftState = on; platform.setPref(K_STRIP_LEFT, on.toString()); platform.setStripSide(on) }
+    private var stripOnLeftState by mutableStateOf(platform.pref(K_STRIP_LEFT) == "true")
 
     /** Whether the strip's buttons have their names under them. On unless turned off. */
     var stripLabels: Boolean
@@ -106,6 +137,7 @@ class SheetsState(val platform: SheetsPlatform) {
     init {
         platform.setEdgeTaps(edgeTapsState)
         platform.setTurnStyle(turnStyleState)
+        platform.setStripSide(stripOnLeftState)
         platform.pref(K_LIBRARY)?.let(::File)?.takeIf { it.isDirectory }?.let(::open)
         // Song turns and the metronome from a pedal, whatever screen is in front.
         com.inkslate.core.Perform.app = { action ->
@@ -331,6 +363,45 @@ class SheetsState(val platform: SheetsPlatform) {
         library = lib
         platform.setPref(K_LIBRARY, folder.absolutePath)
         version = lib.version
+        runCatching { lib.noteDevice(platform.deviceName) }
+        startWatching()
+    }
+
+    /**
+     * Keep looking - whatever is on screen, Home or a song: other devices' changes every couple of
+     * seconds, the music folder itself every ten. Not tied to any screen, so a setlist made on the
+     * phone shows up while the tablet is in the middle of a piece.
+     */
+    private fun startWatching() {
+        if (watcher != null) return
+        watcher = Thread({
+            var ticks = 0
+            while (true) {
+                runCatching { Thread.sleep(2_000) }
+                if (library == null) continue
+                val changed = runCatching { library?.refresh() == true }.getOrDefault(false)
+                if (changed) platform.onMain { version = library?.version ?: version }
+                if (++ticks % 5 == 0) {
+                    val report = scanFolder()
+                    if (report?.added?.isNotEmpty() == true) runCatching { readUnknownParts() }
+                }
+            }
+        }, "library-watch").apply { isDaemon = true; start() }
+    }
+
+    /**
+     * Whose changes have reached this device, and when each last changed anything: every device
+     * that writes to the library has its own record file, which the file sync carries over.
+     */
+    fun devicesHeard(): List<Triple<String, Long, Boolean>> {
+        val base = root ?: return emptyList()
+        val names = runCatching { library?.deviceNames() }.getOrNull().orEmpty()
+        val me = platform.deviceId
+        return File(base, ".inksheets/log").listFiles { f -> f.isFile && f.name.endsWith(".jsonl") && !f.name.startsWith(".") }
+            .orEmpty().map { f ->
+                val id = f.name.removeSuffix(".jsonl")
+                Triple(names[id] ?: id, f.lastModified(), id == me)
+            }.sortedByDescending { it.second }
     }
 
     fun chooseProfile(id: String?) {
@@ -421,6 +492,13 @@ class SheetsState(val platform: SheetsPlatform) {
 
     fun setSongColor(songId: String, color: Int?) = change { editSong(songId) { this.color = color } }
     fun setSetlistColor(setlistId: String, color: Int?) = change { editSetlist(setlistId) { this.color = color } }
+    fun setFolderColor(folderId: String, color: Int?) = change { setFolderColor(folderId, color) }
+
+    /** A song's colour within one setlist only. */
+    fun setEntryColor(setlistId: String, entryId: String, color: Int?) = change {
+        val list = setlist(setlistId) ?: return@change
+        editSetlist(setlistId) { entries = list.entries.map { if (it.id == entryId) it.copy(color = color) else it } }
+    }
 
     /**
      * Some pages of the file at [path] as a part of their own - one instrument's pages of a band
@@ -460,33 +538,94 @@ class SheetsState(val platform: SheetsPlatform) {
     /** A zip handed in from outside, waiting for the bulk import to be shown for it. */
     var downloadWaiting by mutableStateOf<File?>(null)
 
+    /** Files handed in from outside, waiting for the person to say what each is. */
+    var incoming by mutableStateOf<List<File>?>(null)
+
     /**
      * Files handed to InkSheets from outside - shared from another app, picked, dropped on the
-     * window. Music and recordings are copied into the library's Inbox folder, where the folder
-     * scan files them like anything else; a zip opens the bulk import. Off the UI thread.
+     * window. A zip opens the bulk import; music and recordings are shown for the person to say
+     * what they are ([IncomingDialog]). Any thread.
      */
-    fun takeIn(files: List<File>): Int {
-        val base = root ?: return 0
-        val inbox = File(base, "Inbox")
-        var n = 0
-        for (f in files) {
+    fun offer(files: List<File>) {
+        val zips = files.filter { it.extension.equals("zip", ignoreCase = true) }
+        val music = files.filter { f ->
             val ext = f.extension.lowercase()
-            when {
-                ext == "zip" -> platform.onMain { downloadWaiting = f }
-                ext in com.inksheets.core.LibraryScan.MUSIC || ext in com.inksheets.core.LibraryScan.SOUND -> {
-                    inbox.mkdirs()
-                    var target = File(inbox, f.name)
-                    var i = 2
-                    while (target.exists() && target.length() != f.length()) target = File(inbox, f.nameWithoutExtension + " ($i)." + f.extension).also { i++ }
-                    if (!target.exists()) runCatching { f.copyTo(target) }.onSuccess { n++ }
+            ext in com.inksheets.core.LibraryScan.MUSIC || ext in com.inksheets.core.LibraryScan.SOUND
+        }
+        platform.onMain {
+            zips.firstOrNull()?.let { downloadWaiting = it }
+            if (music.isNotEmpty()) incoming = music
+        }
+    }
+
+    /**
+     * Bring [files] in as the person decided ([fates], one each): copied into the music folder's
+     * Inbox, and made new songs, parts of songs already here, or new editions of parts; with
+     * [setlistId], the songs are added to that setlist too. Off the UI thread.
+     */
+    internal fun takeIn(files: List<File>, fates: List<Fate>, setlistId: String? = null) {
+        val base = root ?: return
+        val lib = library ?: return
+        val inbox = File(base, "Inbox")
+        val made = HashMap<String, String>()
+        val touched = ArrayList<String>()
+        importing++
+        try {
+            files.zip(fates).forEach { (f, fate) ->
+                when (fate) {
+                    Fate.Skip -> Unit
+                    is Fate.Replace -> {
+                        val part = lib.song(fate.songId)?.parts?.firstOrNull { it.id == fate.partId } ?: return@forEach
+                        runCatching { f.copyTo(File(base, part.file), overwrite = true) }
+                            .onFailure { platform.log("Could not replace ${part.file}: ${it.message}") }
+                        touched += fate.songId
+                    }
+                    is Fate.NewSong, is Fate.AddTo -> {
+                        inbox.mkdirs()
+                        var target = File(inbox, f.name)
+                        var i = 2
+                        while (target.exists()) target = File(inbox, f.nameWithoutExtension + " (" + i++ + ")." + f.extension)
+                        if (runCatching { f.copyTo(target) }.isFailure) return@forEach
+                        val rel = relative(target) ?: return@forEach
+                        val songId = when (fate) {
+                            is Fate.AddTo -> fate.songId
+                            is Fate.NewSong -> {
+                                val key = com.inksheets.core.Library.matchKey(fate.title)
+                                made[key] ?: run {
+                                    // A new song, even beside one of the same name already here.
+                                    val clash = lib.songs.any { com.inksheets.core.Library.matchKey(it.title) == key }
+                                    val song = if (clash) lib.addSong(fate.title, emptyList()) { apart = true } else lib.ensureSong(fate.title)
+                                    made[key] = song.id
+                                    song.id
+                                }
+                            }
+                            else -> return@forEach
+                        }
+                        if (target.extension.lowercase() in com.inksheets.core.LibraryScan.SOUND) {
+                            val song = lib.song(songId) ?: return@forEach
+                            lib.editSong(songId) { audio = song.audio + com.inksheets.core.AudioTrack(file = rel) }
+                        } else {
+                            val planned = com.inksheets.core.ImportPlan.readPart(rel)
+                            lib.writePart(songId, planned.toPart().copy(id = com.inksheets.core.Library.partIdFor(rel)))
+                        }
+                        touched += songId
+                    }
                 }
             }
+            if (setlistId != null) {
+                val list = lib.setlist(setlistId)
+                if (list != null) {
+                    val have = list.entries.map { it.songId }.toSet()
+                    val more = touched.distinct().filter { it !in have }.map { com.inksheets.core.SetlistEntry(songId = it) }
+                    if (more.isNotEmpty()) lib.editSetlist(setlistId) { entries = list.entries + more }
+                }
+            }
+            platform.log("Took in ${files.size} files")
+        } finally {
+            importing--
         }
-        if (n > 0) {
-            platform.log("Took in $n files to Inbox")
-            scanFolder()
-        }
-        return n
+        platform.onMain { version = lib.version }
+        if (touched.isNotEmpty()) runCatching { readUnknownParts() }
     }
 
     /** Parts whose file is not on this device. */
@@ -619,6 +758,7 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_EDGE_TAPS = "sheets_edge_taps"
         private const val K_TURN = "sheets_turn_style"
         private const val K_STRIP_LABELS = "sheets_strip_labels"
+        private const val K_STRIP_LEFT = "sheets_strip_left"
         private const val K_STRIP = "sheets_strip"
 
         /**

@@ -94,7 +94,9 @@ data class SetlistEntry(
     val songId: String,
     val note: String? = null,
     /** A tempo for this performance, over the song's own. */
-    val tempo: Int? = null
+    val tempo: Int? = null,
+    /** A colour for the song in this setlist only, over its own colour (ARGB). */
+    val color: Int? = null
 )
 
 data class Setlist(
@@ -118,7 +120,9 @@ data class Folder(
     val id: String,
     val name: String,
     val parentId: String? = null,
-    val order: Double = 0.0
+    val order: Double = 0.0,
+    /** A colour to pick the folder out by (ARGB), or null for the theme's own. */
+    val color: Int? = null
 )
 
 internal fun newId(): String = UUID.randomUUID().toString()
@@ -263,6 +267,25 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         if (f == null || f["order"] == null) want["order"] = JsonPrimitive(order ?: System.currentTimeMillis().toDouble())
         val changed = want.filter { (k, v) -> !same(k, v) }
         if (changed.isNotEmpty()) edit(PART, p.id) { changed.forEach { (k, v) -> put(k, v) } }
+    }
+
+    /** Note what this device is called, for showing whose changes have arrived. */
+    fun noteDevice(name: String) {
+        val current = synchronized(this) { (state.fields(DEVICE, log.device)?.get("name")?.value as? JsonPrimitive)?.content }
+        if (current != name) edit(DEVICE, log.device) { put("name", name) }
+    }
+
+    /** Devices by id, with their names. */
+    fun deviceNames(): Map<String, String> = synchronized(this) {
+        state.live(DEVICE).mapValues { (id, f) -> f.string("name") ?: id }
+    }
+
+    /** This device's id in the library. */
+    val deviceId: String get() = log.device
+
+    /** Put a song's parts in this order: the first for an instrument is the one that opens. */
+    fun orderParts(ids: List<String>) {
+        ids.forEachIndexed { i, id -> edit(PART, id) { put("order", i.toDouble()) } }
     }
 
     /** Remove a part. */
@@ -419,6 +442,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     }
 
     fun renameFolder(id: String, name: String) = edit(FOLDER, id) { put("name", name) }
+
+    fun setFolderColor(id: String, color: Int?) = edit(FOLDER, id) { put("color", color) }
 
     /**
      * Move a folder under another. Refused when [parentId] is the folder itself or inside it,
@@ -618,7 +643,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         id = id,
         name = f.string("name") ?: "Untitled folder",
         parentId = f.string("parent"),
-        order = f.string("order")?.toDoubleOrNull() ?: 0.0
+        order = f.string("order")?.toDoubleOrNull() ?: 0.0,
+        color = f.string("color")?.toDoubleOrNull()?.toLong()?.toInt()
     )
 
     /**
@@ -658,9 +684,10 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         const val PRACTICE = "practice"
         const val PROFILE = "profile"
         const val PART = "part"
+        const val DEVICE = "device"
 
         /** The id a song found by title is given: the same on every device for the same title. */
-        fun songIdFor(title: String): String = "s-" + digest(matchKey(title))
+        fun songIdFor(title: String): String = "s-" + digest(titleKey(title))
 
         /** The id a part found in the music folder is given: the same on every device for the same file. */
         fun partIdFor(relativePath: String): String = "p-" + digest(relativePath.lowercase())
@@ -683,7 +710,13 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
          * A title as two copies of one song are matched by: case, punctuation and a leading
          * article ignored, so "Sleigh-Ride", "SLEIGH RIDE" and "The Sleigh Ride" are one song.
          */
-        fun matchKey(title: String): String =
+        fun matchKey(title: String): String = titleKey(title).replace(" ", "")
+
+        /**
+         * [matchKey] with its word breaks kept, for asking whether one title starts with another
+         * ("Sleigh Ride demo" with "Sleigh Ride"), and for song ids.
+         */
+        fun titleKey(title: String): String =
             sortKey(title.lowercase().replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim())
     }
 }

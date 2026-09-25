@@ -56,6 +56,9 @@ object AppFlavor {
      */
     var pagesActions: (@Composable (path: String, pages: List<Int>, close: () -> Unit) -> Unit)? = null
 
+    /** Keep the open tabs, in order, as a setlist; null where the app has none. */
+    var onSaveTabs: ((List<java.io.File>) -> Unit)? = null
+
     /** Told whether Home is what is on screen, whenever that changes. */
     var onHomeShown: ((Boolean) -> Unit)? = null
 

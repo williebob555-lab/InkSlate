@@ -201,6 +201,26 @@ class SheetsScreensTest {
     }
 
     @Test
+    fun `leading fits a phone's screen`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        state.companion.leadPort = java.net.ServerSocket(0).use { it.localPort }
+        try {
+            runDesktopComposeUiTest(width = 380, height = 760) {
+                setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
+                state.companionOpen = true
+                waitForIdle()
+                onNodeWithText("Lead from this device").performClick()
+                waitForIdle()
+                onNodeWithText("Scan to follow Test stand").assertExists()
+                shoot("leading-phone", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+            }
+        } finally {
+            state.companion.stopLeading()
+        }
+    }
+
+    @Test
     fun `adding music offers a download, or what is in the folder`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
@@ -295,12 +315,12 @@ class SheetsScreensTest {
             setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
             waitForIdle()
             val target = onNodeWithText("Jazz Band").fetchSemanticsNode().boundsInRoot.center
-            onAllNodes(androidx.compose.ui.test.hasContentDescription("Drag into a folder")).fetchSemanticsNodes().size.let { assertEquals(2, it) }
-            // The second handle is the setlist's (folders come first).
-            val handle = onAllNodes(androidx.compose.ui.test.hasContentDescription("Drag into a folder"))[1]
-            val from = handle.fetchSemanticsNode().boundsInRoot.center
-            handle.performTouchInput {
+            // The whole row is the handle: held a moment, then dragged.
+            val row = onNodeWithText("Gig")
+            val from = row.fetchSemanticsNode().boundsInRoot.center
+            row.performTouchInput {
                 down(center)
+                advanceEventTime(250)
                 moveBy(androidx.compose.ui.geometry.Offset(0f, 20f))
                 moveBy(target - from - androidx.compose.ui.geometry.Offset(0f, 20f))
                 up()
@@ -312,10 +332,11 @@ class SheetsScreensTest {
             onNodeWithText("Jazz Band").performClick()
             waitForIdle()
             val top = onAllNodesWithText("Setlists").fetchSemanticsNodes().maxBy { it.boundsInRoot.top }.boundsInRoot.center
-            val inside = onAllNodes(androidx.compose.ui.test.hasContentDescription("Drag into a folder"))[0]
+            val inside = onNodeWithText("Gig")
             val start = inside.fetchSemanticsNode().boundsInRoot.center
             inside.performTouchInput {
                 down(center)
+                advanceEventTime(250)
                 moveBy(androidx.compose.ui.geometry.Offset(0f, -20f))
                 moveBy(top - start - androidx.compose.ui.geometry.Offset(0f, -20f))
                 up()

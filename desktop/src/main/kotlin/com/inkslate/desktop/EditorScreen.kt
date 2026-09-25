@@ -1113,7 +1113,7 @@ fun EditorScreen(
                 }
             }
             paperBox(clamped)?.let {
-                viewport.fitClear(it, padding = 8f, lane = STRIP_LANE_DP * density)
+                viewport.fitClear(it, padding = 8f, lane = STRIP_LANE_DP * density, laneOnLeft = AppFlavor.stripOnLeft)
                 fittedScale = viewport.scale
                 return
             }
@@ -1395,10 +1395,11 @@ fun EditorScreen(
         }
     }
 
-    // In the music view the page stays whole on screen whatever the window does - the bars coming
-    // and going, the window resized, a monitor swapped.
-    LaunchedEffect(viewport.viewSize) {
-        if (AppFlavor.musicView && positionRestored && source != null) goToPage(page)
+    // In the music view the page stays whole on screen whatever the window does - the window
+    // resized, a monitor swapped, the tools put away. Bringing the tools out keeps the view as it
+    // is: whatever was zoomed in on to write is still there to write on.
+    LaunchedEffect(viewport.viewSize, immersive) {
+        if (AppFlavor.musicView && positionRestored && source != null && immersive) goToPage(page)
     }
 
     // Where the reader is, for another tablet following this one.
@@ -1450,6 +1451,14 @@ fun EditorScreen(
             }
         }
         com.inkslate.core.Perform.openPages = { pagesOpen = true }
+        com.inkslate.core.Perform.clearInk = { path ->
+            if (path != file.absolutePath) false else {
+                strokes.clear()
+                selection = emptySet()
+                dirty = true
+                true
+            }
+        }
         com.inkslate.core.Perform.recentre = { goToPage(page) }
         com.inkslate.core.Perform.document = { action ->
             val count = source?.pageCount ?: 0
@@ -1885,7 +1894,8 @@ fun EditorScreen(
                         }
                     },
                     // A fitted page of music: a finger turns it rather than moving it.
-                    atRest = { AppFlavor.musicView && fittedScale > 0f && view.viewport.scale <= fittedScale * 1.05f },
+                    // Music with its tools put away: a finger turns pages rather than moving them.
+                    atRest = { AppFlavor.musicView && immersive },
                     recentre = { goToPage(page) },
                     viewport = view.viewport,
                     layout = layout,

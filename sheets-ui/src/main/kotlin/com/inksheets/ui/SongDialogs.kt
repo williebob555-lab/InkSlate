@@ -101,6 +101,18 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
 
             Spacer(Modifier.size(12.dp))
             Text("Parts", style = MaterialTheme.typography.titleMedium)
+            // Two parts for one instrument are usually two versions of the piece, or two pieces
+            // sharing a name: only the first opens, so say so and offer the way out.
+            val doubled = parts.groupBy { it.instrument }.filter { (k, v) -> k != null && v.size > 1 }.keys
+            if (doubled.isNotEmpty()) {
+                Text(
+                    "More than one part is for " + doubled.joinToString(", ") { Instruments.byId[it]?.name ?: it.orEmpty() } +
+                        ". The first of them opens. Use a part's menu to open another first, or to make it a song of its own.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+            }
             parts.forEachIndexed { i, part ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -129,6 +141,11 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                                 text = { Text("Show the pages...") },
                                 onClick = { menu = false; onClose(); state.showPages(song, part) }
                             )
+                            if (i > 0) DropdownMenuItem(text = { Text("Open this one first") }, onClick = {
+                                menu = false
+                                parts.removeAt(i); parts.add(0, part)
+                                state.change { orderParts(parts.map { it.id }) }
+                            })
                             DropdownMenuItem(text = { Text("Move to another song...") }, onClick = { menu = false; moving = part })
                             if (parts.size > 1) {
                                 DropdownMenuItem(text = { Text("Make it a song of its own...") }, onClick = { menu = false; splitting = part })

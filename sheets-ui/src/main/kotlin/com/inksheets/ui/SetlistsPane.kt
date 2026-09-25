@@ -70,6 +70,7 @@ internal fun SetlistsPane(state: SheetsState) {
     var naming by remember { mutableStateOf<Naming?>(null) }
     var sharing by remember { mutableStateOf<String?>(null) }
     var colouring by remember { mutableStateOf<Setlist?>(null) }
+    var colouringFolder by remember { mutableStateOf<Folder?>(null) }
 
     val version = state.version
     val library = state.library ?: return
@@ -177,17 +178,22 @@ internal fun SetlistsPane(state: SheetsState) {
                 Row(Modifier.carried(me).target(f.id).lit(f.id).carryable(me), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) {
                         ListRow(
-                            icon = { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary) },
+                            icon = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    ColourBar(f.color)
+                                    Icon(Icons.Default.Folder, null, tint = f.color?.let { androidx.compose.ui.graphics.Color(it) } ?: MaterialTheme.colorScheme.primary)
+                                }
+                            },
                             title = f.name,
                             detail = library.setlistsUnder(f.id).size.let { n -> if (n == 1) "1 setlist" else "$n setlists" },
                             onClick = { folderId = f.id },
                             menu = listOf(
                                 "Rename" to { naming = Naming.RenameFolder(f) },
+                                "Colour..." to { colouringFolder = f },
                                 "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } }
                             )
                         )
                     }
-                    Handle(me)
                 }
                 HorizontalDivider()
             }
@@ -213,7 +219,6 @@ internal fun SetlistsPane(state: SheetsState) {
                     )
                 )
                 }
-                Handle(me)
                 }
                 HorizontalDivider()
             }
@@ -221,6 +226,9 @@ internal fun SetlistsPane(state: SheetsState) {
     }
 
     sharing?.let { id -> ShareSetlistDialog(state, id, onClose = { sharing = null }) }
+    colouringFolder?.let { f ->
+        ColourDialog("Colour for ${f.name}", f.color, onChosen = { state.setFolderColor(f.id, it); colouringFolder = null }, onDismiss = { colouringFolder = null })
+    }
     colouring?.let { s ->
         ColourDialog("Colour for ${s.name}", s.color, onChosen = { state.setSetlistColor(s.id, it); colouring = null }, onDismiss = { colouring = null })
     }
@@ -264,6 +272,7 @@ private sealed class Naming(val title: String, val initial: String = "") {
 private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit) {
     val library = state.library ?: return
     var adding by remember { mutableStateOf(false) }
+    var colouringEntry by remember { mutableStateOf<com.inksheets.core.SetlistEntry?>(null) }
     val version = state.version
     val songs = remember(version) { library.songs.associateBy { it.id } }
 
@@ -354,19 +363,19 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                                     "Take out of setlist" to { state.change { removeFromSetlist(setlist.id, entry.id) } }
                                 ))
                             }
-                            handle()
                         }
                     } else {
                         SongRow(
-                            song = song,
+                            // Its colour in this setlist, where it has one; else its own.
+                            song = song.copy(color = entry.color ?: song.color),
                             unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
+                            onColour = { colouringEntry = entry },
                             onOpen = { state.playSetlist(setlist.id, setlist.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0)) },
                             trailing = {
                                 Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
                                 IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {
                                     Icon(Icons.Default.Close, "Take out of setlist")
                                 }
-                                handle()
                             }
                         )
                     }
@@ -376,6 +385,13 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         }
     }
 
+    colouringEntry?.let { e ->
+        ColourDialog(
+            "Colour in “${setlist.name}”", e.color,
+            onChosen = { state.setEntryColor(setlist.id, e.id, it); colouringEntry = null },
+            onDismiss = { colouringEntry = null }
+        )
+    }
     if (adding) {
         SongChooserDialog(
             state,

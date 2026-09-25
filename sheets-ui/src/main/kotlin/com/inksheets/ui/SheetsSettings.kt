@@ -75,6 +75,27 @@ private fun LibraryHealth(state: SheetsState) {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        // Whose changes have arrived here. A device missing, or long out of date, means the file
+        // sync is not bringing its changes to this one - worth checking before anything else.
+        val heard = remember(state.version) { state.devicesHeard() }
+        if (heard.isNotEmpty()) {
+            Text("Changes received from", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp))
+            heard.forEach { (name, at, me) ->
+                Text(
+                    "  " + name + (if (me) " (this device)" else "") + " - last change " + howLongAgo(at, "never").lowercase(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (heard.size == 1) {
+                Text(
+                    "Only this device's changes are here. If you use InkSheets on others, the file sync is not " +
+                        "bringing their changes - check the folder is set to send and receive on each device.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(enabled = !busy, onClick = {
                 busy = true

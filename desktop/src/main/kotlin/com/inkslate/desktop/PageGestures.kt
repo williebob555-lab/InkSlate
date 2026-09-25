@@ -450,10 +450,15 @@ suspend fun AwaitPointerEventScope.handlePageGesture(
             var last = down.position
             val throwing = PanThrow()
             throwing.begin()
+            // Music with its tools put away: a finger sideways is a page turn (see DocumentCanvas),
+            // never a pan. Up and down still move a page read up close.
+            val upDownOnly = down.type == androidx.compose.ui.input.pointer.PointerType.Touch && AppFlavor.musicView &&
+                com.inkslate.core.Perform.on(com.inkslate.core.PerformAction.FULLSCREEN)
             dragUntilRelease(down.position) { change, _ ->
                 val moved = change.position - last
-                viewport.panBy(moved.x, moved.y)
-                throwing.sample(moved.x, moved.y)
+                val dx = if (upDownOnly) 0f else moved.x
+                viewport.panBy(dx, moved.y)
+                throwing.sample(dx, moved.y)
                 last = change.position
             }
             // Nothing at all if the hand had stopped before it let go. See PanThrow.

@@ -1084,8 +1084,14 @@ class DrawingView @JvmOverloads constructor(
      * fitted to the screen. Zoomed in to read something small, the finger moves the page as usual.
      */
     private fun turnsWithFinger(): Boolean =
-        swipeTurns && fitWholePage && layout == PageLayout.SINGLE && fittedScale > 0f &&
-            currentScale() <= fittedScale * 1.05f
+        swipeTurns && fitWholePage && layout == PageLayout.SINGLE && toolsPutAway()
+
+    /** Music with its tools put away: a finger turns pages and never moves the page sideways. */
+    private fun toolsPutAway(): Boolean =
+        com.inkslate.core.Perform.on(com.inkslate.core.PerformAction.FULLSCREEN)
+
+    /** Read up close: the page is bigger than it fits at, so up and down still scrolls it. */
+    private fun zoomedIn(): Boolean = fittedScale > 0f && currentScale() > fittedScale * 1.05f
 
     /** What is on screen now, kept to animate away from. Reuses one bitmap the size of the view. */
     private fun snapshot(): Bitmap? = runCatching {
@@ -1121,7 +1127,7 @@ class DrawingView @JvmOverloads constructor(
                 canvas.drawBitmap(anim.from, oldAt, 0f, turnPaint)
             }
         }
-        if (t < 1f) postInvalidateOnAnimation() else turnAnim = null
+        if (t < 1f) postInvalidateOnAnimation() else { turnAnim = null; reportVisiblePages(); scheduleDetail(); postInvalidateOnAnimation() }
     }
 
     private val turnPaint = Paint(Paint.FILTER_BITMAP_FLAG)
@@ -1608,6 +1614,9 @@ class DrawingView @JvmOverloads constructor(
         }
         onCurrentPageChanged?.invoke(target)
         reportVisiblePages()
+        // The sharp rendering of the page belongs to where it now is, not where the old one was.
+        clearDetail()
+        scheduleDetail()
     }
 
     val pageCount: Int get() = slots.size
@@ -2139,8 +2148,14 @@ class DrawingView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
         when {
-            // Music: the whole page, centred, whatever the screen did.
-            fitWholePage && layout == PageLayout.SINGLE -> fitToScreen()
+            // Music with its tools put away: the whole page, centred, whatever the screen did.
+            // With the tools out the view stays where it was - opening them to write must not
+            // throw away the zoom - kept centred on the same spot.
+            fitWholePage && layout == PageLayout.SINGLE && (ow == 0 || oh == 0 || toolsPutAway()) -> fitToScreen()
+            fitWholePage && layout == PageLayout.SINGLE -> {
+                pageToView.postTranslate((w - ow) / 2f, (h - oh) / 2f)
+                syncInverse(); invalidate()
+            }
             ow == 0 || oh == 0 -> fitWidth()
             else -> { clampTranslation(); syncInverse() }
         }
@@ -2243,11 +2258,13 @@ class DrawingView @JvmOverloads constructor(
         // Music keeps a lane clear for the action strip - down the side in landscape, along the
         // bottom in portrait - unless the margin the fit leaves is already that wide.
         val lane = stripLaneDp * resources.displayMetrics.density
+        var laneShift = 0f
         if (fitWholePage && lane > 0f) {
-            val side = w >= h
-            val spare = if (side) (w - b.width() * s) / 2f else (h - b.height() * s) / 2f
+            // Always down a side: a strip along the bottom wraps into two rows of buttons.
+            val spare = (w - b.width() * s) / 2f
             if (spare < lane) {
-                if (side) w -= lane else h -= lane
+                w -= lane
+                if (stripOnLeft) laneShift = lane
                 s = min((w - 24f) / b.width(), (h - 24f) / b.height())
             }
         }
@@ -2255,7 +2272,7 @@ class DrawingView @JvmOverloads constructor(
         fittedScale = s
         pageToView.reset(); pageToView.postScale(s, s)
         pageToView.postTranslate(
-            (w - b.width() * s) / 2f - b.left * s,
+            laneShift + (w - b.width() * s) / 2f - b.left * s,
             (h - b.height() * s) / 2f - b.top * s
         )
         // no clamp here: fitting is an explicit request to centre
@@ -2896,7 +2913,7 @@ class DrawingView @JvmOverloads constructor(
                 if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0) {
                     val at = event.x / width
                     // On a fitted page of music any tap turns: the left half back, the right on.
-                    val share = if (turnsWithFinger()) 0.5f else EDGE_TAP_SHARE
+                    val share = if (turnsWithFinger() && !zoomedIn()) 0.5f else EDGE_TAP_SHARE
                     if (at < share || at >= 1f - share) {
                         discardPending()
                         com.inkslate.core.Perform.run(
@@ -3133,13 +3150,16 @@ class DrawingView @JvmOverloads constructor(
 
         when {
             t == Tool.PAN && turnDrag -> {
-                // A fitted page of music follows the finger sideways only, to be turned or let go.
+                // Sideways is only ever a page turn, decided when the finger lifts: the page itself
+                // never slides left or right. Up and down still scroll a page read up close.
                 val dx = e.x - lastX
+                val dy = e.y - lastY
                 turnDragX += dx
-                pageToView.postTranslate(dx, 0f)
+                if (zoomedIn() && dy != 0f) {
+                    pageToView.postTranslate(0f, dy)
+                    clampTranslation(); syncInverse(); scheduleDetail(); invalidate()
+                }
                 lastX = e.x; lastY = e.y
-                syncInverse()
-                invalidate()
                 return
             }
             t == Tool.PAN -> {
@@ -3376,16 +3396,12 @@ class DrawingView @JvmOverloads constructor(
                 turnDragX > far || (vx > SWIPE_TURN_SPEED && turnDragX > 24f) -> -1
                 else -> 0
             }
-            val dragged = turnDragX
             turnDragX = 0f
-            val turned = dir != 0 && run {
-                swipeCarry = dragged
+            if (dir != 0) {
                 com.inkslate.core.Perform.run(
                     if (dir > 0) com.inkslate.core.PerformAction.NEXT_PAGE else com.inkslate.core.PerformAction.PREVIOUS_PAGE
-                ).also { swipeCarry = null }
+                )
             }
-            // Not far enough, or nowhere to turn to: the page goes back where it was.
-            if (!turned && dragged != 0f) settleBack(dragged)
             drawingPointerId = -1
             drawingIsStylus = false
             parent?.requestDisallowInterceptTouchEvent(false)
@@ -4500,6 +4516,11 @@ class DrawingView @JvmOverloads constructor(
 
         /** Room kept clear beside a fitted page for buttons laid over it, in dp. */
         var stripLaneDp: Float = 0f
+
+        /** That room is on the left rather than the right. */
+        @JvmStatic
+        @Volatile
+        var stripOnLeft: Boolean = false
 
         /** How much of the width at each side counts as "the side". */
         const val EDGE_TAP_SHARE = 0.18f

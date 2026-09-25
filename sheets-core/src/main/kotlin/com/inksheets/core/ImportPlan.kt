@@ -82,13 +82,31 @@ object ImportPlan {
      * The song a file belongs to. Its own name, with the instrument taken off - or, for a file
      * named only for its part ("Trombone 2.pdf"), the folder it is in.
      */
-    fun songTitle(path: String): String {
+    fun songTitle(path: String, folderIsSong: Boolean = true): String {
         val name = path.substringAfterLast('/')
         val own = titleOf(name)
-        if (!onlyPartName(name)) return own
+        if (!onlyPartName(name) || !folderIsSong) return own
         val folder = path.substringBeforeLast('/', "").substringAfterLast('/')
-        return folder.takeIf { it.isNotBlank() }?.let { cleanFolderName(it) } ?: own
+        if (folder.isBlank() || isGenericFolder(folder)) return own
+        return cleanFolderName(folder)
     }
+
+    /** Folders that hold a library's music, not one song's parts: never a song's title. */
+    fun isGenericFolder(name: String): Boolean =
+        Library.matchKey(name) in GENERIC_FOLDERS || name.startsWith(".")
+
+    private val GENERIC_FOLDERS = setOf(
+        "mobilesheets", "inbox", "imported", "music", "sheetmusic", "scans", "downloads", "download",
+        "inksheets", "library", "pdfs", "pdf", "parts", "sync", "documents", "shared", "sharedwithme"
+    )
+
+    /**
+     * Whether a folder is one song's parts - every music file in it named only for its part - so
+     * its name is the song's title. A folder of many songs that happens to hold a "Euph 2.pdf" is not.
+     */
+    fun folderIsSong(musicFilesInFolder: List<String>): Boolean =
+        musicFilesInFolder.isNotEmpty() && musicFilesInFolder.size <= 40 &&
+            musicFilesInFolder.all { onlyPartName(it.substringAfterLast('/')) }
 
     /** Whether a file name says nothing but which part it is: "Trombone 2", "Tbn. II", "Score". */
     fun onlyPartName(fileName: String): Boolean {
@@ -174,7 +192,7 @@ object ImportPlan {
     }
 
     private fun isPartMarker(word: String): Boolean =
-        word.matches(Regex("""\d+(st|nd|rd|th)?|[IVX]+|[ivx]+|&|and|[-–—/,+]|\d+[-–—/&+]\d+""", RegexOption.IGNORE_CASE))
+        word.matches(Regex("""\d{1,2}(st|nd|rd|th)?|[IVX]+|[ivx]+|&|and|[-–—/,+]|\d{1,2}[-–—/&+]\d{1,2}""", RegexOption.IGNORE_CASE))
 
     /** A song title from a name with the instrument (and its separators) taken off. */
     fun cleanTitle(name: String): String {

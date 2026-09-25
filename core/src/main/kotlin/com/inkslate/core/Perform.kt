@@ -140,6 +140,10 @@ object Perform {
     @Volatile
     var mergeInk: ((path: String, ink: InkDocument) -> Boolean)? = null
 
+    /** Take every mark off [path], if it is the document in front. False when it is not. UI thread. */
+    @Volatile
+    var clearInk: ((path: String) -> Boolean)? = null
+
     /**
      * Marks for [path] that came from elsewhere - another app's markings, brought across - placed
      * on its pages, whose sizes [pageSize] gives (in points). Set by InkSheets; each editor asks

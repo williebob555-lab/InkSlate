@@ -264,3 +264,47 @@ class BandPackScanTest {
         assertEquals(3, library.songs.single().parts.size)
     }
 }
+
+class ImportMeetsScanTest {
+    @get:org.junit.Rule val tmp = TemporaryFolder()
+
+    @Test
+    fun `an import on one device and a scan on another agree on one song per piece`() {
+        val root = tmp.newFolder("lib")
+        val phone = Library(LibraryLog(root, "phone"))
+        File(root, "MobileSheets").mkdirs()
+        File(root, "MobileSheets/24K Magic - Trombone 1.pdf").writeText("a")
+        File(root, "MobileSheets/Euph 2.pdf").writeText("b")
+        File(root, "MobileSheets/Euphonium - 2026-27.pdf").writeText("c")
+        // The tablet scans first: it has the files, not yet the phone's records.
+        val tabletRoot = tmp.newFolder("tablet")
+        File(root, "MobileSheets").copyRecursively(File(tabletRoot, "MobileSheets"))
+        val tablet = Library(LibraryLog(tabletRoot, "tablet"))
+        LibraryScan(tabletRoot, tablet, File(tmp.root, "t.json")).run()
+        // No song is named after the folder that holds everything.
+        assertTrue(tablet.songs.none { Library.matchKey(it.title) == "mobilesheets" })
+        assertTrue(tablet.songs.any { it.title == "2026-27" })
+        // Meanwhile the phone imported MobileSheets' songs, with page ranges and its own titles.
+        phone.addSong("24 K Magic", listOf(Part(id = "ms-a", file = "MobileSheets/24K Magic - Trombone 1.pdf", firstPage = 1, lastPage = 1, instrument = "trombone", source = InstrumentSource.TEXT)))
+        phone.addSong("1812 Euph 2", listOf(Part(id = "ms-b", file = "MobileSheets/Euph 2.pdf", firstPage = 1, lastPage = 272, instrument = "euphonium", source = InstrumentSource.TEXT)))
+        // The records meet.
+        File(root, ".inksheets/log/phone.jsonl").copyTo(File(tabletRoot, ".inksheets/log/phone.jsonl"))
+        tablet.refresh()
+        LibraryScan(tabletRoot, tablet, File(tmp.root, "t.json")).run()
+        val songs = tablet.songs
+        assertEquals(songs.joinToString { it.title + " " + it.parts.map { p -> p.file } }, 3, songs.size)
+        assertEquals(3, songs.sumOf { it.parts.size })
+        assertTrue(songs.all { s -> s.parts.map { it.file }.distinct().size == s.parts.size })
+    }
+
+    @Test
+    fun `two songs of one name for the same instrument stay two`() {
+        val root = tmp.newFolder("lib2")
+        val library = Library(LibraryLog(root, "me"))
+        File(root, "a.pdf").writeText("a"); File(root, "b.pdf").writeText("b")
+        library.addSong("Fanfare And Allegro", listOf(Part(file = "a.pdf", instrument = "euphonium")))
+        library.addSong("Fanfare and Allegro", listOf(Part(file = "b.pdf", instrument = "euphonium")))
+        LibraryScan(root, library, File(tmp.root, "m.json")).run()
+        assertEquals(2, library.songs.size)
+    }
+}

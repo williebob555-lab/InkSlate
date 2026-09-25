@@ -69,6 +69,7 @@ import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -97,7 +98,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
     // the bottom of a portrait one - so it sits in blank space and never over the music.
     BoxWithConstraints(Modifier.matchParentSize()) {
-        val side = maxWidth >= maxHeight
+        // Always down a side: along the bottom, the buttons wrap into two rows and take more room.
+        val side = true
         // Every button has to be on screen at once - never a strip to scroll. The buttons shrink
         // to fit a short screen, and only if that is not enough does the strip wrap to a second
         // column (or row).
@@ -187,7 +189,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             tonalElevation = 3.dp,
             shadowElevation = 2.dp,
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-            modifier = Modifier.align(if (side) Alignment.CenterEnd else Alignment.BottomCenter).padding(6.dp)
+            modifier = Modifier.align(if (state.stripOnLeft) Alignment.CenterStart else Alignment.CenterEnd).padding(6.dp)
         ) {
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             if (side) {
@@ -207,6 +209,24 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     }
 
     if (customising) StripEditor(state, onClose = { customising = false })
+    SaveTabsDialog(state)
+    IncomingDialog(state)
+    if (state.clearingMarks) {
+        val title = state.current?.title ?: "this part"
+        SheetDialog(
+            title = "Clear all markings?",
+            onDismiss = { state.clearingMarks = false },
+            buttons = {
+                TextButton(onClick = { state.clearingMarks = false }) { Text("Keep them") }
+                TextButton(onClick = {
+                    state.currentPath?.let { Perform.clearInk?.invoke(it) }
+                    state.clearingMarks = false
+                }) { Text("Clear them", color = MaterialTheme.colorScheme.error) }
+            }
+        ) {
+            Text("Every mark on every page of $title is taken off, on all your devices. This cannot be undone.")
+        }
+    }
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -229,6 +249,13 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
             leadingIcon = { Icon(Icons.Default.Devices, null) },
             onClick = { onDismiss(); state.companionOpen = true }
         )
+        state.currentPath?.let {
+            DropdownMenuItem(
+                text = { Text("Clear all markings on this part...") },
+                leadingIcon = { Icon(Icons.Default.CleaningServices, null) },
+                onClick = { onDismiss(); state.clearingMarks = true }
+            )
+        }
         HorizontalDivider()
         DropdownMenuItem(
             text = { Text("Customise buttons...") },
@@ -252,6 +279,13 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
             ) {
                 Text("Tap or swipe the page to turn it", Modifier.weight(1f))
                 Switch(checked = state.edgeTaps, onCheckedChange = { state.edgeTaps = it })
+            }
+            Row(
+                Modifier.fillMaxWidth().clickable { state.stripOnLeft = !state.stripOnLeft }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Buttons on the left side", Modifier.weight(1f))
+                Switch(checked = state.stripOnLeft, onCheckedChange = { state.stripOnLeft = it })
             }
             Row(
                 Modifier.fillMaxWidth().clickable { state.stripLabels = !state.stripLabels }.padding(vertical = 4.dp),

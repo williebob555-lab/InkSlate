@@ -20,6 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -34,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
@@ -263,6 +265,15 @@ fun TabStrip(
             IconButton(onClick = onNewTab) {
                 Icon(Icons.Default.Add, "Open another document")
             }
+            // The songs open now, kept as a setlist in the order of their tabs.
+            AppFlavor.onSaveTabs?.let { save ->
+                if (tabs.isNotEmpty()) {
+                    TextButton(onClick = { save(tabs.filter { !it.closeRequested.value }.map { it.file }) }) {
+                        Icon(Icons.Default.PlaylistAdd, null, modifier = Modifier.size(18.dp))
+                        Text(" Save as setlist", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
             Row(
                 Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically
@@ -412,8 +423,8 @@ private fun DocumentTabChip(
                         modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary
                     )
                 }
-                // Music closes as a set, from Home, not a tab at a time.
-                if (!AppFlavor.musicView) {
+                // A setlist's songs close together, from Home; a song opened on its own has its X.
+                if (!AppFlavor.musicView || tab.title == null) {
                     IconButton(onClick = onClose, modifier = Modifier.size(20.dp)) {
                         Icon(Icons.Default.Close, "Close ${tab.file.name}", modifier = Modifier.size(14.dp))
                     }

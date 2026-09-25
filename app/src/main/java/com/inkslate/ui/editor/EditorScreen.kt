@@ -370,6 +370,15 @@ fun EditorScreen(
                 }
             }
             conflictNotice = when {
+                // Music: merged quietly, and said only in the event log - a pop-up on opening a
+                // part mid-rehearsal is in the way, and there is nothing to decide.
+                com.inkslate.AppFlavor.musicView -> {
+                    if (opened.mergedConflicts > 0 || opened.sourceChanged) {
+                        EventLog.info("sync", "${file.name}: merged ${opened.mergedConflicts} edit sets from other devices" +
+                            if (opened.sourceChanged) "; the PDF itself changed since" else "")
+                    }
+                    null
+                }
                 opened.mergedConflicts > 0 -> {
                     val who = opened.mergedFrom.distinct().joinToString(", ")
                     "Merged " + opened.mergedConflicts + " edit set" +
@@ -942,7 +951,8 @@ fun EditorScreen(
         if (!sameShape) {
             EventLog.warn("sync", "${file.name} changed shape on disk while it was open")
             persistWorking()
-            externalChange = true
+            // Music reloads and merges without asking: the answer is always the same.
+            if (com.inkslate.AppFlavor.musicView) reloadNonce++ else externalChange = true
             return@LaunchedEffect
         }
 
@@ -965,7 +975,7 @@ fun EditorScreen(
             EventLog.info("sync", "${file.name}: folded in changes that arrived while it was open")
             // Worth saying only when nothing came over the link: then it is news. When the other
             // device is linked, what the file brings was already on the page.
-            if (session.openPeers().isEmpty()) {
+            if (session.openPeers().isEmpty() && !com.inkslate.AppFlavor.musicView) {
                 snackbar.showSnackbar("Folded in handwriting from another device")
             }
         }
@@ -1557,6 +1567,18 @@ fun EditorScreen(
             }
         }
         com.inkslate.core.Perform.openPages = { pagesOpen = true }
+        com.inkslate.core.Perform.clearInk = { path ->
+            val d = doc
+            if (path != file.absolutePath || d == null || !strokesLoaded || restructuring) false else {
+                // Erased like any erasing: every mark gets a tombstone, so it stays gone on every
+                // device, and nothing brought across from MobileSheets comes back either.
+                model.setStrokes(emptyList())
+                syncPage()
+                host.views.forEach { it.view?.invalidate() }
+                dirty = true
+                true
+            }
+        }
         com.inkslate.core.Perform.recentre = { drawingView.value?.fitToScreen() }
         com.inkslate.core.Perform.document = { action ->
             val view = drawingView.value

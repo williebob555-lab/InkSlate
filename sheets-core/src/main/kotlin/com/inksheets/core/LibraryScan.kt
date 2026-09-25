@@ -81,20 +81,38 @@ class LibraryScan(
         val removed = ArrayList<String>()
         val merged = ArrayList<String>()
 
-        // 1. A file two parts both claim is kept once: the part every device would keep.
+        // Songs this scan took parts from: the only ones it may remove for being empty. A song
+        // another device has only half written (its parts still on the way) is never touched.
+        val touched = HashSet<String>()
+
+        // 1. One file listed twice is kept once. The same pages of the same file are the same
+        // part; so are the whole file and a part of it that begins on its first page - what one
+        // device's scan and another's import make of the same file. Band packs, a page range
+        // each, are left alone.
         run {
-            // Parts of one band pack share its file, a page range each: only the same file *and*
-            // the same pages is the same part.
-            val byFile = library.songs.flatMap { s -> s.parts.map { s to it } }
-                .groupBy { Triple(it.second.file.lowercase(), it.second.firstPage, it.second.lastPage) }
-            for ((_, claims) in byFile) {
-                if (claims.size < 2) continue
-                val keep = claims.minBy { it.second.id }
-                for ((song, part) in claims) {
-                    if (part.id == keep.second.id) continue
+            val claims = library.songs.flatMap { s -> s.parts.map { s to it } }.groupBy { it.second.file.lowercase() }
+            for ((_, all) in claims) {
+                if (all.size < 2) continue
+                val ranged = all.filter { it.second.firstPage != null }
+                val whole = all.filter { it.second.firstPage == null }
+                val drop = ArrayList<Pair<Song, Part>>()
+                // Exact doubles: keep the smallest id.
+                for (same in all.groupBy { it.second.firstPage to it.second.lastPage }.values) {
+                    if (same.size > 1) drop += same.sortedBy { it.second.id }.drop(1)
+                }
+                // A whole-file part found by a scan, beside a part of the same file brought in by
+                // an import: the import knew more (its title, its pages) and is kept.
+                if (ranged.isNotEmpty()) {
+                    val single = ranged.map { it.second.firstPage to it.second.lastPage }.distinct().size == 1
+                    for (w in whole) {
+                        val otherSong = ranged.none { it.first.id == w.first.id }
+                        if (w.second.source != InstrumentSource.PERSON && (single || otherSong) && w !in drop) drop += w
+                    }
+                }
+                for ((song, part) in drop) {
                     library.deletePart(part.id)
+                    touched += song.id
                     merged += "${song.title}: ${part.file} was listed twice"
-                    if (song.id != keep.first.id) library.mergeSongs(song.id, keep.first.id)
                 }
             }
         }
@@ -143,12 +161,15 @@ class LibraryScan(
         } else {
             for ((song, part) in gone) {
                 library.deletePart(part.id)
+                touched += song.id
                 removed += "${song.title}: ${part.file}"
                 memory.remove(part.file)
             }
         }
 
         // 3. New files: into the song they belong to, or a new one.
+        val songFolders = disk.filter { it.music }.groupBy { it.path.substringBeforeLast('/', "") }
+            .mapValues { (_, files) -> ImportPlan.folderIsSong(files.map { it.path }) }
         for (file in unclaimed) {
             if (!file.music) continue
             val id = Library.partIdFor(file.path)
@@ -157,7 +178,7 @@ class LibraryScan(
             if (removedAt != null && removedAt >= file.modified) continue
             val (home, _) = library.partHome(id)
             val planned = ImportPlan.readPart(file.path)
-            val title = ImportPlan.songTitle(file.path)
+            val title = ImportPlan.songTitle(file.path, songFolders[file.path.substringBeforeLast('/', "")] == true)
             val song = home?.let { library.song(it) } ?: library.ensureSong(title)
             library.writePart(song.id, Part(
                 id = id, file = file.path, instrument = planned.instrument, source = planned.source,
@@ -172,8 +193,8 @@ class LibraryScan(
             val used = songs.flatMap { s -> s.audio.map { it.file.lowercase() } }.toSet()
             for (file in unclaimed) {
                 if (file.music || file.path.lowercase() in used) continue
-                val key = Library.matchKey(ImportPlan.songTitle(file.path))
-                val song = songs.filter { s -> val k = Library.matchKey(s.title); key == k || key.startsWith("$k ") }
+                val key = Library.titleKey(ImportPlan.songTitle(file.path))
+                val song = songs.filter { s -> val k = Library.titleKey(s.title); key == k || key.startsWith("$k ") }
                     .maxByOrNull { it.title.length } ?: continue
                 library.editSong(song.id) { audio = song.audio + AudioTrack(file = file.path) }
                 added += "${song.title}: ${file.path} (recording)"
@@ -185,15 +206,21 @@ class LibraryScan(
             }
         }
 
-        // 4. One piece, several songs: put together (unless someone split them on purpose).
+        // 4. One piece, several songs: put together (unless someone split them on purpose). Only
+        // songs whose parts are for different instruments: two Euphonium parts under one title
+        // are two editions, or two pieces, and stay two songs.
         run {
             val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(it.title) }
             for ((_, same) in groups) {
                 if (same.size < 2) continue
                 // The same choice on every device: the title's own id if one has it, else the smallest.
                 val keep = same.firstOrNull { it.id == Library.songIdFor(it.title) } ?: same.minBy { it.id }
+                val have = HashSet(library.song(keep.id)?.instruments.orEmpty())
                 for (s in same) if (s.id != keep.id) {
+                    val theirs = s.instruments
+                    if (theirs.any { it in have }) continue
                     library.mergeSongs(s.id, keep.id)
+                    have += theirs
                     merged += "${s.title} into ${keep.title}"
                 }
             }
@@ -201,7 +228,7 @@ class LibraryScan(
 
         // 5. Songs left with nothing, and setlist entries for songs that are gone.
         for (s in library.songs) {
-            if (s.parts.isEmpty() && s.audio.isEmpty()) {
+            if (s.id in touched && s.parts.isEmpty() && s.audio.isEmpty()) {
                 library.deleteSong(s.id)
                 removed += s.title
             }

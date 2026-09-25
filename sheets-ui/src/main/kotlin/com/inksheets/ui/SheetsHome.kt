@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -104,25 +105,15 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     }
 
     // Edits from other devices arrive through the synced folder; look for them now and then.
-    LaunchedEffect(state.library) {
-        var ticks = 0
-        while (true) {
-            withContext(Dispatchers.IO) { runCatching { state.refresh() } }
-            // The folder itself every so often: music added, moved or deleted on any device - or
-            // by the file manager - shows up here without anyone asking.
-            if (++ticks % 4 == 0) {
-                val report = withContext(Dispatchers.IO) { state.scanFolder() }
-                if (report?.added?.isNotEmpty() == true) {
-                    withContext(Dispatchers.IO) { runCatching { state.readUnknownParts() } }
-                }
-            }
-            delay(3_000)
-        }
-    }
+    // Other devices' changes and the folder itself are watched by the state, all the time -
+    // see SheetsState.startWatching - not only while Home is on screen.
 
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    // On a phone the buttons need the whole bar; the name goes.
+    val narrow = maxWidth < 520.dp
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { Text("InkSheets") },
+            title = { if (!narrow) Text("InkSheets", maxLines = 1) },
             actions = {
                 InstrumentChooser(state)
                 IconButton(onClick = { showMetronome = true }) { Icon(Icons.Default.Timer, "Metronome") }
@@ -217,9 +208,12 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
         }
     }
 
+    }
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) AddMusicDialog(state, onClose = { showImport = false })
+    SaveTabsDialog(state)
+    IncomingDialog(state)
     // A zip shared or dropped from outside: straight to the bulk import's review.
     state.downloadWaiting?.let { zip -> BulkImportDialog(state, onClose = { state.downloadWaiting = null }, start = zip) }
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
@@ -533,7 +527,7 @@ internal fun SongRow(
             }
         }
         trailing?.invoke()
-        if (onEdit != null || onAddToSetlist != null || onDelete != null) {
+        if (onEdit != null || onAddToSetlist != null || onDelete != null || onColour != null || onMerge != null) {
             var menu by remember { mutableStateOf(false) }
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Song options") }
@@ -574,7 +568,8 @@ internal fun SheetDialog(
         Surface(
             shape = MaterialTheme.shapes.large,
             tonalElevation = 6.dp,
-            modifier = Modifier.width(if (wide) 640.dp else 440.dp).padding(8.dp)
+            // As wide as it wants on a tablet or laptop, and no wider than a phone's screen.
+            modifier = Modifier.widthIn(max = if (wide) 640.dp else 440.dp).fillMaxWidth().padding(8.dp)
         ) {
             Column(Modifier.padding(20.dp)) {
                 Text(title, style = MaterialTheme.typography.titleLarge)

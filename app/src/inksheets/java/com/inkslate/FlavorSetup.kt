@@ -69,13 +69,14 @@ object FlavorSetup {
         AppFlavor.pagesActions = { path, pages, close ->
             com.inksheets.ui.MusicPageActions(stateFor(LocalContext.current), path, pages, close)
         }
+        AppFlavor.onSaveTabs = { files -> state?.savingTabs = files }
         AppFlavor.onIncomingFiles = { uris ->
             val s = state
             val context = s?.platform?.let { (it as? AndroidSheetsPlatform)?.context }
             if (s == null || context == null || s.root == null) false else {
                 Thread({
                     val files = uris.mapNotNull { AndroidSheetsPlatform.copyIn(context, it) }
-                    s.takeIn(files)
+                    s.offer(files)
                 }, "take-in").apply { isDaemon = true; start() }
                 true
             }

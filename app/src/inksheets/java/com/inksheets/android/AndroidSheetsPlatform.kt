@@ -68,6 +68,10 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.swipeTurns = on
     }
 
+    override fun setStripSide(left: Boolean) {
+        com.inkslate.ink.DrawingView.stripOnLeft = left
+    }
+
     override fun setTurnStyle(style: String) {
         com.inkslate.ink.DrawingView.turnAnimation = when (style) {
             "fade" -> com.inkslate.ink.DrawingView.TURN_FADE

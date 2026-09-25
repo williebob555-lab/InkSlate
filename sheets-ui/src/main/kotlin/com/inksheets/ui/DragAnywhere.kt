@@ -2,7 +2,6 @@ package com.inksheets.ui
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.Modifier
@@ -26,16 +25,30 @@ internal fun Modifier.dragAnywhere(
 ): Modifier = pointerInput(key) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
-        val picked = if (down.type == PointerType.Mouse) {
-            awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+        val pickedAt: androidx.compose.ui.geometry.Offset = if (down.type == PointerType.Mouse) {
+            (awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() } ?: return@awaitEachGesture).position
         } else {
-            awaitLongPressOrCancellation(down.id)
-        } ?: return@awaitEachGesture
-        onStart(picked.position)
-        val finished = drag(picked.id) { change ->
+            // A finger holds the row a moment - a sixth of a second, barely noticed - so a swipe
+            // that is already moving still scrolls the list and a tap still opens it.
+            val stillHeld = withTimeoutOrNull(HOLD_MS) {
+                while (true) {
+                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
+                    if (!change.pressed) return@withTimeoutOrNull false
+                    if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull false
+                }
+                @Suppress("UNREACHABLE_CODE") false
+            }
+            if (stillHeld != null) return@awaitEachGesture   // lifted or moved first: not a drag
+            down.position
+        }
+        onStart(pickedAt)
+        val finished = drag(down.id) { change ->
             onDrag(change.positionChange())
             change.consume()
         }
         if (finished) onEnd() else onCancel()
     }
 }
+
+/** How long a finger holds a row before it can be dragged. */
+private const val HOLD_MS = 150L

@@ -86,7 +86,11 @@ object MobileSheetsImport {
                 val path = f.text("Path") ?: return@mapNotNull null
                 val rel = resolve(path)
                 if (rel == null) { missing += path; return@mapNotNull null }
-                val range = pageRange(f.text("PageOrder"))
+                // "1-3" of a three-page file is the whole file, as the folder scan sees it too.
+                val range = pageRange(f.text("PageOrder"))?.takeUnless { r ->
+                    val count = f.int("SourceFilePageCount") ?: 0
+                    r.first == 1 && count > 0 && r.last >= count
+                }
                 val named = fromTitle ?: InstrumentReader.readFileName(rel.substringAfterLast('/'))
                 val id = if (range == null) Library.partIdFor(rel) else Library.partIdFor("$rel#${range.first}-${range.last}")
                 Part(
@@ -130,14 +134,28 @@ object MobileSheetsImport {
         loose.groupBy { Library.matchKey(ImportPlan.withoutTrailingInstrument(ImportPlan.cleanTitle(found[it].title))) }
             .values.forEach { same -> same.drop(1).forEach { join(it, same.first()) } }
 
-        val groups = found.indices.groupBy { rootOf(it) }.values.map { members ->
+        // Within a title, MobileSheets songs for the same instrument are separate songs: two
+        // editions of a piece, or two pieces that share a name. Only different instruments join.
+        val groups = found.indices.groupBy { rootOf(it) }.values.flatMap { members ->
             val cs = members.map { found[it] }
             val title = if (cs.size > 1) {
                 ImportPlan.withoutTrailingInstrument(ImportPlan.cleanTitle(cs.first().title)).ifEmpty { cs.first().title }
             } else ImportPlan.cleanTitle(cs.first().title).ifEmpty { cs.first().title }
-            // A song already in the library with this title takes these as more of its parts.
-            val existing = library.songs.firstOrNull { !it.apart && Library.matchKey(it.title) == Library.matchKey(title) }
-            Group(title, cs, into = existing?.id)
+            val sharesFile = cs.size > 1 && cs.map { c -> c.parts.map { it.file }.toSet() }.let { sets -> sets.any { a -> sets.any { b -> a !== b && a.intersect(b).isNotEmpty() } } }
+            val bundles = ArrayList<MutableList<Candidate>>()
+            for (c in cs) {
+                val mine = c.parts.mapNotNull { it.instrument }.toSet()
+                val fits = if (sharesFile) bundles.firstOrNull() else bundles.firstOrNull { b ->
+                    b.flatMap { m -> m.parts.mapNotNull { it.instrument } }.none { it in mine }
+                }
+                if (fits != null) fits += c else bundles += arrayListOf(c)
+            }
+            bundles.mapIndexed { i, b ->
+                val own = if (bundles.size > 1) ImportPlan.cleanTitle(b.first().title).ifEmpty { title } else title
+                // A song already in the library with this title takes these as more of its parts.
+                val existing = if (i == 0) library.songs.firstOrNull { !it.apart && Library.matchKey(it.title) == Library.matchKey(own) } else null
+                Group(own, b, into = existing?.id, apart = i > 0)
+            }
         }.sortedBy { Library.sortKey(it.title) }
         return Planned(groups, skipped, missing.distinct(), already)
     }

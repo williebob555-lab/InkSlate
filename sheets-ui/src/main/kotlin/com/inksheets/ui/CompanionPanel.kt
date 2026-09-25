@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -173,7 +174,18 @@ class Companion(private val state: SheetsState) {
     fun pageTurned(page: Int) {
         announce(page)
         applyPendingInk()
+        // Following: how long going where the leader went took to reach the screen.
+        goingTo?.let { (path, since) ->
+            if (state.currentPath == path) {
+                val took = System.currentTimeMillis() - since
+                if (took > 700) state.platform.log("Companion: showing the leader's page took ${took} ms")
+                goingTo = null
+            }
+        }
     }
+
+    /** Where this follower is on its way to, and since when - to find slow moves. */
+    private var goingTo: Pair<String, Long>? = null
 
     private fun announce(page: Int) {
         val l = leader ?: return
@@ -342,6 +354,7 @@ class Companion(private val state: SheetsState) {
         // A page turn while this tablet is on Home is left for the banner to offer; a new song
         // is gone to, which is what following means.
         if (!force && !songChanged && state.homeInFront) return
+        goingTo = file.absolutePath to System.currentTimeMillis()
         if (state.current?.id == song.id && !state.homeInFront && state.currentPath == file.absolutePath) {
             if (page != null) Perform.jumpTo?.invoke(file.absolutePath, page)
             return
@@ -471,7 +484,8 @@ internal fun CompanionDialog(state: SheetsState, onClose: () -> Unit) {
                     companion.lastLeader?.let { last ->
                         Button(onClick = { join(last) }, modifier = Modifier.padding(top = 6.dp)) { Text("Follow ${last.name} again") }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                         if (state.platform.canScanQr) {
                             Button(onClick = {
                                 state.platform.scanQr { text ->
@@ -520,38 +534,58 @@ internal fun CompanionDialog(state: SheetsState, onClose: () -> Unit) {
 private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
     val companion = state.companion
     val link = companion.joinLink
-    Row(verticalAlignment = Alignment.Top) {
-        if (link != null) QrImage(link, 200.dp)
-        Spacer(Modifier.width(16.dp))
-        Column(Modifier.weight(1f)) {
-            Text("Scan to follow ${state.platform.deviceName}", style = MaterialTheme.typography.titleMedium)
-            Text(
-                when (companion.followers) { 0 -> "Nobody following yet"; 1 -> "1 following"; else -> "${companion.followers} following" },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(vertical = 4.dp)
-            )
-            Text(
-                "A phone or tablet's own camera works too. Send the picture to a group chat and anyone can join from it.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (link != null) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                    OutlinedButton(onClick = {
-                        val png = qrPicture(state, link)
-                        onSaid(if (png != null && state.platform.copyImage(png)) "Copied - paste it into a message." else "Couldn't copy the picture here; use Share.")
-                    }) {
-                        Icon(Icons.Default.ContentCopy, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Copy picture")
-                    }
-                    OutlinedButton(onClick = { qrPicture(state, link)?.let { state.platform.shareImage(it) } }) {
-                        Icon(Icons.Default.Share, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Share")
+    // Side by side where there is room; on a phone the code above, everything else below it.
+    androidx.compose.foundation.layout.BoxWithConstraints {
+        val narrow = maxWidth < 460.dp
+        val codeSize = minOf(maxWidth, 240.dp)
+        val details: @Composable () -> Unit = {
+            Column {
+                Text("Scan to follow ${state.platform.deviceName}", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    when (companion.followers) { 0 -> "Nobody following yet"; 1 -> "1 following"; else -> "${companion.followers} following" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+                Text(
+                    "A phone or tablet's own camera works too. Send the picture to a group chat and anyone can join from it.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (link != null) {
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        OutlinedButton(onClick = {
+                            val png = qrPicture(state, link)
+                            onSaid(if (png != null && state.platform.copyImage(png)) "Copied - paste it into a message." else "Couldn't copy the picture here; use Share.")
+                        }) {
+                            Icon(Icons.Default.ContentCopy, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Copy picture")
+                        }
+                        OutlinedButton(onClick = { qrPicture(state, link)?.let { state.platform.shareImage(it) } }) {
+                            Icon(Icons.Default.Share, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Share")
+                        }
                     }
                 }
+            }
+        }
+        if (narrow) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                if (link != null) QrImage(link, codeSize)
+                Spacer(Modifier.size(12.dp))
+                details()
+            }
+        } else {
+            Row(verticalAlignment = Alignment.Top) {
+                if (link != null) QrImage(link, 200.dp)
+                Spacer(Modifier.width(16.dp))
+                Box(Modifier.weight(1f)) { details() }
             }
         }
     }

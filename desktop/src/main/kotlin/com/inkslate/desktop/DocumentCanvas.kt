@@ -550,9 +550,6 @@ fun DocumentCanvas(
                                 // fitted page anywhere - the left half back, the right half on.
                                 val share = if (fitted) 0.5f else EDGE_SHARE
                                 if (end.x < w * share) turn(-1) else if (end.x >= w * (1 - share)) turn(1)
-                            } else if (turn != null && fitted && fingers == 1 && !tapped) {
-                                // Dragged, but not far enough to turn: the page goes back.
-                                settle()
                             }
                             start = null
                         }

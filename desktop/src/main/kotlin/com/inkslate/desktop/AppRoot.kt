@@ -121,6 +121,13 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     fun selectTab(id: String) {
         homeShown = false
         tabOf(id)?.loaded = true
+        // A setlist's next and previous songs are read now, while this one is played, so turning
+        // to them shows them at once rather than after a moment of loading.
+        if (AppFlavor.musicView) {
+            val at = tabs.indexOfFirst { it.id == id }
+            listOf(at + 1, at - 1).mapNotNull { tabs.getOrNull(it) }.filter { it.title != null && !it.closeRequested.value }
+                .forEach { it.loaded = true }
+        }
         when {
             primary?.tabId == id -> focusedPane = Pane.PRIMARY
             secondary?.tabId == id -> focusedPane = Pane.SECONDARY

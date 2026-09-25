@@ -58,33 +58,34 @@ object BulkImport {
         val sound = usable.filter { ext(it) in SOUND }
 
         data class Placed(val part: ImportPlan.PlannedPart, val title: String, val concert: String, val order: Int)
+        val songFolders = music.groupBy { it.substringBeforeLast('/', "") }.mapValues { (_, f) -> ImportPlan.folderIsSong(f) }
         val placed = music.mapIndexed { i, file ->
             onProgress(i, music.size)
             val part = ImportPlan.readPart(file, textOf, recognise)
-            Placed(part, ImportPlan.songTitle(file), concertOf(file), trackNumber(file))
+            Placed(part, ImportPlan.songTitle(file, songFolders[file.substringBeforeLast('/', "")] == true), concertOf(file), trackNumber(file))
         }
         onProgress(music.size, music.size)
 
         // Songs: one per title, wherever in the download its parts are.
         val byKey = LinkedHashMap<String, MutableList<Placed>>()
-        placed.forEach { byKey.getOrPut(Library.matchKey(it.title)) { ArrayList() } += it }
+        placed.forEach { byKey.getOrPut(Library.titleKey(it.title)) { ArrayList() } += it }
         // A recording goes with the song whose title its name starts with - "Sleigh Ride demo.mp3"
         // - the longest such title, so "Sleigh Ride Jazz" does not go to "Sleigh Ride".
         val audioFor = sound.groupBy { a ->
-            val key = Library.matchKey(ImportPlan.songTitle(a))
+            val key = Library.titleKey(ImportPlan.songTitle(a))
             byKey.keys.filter { key == it || key.startsWith("$it ") }.maxByOrNull { it.length }
         }
         val songs = byKey.map { (key, group) ->
             Song(bestTitle(group.map { it.title }), group.map { it.part }, audioFor[key].orEmpty())
         }
-        val titleOf = songs.associateBy({ Library.matchKey(it.title) }, { it.title })
+        val titleOf = songs.associateBy({ Library.titleKey(it.title) }, { it.title })
 
         // Setlists: one per concert folder, songs in track order and each once.
         val concerts = LinkedHashMap<String, MutableList<Placed>>()
         placed.forEach { concerts.getOrPut(it.concert) { ArrayList() } += it }
         val setlists = concerts.map { (concert, members) ->
             val ordered = members.sortedWith(compareBy({ it.order }, { Library.sortKey(it.title) }))
-                .map { titleOf.getValue(Library.matchKey(it.title)) }
+                .map { titleOf.getValue(Library.titleKey(it.title)) }
                 .distinct()
             SetlistPlan(if (concert.isEmpty()) rootName else ImportPlan.cleanFolderName(concert.substringAfterLast('/')), ordered)
         }.filter { it.songTitles.isNotEmpty() }
@@ -224,10 +225,10 @@ object BulkImport {
                 if (more.isNotEmpty()) library.editSetlist(setlist.id) { entries = setlist.entries + more }
             }
         }
-        return Result(added, matched, setlists)
+        return Result(added, matched, setlists, ids.values.distinct())
     }
 
-    data class Result(val songsAdded: Int, val songsMatched: Int, val setlistsMade: Int)
+    data class Result(val songsAdded: Int, val songsMatched: Int, val setlistsMade: Int, val songIds: List<String> = emptyList())
 
     /** Where a download goes: its own name, the same folder again when re-importing it. */
     private fun uniqueBase(root: File, name: String): String {

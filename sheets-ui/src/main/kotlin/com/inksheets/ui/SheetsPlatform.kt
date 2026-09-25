@@ -53,6 +53,9 @@ interface SheetsPlatform {
     /** How a page turn is shown: "slide", "fade" or "none". */
     fun setTurnStyle(style: String) {}
 
+    /** The strip down the left side (true) or the right, and the page fitted beside it. */
+    fun setStripSide(left: Boolean) {}
+
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
 

@@ -59,9 +59,7 @@ internal fun AddMusicDialog(state: SheetsState, onClose: () -> Unit) {
             AddWay(Icons.Default.FolderOpen, "Files from anywhere",
                 "Pick PDFs, pictures or recordings from another app, Google Drive or Downloads. They go into your music folder's Inbox and are filed for you."
             ) {
-                state.platform.pickFiles { files ->
-                    if (files.isNotEmpty()) Thread({ state.takeIn(files) }, "take-in").apply { isDaemon = true; start() }
-                }
+                state.platform.pickFiles { files -> if (files.isNotEmpty()) state.offer(files) }
                 onClose()
             }
             AddWay(Icons.Default.Download, "A download",
@@ -110,6 +108,9 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit, start: Fi
     var result by remember { mutableStateOf<BulkImport.Result?>(null) }
     var working by remember { mutableStateOf(false) }
     var makeSetlists by remember { mutableStateOf(true) }
+    // Importing while looking at a setlist: the songs can go straight into it.
+    val openSetlist = remember { (state.setlistShown ?: state.playing?.first)?.let { state.library?.setlist(it) } }
+    var intoOpen by remember { mutableStateOf(openSetlist != null) }
     // The songs as the person wants them, and as they were worked out, for "Automatic".
     val groups = remember { mutableStateListOf<ReviewGroup>() }
     var automatic by remember { mutableStateOf<List<ReviewGroup>>(emptyList()) }
@@ -190,7 +191,16 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit, start: Fi
                         Thread({
                             val r = runCatching {
                                 state.importing++
-                                try { BulkImport.apply(plan0, src, state.library!!, root, makeSetlists, emptySet(), inPlace) }
+                                try {
+                                    BulkImport.apply(plan0, src, state.library!!, root, makeSetlists, emptySet(), inPlace).also { r ->
+                                        val list = openSetlist?.takeIf { intoOpen }?.let { state.library!!.setlist(it.id) }
+                                        if (list != null) {
+                                            val have = list.entries.map { it.songId }.toSet()
+                                            val more = r.songIds.filter { it !in have }.map { com.inksheets.core.SetlistEntry(songId = it) }
+                                            if (more.isNotEmpty()) state.library!!.editSetlist(list.id) { entries = list.entries + more }
+                                        }
+                                    }
+                                }
                                 finally { state.importing-- }
                             }
                             // The unpacked copy of a zip has done its job.
@@ -236,6 +246,12 @@ internal fun BulkImportDialog(state: SheetsState, onClose: () -> Unit, start: Fi
                         )
                     }
                     Switch(checked = makeSetlists, onCheckedChange = { makeSetlists = it })
+                }
+                if (openSetlist != null) {
+                    Row(Modifier.fillMaxWidth().clickable { intoOpen = !intoOpen }, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Also add them to “${openSetlist.name}”", Modifier.weight(1f))
+                        Switch(checked = intoOpen, onCheckedChange = { intoOpen = it })
+                    }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
                 ImportReview(state, groups, automatic)

@@ -60,6 +60,9 @@ object AppFlavor {
      */
     var pagesActions: (@Composable (path: String, pages: List<Int>, close: () -> Unit) -> Unit)? = null
 
+    /** Keep the open tabs, in order, as a setlist; null where the app has none. */
+    var onSaveTabs: ((List<java.io.File>) -> Unit)? = null
+
     /** Told whether Home is what is on screen, whenever that changes. */
     var onHomeShown: ((Boolean) -> Unit)? = null
 
@@ -69,6 +72,10 @@ object AppFlavor {
     /** Close the app, and put its window away; set once the window is up. */
     var quit: (() -> Unit)? = null
     var minimise: (() -> Unit)? = null
+
+    /** The action strip over music sits down the left side rather than the right. */
+    @Volatile
+    var stripOnLeft: Boolean = false
 
     /** How a page turn in music is shown: "slide", "fade" or "none". */
     @Volatile
