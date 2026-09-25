@@ -130,6 +130,9 @@ dependencies {
     // Joining a leader by its QR code, and photographing paper music: both Google's own camera
     // screens from Play services, so the app asks for no camera permission of its own.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // Play services brings an old androidx.fragment with it, which release lint rejects beside the
+    // activity-result API the app uses; a current one replaces it.
+    implementation("androidx.fragment:fragment-ktx:1.8.9")
     "inksheetsImplementation"("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
