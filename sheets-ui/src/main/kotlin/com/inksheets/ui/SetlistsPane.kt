@@ -1,5 +1,10 @@
 package com.inksheets.ui
 
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -76,16 +81,68 @@ internal fun SetlistsPane(state: SheetsState) {
     val folders = remember(version, folderId) { library.foldersIn(folderId) }
     val setlists = remember(version, folderId) { library.setlistsIn(folderId) }
 
+    // Dragging a setlist or folder by its handle: dropped on a folder it goes in, dropped on the
+    // path at the top ("Setlists", or a folder above this one) it goes back out to there.
+    val targets = remember(folderId, version) { mutableStateMapOf<String, androidx.compose.ui.geometry.Rect>() }
+    var carrying by remember { mutableStateOf<Carried?>(null) }
+    var carriedBy by remember { mutableStateOf(Offset.Zero) }
+    var carriedAt by remember { mutableStateOf(Offset.Zero) }
+    // Worked out when asked, not when composed: the gesture outlives the composition it began in.
+    fun overNow() = carrying?.let { c -> targets.entries.firstOrNull { (key, r) -> r.contains(carriedAt) && key != c.targetKey }?.key }
+    val over = overNow()
+    fun drop() {
+        val c = carrying
+        val key = overNow()
+        carrying = null
+        carriedBy = Offset.Zero
+        if (c == null || key == null) return
+        val into = key.removePrefix(TARGET).takeIf { it.isNotEmpty() }
+        when (c) {
+            is Carried.Set -> state.change { editSetlist(c.id) { this.folderId = into } }
+            is Carried.Dir -> state.change { moveFolder(c.id, into) }
+        }
+    }
+    fun Modifier.target(folder: String?) = onGloballyPositioned { targets[TARGET + (folder ?: "")] = it.boundsInRoot() }
+    val litColour = MaterialTheme.colorScheme.primaryContainer
+    val liftedColour = MaterialTheme.colorScheme.surfaceContainerHighest
+    fun Modifier.lit(folder: String?) = if (carrying != null && over == TARGET + (folder ?: ""))
+        background(litColour, RoundedCornerShape(8.dp)) else this
+    @Composable
+    fun Handle(what: Carried) {
+        var origin by remember { mutableStateOf(Offset.Zero) }
+        Icon(
+            Icons.Default.DragHandle, "Drag into a folder",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .onGloballyPositioned { origin = it.boundsInRoot().topLeft }
+                .pointerInput(what, targets) {
+                    detectDragGestures(
+                        onDragStart = { at -> carrying = what; carriedBy = Offset.Zero; carriedAt = origin + at },
+                        onDragEnd = { drop() },
+                        onDragCancel = { carrying = null; carriedBy = Offset.Zero }
+                    ) { change, amount ->
+                        change.consume()
+                        carriedBy += amount
+                        carriedAt += amount
+                    }
+                }
+                .padding(12.dp)
+        )
+    }
+    fun Modifier.carried(what: Carried) = if (carrying == what)
+        zIndex(1f).graphicsLayer { translationX = carriedBy.x; translationY = carriedBy.y; alpha = 0.85f }
+            .background(liftedColour) else this
+
     Column(Modifier.fillMaxSize()) {
         // Where we are: Setlists > Wind Ensemble > 2025-26
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = { folderId = null }) { Text("Setlists") }
+            TextButton(onClick = { folderId = null }, modifier = Modifier.target(null).lit(null)) { Text("Setlists") }
             path.forEach { f ->
                 Icon(Icons.Default.ChevronRight, null)
-                TextButton(onClick = { folderId = f.id }) { Text(f.name) }
+                TextButton(onClick = { folderId = f.id }, modifier = Modifier.target(f.id).lit(f.id)) { Text(f.name) }
             }
             Spacer(Modifier.weight(1f))
             AddButton("New folder") { naming = Naming.NewFolder(folderId) }
@@ -104,19 +161,28 @@ internal fun SetlistsPane(state: SheetsState) {
 
         LazyColumn(Modifier.fillMaxSize()) {
             items(folders, key = { "f" + it.id }) { f ->
-                ListRow(
-                    icon = { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary) },
-                    title = f.name,
-                    detail = library.setlistsUnder(f.id).size.let { n -> if (n == 1) "1 setlist" else "$n setlists" },
-                    onClick = { folderId = f.id },
-                    menu = listOf(
-                        "Rename" to { naming = Naming.RenameFolder(f) },
-                        "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } }
-                    )
-                )
+                val me = Carried.Dir(f.id)
+                Row(Modifier.carried(me).target(f.id).lit(f.id), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) {
+                        ListRow(
+                            icon = { Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary) },
+                            title = f.name,
+                            detail = library.setlistsUnder(f.id).size.let { n -> if (n == 1) "1 setlist" else "$n setlists" },
+                            onClick = { folderId = f.id },
+                            menu = listOf(
+                                "Rename" to { naming = Naming.RenameFolder(f) },
+                                "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } }
+                            )
+                        )
+                    }
+                    Handle(me)
+                }
                 HorizontalDivider()
             }
             items(setlists, key = { "s" + it.id }) { s ->
+                val me = Carried.Set(s.id)
+                Row(Modifier.carried(me), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
                 ListRow(
                     icon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, null) },
                     title = s.name,
@@ -125,12 +191,12 @@ internal fun SetlistsPane(state: SheetsState) {
                     menu = listOf(
                         "Share with bandmates..." to { sharing = s.id },
                         "Rename" to { naming = Naming.RenameSetlist(s) },
-                        "Move to top level" to { state.change { editSetlist(s.id) { this.folderId = null } } },
                         "Delete" to { state.change { deleteSetlist(s.id) } }
-                    ) + folders.map { target ->
-                        "Move into ${target.name}" to { state.change { editSetlist(s.id) { this.folderId = target.id } } }
-                    }
+                    )
                 )
+                }
+                Handle(me)
+                }
                 HorizontalDivider()
             }
         }
@@ -154,6 +220,17 @@ internal fun SetlistsPane(state: SheetsState) {
         )
     }
 }
+
+/** What is being dragged: a setlist or a folder, by id. */
+private sealed class Carried {
+    abstract val id: String
+    data class Set(override val id: String) : Carried()
+    data class Dir(override val id: String) : Carried()
+    /** A folder is not a place to drop itself. */
+    val targetKey: String? get() = if (this is Dir) TARGET + id else null
+}
+
+private const val TARGET = "into:"
 
 private sealed class Naming(val title: String, val initial: String = "") {
     class NewFolder(val parent: String?) : Naming("New folder")

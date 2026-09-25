@@ -182,7 +182,10 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) {
             }
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Songs") })
-                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Setlists") })
+                Tab(selected = tab == 1, onClick = {
+                    // Also the way back to the top of the setlists, from inside a folder or a setlist.
+                    tab = 1; state.setlistFolder = null; state.setlistShown = null
+                }, text = { Text("Setlists") })
             }
             when (tab) {
                 0 -> SongsPane(state)

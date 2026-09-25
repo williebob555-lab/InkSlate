@@ -22,6 +22,7 @@ import com.inksheets.ui.Microphone
 import com.inksheets.ui.SheetsHome
 import com.inksheets.ui.SheetsPlatform
 import com.inksheets.ui.SheetsState
+import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -210,5 +211,50 @@ class SheetsScreensTest {
         assertEquals(null, state.playing)
         assertEquals(1, state.homeTab)
         assertEquals(setId, state.setlistShown)
+    }
+
+    @Test
+    fun `a setlist dragged onto a folder goes in, and dragged onto the path comes back out`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        lateinit var folder: String
+        lateinit var gig: String
+        state.change {
+            folder = addFolder("Jazz Band").id
+            gig = addSetlist("Gig").id
+        }
+        state.homeTab = 1
+        runDesktopComposeUiTest(width = 900, height = 600) {
+            setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
+            waitForIdle()
+            val target = onNodeWithText("Jazz Band").fetchSemanticsNode().boundsInRoot.center
+            onAllNodes(androidx.compose.ui.test.hasContentDescription("Drag into a folder")).fetchSemanticsNodes().size.let { assertEquals(2, it) }
+            // The second handle is the setlist's (folders come first).
+            val handle = onAllNodes(androidx.compose.ui.test.hasContentDescription("Drag into a folder"))[1]
+            val from = handle.fetchSemanticsNode().boundsInRoot.center
+            handle.performTouchInput {
+                down(center)
+                moveBy(androidx.compose.ui.geometry.Offset(0f, 20f))
+                moveBy(target - from - androidx.compose.ui.geometry.Offset(0f, 20f))
+                up()
+            }
+            waitForIdle()
+            assertEquals(folder, state.library!!.setlist(gig)!!.folderId)
+
+            // Into the folder, and back out by dropping on "Setlists" at the top.
+            onNodeWithText("Jazz Band").performClick()
+            waitForIdle()
+            val top = onAllNodesWithText("Setlists").fetchSemanticsNodes().maxBy { it.boundsInRoot.top }.boundsInRoot.center
+            val inside = onAllNodes(androidx.compose.ui.test.hasContentDescription("Drag into a folder"))[0]
+            val start = inside.fetchSemanticsNode().boundsInRoot.center
+            inside.performTouchInput {
+                down(center)
+                moveBy(androidx.compose.ui.geometry.Offset(0f, -20f))
+                moveBy(top - start - androidx.compose.ui.geometry.Offset(0f, -20f))
+                up()
+            }
+            waitForIdle()
+            assertEquals(null, state.library!!.setlist(gig)!!.folderId)
+        }
     }
 }
