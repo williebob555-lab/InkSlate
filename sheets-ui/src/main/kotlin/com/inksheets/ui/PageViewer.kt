@@ -108,3 +108,25 @@ internal fun PageViewer(state: SheetsState) {
         }
     }
 }
+
+/** A part's first page, small, for telling which part it is at a glance. */
+@Composable
+internal fun PartThumbnail(state: SheetsState, song: com.inksheets.core.Song, part: com.inksheets.core.Part, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var picture by remember(part.id) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(part.id) {
+        picture = withContext(Dispatchers.IO) {
+            runCatching {
+                val file = state.partFile(song, part) ?: return@runCatching null
+                state.platform.peek(file)?.use { it.render(((part.firstPage ?: 1) - 1).coerceAtLeast(0), 360) }
+            }.getOrNull()
+        }
+    }
+    Box(
+        modifier.size(width = 72.dp, height = 92.dp).background(Color(0xFFEEEEEE))
+            .pointerInput(part.id) { detectTapGestures { onClick() } },
+        contentAlignment = Alignment.Center
+    ) {
+        picture?.let { Image(it, "First page of this part", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+            ?: CircularProgressIndicator(Modifier.size(20.dp))
+    }
+}

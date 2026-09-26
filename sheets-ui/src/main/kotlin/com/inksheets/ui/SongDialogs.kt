@@ -147,6 +147,11 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
             }
             parts.forEachIndexed { i, part ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // No instrument yet: its first page right here, to read which it is. A tap
+                    // shows that part alone, bigger.
+                    if (part.instrument == null) {
+                        PartThumbnail(state, song, part, Modifier.padding(end = 8.dp)) { state.peeking = song to part }
+                    }
                     Column(Modifier.weight(1f)) {
                         Text(
                             part.file.substringAfterLast('/') + (part.firstPage?.let { f -> "  ·  pages $f" + (part.lastPage?.takeIf { it != f }?.let { "-$it" } ?: "") } ?: ""),

@@ -418,7 +418,11 @@ private fun SongsPane(state: SheetsState) {
                             onAddToSetlist = { addingToSetlist = song },
                             onRecordings = { recordingsFor = song },
                             onColour = { colouring = song },
-                            onLook = { state.partFor(song)?.let { state.peeking = song to it } },
+                            // Filling in instruments: the part that has none.
+                            onLook = {
+                                val part = (if (noInstrument) song.parts.firstOrNull { it.instrument == null } else null) ?: state.partFor(song)
+                                part?.let { state.peeking = song to it }
+                            },
                             onMerge = { merging = song },
                             onDelete = { state.removeSong(song) },
                             trailing = if (noInstrument || noTempo) {

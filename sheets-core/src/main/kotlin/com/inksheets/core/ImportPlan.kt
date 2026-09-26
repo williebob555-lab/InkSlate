@@ -74,10 +74,17 @@ object ImportPlan {
             fromName != null -> Triple(fromName, InstrumentSource.FILE_NAME, nameText)
             else -> null
         } ?: return PlannedPart(file, null, InstrumentSource.UNKNOWN, null)
+        // A first page naming five or more instruments is a score: every staff has its name.
+        if (chosen.second != InstrumentSource.FILE_NAME && fromName == null &&
+            chosen.third.lines().mapNotNull { InstrumentReader.read(it)?.instrument?.id }.distinct().size >= 5
+        ) return PlannedPart(file, "score", chosen.second, "Score")
         // A part printed for several instruments is filed under the first one printed.
         val all = InstrumentReader.readAll(chosen.third).map { it.id }.takeIf { it.size in 2..4 }.orEmpty()
         val main = all.firstOrNull() ?: chosen.first.instrument.id
-        return PlannedPart(file, main, chosen.second, chosen.first.label, all.filter { it != main }, chairOf(chosen.first.label))
+        // Its number from what was read, or failing that from the file name, if that names the same instrument.
+        val chair = chairOf(chosen.first.label)
+            ?: fromName?.takeIf { it.instrument.id == main }?.let { chairOf(it.label) }
+        return PlannedPart(file, main, chosen.second, chosen.first.label, all.filter { it != main }, chair)
     }
 
     /**
@@ -89,15 +96,18 @@ object ImportPlan {
         if (label.isNullOrBlank()) return null
         val words = label.replace('_', ' ').split(Regex("""[\s.,:;()\[\]]+""")).filter { it.isNotEmpty() }
         // Only a number next to the instrument's name: "Symphony 5 Trumpet 2" is the 2nd trumpet.
-        val filler = setOf("in", "f", "bb", "eb", "c", "b", "tc", "bc")
+        val filler = setOf("in", "f", "bb", "eb", "c", "tc", "bc", "b")
+        // "B♭", "Bb", "E♭": the key a part is in, which sits between its name and its number.
+        fun isFiller(w: String) = w.lowercase() in filler || InstrumentReader.normalise(w).let { n -> n.isNotEmpty() && n.all { it in filler } } ||
+            w.matches(Regex("""[A-Ga-g][♭♯b#]"""))
         fun instrumentAt(i: Int): Boolean {
             var j = i
-            while (j in words.indices && words[j].lowercase() in filler) j += if (j >= i) 1 else -1
+            while (j in words.indices && isFiller(words[j])) j++
             return j in words.indices && InstrumentReader.normalise(words[j]).any { it in INSTRUMENT_WORDS && it !in filler }
         }
         fun instrumentBefore(i: Int): Boolean {
             var j = i - 1
-            while (j >= 0 && words[j].lowercase() in filler) j--
+            while (j >= 0 && isFiller(words[j])) j--
             return j >= 0 && InstrumentReader.normalise(words[j]).any { it in INSTRUMENT_WORDS && it !in filler }
         }
         for ((i, w) in words.withIndex()) {

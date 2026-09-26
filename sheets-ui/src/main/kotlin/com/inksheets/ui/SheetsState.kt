@@ -804,6 +804,8 @@ class SheetsState(val platform: SheetsPlatform) {
             changed++
         }
         runCatching { readTempos(again = true) }
+        // Parts that now read as different ones - Trumpet 2 beside Trumpet 1 - can be one song.
+        runCatching { scanFolder() }
         platform.onMain {
             reassigning = null
             reassigned = if (changed == 0) "Every part already had the instrument it reads as." else "$changed part${if (changed == 1) "" else "s"} given a different instrument."
