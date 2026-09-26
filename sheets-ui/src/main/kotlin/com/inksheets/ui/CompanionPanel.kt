@@ -136,16 +136,6 @@ class Companion(private val state: SheetsState) {
             else -> null
         }
 
-    init {
-        // Following when the app was closed, not long ago: carry on, so a tablet that restarted
-        // mid-rehearsal is back with the band without anyone touching it.
-        val since = state.platform.pref(K_FOLLOWING_SINCE)?.toLongOrNull()
-        val last = lastLeader
-        if (since != null && last != null && System.currentTimeMillis() - since < RESUME_WITHIN_MS) {
-            followLeader(last) { }
-        }
-    }
-
     // ---- leading ----------------------------------------------------------------------
 
     /** The leader's message showing now, and a count that changes with each so a repeat shows again. */
@@ -604,6 +594,18 @@ class Companion(private val state: SheetsState) {
     }
 
     private fun partNo(part: Part): String? = CompanionLink.partNumber(part.label ?: part.file.substringAfterLast('/'))
+
+    // Last in the class, so everything it touches is already set up: resuming follows a leader,
+    // and that reads state declared all through the class.
+    init {
+        // Following when the app was closed, not long ago: carry on, so a tablet that restarted
+        // mid-rehearsal is back with the band without anyone touching it.
+        val since = state.platform.pref(K_FOLLOWING_SINCE)?.toLongOrNull()
+        val last = lastLeader
+        if (since != null && last != null && System.currentTimeMillis() - since < RESUME_WITHIN_MS) {
+            followLeader(last) { }
+        }
+    }
 
     companion object {
         private const val K_FOLLOW = "sheets_companion_follow"

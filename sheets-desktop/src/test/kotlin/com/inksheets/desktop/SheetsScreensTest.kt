@@ -70,6 +70,19 @@ class SheetsScreensTest {
         ImageIO.write(image, "png", File(dir, "$name.png"))
     }
 
+    /** A tablet closed while following opens again and carries on - it used to crash at once. */
+    @Test
+    fun `opening again while following carries on rather than crashing`() {
+        val root = tmp.newFolder("Music")
+        val platform = FakePlatform(root)
+        platform.setPref("sheets_companion_last", com.inksheets.core.CompanionLink.joinLink("Wilsons-Laptop", listOf("127.0.0.1"), 1))
+        platform.setPref("sheets_companion_following_since", System.currentTimeMillis().toString())
+        platform.setPref("sheets_companion_bluetooth", "true")
+        val state = SheetsState(platform)
+        assertEquals("Wilsons-Laptop", state.companion.following)
+        state.companion.stopFollowing()
+    }
+
     @Test
     fun `the library shows the chosen instrument's songs and opens its part`() {
         val root = tmp.newFolder("Music")
