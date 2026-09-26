@@ -101,6 +101,24 @@ class BulkImportTest {
     }
 
     @Test
+    fun `a folder per song is not a setlist per song`() {
+        val files = listOf(
+            "PEP BAND/Music/24K Magic/24K Magic - Alto Sax 1.pdf",
+            "PEP BAND/Music/24K Magic/24K Magic - Trumpet 1.pdf",
+            "PEP BAND/Music/99 Red Balloons/99 Red Balloons - Tuba.pdf",
+            "PEP BAND/Music/99 Red Balloons/99 Red Balloons.pdf",
+            "PEP BAND/Music/Student Arrangements/Bills (Marli)/bills-Trumpet_in_Bb_1.pdf",
+            "PEP BAND/Music/Student Arrangements/Bills (Marli)/bills-Mellophone.pdf",
+            "PEP BAND/Music/Student Arrangements/Replay (Henry)/Trombone 1.pdf"
+        )
+        val plan = BulkImport.plan("PEP BAND", files)
+        assertEquals(4, plan.songs.size)
+        assertEquals(listOf("PEP BAND", "Student Arrangements"), plan.setlists.map { it.name })
+        assertEquals(2, plan.setlists.first().songTitles.size)
+        assertEquals(2, plan.setlists.last().songTitles.size)
+    }
+
+    @Test
     fun `a song already in the library gains the new parts`() {
         val root = tmp.newFolder("music2")
         val library = Library(LibraryLog(root, "me"))

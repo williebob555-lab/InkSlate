@@ -80,15 +80,29 @@ object BulkImport {
         }
         val titleOf = songs.associateBy({ Library.titleKey(it.title) }, { it.title })
 
+        // A folder holding one song's parts - "Music/24K Magic/24K Magic - Trumpet 1.pdf" - is that
+        // song's folder, not a concert: its parent is. Worked out from the titles, since a song's
+        // files are often named for the song as well as the part.
+        val oneSong = placed.groupBy { it.part.file.substringBeforeLast('/', "") }
+            .filterValues { members -> members.map { Library.titleKey(it.title) }.distinct().size == 1 }.keys
+        fun concertFor(p: Placed): String {
+            val dir = p.part.file.substringBeforeLast('/', "")
+            return if (dir in oneSong && dir.isNotEmpty()) dir.substringBeforeLast('/', "") else p.concert
+        }
+
         // Setlists: one per concert folder, songs in track order and each once.
         val concerts = LinkedHashMap<String, MutableList<Placed>>()
-        placed.forEach { concerts.getOrPut(it.concert) { ArrayList() } += it }
+        placed.forEach { concerts.getOrPut(concertFor(it)) { ArrayList() } += it }
         val setlists = concerts.map { (concert, members) ->
             val ordered = members.sortedWith(compareBy({ it.order }, { Library.sortKey(it.title) }))
                 .map { titleOf.getValue(Library.titleKey(it.title)) }
                 .distinct()
-            SetlistPlan(if (concert.isEmpty()) rootName else ImportPlan.cleanFolderName(concert.substringAfterLast('/')), ordered)
+            // A folder called something like "Music" says nothing: the download's own name does.
+            val folder = concert.substringAfterLast('/')
+            SetlistPlan(if (concert.isEmpty() || ImportPlan.isGenericFolder(folder)) rootName else ImportPlan.cleanFolderName(folder), ordered)
         }.filter { it.songTitles.isNotEmpty() }
+            // Two folders that both come out as the download's name are one setlist.
+            .groupBy { Library.matchKey(it.name) }.map { (_, same) -> SetlistPlan(same.first().name, same.flatMap { it.songTitles }.distinct()) }
         return Plan(rootName, songs, setlists)
     }
 

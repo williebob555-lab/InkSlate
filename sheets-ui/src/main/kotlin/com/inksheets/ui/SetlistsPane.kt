@@ -71,6 +71,7 @@ internal fun SetlistsPane(state: SheetsState) {
     var sharing by remember { mutableStateOf<String?>(null) }
     var colouring by remember { mutableStateOf<Setlist?>(null) }
     var colouringFolder by remember { mutableStateOf<Folder?>(null) }
+    var clearing by remember { mutableStateOf<Folder?>(null) }
 
     val version = state.version
     val library = state.library ?: return
@@ -193,7 +194,8 @@ internal fun SetlistsPane(state: SheetsState) {
                             menu = listOf(
                                 "Rename" to { naming = Naming.RenameFolder(f) },
                                 "Colour..." to { colouringFolder = f },
-                                "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } }
+                                "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } },
+                                "Delete with its setlists..." to { clearing = f }
                             )
                         )
                     }
@@ -229,6 +231,32 @@ internal fun SetlistsPane(state: SheetsState) {
     }
 
     sharing?.let { id -> ShareSetlistDialog(state, id, onClose = { sharing = null }) }
+    clearing?.let { f ->
+        val lists = library.setlistsUnder(f.id)
+        SheetDialog(
+            title = "Delete ${f.name} and its setlists?",
+            onDismiss = { clearing = null },
+            buttons = {
+                TextButton(onClick = { clearing = null }) { Text("Keep them") }
+                TextButton(onClick = {
+                    state.change {
+                        lists.forEach { deleteSetlist(it.id) }
+                        // Its folders inside it go too, deepest first.
+                        fun under(id: String): List<String> = foldersIn(id).flatMap { under(it.id) + it.id }
+                        under(f.id).forEach { deleteFolder(it) }
+                        deleteFolder(f.id)
+                    }
+                    if (folderId == f.id) folderId = f.parentId
+                    clearing = null
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            }
+        ) {
+            Text(
+                "${lists.size} setlist${if (lists.size == 1) "" else "s"} go, on all your devices. The songs in them stay in your library.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
     colouringFolder?.let { f ->
         ColourDialog("Colour for ${f.name}", f.color, onChosen = { state.setFolderColor(f.id, it); colouringFolder = null }, onDismiss = { colouringFolder = null })
     }

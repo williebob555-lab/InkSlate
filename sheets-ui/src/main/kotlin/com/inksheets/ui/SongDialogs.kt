@@ -2,6 +2,8 @@ package com.inksheets.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.horizontalScroll
@@ -164,6 +166,10 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                             InstrumentSource.UNKNOWN -> "not known"
                         }
                         Text(how, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // A duo, or a part printed for several: it shows for each of them.
+                        if (part.instrument != null) AlsoFor(part) { also ->
+                            parts[i] = part.copy(also = also, source = InstrumentSource.PERSON)
+                        }
                     }
                     InstrumentPicker(part.instrument) { chosen ->
                         parts[i] = part.copy(instrument = chosen, source = InstrumentSource.PERSON)
@@ -226,6 +232,36 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
         value = value, onValueChange = onChange, label = { Text(label) }, singleLine = true,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
     )
+}
+
+/**
+ * The other instruments one file is for - a duo, a "Trombone / Euphonium" part - each shown as a
+ * chip to take off, and "Also for..." to add one.
+ */
+@Composable
+private fun AlsoFor(part: Part, onChange: (List<String>) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (id in part.also) {
+            androidx.compose.material3.InputChip(
+                selected = false,
+                onClick = { onChange(part.also - id) },
+                label = { Text("also " + (Instruments.byId[id]?.name ?: id)) },
+                trailingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Close, "Take off", Modifier.size(16.dp)) }
+            )
+        }
+        Box {
+            TextButton(onClick = { open = true }) { Text("Also for...") }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false; query = "" }) {
+                ListSearch(Instruments.all.size, query, { query = it }, "Find an instrument", Modifier.padding(horizontal = 8.dp))
+                Instruments.all.filter { it.id != part.instrument && it.id !in part.also && matches(query, it) }.forEach { inst ->
+                    DropdownMenuItem(text = { Text(inst.name) }, onClick = { open = false; query = ""; onChange(part.also + inst.id) })
+                }
+            }
+        }
+    }
 }
 
 /** Which of several parts for one instrument: 1st, 2nd, 3rd... or just the one. */
