@@ -635,6 +635,9 @@ class SheetsState(val platform: SheetsPlatform) {
     /** A part to show the pages of once its editor is in front. */
     @Volatile var pagesWanted: String? = null
 
+    /** A part being looked at in the page viewer over Home - read, not opened as a song. */
+    var peeking by mutableStateOf<Pair<com.inksheets.core.Song, com.inksheets.core.Part>?>(null)
+
     /** Open [part]'s file and its page overview. */
     fun showPages(song: com.inksheets.core.Song, part: com.inksheets.core.Part) {
         val file = partFile(song, part) ?: return

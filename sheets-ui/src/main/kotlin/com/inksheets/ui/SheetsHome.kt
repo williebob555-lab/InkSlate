@@ -214,6 +214,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     if (showImport) AddMusicDialog(state, onClose = { showImport = false })
     SaveTabsDialog(state)
     IncomingDialog(state)
+    PageViewer(state)
     // A zip shared or dropped from outside: straight to the bulk import's review.
     state.downloadWaiting?.let { zip -> BulkImportDialog(state, onClose = { state.downloadWaiting = null }, start = zip) }
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
@@ -417,6 +418,7 @@ private fun SongsPane(state: SheetsState) {
                             onAddToSetlist = { addingToSetlist = song },
                             onRecordings = { recordingsFor = song },
                             onColour = { colouring = song },
+                            onLook = { state.partFor(song)?.let { state.peeking = song to it } },
                             onMerge = { merging = song },
                             onDelete = { state.removeSong(song) },
                             trailing = if (noInstrument || noTempo) {
@@ -494,6 +496,7 @@ internal fun SongRow(
     onDelete: (() -> Unit)? = null,
     onColour: (() -> Unit)? = null,
     onMerge: (() -> Unit)? = null,
+    onLook: (() -> Unit)? = null,
     missing: Boolean = false,
     trailing: (@Composable () -> Unit)? = null
 ) {
@@ -532,6 +535,7 @@ internal fun SongRow(
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Song options") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    onLook?.let { DropdownMenuItem(text = { Text("Look at it") }, onClick = { menu = false; it() }) }
                     onEdit?.let { DropdownMenuItem(text = { Text("Details and parts") }, onClick = { menu = false; it() }) }
                     onAddToSetlist?.let { DropdownMenuItem(text = { Text("Add to setlist...") }, onClick = { menu = false; it() }) }
                     onRecordings?.let {

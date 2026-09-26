@@ -71,6 +71,9 @@ interface SheetsPlatform {
     /** Put a setlist's tabs away. */
     fun closeSet() {}
 
+    /** [file]'s pages as pictures, to read without opening it as a song; null where it cannot be read. */
+    fun peek(file: File): PagePeek? = null
+
     /** [old]'s tab shows [new] instead, where it was in the row: another part of the same song. */
     fun swapPart(old: File, new: File) {}
 
@@ -183,4 +186,10 @@ interface Microphone {
      */
     fun start(onChunk: (FloatArray) -> Unit): Boolean
     fun stop()
+}
+
+/** A file's pages as pictures, for a quick look. Close it when done. */
+interface PagePeek : java.io.Closeable {
+    val pageCount: Int
+    fun render(index: Int, widthPx: Int): androidx.compose.ui.graphics.ImageBitmap?
 }

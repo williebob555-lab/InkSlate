@@ -1,5 +1,7 @@
 package com.inksheets.android
 
+import androidx.compose.ui.graphics.asImageBitmap
+
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -161,6 +163,16 @@ class AndroidSheetsPlatform(
 
     override fun closeSet() {
         com.inkslate.AppFlavor.closeSet?.invoke()
+    }
+
+    override fun peek(file: File): com.inksheets.ui.PagePeek? {
+        val source = com.inkslate.pdf.PageSources.open(file) ?: return null
+        return object : com.inksheets.ui.PagePeek {
+            override val pageCount = source.pageCount
+            override fun render(index: Int, widthPx: Int) =
+                runCatching<androidx.compose.ui.graphics.ImageBitmap?> { source.renderPage(index, widthPx)?.asImageBitmap() }.getOrNull()
+            override fun close() = source.close()
+        }
     }
 
     override fun swapPart(old: File, new: File) {

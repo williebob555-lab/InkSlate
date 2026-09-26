@@ -173,7 +173,11 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             DropdownMenuItem(
-                                text = { Text("Show the pages...") },
+                                text = { Text("Look at the pages") },
+                                onClick = { menu = false; state.peeking = song to part }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Arrange the pages...") },
                                 onClick = { menu = false; onClose(); state.showPages(song, part) }
                             )
                             if (i > 0) DropdownMenuItem(text = { Text("Open this one first") }, onClick = {

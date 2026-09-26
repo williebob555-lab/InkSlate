@@ -151,6 +151,15 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.closeSet?.invoke()
     }
 
+    override fun peek(file: File): com.inksheets.ui.PagePeek? {
+        val source = com.inkslate.desktop.DesktopSources.open(file, detached = true) ?: return null
+        return object : com.inksheets.ui.PagePeek {
+            override val pageCount = source.pageCount
+            override fun render(index: Int, widthPx: Int) = runCatching { source.render(index, widthPx) }.getOrNull()
+            override fun close() = source.close()
+        }
+    }
+
     override fun swapPart(old: File, new: File) {
         com.inkslate.desktop.AppFlavor.swapTab?.invoke(old, new) ?: openFile(new)
     }
