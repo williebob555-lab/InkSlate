@@ -150,6 +150,135 @@ class Companion(private val state: SheetsState) {
 
     /** The leader's message showing now, and a count that changes with each so a repeat shows again. */
     var notice by mutableStateOf<CompanionLink.Note?>(null)
+
+    // ---- Bluetooth (experimental) ------------------------------------------------------
+
+    /** Also keep in step over Bluetooth, device to device - for networks that block devices. */
+    var meshOn: Boolean
+        get() = meshOnState
+        set(v) {
+            meshOnState = v
+            state.platform.setPref(K_MESH, v.toString())
+            if (!v) stopMesh() else when {
+                leading -> startMesh(state.platform.deviceName)
+                following != null -> startMesh(following!!)
+            }
+        }
+    private var meshOnState by mutableStateOf(state.platform.pref(K_MESH) == "true")
+    /** What the mesh is doing, for Settings. */
+    var meshStatus by mutableStateOf<String?>(null)
+    private var radio: MeshRadio? = null
+    private var meshSession = 0
+    private var meshState: com.inksheets.core.MeshFrames.State? = null
+    private val meshNotes = ArrayList<Pair<Long, List<com.inksheets.core.MeshFrames.NotePiece>>>()
+    private var lastSeq = 0L
+    private val assembler = com.inksheets.core.MeshFrames.NoteAssembler()
+    private var songKeys: Pair<Long, Map<Long, Song>>? = null
+
+    private fun startMesh(leaderName: String) {
+        if (!meshOn) return
+        val r = state.platform.meshRadio() ?: run { meshStatus = "Not on this device"; return }
+        if (!r.ready()) { meshStatus = "Waiting for Bluetooth permission, or Bluetooth to be on"; return }
+        stopMesh()
+        meshSession = com.inksheets.core.MeshFrames.sessionOf(leaderName)
+        if (!r.start { bytes -> state.platform.onMain { heardFrame(bytes) } }) { meshStatus = "Bluetooth could not start"; return }
+        radio = r
+        meshStatus = "On"
+        state.platform.log("Companion: Bluetooth on, for $leaderName")
+        rebroadcast()
+    }
+
+    private fun stopMesh() {
+        radio?.stop()
+        radio = null
+        meshState = null
+        meshNotes.clear()
+        if (meshOn) meshStatus = null
+    }
+
+    /** Everything this device knows, sent round in turn: where the leader is, and recent messages. */
+    private fun rebroadcast() {
+        val r = radio ?: return
+        val now = System.currentTimeMillis()
+        meshNotes.removeAll { now - it.first > 20_000 }
+        val frames = listOfNotNull(meshState?.let { com.inksheets.core.MeshFrames.encode(it) }) +
+            meshNotes.flatMap { (_, pieces) -> pieces.map { com.inksheets.core.MeshFrames.encode(it) } }
+        r.broadcast(frames)
+    }
+
+    /** Where the leader is, passed on: from the leader itself (hop 0) or heard over Wi-Fi (hop 1). */
+    private fun meshPublish(showing: CompanionLink.Showing, hops: Int) {
+        if (radio == null || showing.seq <= 0) return
+        val next = com.inksheets.core.MeshFrames.State(
+            session = meshSession, seq = showing.seq,
+            songKey = com.inksheets.core.MeshFrames.songKey(showing.title ?: return),
+            page = showing.page,
+            partKey = com.inksheets.core.MeshFrames.partKey(showing.instrument, showing.partNo, showing.pages),
+            hops = hops
+        )
+        val had = meshState
+        if (had != null && !com.inksheets.core.MeshFrames.isNewer(next.seq, had.seq)) return
+        meshState = next
+        rebroadcast()
+    }
+
+    private fun meshNote(note: CompanionLink.Note, hops: Int) {
+        if (radio == null) return
+        val colour = note.color?.let { c -> MARK_COLOURS.indexOf(c).takeIf { it >= 0 }?.plus(1) } ?: 0
+        val pieces = com.inksheets.core.MeshFrames.notePieces(meshSession, (note.at / 1000), note.text, note.urgent, colour)
+            .map { it.copy(hops = hops) }
+        meshNotes += System.currentTimeMillis() to pieces
+        rebroadcast()
+    }
+
+    /** A broadcast heard from a nearby device. UI thread. */
+    private fun heardFrame(bytes: ByteArray) {
+        val frame = com.inksheets.core.MeshFrames.decode(bytes) ?: return
+        if (frame.session != meshSession || radio == null) return
+        when (frame) {
+            is com.inksheets.core.MeshFrames.State -> {
+                if (leading) return
+                if (!com.inksheets.core.MeshFrames.isNewer(frame.seq, lastSeq)) return
+                lastSeq = frame.seq
+                val song = songByKey(frame.songKey)
+                if (song != null && following != null) {
+                    val mine = state.partFor(song)
+                    val myKey = mine?.let { com.inksheets.core.MeshFrames.partKey(it.instrument, partNo(it), state.pageShown.second) }
+                    val same = myKey != null && myKey == frame.partKey
+                    show(CompanionLink.Showing(
+                        title = song.title, page = frame.page, leader = following.orEmpty(),
+                        instrument = if (same) mine?.instrument else "?", partNo = if (same) mine?.let(::partNo) else null,
+                        seq = frame.seq
+                    ))
+                }
+                // Passed on, a hop further, so it reaches the far side of the room.
+                if (frame.hops < com.inksheets.core.MeshFrames.MAX_HOPS) {
+                    meshState = frame.copy(hops = frame.hops + 1)
+                    rebroadcast()
+                }
+            }
+            is com.inksheets.core.MeshFrames.NotePiece -> {
+                if (frame.hops < com.inksheets.core.MeshFrames.MAX_HOPS && meshNotes.none { (_, p) -> p.any { it.noteId == frame.noteId && it.index == frame.index } }) {
+                    meshNotes += System.currentTimeMillis() to listOf(frame.copy(hops = frame.hops + 1))
+                    rebroadcast()
+                }
+                if (leading) return
+                val text = assembler.take(frame) ?: return
+                val colour = frame.colour.takeIf { it > 0 }?.let { MARK_COLOURS.getOrNull(it - 1) }
+                heard(CompanionLink.Line.Message(CompanionLink.Note(
+                    text = text, from = following.orEmpty(), at = frame.noteId * 1000, urgent = frame.urgent, color = colour
+                )))
+            }
+        }
+    }
+
+    /** A song in this library by the key its title makes. */
+    private fun songByKey(key: Long): Song? {
+        val version = state.version
+        val cached = songKeys?.takeIf { it.first == version }?.second
+            ?: state.library?.songs.orEmpty().associateBy { com.inksheets.core.MeshFrames.songKey(it.title) }.also { songKeys = version to it }
+        return cached[key]
+    }
     private val REFRESH_MS = 3_000L
     private val seenNotes = HashSet<String>()
 
@@ -187,7 +316,10 @@ class Companion(private val state: SheetsState) {
     fun sendNote(text: String, instruments: List<String>, urgent: Boolean = false, color: Int? = null) {
         val l = leader ?: return
         if (text.isBlank()) return
-        l.note(CompanionLink.Note(text = text.trim(), instruments = instruments, urgent = urgent, color = if (urgent) color else null))
+        val note = CompanionLink.Note(text = text.trim(), instruments = instruments, urgent = urgent, color = if (urgent) color else null, at = System.currentTimeMillis())
+        l.note(note)
+        // Over Bluetooth it goes to everyone: there is no room in a broadcast to say for whom.
+        meshNote(note, hops = 0)
     }
 
     fun lead(): Boolean {
@@ -204,6 +336,7 @@ class Companion(private val state: SheetsState) {
         leading = true
         state.platform.holdNetwork(true)
         joinLink = CompanionLink.joinLink(name, NetAddresses.mine(), leadPort)
+        startMesh(name)
         state.platform.log("Companion: leading as $name")
         state.current?.let { announce(state.pageShown.first) }
         lastInkSignature = 0L
@@ -243,6 +376,7 @@ class Companion(private val state: SheetsState) {
                 pages = state.pageShown.second, shareInk = shareInk
             )
         )
+        l.current?.let { meshPublish(it, hops = 0) }
     }
 
     /** Send the marks on the part in front, when sharing them and they have changed. UI thread. */
@@ -268,6 +402,7 @@ class Companion(private val state: SheetsState) {
     }
 
     fun stopLeading() {
+        if (leading) stopMesh()
         inkTimer?.cancel()
         inkTimer = null
         leader?.stop()
@@ -315,6 +450,8 @@ class Companion(private val state: SheetsState) {
         if (follower == null) state.platform.holdNetwork(true)
         follower = f
         following = target.name
+        lastSeq = 0
+        startMesh(target.name)
         connected = false
         lastApplied = null
         state.platform.setPref(K_LAST, CompanionLink.joinLink(target.name, target.hosts, target.port))
@@ -326,6 +463,7 @@ class Companion(private val state: SheetsState) {
     }
 
     fun stopFollowing() {
+        if (following != null) stopMesh()
         follower?.stop()
         if (follower != null) {
             state.platform.log("Companion: stopped following")
@@ -345,13 +483,20 @@ class Companion(private val state: SheetsState) {
         when (line) {
             is CompanionLink.Line.Show -> {
                 state.platform.setPref(K_FOLLOWING_SINCE, System.currentTimeMillis().toString())
+                val seq = line.showing.seq
+                if (seq > 0) {
+                    if (!com.inksheets.core.MeshFrames.isNewer(seq, lastSeq) && seq != lastSeq) return
+                    lastSeq = seq
+                }
                 show(line.showing)
+                meshPublish(line.showing, hops = 1)
             }
             is CompanionLink.Line.Ink -> takeInk(line.share)
             is CompanionLink.Line.Message -> {
                 // Given again after a dropped link: shown once.
-                val id = line.note.from + "@" + line.note.at
+                val id = "n" + (line.note.at / 1000)
                 if (!seenNotes.add(id)) return
+                meshNote(line.note, hops = 1)
                 if (CompanionLink.noteIsFor(line.note, myInstruments())) {
                     notice = line.note
                     noticeCount++
@@ -463,6 +608,7 @@ class Companion(private val state: SheetsState) {
     companion object {
         private const val K_FOLLOW = "sheets_companion_follow"
         private const val K_SHARE_INK = "sheets_companion_share_ink"
+        private const val K_MESH = "sheets_companion_bluetooth"
         private const val K_LAST = "sheets_companion_last"
         private const val K_FOLLOWING_SINCE = "sheets_companion_following_since"
         private const val RESUME_WITHIN_MS = 3L * 60 * 60 * 1000

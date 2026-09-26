@@ -2,6 +2,7 @@ package com.inksheets.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -170,6 +171,34 @@ private fun LibraryHealth(state: SheetsState) {
             if (state.scanHistory.size > 8) {
                 TextButton(onClick = { allHistory = !allHistory }) { Text(if (allHistory) "Show fewer" else "Show all ${state.scanHistory.size}") }
             }
+        }
+    }
+
+    // Tucked away at the very end: things still being tried out.
+    Heading("Experimental")
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        val companion = state.companion
+        Row(
+            Modifier.fillMaxWidth().clickable { companion.meshOn = !companion.meshOn }.padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Play together over Bluetooth as well")
+                Text(
+                    "Nearby devices pass the leader's page and messages on to each other over Bluetooth, " +
+                        "for networks that stop devices reaching each other (school Wi-Fi, eduroam) and places with none. " +
+                        "Android only; every device playing together needs it on. Messages sent this way go to everyone.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                companion.meshStatus?.takeIf { companion.meshOn }?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+            }
+            androidx.compose.material3.Switch(checked = companion.meshOn, onCheckedChange = { companion.meshOn = it })
+        }
+        if (state.platform.meshRadio() == null) {
+            Text("Not available on this device.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

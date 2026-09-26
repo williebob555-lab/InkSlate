@@ -4,6 +4,15 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Keeps Wi-Fi out of power saving while playing together, so page turns arrive at once. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Play together over Bluetooth (experimental, off unless turned on): broadcasts to nearby
+         devices and listening for theirs. Never used to find where anyone is. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"
+        xmlns:tools="http://schemas.android.com/tools" tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application>
         <!-- Scanning a leader's join code with the tablet's own camera app opens InkSheets and follows. -->

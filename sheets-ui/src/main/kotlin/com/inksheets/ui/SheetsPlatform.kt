@@ -74,6 +74,9 @@ interface SheetsPlatform {
     /** [file]'s pages as pictures, to read without opening it as a song; null where it cannot be read. */
     fun peek(file: File): PagePeek? = null
 
+    /** Bluetooth broadcasts for Play together (experimental); null where there are none. */
+    fun meshRadio(): MeshRadio? = null
+
     /** [old]'s tab shows [new] instead, where it was in the row: another part of the same song. */
     fun swapPart(old: File, new: File) {}
 
@@ -192,4 +195,18 @@ interface Microphone {
 interface PagePeek : java.io.Closeable {
     val pageCount: Int
     fun render(index: Int, widthPx: Int): androidx.compose.ui.graphics.ImageBitmap?
+}
+
+/**
+ * Tiny Bluetooth broadcasts: every device sends what it knows and hears everyone else's - no
+ * connections, nothing to join. See [com.inksheets.core.MeshFrames].
+ */
+interface MeshRadio {
+    /** Whether it can run now; asks for what it needs (permission, Bluetooth on) if not. */
+    fun ready(): Boolean
+    /** Start listening; [onFrame] off the UI thread. */
+    fun start(onFrame: (ByteArray) -> Unit): Boolean
+    /** What this device broadcasts from now on, taken in turn - replacing what it sent before. */
+    fun broadcast(frames: List<ByteArray>)
+    fun stop()
 }

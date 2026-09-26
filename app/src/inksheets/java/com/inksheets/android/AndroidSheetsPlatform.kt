@@ -165,6 +165,10 @@ class AndroidSheetsPlatform(
         com.inkslate.AppFlavor.closeSet?.invoke()
     }
 
+    private val mesh by lazy { BleMeshRadio { context } }
+    override fun meshRadio(): com.inksheets.ui.MeshRadio? =
+        if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH_LE)) mesh else null
+
     override fun peek(file: File): com.inksheets.ui.PagePeek? {
         val source = com.inkslate.pdf.PageSources.open(file) ?: return null
         return object : com.inksheets.ui.PagePeek {

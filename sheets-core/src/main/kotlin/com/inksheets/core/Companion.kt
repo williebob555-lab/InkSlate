@@ -278,6 +278,9 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     /** Players following, each once however many links it has open while swapping to a new one. */
     val followerCount: Int get() = followers.map { it.name }.distinct().size
 
+    /** Where the leader last said it was, numbered as it was sent. */
+    val current: CompanionLink.Showing? get() = last
+
     /** Called whenever the number of followers changes, off the UI thread. */
     var onFollowers: ((Int) -> Unit)? = null
 
@@ -410,7 +413,8 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
 
     /** A message to every follower; each shows it only if it is for its instrument. */
     fun note(note: CompanionLink.Note) {
-        val sent = note.copy(from = name, at = System.currentTimeMillis())
+        // Its time is its name, the same over Wi-Fi and over Bluetooth: kept if already given.
+        val sent = note.copy(from = name, at = if (note.at > 0) note.at else System.currentTimeMillis())
         val line = CompanionLink.encode(sent)
         // Kept a while and given again to anyone who joins meanwhile: a tablet whose link dropped
         // for a moment still gets told. Each follower shows a message once, however often it comes.
