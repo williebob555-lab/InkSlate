@@ -132,6 +132,10 @@ object UpdateCheck {
 
         val body = try {
             fetchJson(if (channel == Channel.TEST) ALL_RELEASES_API else LATEST_RELEASE_API)
+        } catch (e: RateLimited) {
+            // The API allows so many asks an hour per internet connection, shared by every device
+            // and program on it. The release pages and their downloads are not counted: read those.
+            return runCatching { fromPages(installed, platform, channel, app) }.getOrNull() ?: Result.Failed(describe(e))
         } catch (e: Exception) {
             return Result.Failed(describe(e))
         }
@@ -239,12 +243,80 @@ object UpdateCheck {
             when (val code = connection.responseCode) {
                 200 -> return connection.inputStream.bufferedReader().use { it.readText() }
                 404 -> throw IOException("No releases have been published yet.")
-                403, 429 -> throw IOException("GitHub is rate-limiting this device. Try later.")
+                403, 429 -> throw RateLimited()
                 else -> throw IOException("GitHub replied $code.")
             }
         } finally {
             connection.disconnect()
         }
+    }
+
+    private class RateLimited : IOException("GitHub is busy answering this connection - try again in a while.")
+
+    /**
+     * The same check from GitHub's ordinary pages rather than its API: the newest stable tag is
+     * where "latest" redirects to, a test build's version is in its release's title, and a file's
+     * address follows from the tag and its name. Null if the pages do not say.
+     */
+    internal fun fromPages(installed: Version, platform: Platform, channel: Channel, app: String): Result? {
+        val found = ArrayList<Pair<String, Version>>()
+        latestTag()?.let { tag -> Version.parse(tag)?.let { found += tag to it } }
+        if (channel == Channel.TEST) testVersion()?.let { found += "test" to it }
+        val (tag, version) = found.maxByOrNull { it.second } ?: return null
+        if (version <= installed) return Result.UpToDate(installed)
+        val page = "$RELEASES_URL/tag/$tag"
+        for (extension in platform.extensions) {
+            val name = "$app-$version$extension"
+            val url = "$PROJECT_URL/releases/download/$tag/$name"
+            if (exists(url)) {
+                val asset = Asset(name, url, 0)
+                return Result.Available(Release(version, if (tag == "test") "Test build $version" else tag, "", page, listOf(asset)), asset)
+            }
+        }
+        return Result.AvailableWithoutDownload(Release(version, tag, "", page, emptyList()))
+    }
+
+    /** The tag github.com/.../releases/latest sends a browser on to. */
+    private fun latestTag(): String? {
+        val c = (URL("$RELEASES_URL/latest").openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = false
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            setRequestProperty("User-Agent", "InkSlate")
+        }
+        return try {
+            c.getHeaderField("Location")?.substringAfter("/releases/tag/", "")?.takeIf { it.isNotEmpty() }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    /** The test build's version, from its release page's title: "Test build 1.2.1-test.145". */
+    private fun testVersion(): Version? {
+        val c = (URL("$RELEASES_URL/tag/test").openConnection() as HttpURLConnection).apply {
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            setRequestProperty("User-Agent", "InkSlate")
+        }
+        return try {
+            if (c.responseCode != 200) return null
+            val html = c.inputStream.bufferedReader().use { it.readText() }
+            Regex("""Test build ([0-9][0-9A-Za-z.\-+]*)""").find(html)?.groupValues?.get(1)?.let { Version.parse(it) }
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    /** Whether a download address leads to a file. */
+    private fun exists(url: String): Boolean {
+        val c = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "HEAD"
+            instanceFollowRedirects = true
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            setRequestProperty("User-Agent", "InkSlate")
+        }
+        return try { c.responseCode in 200..299 } catch (e: Exception) { false } finally { c.disconnect() }
     }
 
     // ---------------------------------------------------------------- downloading
