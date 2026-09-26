@@ -18,7 +18,12 @@ data class Instrument(
     val name: String,
     val names: List<String>,
     val transpose: Int = 0,
-    val clef: String = "bass"
+    val clef: String = "bass",
+    /**
+     * Instruments that read the same parts, kept apart for clarity: a euphonium player can read
+     * a Baritone B.C. part. Choosing one opens the other's part when a song has only that.
+     */
+    val sameAs: List<String> = emptyList()
 )
 
 /**
@@ -36,17 +41,64 @@ data class InstrumentProfile(
 
 object Instruments {
 
-    val all: List<Instrument> = listOf(
+    /**
+     * Every instrument parts can be for: the built-in ones, with any names added to them in the
+     * library, and the library's own - so what one device is taught, every device reads.
+     */
+    val all: List<Instrument> get() = merged
+
+    val byId: Map<String, Instrument> get() = mergedById
+
+    /** Bumped whenever [all] changes, for anything that caches what it built from it. */
+    @Volatile var revision = 0
+        private set
+
+    /**
+     * The library's instruments: new ones, and built-in ones given more names. Names are matched
+     * as [InstrumentReader] reads a page, so "Mello." and "Mellophone" can both be taught.
+     */
+    fun use(fromLibrary: List<Instrument>) {
+        val added = fromLibrary.associateBy { it.id }
+        val next = builtIn.map { b ->
+            added[b.id]?.let { extra ->
+                b.copy(names = (b.names + extra.names.map(::spoken)).distinct(), sameAs = (b.sameAs + extra.sameAs).distinct())
+            } ?: b
+        } + fromLibrary.filter { it.id !in builtInIds }.map { it.copy(names = it.names.map(::spoken).filter { n -> n.isNotBlank() }.distinct()) }
+        if (next == merged) return
+        merged = next
+        mergedById = next.associateBy { it.id }
+        revision++
+    }
+
+    /** [id] and the instruments that read the same parts, either way round. */
+    fun sisters(id: String): Set<String> {
+        val own = byId[id]?.sameAs.orEmpty()
+        val theirs = all.filter { id in it.sameAs }.map { it.id }
+        return (own + theirs).toSet() - id
+    }
+
+    /** A part as a player names it: "Trumpet 2", "Tuba", or what it was read from. */
+    fun partName(p: Part): String {
+        val name = p.instrument?.let { byId[it]?.name } ?: return p.label?.takeIf { it.isNotBlank() } ?: "Part"
+        return if (p.chair != null) "$name ${p.chair}" else name
+    }
+
+    /** A name as it reads once printed words are normalised: "Mello." becomes "mellophone". */
+    private fun spoken(name: String): String = InstrumentReader.normalise(name).joinToString(" ")
+
+    /** Built in: the instruments InkSheets knows without being told. */
+    val builtIn: List<Instrument> = listOf(
         Instrument("trombone", "Trombone", listOf("trombone", "tenor trombone")),
         Instrument("bass-trombone", "Bass Trombone", listOf("bass trombone")),
         Instrument("baritone-bc", "Baritone B.C.", listOf("baritone", "baritone bc", "baritone horn", "baritone horn bc")),
         Instrument("baritone-tc", "Baritone T.C.", listOf("baritone tc", "baritone horn tc"), transpose = 14, clef = "treble"),
-        Instrument("euphonium", "Euphonium", listOf("euphonium", "euphonium bc", "tenor tuba")),
-        Instrument("euphonium-tc", "Euphonium T.C.", listOf("euphonium tc"), transpose = 14, clef = "treble"),
+        Instrument("euphonium", "Euphonium", listOf("euphonium", "euphonium bc", "tenor tuba"), sameAs = listOf("baritone-bc")),
+        Instrument("euphonium-tc", "Euphonium T.C.", listOf("euphonium tc"), transpose = 14, clef = "treble", sameAs = listOf("baritone-tc")),
         Instrument("tuba", "Tuba", listOf("tuba", "bb tuba", "eb tuba", "sousaphone")),
         Instrument("bass-guitar", "Bass Guitar", listOf("bass guitar", "electric bass", "e bass", "bass", "bass gtr")),
         Instrument("string-bass", "String Bass", listOf("string bass", "double bass", "upright bass", "contrabass")),
         Instrument("horn", "Horn in F", listOf("horn", "french horn", "horn in f", "f horn"), transpose = 7, clef = "treble"),
+        Instrument("mellophone", "Mellophone", listOf("mellophone", "mellophone in f"), transpose = 7, clef = "treble", sameAs = listOf("horn")),
         Instrument("trumpet", "Trumpet", listOf("trumpet", "bb trumpet", "cornet", "flugelhorn"), transpose = 2, clef = "treble"),
         Instrument("flute", "Flute", listOf("flute"), clef = "treble"),
         Instrument("piccolo", "Piccolo", listOf("piccolo"), transpose = -12, clef = "treble"),
@@ -64,6 +116,7 @@ object Instruments {
         Instrument("guitar", "Guitar", listOf("guitar", "electric guitar", "acoustic guitar"), transpose = 12, clef = "treble"),
         Instrument("piano", "Piano", listOf("piano", "keyboard", "keys")),
         Instrument("drums", "Drum Set", listOf("drums", "drum set", "drumset", "drum kit")),
+        Instrument("drumline", "Drum Line", listOf("drum line", "drumline", "battery", "marching percussion", "drum cadence"), clef = "percussion"),
         Instrument(
             "percussion", "Percussion",
             listOf(
@@ -79,7 +132,9 @@ object Instruments {
         Instrument("score", "Full Score", listOf("score", "full score", "conductor", "conductor score", "condensed score"))
     )
 
-    val byId: Map<String, Instrument> = all.associateBy { it.id }
+    private val builtInIds = builtIn.map { it.id }.toSet()
+    @Volatile private var merged: List<Instrument> = builtIn
+    @Volatile private var mergedById: Map<String, Instrument> = builtIn.associateBy { it.id }
 
     /** The three the library starts with, for the instruments its owner plays. */
     val defaultProfiles = listOf(
@@ -121,7 +176,7 @@ object InstrumentReader {
         "btbn" to "bass trombone", "btb" to "bass trombone",
         "aux" to "auxiliary", "timp" to "timpani", "glock" to "glockenspiel", "xylo" to "xylophone",
         "vibes" to "vibraphone", "mar" to "marimba", "tamb" to "tambourine",
-        "cor" to "horn", "flugel" to "flugelhorn", "crnt" to "cornet", "cnt" to "cornet",
+        "cor" to "horn", "flugel" to "flugelhorn", "mello" to "mellophone", "mellos" to "mellophone", "mellophones" to "mellophone", "crnt" to "cornet", "cnt" to "cornet",
         "ssx" to "soprano saxophone", "asx" to "alto saxophone", "tsx" to "tenor saxophone", "bsx" to "baritone saxophone",
         "euphs" to "euphonium", "tbns" to "trombone", "tpts" to "trumpet", "cls" to "clarinet", "fls" to "flute",
         "bcl" to "bass clarinet", "acl" to "alto clarinet", "tuba's" to "tuba",
@@ -165,9 +220,16 @@ object InstrumentReader {
         return best
     }
 
-    private val nameWords: Set<String> by lazy {
-        Instruments.all.flatMap { i -> i.names.flatMap { it.split(' ') } }.toSet() + setOf("bb", "eb", "f", "c", "tc", "bc")
-    }
+    private var nameWordsFor = -1
+    private var nameWordsCache: Set<String> = emptySet()
+    private val nameWords: Set<String>
+        get() {
+            if (nameWordsFor != Instruments.revision) {
+                nameWordsCache = Instruments.all.flatMap { i -> i.names.flatMap { it.split(' ') } }.toSet() + setOf("bb", "eb", "f", "c", "tc", "bc")
+                nameWordsFor = Instruments.revision
+            }
+            return nameWordsCache
+        }
 
     /** Read the instrument from a file name: "Liberty Bell - Trombone 2.pdf". */
     fun readFileName(name: String): Match? =

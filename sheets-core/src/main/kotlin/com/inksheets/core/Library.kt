@@ -36,7 +36,9 @@ data class Part(
      * Other instruments the same part is printed for - a flexible-band "Trombone / Euphonium /
      * Bassoon" part serves all three, so it shows for any of them.
      */
-    val also: List<String> = emptyList()
+    val also: List<String> = emptyList(),
+    /** Which of several parts for one instrument: 2 for "Trumpet 2", "2nd Trumpet", "Tpt. II". */
+    val chair: Int? = null
 )
 
 /** A recording paired with a song, and the loop last used in it. */
@@ -67,6 +69,10 @@ data class Song(
     val key: String? = null,
     val timeSignature: String? = null,
     val tempo: Int? = null,
+    /** The tempo word printed on the music ("Allegro"), when the tempo was read from one. */
+    val tempoMark: String? = null,
+    /** The tempo was read from the page, not set by a person - reading again may change it. */
+    val tempoRead: Boolean = false,
     val difficulty: Int? = null,
     val notes: String? = null,
     val parts: List<Part> = emptyList(),
@@ -85,6 +91,9 @@ data class Song(
 ) {
     /** The instruments this song has parts for. */
     val instruments: Set<String> get() = parts.flatMap { listOfNotNull(it.instrument) + it.also }.toSet()
+
+    /** Each part's instrument and chair, "trumpet#2": two parts on one of these are two editions. */
+    val seats: Set<String> get() = parts.mapNotNull { p -> p.instrument?.let { "$it#${p.chair ?: 0}" } }.toSet()
 }
 
 /** One place in a setlist. The same song can be in a setlist more than once, each its own entry. */
@@ -205,7 +214,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
                 instrument = f.string("instrument"),
                 source = f.string("source")?.let { v -> InstrumentSource.entries.firstOrNull { it.name == v } } ?: InstrumentSource.UNKNOWN,
                 label = f.string("label"),
-                also = f.list("also", STRING_LIST)
+                also = f.list("also", STRING_LIST),
+                chair = f.string("chair")?.toDoubleOrNull()?.toInt()
             ))
         }.groupBy({ it.first }, { it.second to it.third })
             .mapValues { (_, list) -> list.sortedWith(compareBy({ it.first }, { it.second.id })).map { it.second } }
@@ -262,6 +272,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
             "source" to JsonPrimitive(p.source.name),
             "label" to (p.label?.let(::JsonPrimitive) ?: JsonNull),
             "also" to json.encodeToJsonElement(STRING_LIST, p.also),
+            "chair" to (p.chair?.let(::JsonPrimitive) ?: JsonNull),
             Op.DELETED to JsonPrimitive(false)
         )
         if (f == null || f["order"] == null) want["order"] = JsonPrimitive(order ?: System.currentTimeMillis().toDouble())
@@ -542,6 +553,36 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     fun deleteProfile(id: String) = edit(PROFILE, id) { put(Op.DELETED, true) }
 
+    // ---- instruments taught here -----------------------------------------------------
+
+    /**
+     * Instruments added in this library, and names added to built-in ones (a record with a
+     * built-in's id). Kept in the library so every device reads parts the same way.
+     */
+    fun instruments(): List<Instrument> = synchronized(this) {
+        state.live(INSTRUMENT).map { (id, f) ->
+            Instrument(
+                id = id,
+                name = f.string("name") ?: Instruments.builtIn.firstOrNull { it.id == id }?.name ?: id,
+                names = f.list("names", STRING_LIST),
+                transpose = f.string("transpose")?.toIntOrNull() ?: 0,
+                clef = f.string("clef") ?: "treble",
+                sameAs = f.list("sameAs", STRING_LIST)
+            )
+        }
+    }
+
+    fun saveInstrument(instrument: Instrument) = edit(INSTRUMENT, instrument.id) {
+        put("name", instrument.name)
+        put("names", instrument.names, STRING_LIST)
+        put("transpose", instrument.transpose.toString())
+        put("clef", instrument.clef)
+        put("sameAs", instrument.sameAs, STRING_LIST)
+        put(Op.DELETED, false)
+    }
+
+    fun deleteInstrument(id: String) = edit(INSTRUMENT, id) { put(Op.DELETED, true) }
+
     // ---- practice ------------------------------------------------------------------
 
     /** How much a song has been practised, on every device together. */
@@ -617,6 +658,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         key = f.string("key"),
         timeSignature = f.string("timeSignature"),
         tempo = f.string("tempo")?.toDoubleOrNull()?.toInt(),
+        tempoMark = f.string("tempoMark"),
+        tempoRead = f.string("tempoRead") == "true",
         difficulty = f.string("difficulty")?.toDoubleOrNull()?.toInt(),
         notes = f.string("notes"),
         parts = partsOf(id, f, index),
@@ -683,6 +726,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         const val FOLDER = "folder"
         const val PRACTICE = "practice"
         const val PROFILE = "profile"
+        const val INSTRUMENT = "instrument"
         const val PART = "part"
         const val DEVICE = "device"
 
@@ -732,6 +776,8 @@ class SongEdit internal constructor(private val edit: Library.Edit) {
     var key: String? = null; set(v) { field = v; edit.put("key", v) }
     var timeSignature: String? = null; set(v) { field = v; edit.put("timeSignature", v) }
     var tempo: Int? = null; set(v) { field = v; edit.put("tempo", v) }
+    var tempoMark: String? = null; set(v) { field = v; edit.put("tempoMark", v) }
+    var tempoRead: Boolean? = null; set(v) { field = v; edit.put("tempoRead", v ?: false) }
     var difficulty: Int? = null; set(v) { field = v; edit.put("difficulty", v) }
     var notes: String? = null; set(v) { field = v; edit.put("notes", v) }
     /** The song's parts, all together: written as a part record each, never as one list. */

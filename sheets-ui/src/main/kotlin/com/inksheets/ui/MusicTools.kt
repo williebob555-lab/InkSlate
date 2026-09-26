@@ -138,7 +138,7 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
 internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
     val mic = state.platform.microphone
     // Name notes as the chosen instrument reads them: a treble-clef baritone sees C, not B-flat.
-    val instrument = state.profile?.instruments?.firstOrNull()?.let { Instruments.byId[it] }
+    val instrument = state.profile?.instruments?.firstOrNull()?.let { Instruments.byId[com.inksheets.core.PartChoice.seat(it).first] }
     var transposed by remember { mutableStateOf(true) }
     var hz by remember { mutableStateOf<Double?>(null) }
     var listening by remember { mutableStateOf(false) }

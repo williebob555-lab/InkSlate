@@ -67,6 +67,7 @@ private fun LibraryHealth(state: SheetsState) {
 
     Heading("Library health")
     Column(Modifier.padding(horizontal = 16.dp)) {
+        ReassignRow(state)
         val lib = state.library
         val songs = lib?.songs.orEmpty()
         Text(

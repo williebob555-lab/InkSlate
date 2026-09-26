@@ -22,9 +22,11 @@ object ImportPlan {
         val source: InstrumentSource,
         val label: String?,
         /** Other instruments the same part is printed for (a flexible-band part). */
-        val also: List<String> = emptyList()
+        val also: List<String> = emptyList(),
+        /** Which of several parts for the instrument: 2 for "Trumpet 2". */
+        val chair: Int? = null
     ) {
-        fun toPart() = Part(file = file, instrument = instrument, source = source, label = label, also = also)
+        fun toPart() = Part(file = file, instrument = instrument, source = source, label = label, also = also, chair = chair)
     }
 
     data class PlannedSong(val title: String, val parts: List<PlannedPart>)
@@ -75,8 +77,40 @@ object ImportPlan {
         // A part printed for several instruments is filed under the first one printed.
         val all = InstrumentReader.readAll(chosen.third).map { it.id }.takeIf { it.size in 2..4 }.orEmpty()
         val main = all.firstOrNull() ?: chosen.first.instrument.id
-        return PlannedPart(file, main, chosen.second, chosen.first.label, all.filter { it != main })
+        return PlannedPart(file, main, chosen.second, chosen.first.label, all.filter { it != main }, chairOf(chosen.first.label))
     }
+
+    /**
+     * Which chair a part name is for: "Trumpet 2", "2nd Trumpet", "Tpt. II", "Horn in F 3" - the
+     * first part number in it, 1 to 9. Null when it has none ("Tuba") or shares one ("Trumpet 1/2"
+     * is read as the 1st).
+     */
+    fun chairOf(label: String?): Int? {
+        if (label.isNullOrBlank()) return null
+        val words = label.replace('_', ' ').split(Regex("""[\s.,:;()\[\]]+""")).filter { it.isNotEmpty() }
+        // Only a number next to the instrument's name: "Symphony 5 Trumpet 2" is the 2nd trumpet.
+        val filler = setOf("in", "f", "bb", "eb", "c", "b", "tc", "bc")
+        fun instrumentAt(i: Int): Boolean {
+            var j = i
+            while (j in words.indices && words[j].lowercase() in filler) j += if (j >= i) 1 else -1
+            return j in words.indices && InstrumentReader.normalise(words[j]).any { it in INSTRUMENT_WORDS && it !in filler }
+        }
+        fun instrumentBefore(i: Int): Boolean {
+            var j = i - 1
+            while (j >= 0 && words[j].lowercase() in filler) j--
+            return j >= 0 && InstrumentReader.normalise(words[j]).any { it in INSTRUMENT_WORDS && it !in filler }
+        }
+        for ((i, w) in words.withIndex()) {
+            val bare = w.lowercase().substringBefore('/').substringBefore('&').substringBefore('+')
+            val n = Regex("""^([1-9])(st|nd|rd|th)?$""").find(bare)?.groupValues?.get(1)?.toInt() ?: ROMAN[bare] ?: continue
+            if (instrumentBefore(i) || instrumentAt(i + 1)) return n
+        }
+        return null
+    }
+
+    private val KEY_WORDS = setOf("in", "f", "bb", "eb", "c", "tc", "bc")
+
+    private val ROMAN = mapOf("i" to 1, "ii" to 2, "iii" to 3, "iv" to 4, "v" to 5, "vi" to 6)
 
     /**
      * The song a file belongs to. Its own name, with the instrument taken off - or, for a file
@@ -112,7 +146,8 @@ object ImportPlan {
     fun onlyPartName(fileName: String): Boolean {
         val base = readableName(fileName)
         val match = InstrumentReader.read(base) ?: return false
-        val words = InstrumentReader.normalise(base).filterNot { isPartMarker(it) }
+        // "in Bb", "in F": how a part is named, not more words.
+        val words = InstrumentReader.normalise(base).filterNot { isPartMarker(it) || it in KEY_WORDS }
         return words.size <= match.strength + 1 && words.all { w -> w in INSTRUMENT_WORDS }
     }
 
@@ -135,7 +170,15 @@ object ImportPlan {
         var base = fileName.substringBeforeLast('.').takeIf { '.' in fileName && fileName.substringAfterLast('.').let { e -> e.length in 2..4 && e.all(Char::isLetterOrDigit) } } ?: fileName
         base = base.replace(Regex("""\s*\(\d{1,2}\)\s*$"""), "")
         base = base.replace('_', ' ')
+        // A copy MobileSheets made carries its own id on the end: "Song-Trombone_1_89562782".
+        base = base.replace(Regex("""\s+\d{6,}$"""), "")
         if (' ' !in base.trim()) base = base.replace('-', ' ')
+        // "All The Things She Said-Alto Saxophone 1": notation software's export names glue the
+        // part on with a bare hyphen. Parted only when what follows is nothing but a part name.
+        Regex("""(?<=[\p{L}\d)])-(?=\p{L})""").findAll(base).toList().lastOrNull()?.let { m ->
+            val rest = base.substring(m.range.last + 1)
+            if ('-' !in rest && rest.isNotBlank() && onlyPartName(rest)) base = base.substring(0, m.range.first) + " - " + rest
+        }
         // "LibertyBell", "Trombone1": joined-up words and numbers apart. Not "McDonald" or "iPad".
         base = base.replace(Regex("""(\p{Lu}\p{Ll}{2,})(?=\p{Lu})"""), "$1 ")
             .replace(Regex("""(\p{L}{2,})(\d{1,2})\b"""), "$1 $2")
@@ -157,7 +200,7 @@ object ImportPlan {
             if (end - take < 1) continue
             val tail = words.subList(end - take, end).joinToString(" ")
             val match = InstrumentReader.read(tail) ?: continue
-            if (InstrumentReader.normalise(tail).filterNot(::isPartMarker).size == match.strength) {
+            if (InstrumentReader.normalise(tail).filterNot { isPartMarker(it) || it in KEY_WORDS }.size == match.strength) {
                 return words.subList(0, end - take).joinToString(" ")
             }
         }
@@ -186,10 +229,17 @@ object ImportPlan {
     /** Instrument words that are also everyday words, which a title can end with. */
     private val AMBIGUOUS = setOf("bass", "horn", "voice", "vocal", "key", "keyboard", "score", "drum", "bell", "chime", "triangle", "snare", "guitar", "piano")
 
-    private val INSTRUMENT_WORDS: Set<String> by lazy {
-        Instruments.all.flatMap { i -> i.names.flatMap { it.split(' ') } }.toSet() +
-            setOf("in", "f", "bb", "eb", "c", "tc", "bc", "part", "and", "solo", "optional", "opt", "divisi", "div", "flex")
-    }
+    private var instrumentWordsFor = -1
+    private var instrumentWords: Set<String> = emptySet()
+    private val INSTRUMENT_WORDS: Set<String>
+        get() {
+            if (instrumentWordsFor != Instruments.revision) {
+                instrumentWords = Instruments.all.flatMap { i -> i.names.flatMap { it.split(' ') } }.toSet() +
+                    setOf("in", "f", "bb", "eb", "c", "tc", "bc", "part", "and", "solo", "optional", "opt", "divisi", "div", "flex")
+                instrumentWordsFor = Instruments.revision
+            }
+            return instrumentWords
+        }
 
     private fun isPartMarker(word: String): Boolean =
         word.matches(Regex("""\d{1,2}(st|nd|rd|th)?|[IVX]+|[ivx]+|&|and|[-–—/,+]|\d{1,2}[-–—/&+]\d{1,2}""", RegexOption.IGNORE_CASE))

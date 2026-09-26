@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -71,7 +72,9 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                         this.arrangers = list(arrangers)
                         this.key = key.trim().ifEmpty { null }
                         this.timeSignature = time.trim().ifEmpty { null }
-                        this.tempo = tempo.trim().toIntOrNull()
+                        val bpm = tempo.trim().toIntOrNull()
+                        // A tempo typed or picked is the person's: reading again leaves it be.
+                        if (bpm != song.tempo) { this.tempo = bpm; this.tempoRead = false }
                         this.tags = list(tags)
                         this.parts = parts.toList()
                         if (colour != song.color) this.color = colour
@@ -92,6 +95,35 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                 Spacer(Modifier.size(8.dp))
                 Box(Modifier.weight(1f)) { Field("Tempo", tempo) { tempo = it.filter(Char::isDigit) } }
             }
+            // What the music says, and the range a tempo word means - a baseline to pick from.
+            val range = com.inksheets.core.TempoReader.rangeOf(song.tempoMark)
+            if (song.tempoMark != null || song.tempoRead) {
+                Column(Modifier.padding(vertical = 2.dp)) {
+                    Text(
+                        buildString {
+                            append(if (song.tempoRead) "Read from the music" else "The music says")
+                            song.tempoMark?.let { append(": $it") }
+                            range?.let { append(" (${it.first}-${it.last})") }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (range != null) {
+                        val steps = 5
+                        val picks = (0 until steps).map { i -> range.first + (range.last - range.first) * i / (steps - 1) }.distinct()
+                        Row(Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState())) {
+                            for (bpm in picks) {
+                                androidx.compose.material3.FilterChip(
+                                    selected = tempo == bpm.toString(),
+                                    onClick = { tempo = bpm.toString() },
+                                    label = { Text("$bpm") },
+                                    modifier = Modifier.padding(end = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
             Field("Tags and genres", tags) { tags = it }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
                 Text("Colour", Modifier.weight(1f))
@@ -103,10 +135,10 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
             Text("Parts", style = MaterialTheme.typography.titleMedium)
             // Two parts for one instrument are usually two versions of the piece, or two pieces
             // sharing a name: only the first opens, so say so and offer the way out.
-            val doubled = parts.groupBy { it.instrument }.filter { (k, v) -> k != null && v.size > 1 }.keys
+            val doubled = parts.filter { it.instrument != null }.groupBy { it.instrument to it.chair }.filter { (_, v) -> v.size > 1 }.values.map { it.first() }
             if (doubled.isNotEmpty()) {
                 Text(
-                    "More than one part is for " + doubled.joinToString(", ") { Instruments.byId[it]?.name ?: it.orEmpty() } +
+                    "More than one part is for " + doubled.joinToString(", ") { Instruments.partName(it) } +
                         ". The first of them opens. Use a part's menu to open another first, or to make it a song of its own.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiary,
@@ -130,6 +162,9 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                     }
                     InstrumentPicker(part.instrument) { chosen ->
                         parts[i] = part.copy(instrument = chosen, source = InstrumentSource.PERSON)
+                    }
+                    if (part.instrument != null) ChairPicker(part.chair) { chair ->
+                        parts[i] = part.copy(chair = chair, source = InstrumentSource.PERSON)
                     }
                     var menu by remember { mutableStateOf(false) }
                     Box {
@@ -182,6 +217,22 @@ private fun Field(label: String, value: String, onChange: (String) -> Unit) {
         value = value, onValueChange = onChange, label = { Text(label) }, singleLine = true,
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
     )
+}
+
+/** Which of several parts for one instrument: 1st, 2nd, 3rd... or just the one. */
+@Composable
+internal fun ChairPicker(current: Int?, onChosen: (Int?) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        TextButton(onClick = { open = true }) {
+            Text(current?.toString() ?: "–")
+            Icon(Icons.Default.ArrowDropDown, null)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(text = { Text("Just the one") }, onClick = { open = false; onChosen(null) })
+            for (n in 1..6) DropdownMenuItem(text = { Text("Part $n") }, onClick = { open = false; onChosen(n) })
+        }
+    }
 }
 
 @Composable

@@ -210,18 +210,28 @@ class LibraryScan(
         // songs whose parts are for different instruments: two Euphonium parts under one title
         // are two editions, or two pieces, and stay two songs.
         run {
-            val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(it.title) }
+            // Grouped by the title with any instrument still stuck to it taken off: a download
+            // named "Song-Trumpet_1.pdf" once made a song per part before that was read.
+            val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(ImportPlan.titleOf(it.title).ifBlank { it.title }) }
             for ((_, same) in groups) {
                 if (same.size < 2) continue
                 // The same choice on every device: the title's own id if one has it, else the smallest.
-                val keep = same.firstOrNull { it.id == Library.songIdFor(it.title) } ?: same.minBy { it.id }
-                val have = HashSet(library.song(keep.id)?.instruments.orEmpty())
+                val clean = same.filter { ImportPlan.titleOf(it.title) == it.title.trim() }
+                val keep = (clean.ifEmpty { same }).let { c -> c.firstOrNull { it.id == Library.songIdFor(it.title) } ?: c.minBy { it.id } }
+                val have = HashSet(library.song(keep.id)?.seats.orEmpty())
+                var took = false
                 for (s in same) if (s.id != keep.id) {
-                    val theirs = s.instruments
+                    val theirs = s.seats
                     if (theirs.any { it in have }) continue
                     library.mergeSongs(s.id, keep.id)
                     have += theirs
+                    took = true
                     merged += "${s.title} into ${keep.title}"
+                }
+                // Kept a title with an instrument on it: it is the song's now, so it goes.
+                if (took) {
+                    val title = ImportPlan.titleOf(keep.title)
+                    if (title.isNotBlank() && title != keep.title) library.editSong(keep.id) { this.title = title }
                 }
             }
         }

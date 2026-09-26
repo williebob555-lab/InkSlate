@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -31,15 +34,19 @@ internal fun ProfilesDialog(state: SheetsState, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<InstrumentProfile?>(null) }
     val profiles = state.profiles
 
+    var listing by remember { mutableStateOf(false) }
     editing?.let { p ->
-        ProfileEditor(p, onSave = { state.change { saveProfile(it) }; editing = null }, onCancel = { editing = null })
+        ProfileEditor(p, onSave = { state.change { saveProfile(it) }; editing = null }, onCancel = { editing = null }, onTeach = { listing = true })
+        if (listing) InstrumentListDialog(state, onClose = { listing = false })
         return
     }
+    if (listing) { InstrumentListDialog(state, onClose = { listing = false }); return }
 
     SheetDialog(
         title = "Instruments I play",
         onDismiss = onClose,
         buttons = {
+            TextButton(onClick = { listing = true }) { Text("All instruments...") }
             TextButton(onClick = {
                 editing = InstrumentProfile(id = "p-" + System.currentTimeMillis().toString(36), name = "", instruments = emptyList())
             }) { Text("Add one") }
@@ -51,7 +58,7 @@ internal fun ProfilesDialog(state: SheetsState, onClose: () -> Unit) {
                 ListRow(
                     icon = {},
                     title = p.name,
-                    detail = p.instruments.mapNotNull { Instruments.byId[it]?.name }.joinToString(", ").ifEmpty { "No parts chosen" },
+                    detail = p.instruments.mapNotNull { com.inksheets.core.PartChoice.seatName(it) }.joinToString(", ").ifEmpty { "No parts chosen" },
                     onClick = { editing = p },
                     menu = listOf(
                         "Edit" to { editing = p },
@@ -66,41 +73,57 @@ internal fun ProfilesDialog(state: SheetsState, onClose: () -> Unit) {
     }
 }
 
-/** A profile's name and its instruments, in the order they are preferred. */
+/**
+ * What one player reads: instruments, each any part or one chair ("Trumpet 2"), in the order they
+ * are preferred. Named for what is ticked - the name is the instrument.
+ */
 @Composable
-private fun ProfileEditor(profile: InstrumentProfile, onSave: (InstrumentProfile) -> Unit, onCancel: () -> Unit) {
-    var name by remember { mutableStateOf(profile.name) }
+private fun ProfileEditor(profile: InstrumentProfile, onSave: (InstrumentProfile) -> Unit, onCancel: () -> Unit, onTeach: () -> Unit) {
+    // Entries as "trumpet" (any part) or "trumpet:2" (the 2nd).
     val chosen = remember { mutableStateListOf(*profile.instruments.toTypedArray()) }
+    val named = chosen.mapNotNull { com.inksheets.core.PartChoice.seatName(it) }.joinToString(" / ")
     SheetDialog(
-        title = if (profile.name.isEmpty()) "New instrument" else profile.name,
+        title = named.ifEmpty { "What do you play?" },
         onDismiss = onCancel,
         wide = true,
         buttons = {
+            TextButton(onClick = onTeach) { Text("Missing one?") }
             TextButton(onClick = onCancel) { Text("Cancel") }
             TextButton(
-                enabled = name.isNotBlank() && chosen.isNotEmpty(),
-                onClick = { onSave(profile.copy(name = name.trim(), instruments = chosen.toList())) }
+                enabled = chosen.isNotEmpty(),
+                onClick = { onSave(profile.copy(name = named, instruments = chosen.toList())) }
             ) { Text("Save") }
         }
     ) {
         Column {
-            OutlinedTextField(name, { name = it }, label = { Text("Name, e.g. Tuba") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Text(
-                "Tick the parts this shows. The first ticked is opened first when a song has several.",
+                "Tick what you play, and which part if there are several - Trumpet 2, say. The first ticked opens first; " +
+                    "a song without your part opens one that reads the same (a Baritone B.C. part for a euphonium).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 6.dp)
             )
-            LazyColumn(Modifier.heightIn(max = 360.dp)) {
+            LazyColumn(Modifier.heightIn(max = 380.dp)) {
                 items(Instruments.all, key = { it.id }) { inst ->
-                    val at = chosen.indexOf(inst.id)
-                    Row(
-                        Modifier.fillMaxWidth().clickable { if (at >= 0) chosen.removeAt(at) else chosen.add(inst.id) },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = at >= 0, onCheckedChange = null)
-                        Text(inst.name, modifier = Modifier.weight(1f).padding(start = 8.dp))
-                        if (at >= 0) Text("${at + 1}", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 12.dp))
+                    val at = chosen.indexOfFirst { com.inksheets.core.PartChoice.seat(it).first == inst.id }
+                    Column {
+                        Row(
+                            Modifier.fillMaxWidth().clickable { if (at >= 0) chosen.removeAt(at) else chosen.add(inst.id) },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = at >= 0, onCheckedChange = null)
+                            Text(inst.name, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                            if (at >= 0) Text("${at + 1}", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(end = 12.dp))
+                        }
+                        if (at >= 0) {
+                            val chair = com.inksheets.core.PartChoice.seat(chosen[at]).second
+                            Row(Modifier.padding(start = 40.dp, bottom = 4.dp).horizontalScroll(rememberScrollState())) {
+                                FilterChip(selected = chair == null, onClick = { chosen[at] = inst.id }, label = { Text("Any part") }, modifier = Modifier.padding(end = 4.dp))
+                                for (n in 1..4) {
+                                    FilterChip(selected = chair == n, onClick = { chosen[at] = "${inst.id}:$n" }, label = { Text("$n") }, modifier = Modifier.padding(end = 4.dp))
+                                }
+                            }
+                        }
                     }
                 }
             }

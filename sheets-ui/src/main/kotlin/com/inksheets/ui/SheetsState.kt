@@ -341,6 +341,42 @@ class SheetsState(val platform: SheetsPlatform) {
         onProgress(todo.size, todo.size)
     }
 
+    /**
+     * Read the tempo off the first page of every song that has none - a metronome mark, or a
+     * tempo word and the middle of its range. Songs read before are not read again, unless
+     * [again], which also reads again every tempo that was read rather than set. A tempo a person
+     * set is never touched. Off the UI thread.
+     */
+    fun readTempos(again: Boolean = false) {
+        val lib = library ?: return
+        val tried = if (again) mutableSetOf() else platform.pref(K_TEMPO_TRIED).orEmpty().split(',').filter { it.isNotEmpty() }.toMutableSet()
+        val todo = lib.songs.filter { s -> (s.tempo == null || (again && s.tempoRead)) && s.id !in tried && s.parts.isNotEmpty() }
+        for (song in todo) {
+            val part = partFor(song) ?: song.parts.first()
+            val file = partFile(song, part)
+            if (file != null && file.isFile) {
+                val page = part.firstPage ?: 1
+                val reading = runCatching { platform.pageText(file, page) }.getOrNull()?.let { com.inksheets.core.TempoReader.read(it) }
+                    ?: if (platform.canRecognise) runCatching { platform.recognise(file, page) }.getOrNull()?.let { com.inksheets.core.TempoReader.read(it) } else null
+                if (reading != null) {
+                    platform.onMain {
+                        val now = lib.song(song.id)
+                        // Set by a person in the meantime: theirs stands.
+                        if (now != null && (now.tempo == null || now.tempoRead)) change {
+                            editSong(song.id) {
+                                tempo = reading.bpm
+                                tempoMark = reading.mark
+                                tempoRead = true
+                            }
+                        }
+                    }
+                }
+            }
+            tried += song.id
+        }
+        platform.setPref(K_TEMPO_TRIED, tried.joinToString(","))
+    }
+
     fun toggleMetronome() {
         val out = platform.audioOut ?: return
         val engine = SharedMetronome.engine
@@ -362,9 +398,12 @@ class SheetsState(val platform: SheetsPlatform) {
         root = folder
         library = lib
         platform.setPref(K_LIBRARY, folder.absolutePath)
+        runCatching { com.inksheets.core.Instruments.use(lib.instruments()) }
         version = lib.version
         runCatching { lib.noteDevice(platform.deviceName) }
         startWatching()
+        // Songs already here get a tempo read for them once, in the background.
+        Thread({ runCatching { readTempos() } }, "tempos").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
     }
 
     /**
@@ -383,7 +422,7 @@ class SheetsState(val platform: SheetsPlatform) {
                 if (changed) platform.onMain { version = library?.version ?: version }
                 if (++ticks % 5 == 0) {
                     val report = scanFolder()
-                    if (report?.added?.isNotEmpty() == true) runCatching { readUnknownParts() }
+                    if (report?.added?.isNotEmpty() == true) { runCatching { readUnknownParts() }; runCatching { readTempos() } }
                 }
             }
         }, "library-watch").apply { isDaemon = true; start() }
@@ -480,7 +519,10 @@ class SheetsState(val platform: SheetsPlatform) {
     /** Take in edits from other devices. Called off the UI thread on a timer. */
     fun refresh() {
         val lib = library ?: return
-        if (lib.refresh()) version = lib.version
+        if (lib.refresh()) {
+            runCatching { com.inksheets.core.Instruments.use(lib.instruments()) }
+            version = lib.version
+        }
     }
 
     // ---- keeping the library in step with the folder ------------------------------------
@@ -693,7 +735,7 @@ class SheetsState(val platform: SheetsPlatform) {
             importing--
         }
         platform.onMain { version = lib.version }
-        if (touched.isNotEmpty()) runCatching { readUnknownParts() }
+        if (touched.isNotEmpty()) { runCatching { readUnknownParts() }; runCatching { readTempos() } }
     }
 
     /** Parts whose file is not on this device. */
@@ -711,7 +753,58 @@ class SheetsState(val platform: SheetsPlatform) {
     fun change(block: Library.() -> Unit) {
         val lib = library ?: return
         lib.block()
+        runCatching { com.inksheets.core.Instruments.use(lib.instruments()) }
         version = lib.version
+    }
+
+    /** Where "Redo automatic assignment" has got to: parts read, of how many; null when not running. */
+    var reassigning by mutableStateOf<Pair<Int, Int>?>(null)
+
+    /** What the last "Redo automatic assignment" changed, for saying so. */
+    var reassigned by mutableStateOf<String?>(null)
+
+    /**
+     * Read the instrument off every part again - its name, then its first page's words, then a
+     * scan of it - with every instrument now known, the ones taught in this library included.
+     * Parts a person set by hand are left alone. What changes is written to the library, so every
+     * device gets it. Off the UI thread.
+     */
+    fun reassignInstruments() {
+        val lib = library ?: return
+        val todo = lib.songs.flatMap { song -> song.parts.filter { it.source != com.inksheets.core.InstrumentSource.PERSON }.map { song to it } }
+        var changed = 0
+        platform.onMain { reassigning = 0 to todo.size; reassigned = null }
+        todo.forEachIndexed { i, (song, part) ->
+            platform.onMain { reassigning = i to todo.size }
+            val file = partFile(song, part)
+            val page = part.firstPage ?: 1
+            val read = com.inksheets.core.ImportPlan.readPart(
+                part.file,
+                textOf = { if (file != null && file.isFile) runCatching { platform.pageText(file, page) }.getOrNull() else null },
+                recognise = { if (file != null && file.isFile && platform.canRecognise) runCatching { platform.recognise(file, page) }.getOrNull() else null }
+            )
+            // Nothing found this time is no reason to forget what was found before.
+            if (read.instrument == null) return@forEachIndexed
+            if (read.instrument == part.instrument && read.also == part.also && read.chair == part.chair) return@forEachIndexed
+            val current = lib.song(song.id) ?: return@forEachIndexed
+            platform.onMain {
+                change {
+                    editSong(song.id) {
+                        parts = current.parts.map { p ->
+                            if (p.id == part.id && p.source != com.inksheets.core.InstrumentSource.PERSON) {
+                                p.copy(instrument = read.instrument, source = read.source, label = read.label, also = read.also, chair = read.chair)
+                            } else p
+                        }
+                    }
+                }
+            }
+            changed++
+        }
+        runCatching { readTempos(again = true) }
+        platform.onMain {
+            reassigning = null
+            reassigned = if (changed == 0) "Every part already had the instrument it reads as." else "$changed part${if (changed == 1) "" else "s"} given a different instrument."
+        }
     }
 
     /** The song one of whose parts is the file at [path]. */
@@ -823,6 +916,7 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_LIBRARY = "sheets_library"
         private const val K_PROFILE = "sheets_profile"
         private const val K_PICKS = "sheets_part_picks"
+        private const val K_TEMPO_TRIED = "sheets_tempo_tried"
         private const val K_TRIED = "sheets_ocr_tried"
         private const val K_EDGE_TAPS = "sheets_edge_taps"
         private const val K_TURN = "sheets_turn_style"

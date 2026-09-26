@@ -15,7 +15,8 @@ object PartChoice {
     /** How well [song] fits [profile]; everything fits when no instrument is chosen. */
     fun fit(song: Song, profile: InstrumentProfile?): Fit {
         if (profile == null || song.parts.isEmpty()) return Fit.YES
-        if (song.parts.any { p -> p.instrument in profile.instruments || p.also.any { it in profile.instruments } }) return Fit.YES
+        val ids = profile.instruments.map { seat(it).first }.flatMap { listOf(it) + Instruments.sisters(it) }
+        if (song.parts.any { p -> p.instrument in ids || p.also.any { it in ids } }) return Fit.YES
         if (song.parts.any { it.instrument == null }) return Fit.UNKNOWN
         return Fit.NO
     }
@@ -26,16 +27,34 @@ object PartChoice {
      */
     fun partFor(song: Song, profile: InstrumentProfile?): Part? {
         if (profile != null) {
-            for (instrument in profile.instruments) {
-                song.parts.firstOrNull { it.instrument == instrument }?.let { return it }
+            for (entry in profile.instruments) {
+                val (id, chair) = seat(entry)
+                // Your instrument's parts; with none, those of one that reads the same (a
+                // euphonium reads a Baritone B.C. part).
+                val theirs = song.parts.filter { it.instrument == id }
+                    .ifEmpty { Instruments.sisters(id).let { s -> song.parts.filter { it.instrument in s } } }
+                // Your chair's part; failing that, the lowest.
+                (theirs.firstOrNull { chair != null && it.chair == chair } ?: theirs.minByOrNull { it.chair ?: 0 })?.let { return it }
             }
             // A part printed for several instruments, one of them yours.
-            for (instrument in profile.instruments) {
-                song.parts.firstOrNull { instrument in it.also }?.let { return it }
+            for (entry in profile.instruments) {
+                val id = seat(entry).first
+                song.parts.firstOrNull { id in it.also }?.let { return it }
             }
             song.parts.firstOrNull { it.instrument == null }?.let { return it }
         }
         return song.parts.firstOrNull()
+    }
+
+    /** A profile's entry as instrument and chair: "trumpet:2" is 2nd trumpet, "trumpet" any. */
+    fun seat(entry: String): Pair<String, Int?> =
+        entry.substringBefore(':') to entry.substringAfter(':', "").toIntOrNull()
+
+    /** "Trumpet 2" for a profile entry. */
+    fun seatName(entry: String): String? {
+        val (id, chair) = seat(entry)
+        val name = Instruments.byId[id]?.name ?: return null
+        return if (chair != null) "$name $chair" else name
     }
 
     /** The songs to list for [profile], best fits first within the given order. */

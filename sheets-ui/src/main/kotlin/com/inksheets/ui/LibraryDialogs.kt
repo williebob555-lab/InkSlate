@@ -90,7 +90,7 @@ internal fun PickSongDialog(
                     Column(Modifier.fillMaxWidth().clickable { onChosen(s) }.padding(vertical = 10.dp, horizontal = 4.dp)) {
                         Text(s.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            s.parts.joinToString(", ") { p -> p.instrument?.let { com.inksheets.core.Instruments.byId[it]?.name } ?: "part" },
+                            s.parts.joinToString(", ") { p -> if (p.instrument == null) "part" else com.inksheets.core.Instruments.partName(p) },
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1, overflow = TextOverflow.Ellipsis
                         )

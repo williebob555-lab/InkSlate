@@ -144,9 +144,9 @@ object MobileSheetsImport {
             val sharesFile = cs.size > 1 && cs.map { c -> c.parts.map { it.file }.toSet() }.let { sets -> sets.any { a -> sets.any { b -> a !== b && a.intersect(b).isNotEmpty() } } }
             val bundles = ArrayList<MutableList<Candidate>>()
             for (c in cs) {
-                val mine = c.parts.mapNotNull { it.instrument }.toSet()
+                val mine = c.parts.mapNotNull { p -> p.instrument?.let { "$it#${p.chair ?: 0}" } }.toSet()
                 val fits = if (sharesFile) bundles.firstOrNull() else bundles.firstOrNull { b ->
-                    b.flatMap { m -> m.parts.mapNotNull { it.instrument } }.none { it in mine }
+                    b.flatMap { m -> m.parts.mapNotNull { p -> p.instrument?.let { "$it#${p.chair ?: 0}" } } }.none { it in mine }
                 }
                 if (fits != null) fits += c else bundles += arrayListOf(c)
             }

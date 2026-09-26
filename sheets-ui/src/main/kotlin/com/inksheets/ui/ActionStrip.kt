@@ -253,7 +253,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 
 /** An instrument's name for a part, or what the part calls itself. */
 private fun partName(p: com.inksheets.core.Part): String =
-    p.instrument?.let { com.inksheets.core.Instruments.byId[it]?.name } ?: p.label?.takeIf { it.isNotBlank() } ?: "Part"
+    com.inksheets.core.Instruments.partName(p)
 
 /**
  * Switch part, two ways: for this song only (every other song keeps its part), or for every song

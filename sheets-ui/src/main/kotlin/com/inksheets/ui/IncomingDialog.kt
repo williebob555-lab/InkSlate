@@ -115,7 +115,7 @@ internal fun IncomingDialog(state: SheetsState) {
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
                 itemsIndexed(files) { i, f ->
                     Column(Modifier.padding(vertical = 6.dp)) {
-                        val instrument = planned[i].instrument?.let { Instruments.byId[it]?.name } ?: "instrument to be read"
+                        val instrument = planned[i].instrument?.let { Instruments.byId[it]?.name }?.let { n -> planned[i].chair?.let { "$n $it" } ?: n } ?: "instrument to be read"
                         Text(f.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(instrument, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val fate = fates[i]
@@ -159,7 +159,7 @@ internal fun IncomingDialog(state: SheetsState) {
                 Column {
                     chosen.parts.forEach { p ->
                         Text(
-                            (p.instrument?.let { Instruments.byId[it]?.name } ?: "Part") + " - " + p.file.substringAfterLast('/'),
+                            Instruments.partName(p) + " - " + p.file.substringAfterLast('/'),
                             modifier = Modifier.fillMaxWidth().clickable { fates[i] = Fate.Replace(chosen.id, p.id); replacingFor = null }.padding(vertical = 10.dp)
                         )
                     }
