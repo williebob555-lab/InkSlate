@@ -273,6 +273,7 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     @Volatile private var last: CompanionLink.Showing? = null
     @Volatile private var lastInk: CompanionLink.InkShare? = null
     private val seq = java.util.concurrent.atomic.AtomicLong()
+    private val recentNotes = ArrayList<Pair<Long, String>>()
 
     val followerCount: Int get() = followers.size
 
@@ -329,6 +330,8 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         // A follower that joins mid-song is told at once where the leader is, and given the marks.
         last?.let { f.queue.offer(CompanionLink.encode(it)) }
         lastInk?.let { share -> if (last?.shareInk == true) f.queue.offer(CompanionLink.encode(share)) }
+        val now = System.currentTimeMillis()
+        synchronized(recentNotes) { recentNotes.filter { now - it.first <= NOTE_KEPT_MS }.forEach { f.queue.offer(it.second) } }
         Thread({
             val out = runCatching { OutputStreamWriter(f.socket.getOutputStream(), Charsets.UTF_8) }.getOrNull()
             var why = "left"
@@ -392,7 +395,14 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
 
     /** A message to every follower; each shows it only if it is for its instrument. */
     fun note(note: CompanionLink.Note) {
-        val line = CompanionLink.encode(note.copy(from = name, at = System.currentTimeMillis()))
+        val sent = note.copy(from = name, at = System.currentTimeMillis())
+        val line = CompanionLink.encode(sent)
+        // Kept a while and given again to anyone who joins meanwhile: a tablet whose link dropped
+        // for a moment still gets told. Each follower shows a message once, however often it comes.
+        synchronized(recentNotes) {
+            recentNotes += sent.at to line
+            recentNotes.removeAll { sent.at - it.first > NOTE_KEPT_MS }
+        }
         followers.forEach { it.queue.offer(line) }
         onLog?.invoke("Sent \"${note.text}\" to ${followers.size}" + if (note.instruments.isEmpty()) "" else " (for ${note.instruments.joinToString(", ")})")
     }
@@ -419,6 +429,9 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
 
     companion object {
         const val PING_EVERY_MS = 2_000L
+
+        /** How long a message is given again to followers that join (or come back) after it. */
+        const val NOTE_KEPT_MS = 30_000L
     }
 }
 
@@ -568,7 +581,7 @@ class CompanionFollower(
 
     companion object {
         /** Four missed heartbeats. */
-        const val SILENT_FOR_MS = 8_000L
+        const val SILENT_FOR_MS = 5_000L
     }
 }
 

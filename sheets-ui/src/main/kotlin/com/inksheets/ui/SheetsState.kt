@@ -927,24 +927,21 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_TURN = "sheets_turn_style"
         private const val K_STRIP_LABELS = "sheets_strip_labels"
         private const val K_STRIP_LEFT = "sheets_strip_left"
-        private const val K_STRIP = "sheets_strip"
+        private const val K_STRIP = "sheets_strip_2"
 
         /**
          * Page turns, then the pen tools - a rehearsal note goes on in one tap and the pen is
          * back in one more - then songs, the metronome and tuner, and fullscreen.
          */
+        /**
+         * Lean: pages and songs turn by tap and swipe, so the strip is for marking up and the
+         * metronome. The rest is in More, or added back under Customise.
+         */
         val DEFAULT_STRIP = listOf(
-            com.inkslate.core.PerformAction.PREVIOUS_PAGE,
-            com.inkslate.core.PerformAction.NEXT_PAGE,
             com.inkslate.core.PerformAction.PEN,
-            com.inkslate.core.PerformAction.HIGHLIGHTER,
             com.inkslate.core.PerformAction.ERASER,
             com.inkslate.core.PerformAction.UNDO,
-            com.inkslate.core.PerformAction.PREVIOUS_SONG,
-            com.inkslate.core.PerformAction.NEXT_SONG,
-            com.inkslate.core.PerformAction.PLAY_AUDIO,
             com.inkslate.core.PerformAction.METRONOME,
-            com.inkslate.core.PerformAction.TUNER,
             com.inkslate.core.PerformAction.FULLSCREEN
         )
     }

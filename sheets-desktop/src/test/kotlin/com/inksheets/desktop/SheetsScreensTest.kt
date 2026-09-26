@@ -149,8 +149,10 @@ class SheetsScreensTest {
                 }
             }
             waitForIdle()
-            onNode(androidx.compose.ui.test.hasContentDescription("Next page")).performClick()
-            assertEquals(listOf(com.inkslate.core.PerformAction.NEXT_PAGE), ran)
+            // The lean strip: marking up and the metronome; pages turn by tap and swipe.
+            onNode(androidx.compose.ui.test.hasContentDescription("Undo")).performClick()
+            assertEquals(listOf(com.inkslate.core.PerformAction.UNDO), ran)
+            assertEquals(0, onAllNodes(androidx.compose.ui.test.hasContentDescription("Next page")).fetchSemanticsNodes().size)
             shoot("action-strip", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
         com.inkslate.core.Perform.document = null

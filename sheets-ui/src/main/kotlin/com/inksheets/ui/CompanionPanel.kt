@@ -150,6 +150,26 @@ class Companion(private val state: SheetsState) {
 
     /** The leader's message showing now, and a count that changes with each so a repeat shows again. */
     var notice by mutableStateOf<CompanionLink.Note?>(null)
+    private val seenNotes = HashSet<String>()
+
+    /**
+     * Set when the links keep dying a few seconds after they are made - what a school or
+     * eduroam network does to devices talking to each other. Said once, where it can be acted on.
+     */
+    var networkBlocks by mutableStateOf(false)
+    private val quickDrops = ArrayList<Long>()
+
+    /** A link that lasted [secs] seconds went silent: several in a row means the network. */
+    internal fun linkDied(secs: Long) {
+        val now = System.currentTimeMillis()
+        if (secs > 30) { quickDrops.clear(); return }
+        quickDrops += now
+        quickDrops.removeAll { now - it > 120_000 }
+        if (quickDrops.size >= 3 && !networkBlocks) {
+            networkBlocks = true
+            state.platform.log("Companion: links keep dropping a few seconds after connecting - the network is likely blocking devices from reaching each other")
+        }
+    }
     var noticeCount by mutableStateOf(0)
 
     /** The instruments this player reads: the part in front, and those chosen to play. */
@@ -172,7 +192,10 @@ class Companion(private val state: SheetsState) {
         val name = state.platform.deviceName
         val l = CompanionLeader(name, leadPort)
         l.onFollowers = { n -> state.platform.onMain { followers = n } }
-        l.onLog = { line -> state.platform.log("Companion: $line") }
+        l.onLog = { line ->
+            state.platform.log("Companion: $line")
+            Regex("""went silent for \d+ s after (\d+) s""").find(line)?.let { m -> state.platform.onMain { linkDied(m.groupValues[1].toLong()) } }
+        }
         if (!l.start()) return false
         leader = l
         leading = true
@@ -263,7 +286,10 @@ class Companion(private val state: SheetsState) {
         stopLeading()
         follower?.stop()
         val f = CompanionFollower(state.platform.deviceName) { line -> state.platform.onMain { heard(line) } }
-        f.onLog = { line -> state.platform.log("Companion: $line") }
+        f.onLog = { line ->
+            state.platform.log("Companion: $line")
+            Regex("""^Lost .* after (\d+) s: nothing arrived""").find(line)?.let { m -> state.platform.onMain { linkDied(m.groupValues[1].toLong()) } }
+        }
         f.onConnected = { on ->
             state.platform.onMain {
                 if (follower === f) {
@@ -319,6 +345,9 @@ class Companion(private val state: SheetsState) {
             }
             is CompanionLink.Line.Ink -> takeInk(line.share)
             is CompanionLink.Line.Message -> {
+                // Given again after a dropped link: shown once.
+                val id = line.note.from + "@" + line.note.at
+                if (!seenNotes.add(id)) return
                 if (CompanionLink.noteIsFor(line.note, myInstruments())) {
                     notice = line.note
                     noticeCount++
@@ -637,6 +666,7 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
         }
         Switch(checked = companion.shareInk, onCheckedChange = { companion.shareInk = it })
     }
+    NetworkHint(state)
     HorizontalDivider(Modifier.padding(vertical = 8.dp))
     SendNote(state, onSaid)
     OutlinedButton(onClick = { companion.stopLeading() }, modifier = Modifier.padding(top = 8.dp)) { Text("Stop leading") }
@@ -645,6 +675,7 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
 @Composable
 private fun FollowingSection(state: SheetsState, onClose: () -> Unit) {
     val companion = state.companion
+    NetworkHint(state)
     Text(
         "Following ${companion.following}" + if (companion.connected) "" else " - reconnecting...",
         style = MaterialTheme.typography.titleMedium
@@ -750,5 +781,30 @@ internal fun BackToLeader(state: SheetsState, modifier: Modifier = Modifier) {
             maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
         )
+    }
+}
+
+/**
+ * The network is cutting devices off from each other (school Wi-Fi, eduroam): what to do instead.
+ * Only once it has been seen happening, and only here, never over the music.
+ */
+@Composable
+internal fun NetworkHint(state: SheetsState) {
+    if (!state.companion.networkBlocks) return
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("This Wi-Fi keeps cutting the link", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+            Text(
+                "School and eduroam networks stop devices talking to each other after a few seconds, so pages and messages arrive in fits. " +
+                    "Put everyone on one hotspot instead: a phone's hotspot, or on the laptop Settings > Network > Mobile hotspot. " +
+                    "Then start leading again.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+        }
     }
 }

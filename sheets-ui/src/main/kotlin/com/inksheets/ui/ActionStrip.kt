@@ -97,6 +97,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     val shown = state.strip
     var customising by remember { mutableStateOf(false) }
     var sendingNote by remember { mutableStateOf(false) }
+    var partMenu by remember { mutableStateOf(false) }
     // Folded away, the strip is one button in the corner and the page has the whole width.
     androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
 
@@ -139,20 +140,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                         if (named) Text("Pages", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp)
                     }
                 }
-                StripButton(Icons.Default.CenterFocusStrong, "Fit", "Fit the page to the screen", btn, named) { Perform.recentre?.invoke() }
                 // Leading: a message to the band, one tap away.
                 if (state.companion.leading) {
                     StripButton(Icons.Default.Campaign, "Message", "Message the band", btn, named) { sendingNote = true }
-                }
-                // Another instrument's part: of this song only, or of every song.
-                state.current?.let { song ->
-                    var partMenu by remember { mutableStateOf(false) }
-                    Box {
-                        val shownPart = state.partShown()
-                        val label = shownPart?.let { partName(it) }?.let { if (it.length > 7) it.take(6) + "…" else it } ?: "Part"
-                        StripButton(Icons.Default.SwapHoriz, label, "Play another part - this song or all songs", btn, named) { partMenu = true }
-                        PartMenu(state, song, shownPart, partMenu, onDismiss = { partMenu = false })
-                    }
                 }
                 // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
@@ -193,7 +183,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 Box {
                     StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }
-                    StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true })
+                    StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
+                    // Another instrument's part, from More: opens where More was.
+                    state.current?.let { song -> PartMenu(state, song, state.partShown(), partMenu, onDismiss = { partMenu = false }) }
                 }
             }
             IconButton(onClick = {
@@ -314,8 +306,39 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
 }
 
 @Composable
-private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onCustomise: () -> Unit) {
+private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        state.current?.let { _ ->
+            val part = state.partShown()?.let { partName(it) }
+            DropdownMenuItem(
+                text = { Text("Switch part" + (part?.let { " (now $it)" } ?: "") + "...") },
+                leadingIcon = { Icon(Icons.Default.SwapHoriz, null) },
+                onClick = { onDismiss(); onPart() }
+            )
+        }
+        DropdownMenuItem(
+            text = { Text("Fit the page to the screen") },
+            leadingIcon = { Icon(Icons.Default.CenterFocusStrong, null) },
+            onClick = { onDismiss(); Perform.recentre?.invoke() }
+        )
+        if (state.playing != null) {
+            DropdownMenuItem(
+                text = { Text("Next song") },
+                leadingIcon = { Icon(Icons.Default.SkipNext, null) },
+                onClick = { onDismiss(); Perform.run(PerformAction.NEXT_SONG) }
+            )
+            DropdownMenuItem(
+                text = { Text("Previous song") },
+                leadingIcon = { Icon(Icons.Default.SkipPrevious, null) },
+                onClick = { onDismiss(); Perform.run(PerformAction.PREVIOUS_SONG) }
+            )
+        }
+        DropdownMenuItem(
+            text = { Text("Tuner") },
+            leadingIcon = { Icon(Icons.Default.GraphicEq, null) },
+            onClick = { onDismiss(); Perform.run(PerformAction.TUNER) }
+        )
+        HorizontalDivider()
         state.current?.let { song ->
             DropdownMenuItem(
                 text = { Text("Recordings...") },
