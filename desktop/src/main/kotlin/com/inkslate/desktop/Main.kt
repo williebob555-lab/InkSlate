@@ -58,10 +58,15 @@ fun runAs(name: String, setup: () -> Unit) {
 @OptIn(ExperimentalComposeUiApi::class, kotlinx.coroutines.FlowPreview::class)
 private fun ui() = application {
     // Where it was left, rather than the middle of the screen at a fixed size every time.
+    // On Windows a program always on the whole screen is a borderless window exactly covering it,
+    // not Java's full-screen mode: Windows minimises a window in that mode the moment anything
+    // else - a file picker - is put in front of it.
+    val covering = AppFlavor.alwaysFullscreen && WindowsFileDialog.available
     val state = remember {
         WindowMemory.restore().also {
             // Straight to the whole screen, so the window never shows a frame first.
-            if (AppFlavor.alwaysFullscreen) it.placement = androidx.compose.ui.window.WindowPlacement.Fullscreen
+            if (covering) WindowMemory.cover(it)
+            else if (AppFlavor.alwaysFullscreen) it.placement = androidx.compose.ui.window.WindowPlacement.Fullscreen
         }
     }
     AppFlavor.quit = ::exitApplication
@@ -79,8 +84,9 @@ private fun ui() = application {
             val screen = WindowMemory.screenSize()
             if (screen != lastScreen) {
                 lastScreen = screen
-                WindowMemory.refit(state)
+                if (covering) WindowMemory.cover(state) else WindowMemory.refit(state)
             }
+            if (covering) continue
 
             // Folded into a tablet, the program should fill the screen the way it does on one.
             // Only the change is acted on, so a window maximised or restored by hand in either
@@ -98,12 +104,13 @@ private fun ui() = application {
     LaunchedEffect(state) {
         snapshotFlow { Triple(state.size, state.position, state.placement) }
             .debounce(400)
-            .collect { if (state.placement != androidx.compose.ui.window.WindowPlacement.Fullscreen) WindowMemory.remember(state) }
+            .collect { if (!covering && state.placement != androidx.compose.ui.window.WindowPlacement.Fullscreen) WindowMemory.remember(state) }
     }
 
     // The whole screen, taskbar and title bar included, and back to how it was.
     LaunchedEffect(state) {
         var before = state.placement
+        if (covering) return@LaunchedEffect
         snapshotFlow { AppFlavor.windowFullscreen }.collect { whole ->
             val full = androidx.compose.ui.window.WindowPlacement.Fullscreen
             if (whole && state.placement != full) {

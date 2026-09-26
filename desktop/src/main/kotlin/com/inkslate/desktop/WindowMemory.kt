@@ -118,6 +118,24 @@ object WindowMemory {
         }
     }
 
+    /**
+     * Exactly the screen the window is on - taskbar included - as a plain window with no border.
+     * Looks the same as full-screen mode, but other windows can open over it without it going.
+     */
+    fun cover(state: WindowState) {
+        val bounds = runCatching {
+            val screens = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { it.defaultConfiguration.bounds }
+            val at = state.position as? WindowPosition.Absolute
+            val cx = (at?.x?.value ?: 0f) + state.size.width.value / 2f
+            val cy = (at?.y?.value ?: 0f) + state.size.height.value / 2f
+            screens.firstOrNull { at != null && it.contains(cx.toDouble(), cy.toDouble()) }
+                ?: java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration.bounds
+        }.getOrNull() ?: return
+        state.placement = WindowPlacement.Floating
+        state.position = WindowPosition(bounds.x.dp, bounds.y.dp)
+        state.size = DpSize(bounds.width.dp, bounds.height.dp)
+    }
+
     fun screenSize(): DpSize = runCatching {
         val screen = Toolkit.getDefaultToolkit().screenSize
         DpSize(screen.width.dp, screen.height.dp)
