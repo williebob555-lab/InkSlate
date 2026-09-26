@@ -33,6 +33,13 @@ tasks.withType<Test>().configureEach {
     environment("XDG_DATA_HOME", sandbox.absolutePath)
     systemProperty("user.home", sandbox.absolutePath)
 
+    // Opens the Windows picker for real and cancels it, to prove it still opens.
+    System.getProperty("inkslate.picker")?.let {
+        systemProperty("inkslate.picker", it)
+        outputs.upToDateWhen { false }
+        testLogging.showStandardStreams = true
+    }
+
     // Where to save pictures of what a stamp draws, for a look at it without a tablet in hand.
     System.getProperty("inkslate.looks")?.let {
         systemProperty("inkslate.looks", it)

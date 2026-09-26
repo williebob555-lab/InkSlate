@@ -143,14 +143,31 @@ object BulkImport {
 
     class ZipSource(private val zip: File) : Source {
         override val name: String = ImportPlan.cleanFolderName(zip.nameWithoutExtension)
-        override fun list(): List<String> = ZipFile(zip).use { z ->
-            z.entries().toList().filter { !it.isDirectory }.map { it.name.replace('\\', '/') }
-                .filter { safe(it) }
-        }
-        override fun copy(path: String, to: File) {
-            require(safe(path))
+        /**
+         * Names as they can be on every system, to the names in the zip. A zip made on a Mac can
+         * hold names Windows refuses - a folder called "*Student Arrangements" - and one of those
+         * used to stop the whole import.
+         */
+        private val entries: Map<String, String> by lazy {
             ZipFile(zip).use { z ->
-                val entry = z.getEntry(path) ?: return
+                val out = LinkedHashMap<String, String>()
+                z.entries().toList().filter { !it.isDirectory }.forEach { e ->
+                    val raw = e.name.replace('\\', '/')
+                    if (!safe(raw)) return@forEach
+                    val clean = portablePath(raw)
+                    var named = clean
+                    var n = 2
+                    while (named in out) named = clean.substringBeforeLast('.') + " (" + n++ + ")." + clean.substringAfterLast('.')
+                    out[named] = e.name
+                }
+                out
+            }
+        }
+        override fun list(): List<String> = entries.keys.toList()
+        override fun copy(path: String, to: File) {
+            val original = entries[path] ?: return
+            ZipFile(zip).use { z ->
+                val entry = z.getEntry(original) ?: return
                 to.parentFile?.mkdirs()
                 z.getInputStream(entry).use { input -> to.outputStream().use { input.copyTo(it) } }
             }
@@ -159,6 +176,17 @@ object BulkImport {
         /** Never a path that climbs out of where it is put. */
         private fun safe(path: String) = path.split('/').none { it == ".." } && !path.startsWith("/")
     }
+
+    /**
+     * [path] with each folder and file name made one every system accepts: none of \ : * ? " < > |
+     * or control characters, no trailing dots or spaces, and none of Windows' reserved names.
+     */
+    fun portablePath(path: String): String = path.split('/').filter { it.isNotEmpty() }.joinToString("/") { part ->
+        val cleaned = part.filter { it >= ' ' && it !in "\\:*?\"<>|" }.trim().trimEnd('.', ' ').ifEmpty { "_" }
+        if (cleaned.substringBefore('.').uppercase() in RESERVED) "_$cleaned" else cleaned
+    }
+
+    private val RESERVED = setOf("CON", "PRN", "AUX", "NUL") + (1..9).flatMap { listOf("COM$it", "LPT$it") }
 
     /**
      * Put [plan] into [library]: files copied under `<root>/<plan name>/` (unless [inPlace], for a

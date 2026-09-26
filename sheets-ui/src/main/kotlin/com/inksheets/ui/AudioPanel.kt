@@ -282,6 +282,18 @@ private fun clock(ms: Long): String {
 @Composable
 private fun AudioFilePicker(state: SheetsState, song: Song, onChosen: (String) -> Unit, onDismiss: () -> Unit) {
     val root = state.root ?: return
+    // The system's picker: one already in the music folder is paired, one from anywhere else is
+    // copied in first.
+    NativePickers.file?.let { pick ->
+        NativeChoice(pick = { pick("Choose a recording", root, AUDIO_EXTENSIONS) }) { f ->
+            when {
+                f == null -> onDismiss()
+                f.isInside(root) -> state.relative(f)?.let(onChosen) ?: onDismiss()
+                else -> runCatching { importRecording(root, song, f) }.getOrNull()?.let { state.relative(it) }?.let(onChosen) ?: onDismiss()
+            }
+        }
+        return
+    }
     var importing by remember { mutableStateOf(false) }
     var failed by remember { mutableStateOf<String?>(null) }
     if (importing) {

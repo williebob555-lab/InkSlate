@@ -78,6 +78,29 @@ class BulkImportTest {
     }
 
     @Test
+    fun `names Windows refuses are made ones it takes, and the import carries on`() {
+        val zip = tmp.newFile("PEP BAND.zip")
+        val odd = "PEP BAND/Music/*Student Arrangements/Replay (Henry)/replay-Alto_Saxophone.pdf"
+        ZipOutputStream(zip.outputStream()).use { out ->
+            for (name in listOf(odd, "PEP BAND/Music/Hey: Baby?/Trumpet.pdf", "PEP BAND/CON/Tuba.pdf")) {
+                out.putNextEntry(ZipEntry(name)); out.write(name.toByteArray()); out.closeEntry()
+            }
+        }
+        val source = BulkImport.ZipSource(zip)
+        assertEquals(
+            listOf(
+                "PEP BAND/Music/Student Arrangements/Replay (Henry)/replay-Alto_Saxophone.pdf",
+                "PEP BAND/Music/Hey Baby/Trumpet.pdf",
+                "PEP BAND/_CON/Tuba.pdf"
+            ),
+            source.list()
+        )
+        val staging = tmp.newFolder("staging")
+        source.list().forEach { source.copy(it, File(staging, it)) }
+        assertEquals(odd, File(staging, source.list().first()).readText())
+    }
+
+    @Test
     fun `a song already in the library gains the new parts`() {
         val root = tmp.newFolder("music2")
         val library = Library(LibraryLog(root, "me"))

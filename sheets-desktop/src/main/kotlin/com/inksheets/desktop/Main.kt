@@ -29,5 +29,14 @@ fun main() = runAs("InkSheets") {
     AppFlavor.onHomeShown = { home -> state.homeInFront = home }
     AppFlavor.onSaveTabs = { files -> state.savingTabs = files }
     AppFlavor.onFilesDropped = { files -> state.offer(files) }
+    // Windows' own pickers - search, filters, Quick access - rather than a list of files.
+    if (com.inkslate.desktop.WindowsFileDialog.available) {
+        com.inksheets.ui.NativePickers.file = { title, start, extensions ->
+            val types = if (extensions.isEmpty()) listOf("All files" to "*.*")
+            else listOf(extensions.joinToString(", ") { it.uppercase() } to extensions.joinToString(";") { "*.$it" }, "All files" to "*.*")
+            com.inkslate.desktop.WindowsFileDialog.files(title, start, types).firstOrNull()
+        }
+        com.inksheets.ui.NativePickers.folder = { title, start -> com.inkslate.desktop.WindowsFileDialog.folder(title, start) }
+    }
     AppFlavor.pagesActions = { path, pages, close -> com.inksheets.ui.MusicPageActions(state, path, pages, close) }
 }

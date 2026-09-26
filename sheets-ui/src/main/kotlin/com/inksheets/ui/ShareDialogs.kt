@@ -55,6 +55,25 @@ internal fun FilePickerDialog(
     folderLabel: String? = null,
     onFolder: ((File) -> Unit)? = null
 ) {
+    // The system's own picker, where there is one worth using. Inside a folder that must hold the
+    // file, what is chosen elsewhere is left to the caller's other way ([extra]) - so there, the
+    // list below.
+    NativePickers.file?.takeIf { within == null }?.let { pick ->
+        // A download unpacked to a folder is chosen by any file in it.
+        val any = onFolder != null
+        NativeChoice(
+            pick = { pick(if (any) "$title - or any file in the unpacked folder" else title, start, if (any) emptySet() else extensions) },
+            onResult = { f ->
+                when {
+                    f == null -> onDismiss()
+                    f.extension.lowercase() in extensions -> onChosen(f)
+                    onFolder != null -> f.parentFile?.let(onFolder) ?: onDismiss()
+                    else -> onChosen(f)
+                }
+            }
+        )
+        return
+    }
     var at by remember { mutableStateOf(start.takeIf { it.isDirectory } ?: File(System.getProperty("user.home"))) }
     val entries = remember(at) {
         at.listFiles { f -> !f.name.startsWith(".") && (f.isDirectory || f.extension.lowercase() in extensions) }

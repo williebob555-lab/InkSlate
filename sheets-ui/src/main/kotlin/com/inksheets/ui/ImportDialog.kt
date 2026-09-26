@@ -161,6 +161,13 @@ internal fun FolderPickerDialog(
     within: File? = null,
     confirmLabel: String = "Use this folder"
 ) {
+    NativePickers.folder?.let { pick ->
+        NativeChoice(
+            pick = { pick(title, start) },
+            onResult = { f -> if (f != null && (within == null || f.isInside(within))) onChosen(f) else onDismiss() }
+        )
+        return
+    }
     var at by remember { mutableStateOf(start.takeIf { it.isDirectory } ?: File(System.getProperty("user.home"))) }
     val children = remember(at) {
         at.listFiles { f -> f.isDirectory && !f.name.startsWith(".") }.orEmpty().sortedBy { it.name.lowercase() }

@@ -174,6 +174,18 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.ClipboardQr.writePng(width, height, argb, to)
 
     override fun pickFiles(onResult: (List<File>) -> Unit) {
+        if (com.inkslate.desktop.WindowsFileDialog.available) {
+            val music = (com.inksheets.core.LibraryScan.MUSIC + com.inksheets.core.LibraryScan.SOUND + "zip")
+            Thread({
+                val files = com.inkslate.desktop.WindowsFileDialog.files(
+                    "Add music", downloadsFolder,
+                    listOf("Music, recordings and zips" to music.joinToString(";") { "*.$it" }, "All files" to "*.*"),
+                    many = true
+                )
+                onMain { onResult(files) }
+            }, "add-music").apply { isDaemon = true; start() }
+            return
+        }
         val dialog = java.awt.FileDialog(null as java.awt.Frame?, "Add music", java.awt.FileDialog.LOAD).apply {
             isMultipleMode = true
             directory = downloadsFolder.absolutePath
