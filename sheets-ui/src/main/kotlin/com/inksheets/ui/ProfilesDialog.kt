@@ -53,8 +53,11 @@ internal fun ProfilesDialog(state: SheetsState, onClose: () -> Unit) {
             TextButton(onClick = onClose) { Text("Done") }
         }
     ) {
+        var query by remember { mutableStateOf("") }
+        Column {
+        ListSearch(profiles.size, query, { query = it })
         LazyColumn(Modifier.heightIn(max = 420.dp)) {
-            items(profiles, key = { it.id }) { p ->
+            items(profiles.filter { matches(query, it.name) }, key = { it.id }) { p ->
                 ListRow(
                     icon = {},
                     title = p.name,
@@ -69,6 +72,7 @@ internal fun ProfilesDialog(state: SheetsState, onClose: () -> Unit) {
                     )
                 )
             }
+        }
         }
     }
 }
@@ -103,8 +107,10 @@ private fun ProfileEditor(profile: InstrumentProfile, onSave: (InstrumentProfile
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 6.dp)
             )
+            var query by remember { mutableStateOf("") }
+            ListSearch(Instruments.all.size, query, { query = it }, "Find an instrument")
             LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                items(Instruments.all, key = { it.id }) { inst ->
+                items(Instruments.all.filter { matches(query, it) }, key = { it.id }) { inst ->
                     val at = chosen.indexOfFirst { com.inksheets.core.PartChoice.seat(it).first == inst.id }
                     Column {
                         Row(

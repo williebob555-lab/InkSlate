@@ -56,7 +56,7 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
     // The instruments with parts in the library, to pick from - not every instrument there is.
     val present = remember(state.version) {
         state.library?.songs.orEmpty().flatMap { s -> s.parts.mapNotNull { it.instrument } }.distinct()
-            .mapNotNull { Instruments.byId[it] }.sortedBy { it.name }
+            .let { have -> Instruments.all.filter { it.id in have } }
     }
     fun send(what: String, cover: Boolean = urgent) {
         if (what.isBlank()) return
@@ -121,9 +121,12 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
             }
         }
         Text("To", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp))
+        var query by remember { mutableStateOf("") }
+        ListSearch(present.size, query, { query = it }, "Find an instrument")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FilterChip(selected = only.isEmpty(), onClick = { only.clear() }, label = { Text("Everyone") })
-            for (inst in present) {
+            // Chosen ones stay in sight whatever is searched for.
+            for (inst in present.filter { it.id in only || matches(query, it) }) {
                 FilterChip(
                     selected = inst.id in only,
                     onClick = { if (inst.id in only) only.remove(inst.id) else only.add(inst.id) },

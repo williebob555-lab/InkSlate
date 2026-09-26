@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Checkbox
@@ -112,8 +113,10 @@ internal fun IncomingDialog(state: SheetsState) {
                 }
             }
             HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            var query by remember { mutableStateOf("") }
+            ListSearch(files.size, query, { query = it }, "Find a file")
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                itemsIndexed(files) { i, f ->
+                items(files.withIndex().filter { (_, f) -> matches(query, f.name) }) { (i, f) ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         val instrument = planned[i].instrument?.let { Instruments.byId[it]?.name }?.let { n -> planned[i].chair?.let { "$n $it" } ?: n } ?: "instrument to be read"
                         Text(f.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -523,7 +523,7 @@ internal fun SongRow(
             if (missing) {
                 Text("A file is not on this device", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
-            val instruments = song.instruments.mapNotNull { Instruments.byId[it]?.name }.sorted()
+            val instruments = Instruments.all.filter { it.id in song.instruments }.map { it.name }
             if (instruments.isNotEmpty() || unsure) {
                 Text(
                     (instruments + if (unsure) listOf("parts not yet named") else emptyList()).joinToString(", "),

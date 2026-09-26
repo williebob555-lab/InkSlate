@@ -278,7 +278,10 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         )
         val names = song.parts.map { partName(it) }
+        var query by remember { mutableStateOf("") }
+        ListSearch(song.parts.size, query, { query = it }, "Find a part", Modifier.padding(horizontal = 8.dp))
         song.parts.forEachIndexed { i, p ->
+            if (!matches(query, names[i], p.file.substringAfterLast('/'))) return@forEachIndexed
             // Two parts for one instrument are told apart by their file.
             val name = if (names.count { it == names[i] } > 1) names[i] + " - " + p.file.substringAfterLast('/').substringBeforeLast('.') else names[i]
             DropdownMenuItem(
@@ -433,12 +436,14 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
             if (rest.isNotEmpty()) {
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 Text("Add a button", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                var query by remember { mutableStateOf("") }
+                ListSearch(rest.size, query, { query = it }, "Find a button")
                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                 androidx.compose.foundation.layout.FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.padding(top = 4.dp)
                 ) {
-                    rest.forEach { action ->
+                    rest.filter { matches(query, it.label, shortName(it, false)) }.forEach { action ->
                         AssistChip(
                             onClick = { state.setStripActions(order + action) },
                             label = { Text(action.label) },

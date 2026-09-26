@@ -116,8 +116,10 @@ internal fun ImportDialog(state: SheetsState, onClose: () -> Unit) {
         } else if (songs.isEmpty()) {
             Text("Everything in that folder is already in the library.")
         } else {
+            var query by remember { mutableStateOf("") }
+            ListSearch(songs.size, query, { query = it }, "Find a song")
             LazyColumn(Modifier.heightIn(max = 480.dp)) {
-                items(songs, key = { it.title }) { s ->
+                items(songs.filter { matches(query, it.title) }, key = { it.title }) { s ->
                     Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 4.dp)) {
                         Checkbox(
                             checked = s.title !in skipped,
@@ -189,8 +191,10 @@ internal fun FolderPickerDialog(
                 }
                 Text(at.absolutePath, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            var query by remember(at) { mutableStateOf("") }
+            ListSearch(children.size, query, { query = it }, "Find a folder")
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                items(children, key = { it.absolutePath }) { dir ->
+                items(children.filter { matches(query, it.name) }, key = { it.absolutePath }) { dir ->
                     Row(
                         Modifier.fillMaxWidth().clickable { at = dir }.padding(vertical = 8.dp, horizontal = 8.dp),
                         verticalAlignment = Alignment.CenterVertically

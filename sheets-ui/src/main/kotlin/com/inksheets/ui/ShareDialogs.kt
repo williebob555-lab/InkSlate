@@ -92,8 +92,10 @@ internal fun FilePickerDialog(
                 }
                 Text(at.absolutePath, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            var query by remember(at) { mutableStateOf("") }
+            ListSearch(entries.size, query, { query = it }, "Find a file")
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                items(entries, key = { it.path }) { f ->
+                items(entries.filter { matches(query, it.name) }, key = { it.path }) { f ->
                     Row(
                         Modifier.fillMaxWidth().clickable { if (f.isDirectory) at = f else onChosen(f) }.padding(8.dp),
                         verticalAlignment = Alignment.CenterVertically

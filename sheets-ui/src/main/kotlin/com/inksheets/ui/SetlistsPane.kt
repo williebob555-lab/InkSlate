@@ -81,8 +81,10 @@ internal fun SetlistsPane(state: SheetsState) {
     }
 
     val path = remember(version, folderId) { library.pathTo(folderId) }
-    val folders = remember(version, folderId) { library.foldersIn(folderId) }
-    val setlists = remember(version, folderId) { library.setlistsIn(folderId) }
+    var query by remember { mutableStateOf("") }
+    // Searching looks in every folder: the setlists found, wherever they are.
+    val folders = remember(version, folderId, query) { if (query.isBlank()) library.foldersIn(folderId) else library.folders.filter { matches(query, it.name) } }
+    val setlists = remember(version, folderId, query) { if (query.isBlank()) library.setlistsIn(folderId) else library.setlists.filter { matches(query, it.name) } }
 
     // Dragging a setlist or folder by its handle: dropped on a folder it goes in, dropped on the
     // path at the top ("Setlists", or a folder above this one) it goes back out to there.
@@ -162,6 +164,7 @@ internal fun SetlistsPane(state: SheetsState) {
             AddButton("New setlist") { naming = Naming.NewSetlist(folderId) }
         }
         HorizontalDivider()
+        ListSearch(library.setlists.size + library.folders.size, query, { query = it }, "Find a setlist", Modifier.padding(horizontal = 8.dp))
 
         if (folders.isEmpty() && setlists.isEmpty()) {
             Text(
@@ -461,8 +464,11 @@ internal fun SetlistChooserDialog(state: SheetsState, onChosen: (Setlist) -> Uni
             TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     ) {
+        var query by remember { mutableStateOf("") }
+        Column {
+        ListSearch(library.setlists.size, query, { query = it }, "Find a setlist")
         LazyColumn(Modifier.heightIn(max = 420.dp)) {
-            items(library.setlists, key = { it.id }) { s ->
+            items(library.setlists.filter { matches(query, it.name, library.pathTo(it.folderId).joinToString(" ") { f -> f.name }) }, key = { it.id }) { s ->
                 val where = library.pathTo(s.folderId).joinToString(" › ") { it.name }
                 ListRow(
                     icon = { Icon(Icons.AutoMirrored.Filled.QueueMusic, null) },
@@ -471,6 +477,7 @@ internal fun SetlistChooserDialog(state: SheetsState, onChosen: (Setlist) -> Uni
                     onClick = { onChosen(s) }
                 )
             }
+        }
         }
     }
     if (creating) {

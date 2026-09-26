@@ -86,37 +86,32 @@ object Instruments {
     /** A name as it reads once printed words are normalised: "Mello." becomes "mellophone". */
     private fun spoken(name: String): String = InstrumentReader.normalise(name).joinToString(" ")
 
-    /** Built in: the instruments InkSheets knows without being told. */
+    /** Built in: the instruments InkSheets knows without being told, in band score order. */
     val builtIn: List<Instrument> = listOf(
-        Instrument("trombone", "Trombone", listOf("trombone", "tenor trombone")),
-        Instrument("bass-trombone", "Bass Trombone", listOf("bass trombone")),
-        Instrument("baritone-bc", "Baritone B.C.", listOf("baritone", "baritone bc", "baritone horn", "baritone horn bc")),
-        Instrument("baritone-tc", "Baritone T.C.", listOf("baritone tc", "baritone horn tc"), transpose = 14, clef = "treble"),
-        Instrument("euphonium", "Euphonium", listOf("euphonium", "euphonium bc", "tenor tuba"), sameAs = listOf("baritone-bc")),
-        Instrument("euphonium-tc", "Euphonium T.C.", listOf("euphonium tc"), transpose = 14, clef = "treble", sameAs = listOf("baritone-tc")),
-        Instrument("tuba", "Tuba", listOf("tuba", "bb tuba", "eb tuba", "sousaphone")),
-        Instrument("bass-guitar", "Bass Guitar", listOf("bass guitar", "electric bass", "e bass", "bass", "bass gtr")),
-        Instrument("string-bass", "String Bass", listOf("string bass", "double bass", "upright bass", "contrabass")),
-        Instrument("horn", "Horn in F", listOf("horn", "french horn", "horn in f", "f horn"), transpose = 7, clef = "treble"),
-        Instrument("mellophone", "Mellophone", listOf("mellophone", "mellophone in f"), transpose = 7, clef = "treble", sameAs = listOf("horn")),
-        Instrument("trumpet", "Trumpet", listOf("trumpet", "bb trumpet", "cornet", "flugelhorn"), transpose = 2, clef = "treble"),
-        Instrument("flute", "Flute", listOf("flute"), clef = "treble"),
         Instrument("piccolo", "Piccolo", listOf("piccolo"), transpose = -12, clef = "treble"),
+        Instrument("flute", "Flute", listOf("flute"), clef = "treble"),
         Instrument("oboe", "Oboe", listOf("oboe"), clef = "treble"),
         Instrument("english-horn", "English Horn", listOf("english horn", "cor anglais"), transpose = 7, clef = "treble"),
         Instrument("bassoon", "Bassoon", listOf("bassoon")),
         Instrument("clarinet", "Clarinet", listOf("clarinet", "bb clarinet"), transpose = 2, clef = "treble"),
         Instrument("alto-clarinet", "Alto Clarinet", listOf("alto clarinet", "eb alto clarinet"), transpose = 9, clef = "treble"),
+        Instrument("bass-clarinet", "Bass Clarinet", listOf("bass clarinet"), transpose = 14, clef = "treble"),
         Instrument("contra-clarinet", "Contrabass Clarinet", listOf("contrabass clarinet", "contra alto clarinet", "contra clarinet"), transpose = 26, clef = "treble"),
         Instrument("soprano-sax", "Soprano Saxophone", listOf("soprano saxophone", "soprano sax"), transpose = 2, clef = "treble"),
-        Instrument("bass-clarinet", "Bass Clarinet", listOf("bass clarinet"), transpose = 14, clef = "treble"),
         Instrument("alto-sax", "Alto Saxophone", listOf("alto saxophone", "alto sax", "eb alto saxophone"), transpose = 9, clef = "treble"),
         Instrument("tenor-sax", "Tenor Saxophone", listOf("tenor saxophone", "tenor sax"), transpose = 14, clef = "treble"),
         Instrument("bari-sax", "Baritone Saxophone", listOf("baritone saxophone", "baritone sax", "bari sax", "bari saxophone"), transpose = 21, clef = "treble"),
-        Instrument("guitar", "Guitar", listOf("guitar", "electric guitar", "acoustic guitar"), transpose = 12, clef = "treble"),
-        Instrument("piano", "Piano", listOf("piano", "keyboard", "keys")),
-        Instrument("drums", "Drum Set", listOf("drums", "drum set", "drumset", "drum kit")),
-        Instrument("drumline", "Drum Line", listOf("drum line", "drumline", "battery", "marching percussion", "drum cadence"), clef = "percussion"),
+        Instrument("trumpet", "Trumpet", listOf("trumpet", "bb trumpet", "cornet", "flugelhorn"), transpose = 2, clef = "treble"),
+        Instrument("horn", "Horn in F", listOf("horn", "french horn", "horn in f", "f horn"), transpose = 7, clef = "treble"),
+        Instrument("mellophone", "Mellophone", listOf("mellophone", "mellophone in f"), transpose = 7, clef = "treble", sameAs = listOf("horn")),
+        Instrument("trombone", "Trombone", listOf("trombone", "tenor trombone")),
+        Instrument("bass-trombone", "Bass Trombone", listOf("bass trombone")),
+        Instrument("baritone-tc", "Baritone T.C.", listOf("baritone tc", "baritone horn tc"), transpose = 14, clef = "treble"),
+        Instrument("baritone-bc", "Baritone B.C.", listOf("baritone", "baritone bc", "baritone horn", "baritone horn bc")),
+        Instrument("euphonium-tc", "Euphonium T.C.", listOf("euphonium tc"), transpose = 14, clef = "treble", sameAs = listOf("baritone-tc")),
+        Instrument("euphonium", "Euphonium", listOf("euphonium", "euphonium bc", "tenor tuba"), sameAs = listOf("baritone-bc")),
+        Instrument("tuba", "Tuba", listOf("tuba", "bb tuba", "eb tuba", "sousaphone")),
+        Instrument("string-bass", "String Bass", listOf("string bass", "double bass", "upright bass", "contrabass")),
         Instrument(
             "percussion", "Percussion",
             listOf(
@@ -125,6 +120,11 @@ object Instruments {
                 "auxiliary percussion", "crash cymbals", "suspended cymbal", "tambourine", "triangle"
             )
         ),
+        Instrument("drumline", "Drum Line", listOf("drum line", "drumline", "battery", "marching percussion", "drum cadence"), clef = "percussion"),
+        Instrument("drums", "Drum Set", listOf("drums", "drum set", "drumset", "drum kit")),
+        Instrument("piano", "Piano", listOf("piano", "keyboard", "keys")),
+        Instrument("guitar", "Guitar", listOf("guitar", "electric guitar", "acoustic guitar"), transpose = 12, clef = "treble"),
+        Instrument("bass-guitar", "Bass Guitar", listOf("bass guitar", "electric bass", "e bass", "bass", "bass gtr")),
         Instrument("violin", "Violin", listOf("violin"), clef = "treble"),
         Instrument("viola", "Viola", listOf("viola"), clef = "alto"),
         Instrument("cello", "Cello", listOf("cello", "violoncello")),

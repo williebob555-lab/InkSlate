@@ -34,7 +34,7 @@ import com.inksheets.core.Instruments
 internal fun InstrumentListDialog(state: SheetsState, onClose: () -> Unit) {
     var editing by remember { mutableStateOf<Instrument?>(null) }
     val taught = remember(state.version) { state.library?.instruments().orEmpty().associateBy { it.id } }
-    val all = remember(state.version) { Instruments.all.sortedBy { it.name.lowercase() } }
+    val all = remember(state.version) { Instruments.all }
 
     editing?.let { inst ->
         InstrumentEditor(
@@ -58,8 +58,10 @@ internal fun InstrumentListDialog(state: SheetsState, onClose: () -> Unit) {
         Column {
             ReassignRow(state)
             HorizontalDivider(Modifier.padding(vertical = 6.dp))
+            var query by remember { mutableStateOf("") }
+            ListSearch(all.size, query, { query = it }, "Find an instrument")
             LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                items(all, key = { it.id }) { inst ->
+                items(all.filter { matches(query, it) }, key = { it.id }) { inst ->
                     val own = inst.id !in Instruments.builtIn.map { it.id }
                     ListRow(
                         icon = {},
@@ -177,8 +179,11 @@ private fun InstrumentEditor(state: SheetsState, instrument: Instrument, taught:
                 SheetDialog(title = "Reads the same parts as", onDismiss = { linking = false }, buttons = {
                     TextButton(onClick = { linking = false }) { Text("Done") }
                 }) {
+                    var query by remember { mutableStateOf("") }
+                    Column {
+                    ListSearch(Instruments.all.size, query, { query = it }, "Find an instrument")
                     LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                        items(Instruments.all.filter { it.id != instrument.id }, key = { it.id }) { other ->
+                        items(Instruments.all.filter { it.id != instrument.id && matches(query, it) }, key = { it.id }) { other ->
                             val locked = other.id in fixed
                             val on = locked || other.id in sameAs
                             Row(
@@ -189,6 +194,7 @@ private fun InstrumentEditor(state: SheetsState, instrument: Instrument, taught:
                                 Text(other.name, modifier = Modifier.padding(start = 8.dp))
                             }
                         }
+                    }
                     }
                 }
             }

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Checkbox
@@ -96,8 +97,12 @@ internal fun ImportReview(state: SheetsState, groups: SnapshotStateList<ReviewGr
             )
         }
         HorizontalDivider(Modifier.padding(vertical = 6.dp))
+        var query by remember { mutableStateOf("") }
+        ListSearch(groups.size, query, { query = it }, "Find a song")
+        // Found ones keep their place in the whole list, so ticking one ticks the right one.
+        val found = groups.withIndex().filter { (_, g) -> matches(query, g.title, *g.items.map { it.label }.toTypedArray()) }
         LazyColumn(Modifier.heightIn(max = 400.dp)) {
-            itemsIndexed(groups, key = { i, g -> g.items.first().key + "#" + i }) { i, g ->
+            items(found, key = { (i, g) -> g.items.first().key + "#" + i }) { (i, g) ->
                 Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(vertical = 2.dp)) {
                     Checkbox(checked = i in picked, onCheckedChange = { on -> if (on) picked += i else picked -= i })
                     Column(Modifier.weight(1f).padding(top = 4.dp)) {

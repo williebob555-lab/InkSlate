@@ -252,10 +252,12 @@ internal fun InstrumentPicker(current: String?, onChosen: (String?) -> Unit) {
             Text(current?.let { Instruments.byId[it]?.name } ?: "Which instrument?")
             Icon(Icons.Default.ArrowDropDown, null)
         }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(text = { Text("Not known") }, onClick = { open = false; onChosen(null) })
-            Instruments.all.forEach { inst ->
-                DropdownMenuItem(text = { Text(inst.name) }, onClick = { open = false; onChosen(inst.id) })
+        var query by remember { mutableStateOf("") }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false; query = "" }) {
+            ListSearch(Instruments.all.size, query, { query = it }, "Find an instrument", Modifier.padding(horizontal = 8.dp))
+            if (query.isBlank()) DropdownMenuItem(text = { Text("Not known") }, onClick = { open = false; onChosen(null) })
+            Instruments.all.filter { matches(query, it) }.forEach { inst ->
+                DropdownMenuItem(text = { Text(inst.name) }, onClick = { open = false; query = ""; onChosen(inst.id) })
             }
         }
     }
