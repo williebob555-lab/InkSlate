@@ -501,6 +501,9 @@ internal fun SongRow(
     onColour: (() -> Unit)? = null,
     onMerge: (() -> Unit)? = null,
     onLook: (() -> Unit)? = null,
+    /** In a setlist: "Colour..." is the song's colour there, and this its colour everywhere. */
+    colourLabel: String = "Colour...",
+    onColourEverywhere: (() -> Unit)? = null,
     missing: Boolean = false,
     trailing: (@Composable () -> Unit)? = null
 ) {
@@ -548,7 +551,8 @@ internal fun SongRow(
                             onClick = { menu = false; it() }
                         )
                     }
-                    onColour?.let { DropdownMenuItem(text = { Text("Colour...") }, onClick = { menu = false; it() }) }
+                    onColour?.let { DropdownMenuItem(text = { Text(colourLabel) }, onClick = { menu = false; it() }) }
+                    onColourEverywhere?.let { DropdownMenuItem(text = { Text("Colour everywhere...") }, onClick = { menu = false; it() }) }
                     onMerge?.let { DropdownMenuItem(text = { Text("Put into another song...") }, onClick = { menu = false; it() }) }
                     onDelete?.let {
                         var confirm by remember { mutableStateOf(false) }

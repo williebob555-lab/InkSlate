@@ -329,6 +329,12 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
     val library = state.library ?: return
     var adding by remember { mutableStateOf(false) }
     var colouringEntry by remember { mutableStateOf<com.inksheets.core.SetlistEntry?>(null) }
+    // Everything the song list offers for a song, here too.
+    var editing by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
+    var merging by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
+    var recordingsFor by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
+    var addingElsewhere by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
+    var colouringSong by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
     val version = state.version
     val songs = remember(version) { library.songs.associateBy { it.id } }
 
@@ -427,6 +433,14 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
                             onColour = { colouringEntry = entry },
                             onOpen = { state.playSetlist(setlist.id, setlist.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0)) },
+                            onLook = { state.partFor(song)?.let { state.peeking = song to it } },
+                            onEdit = { editing = song },
+                            onAddToSetlist = { addingElsewhere = song },
+                            onRecordings = { recordingsFor = song },
+                            onMerge = { merging = song },
+                            onDelete = { state.removeSong(song) },
+                            colourLabel = "Colour in this setlist...",
+                            onColourEverywhere = { colouringSong = song },
                             trailing = {
                                 Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
                                 IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {
@@ -441,6 +455,25 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         }
     }
 
+    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    colouringSong?.let { song ->
+        ColourDialog("Colour for ${song.title}", song.color, onChosen = { state.setSongColor(song.id, it); colouringSong = null }, onDismiss = { colouringSong = null })
+    }
+    merging?.let { song ->
+        PickSongDialog(
+            state, title = "Put \u201C${song.title}\u201D into which song?", exclude = song.id, near = song.title,
+            onChosen = { into -> state.mergeSongs(song.id, into.id); merging = null },
+            onDismiss = { merging = null }
+        )
+    }
+    recordingsFor?.let { song -> AudioDialog(state, song, onClose = { recordingsFor = null }) }
+    addingElsewhere?.let { song ->
+        SetlistChooserDialog(
+            state,
+            onChosen = { other -> state.change { addToSetlist(other.id, song.id) }; addingElsewhere = null },
+            onDismiss = { addingElsewhere = null }
+        )
+    }
     colouringEntry?.let { e ->
         ColourDialog(
             "Colour in “${setlist.name}”", e.color,
