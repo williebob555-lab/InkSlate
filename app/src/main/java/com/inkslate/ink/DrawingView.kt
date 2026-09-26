@@ -880,6 +880,12 @@ class DrawingView @JvmOverloads constructor(
         set(value) {
             if (field == value) return
             field = value
+            if (value) slots.forEach { slot ->
+                val bmp = slot.bitmap?.takeIf { !it.isRecycled }
+                if (slot.cropRect == null && bmp != null) {
+                    slot.cropRect = runCatching { detectContentBox(bmp, slot.width, slot.height) }.getOrNull()
+                }
+            }
             slots.forEach { it.cropEnabled = value }
             relayout()
             fitWidth()
@@ -1152,6 +1158,9 @@ class DrawingView @JvmOverloads constructor(
         if (anim == null) {
             if (dragOffset != 0f) {
                 canvas.save(); canvas.translate(dragOffset, 0f); super.draw(canvas); canvas.restore()
+                // The page it is being pushed towards comes in beside it, as a real page would.
+                if (dragOffset < 0f) drawNeighbour(canvas, currentPage + 1, dragOffset + width)
+                else drawNeighbour(canvas, currentPage - 1, dragOffset - width)
             } else {
                 super.draw(canvas)
             }
@@ -1186,6 +1195,38 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private val turnPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val neighbourMatrix = Matrix()
+    private val neighbourFill = Paint()
+
+    /**
+     * Page [index] as it will look once turned to - fitted the same way, with its markings -
+     * drawn [x] across, while a finger drags the page beside it. Past either end, the bare
+     * backdrop.
+     */
+    private fun drawNeighbour(canvas: android.graphics.Canvas, index: Int, x: Float) {
+        canvas.save()
+        canvas.translate(x, 0f)
+        canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
+        canvas.drawColor(pageFilter.backdropColor)
+        val slot = slots.getOrNull(index)
+        if (slot != null && slot.visibleWidth > 0f && slot.visibleHeight > 0f) {
+            fitInto(RectF(0f, 0f, slot.visibleWidth, slot.visibleHeight), neighbourMatrix)
+            canvas.concat(neighbourMatrix)
+            canvas.translate(-slot.cropLeft, -slot.cropTop)
+            val pageRect = RectF(0f, 0f, slot.width, slot.height)
+            canvas.clipRect(slot.cropLeft, slot.cropTop, slot.cropLeft + slot.visibleWidth, slot.cropTop + slot.visibleHeight)
+            neighbourFill.color = Color.WHITE
+            neighbourFill.colorFilter = pageFilter.filter
+            canvas.drawRect(pageRect, neighbourFill)
+            slot.bitmap?.takeIf { !it.isRecycled }?.let { canvas.drawBitmap(it, null, pageRect, bitmapPaint) }
+            canvas.drawRect(pageRect, pageEdge)
+            val onPage = strokesByPage[index].orEmpty()
+            StrokeRasteriser.colorFilter = pageFilter.filter
+            for (st in onPage) if (st.isHighlighter) StrokeRasteriser.draw(canvas, st)
+            for (st in onPage) if (!st.isHighlighter) StrokeRasteriser.draw(canvas, st)
+        }
+        canvas.restore()
+    }
     private var lastY = 0f
     private var gesturing = false
 
@@ -1584,7 +1625,8 @@ class DrawingView @JvmOverloads constructor(
         slots.getOrNull(index)?.let { slot ->
             if (slot.bitmap !== bitmap) slot.bitmap?.recycle()
             slot.bitmap = bitmap
-            if (bitmap != null && slot.cropRect == null) {
+            // Looking for the margins reads the picture, on the main thread: only when cropping.
+            if (bitmap != null && slot.cropRect == null && cropMargins) {
                 slot.cropRect = runCatching {
                     detectContentBox(bitmap, slot.width, slot.height)
                 }.getOrNull()
@@ -2417,30 +2459,34 @@ class DrawingView @JvmOverloads constructor(
         reportVisiblePages()
     }
 
-    fun fitToScreen() {
-        if (width == 0 || height == 0 || slots.isEmpty()) return
-        val b = docBounds()
+    /**
+     * The whole of [b] fitted to the view, centred, into [out]; the scale is returned. Music keeps
+     * a lane clear for the strip down its side - always the same room whatever the page's shape,
+     * so every page of every song sits in the same place and flipping through never jumps.
+     */
+    private fun fitInto(b: RectF, out: Matrix): Float {
         var w = width.toFloat()
-        var h = height.toFloat()
-        var s = min((w - 24f) / b.width(), (h - 24f) / b.height())
-        // Music keeps a lane clear for the action strip - down the side in landscape, along the
-        // bottom in portrait - unless the margin the fit leaves is already that wide.
+        val h = height.toFloat()
         val lane = stripLaneDp * resources.displayMetrics.density
         var laneShift = 0f
         if (fitWholePage && lane > 0f) {
-            // Always down a side, and always the same room kept whatever the page's shape: every
-            // page of every song then sits in the same place, so flipping through never jumps.
             w -= lane
             if (stripOnLeft) laneShift = lane
-            s = min((w - 24f) / b.width(), (h - 24f) / b.height())
         }
-        minScale = s * 0.35f
-        fittedScale = s
-        pageToView.reset(); pageToView.postScale(s, s)
-        pageToView.postTranslate(
+        val s = min((w - 24f) / b.width(), (h - 24f) / b.height())
+        out.reset(); out.postScale(s, s)
+        out.postTranslate(
             laneShift + (w - b.width() * s) / 2f - b.left * s,
             (h - b.height() * s) / 2f - b.top * s
         )
+        return s
+    }
+
+    fun fitToScreen() {
+        if (width == 0 || height == 0 || slots.isEmpty()) return
+        val s = fitInto(docBounds(), pageToView)
+        minScale = s * 0.35f
+        fittedScale = s
         // no clamp here: fitting is an explicit request to centre
         syncInverse(); invalidate(); onTransformChanged?.invoke(); reportVisiblePages()
     }

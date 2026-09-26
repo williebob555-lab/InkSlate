@@ -306,7 +306,14 @@ fun EditorScreen(
     // proportional to how far someone might pinch in.
     val config = LocalConfiguration.current
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val renderWidthPx = remember(config.screenWidthDp, doc) {
+    val renderWidthPx = remember(config.screenWidthDp, config.screenHeightDp, doc) {
+        // Music is shown a whole page at a time, so a page is never wider on screen than the
+        // screen's longer side allows: rendered at that, a turn's picture is ready in about half
+        // the time and memory of twice the width.
+        if (com.inkslate.AppFlavor.musicView) {
+            val longer = with(density) { maxOf(config.screenWidthDp, config.screenHeightDp).dp.toPx() }
+            return@remember (longer * 0.8f).toInt().coerceIn(800, 2000)
+        }
         val base = with(density) { (config.screenWidthDp.dp.toPx() * 2f).toInt() }
         val pages = doc?.pageCount ?: 1
         // A thousand-page textbook is read, not written on at high zoom. Rendering every page at
@@ -553,6 +560,21 @@ fun EditorScreen(
         }
     }
 
+    // A song waiting in a set, not on screen yet: the page it opens on is drawn now, so turning
+    // to it shows it at once instead of after a moment of rendering.
+    var warmPage by remember { mutableStateOf<Pair<Int, android.graphics.Bitmap>?>(null) }
+    val onScreen = host.views.any { it.view != null }
+    LaunchedEffect(doc, onScreen) {
+        val d = doc ?: return@LaunchedEffect
+        if (!com.inkslate.AppFlavor.musicView || onScreen || warmPage != null) return@LaunchedEffect
+        val index = if (pendingCamera == null && pendingPage in 0 until d.pageCount) pendingPage else 0
+        val bmp = withContext(Dispatchers.IO) {
+            runCatching { d.source.renderPage(index, renderWidthPx) }.getOrNull()
+        } ?: return@LaunchedEffect
+        warmPage = index to bmp
+    }
+    DisposableEffect(Unit) { onDispose { warmPage?.second?.recycle(); warmPage = null } }
+
     // Declare the pages to each surface as soon as their geometry is known, and render what each
     // one shows. Per view, because two views of one document look at different pages - and each
     // surface holds pictures of only the pages it is showing.
@@ -605,6 +627,10 @@ fun EditorScreen(
                     "open",
                     "Declared ${pageDims.size} page(s) for ${d.file.name}, layout ${layout.name}"
                 )
+                warmPage?.let { (index, bmp) ->
+                    warmPage = null
+                    if (index == view.currentPage && !view.hasBitmap(index)) view.setPageBitmap(index, bmp) else bmp.recycle()
+                }
                 slot.wantedPages = listOf(view.currentPage)
             }
 
