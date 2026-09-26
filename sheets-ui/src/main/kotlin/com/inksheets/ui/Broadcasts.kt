@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
@@ -120,18 +122,40 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
                 )
             }
         }
-        Text("To", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 6.dp))
+        // Who it goes to: everyone, or picked instruments from a list that scrolls and searches.
+        var picking by remember { mutableStateOf(false) }
         var query by remember { mutableStateOf("") }
-        ListSearch(present.size, query, { query = it }, "Find an instrument")
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(selected = only.isEmpty(), onClick = { only.clear() }, label = { Text("Everyone") })
-            // Chosen ones stay in sight whatever is searched for.
-            for (inst in present.filter { it.id in only || matches(query, it) }) {
-                FilterChip(
-                    selected = inst.id in only,
-                    onClick = { if (inst.id in only) only.remove(inst.id) else only.add(inst.id) },
-                    label = { Text(inst.name) }
-                )
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+            androidx.compose.foundation.layout.Box {
+                androidx.compose.material3.OutlinedButton(onClick = { picking = true }) {
+                    Text(
+                        "To: " + if (only.isEmpty()) "Everyone" else only.mapNotNull { Instruments.byId[it]?.name }.joinToString(", "),
+                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 260.dp)
+                    )
+                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ArrowDropDown, null)
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = picking,
+                    onDismissRequest = { picking = false; query = "" },
+                    modifier = Modifier.heightIn(max = 420.dp)
+                ) {
+                    ListSearch(present.size, query, { query = it }, "Find an instrument", Modifier.padding(horizontal = 8.dp))
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Everyone") },
+                        leadingIcon = { androidx.compose.material3.RadioButton(selected = only.isEmpty(), onClick = null) },
+                        onClick = { only.clear(); picking = false; query = "" }
+                    )
+                    androidx.compose.material3.HorizontalDivider()
+                    for (inst in present.filter { matches(query, it) }) {
+                        androidx.compose.material3.DropdownMenuItem(
+                            text = { Text(inst.name) },
+                            leadingIcon = { androidx.compose.material3.Checkbox(checked = inst.id in only, onCheckedChange = null) },
+                            // Stays open, to tick several.
+                            onClick = { if (inst.id in only) only.remove(inst.id) else only.add(inst.id) }
+                        )
+                    }
+                }
             }
         }
     }

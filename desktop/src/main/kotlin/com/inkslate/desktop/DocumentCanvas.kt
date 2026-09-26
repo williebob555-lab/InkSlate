@@ -514,7 +514,7 @@ fun DocumentCanvas(
             // Where the drawing surface sits in the window, which is what lets a pointer reading
             // be carried out to the screen and compared with the cursor. See PointerDiagnostics.
             .onGloballyPositioned { PointerDiagnostics.canvasAt(it.positionInWindow()) }
-            .pointerInput(Unit) { awaitPointerEventScope { wheelLoop(viewport) { swipe } } }
+            .pointerInput(Unit) { awaitPointerEventScope { wheelLoop(viewport, { swipe }, { resting() }) } }
             // A finger flicked sideways turns the page. Only watched, never consumed: the finger
             // still moves the page as it goes, and the turn fits the new page afterwards.
             .pointerInput(Unit) {
@@ -525,8 +525,14 @@ fun DocumentCanvas(
                     var fitted = false
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
-                        val touches = event.changes.filter { it.type == PointerType.Touch }
+                        // A finger, or - on music with its tools away - the mouse, which then turns
+                        // pages rather than writing: click a half, or drag across. A pen still writes.
+                        val mouseTurns = resting() && swipe != null
+                        val touches = event.changes.filter { c ->
+                            c.type == PointerType.Touch || (mouseTurns && c.type == PointerType.Mouse && event.type != PointerEventType.Scroll)
+                        }
                         if (touches.isEmpty()) continue
+                        touches.filter { it.type == PointerType.Mouse }.forEach { it.consume() }
                         val down = touches.count { it.pressed }
                         if (start == null && down == 1 && touches.any { it.pressed && !it.previousPressed }) {
                             start = touches.first { it.pressed }.position
@@ -590,6 +596,9 @@ fun DocumentCanvas(
                         it.pressed && it.type == PointerType.Stylus
                     }
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
+
+                    // Music with its tools away: the mouse turns pages (see above), it does not write.
+                    if (down.type == PointerType.Mouse && resting() && swipe != null) return@awaitEachGesture
 
                     // Name what touched the screen, then ask the table what that does. Naming
                     // and deciding are separate on purpose: everything uncertain about a device
@@ -1184,8 +1193,12 @@ private suspend fun PointerInputScope.middleDragPan(viewport: Viewport, tools: T
  */
 private suspend fun AwaitPointerEventScope.wheelLoop(
     viewport: Viewport,
-    swipe: () -> ((Int) -> Unit)? = { null }
+    swipe: () -> ((Int) -> Unit)? = { null },
+    resting: () -> Boolean = { false }
 ) {
+    // A mouse wheel on music with its tools away turns pages: a notch down on, up back - and a
+    // quick spin turns one page, not five.
+    var wheelTurnedAt = 0L
     // A trackpad that has just spoken is still a trackpad a moment later, even on an event that
     // happens to look like a wheel's. Without this a two-finger drag zooms every so often, which
     // is worse than it never working.
@@ -1266,6 +1279,13 @@ private suspend fun AwaitPointerEventScope.wheelLoop(
                 )
             }
 
+            !trackpad && !ctrl && !shift && turn != null && resting() && notches != 0f -> {
+                if (now - wheelTurnedAt > WHEEL_TURN_GAP_MS) {
+                    wheelTurnedAt = now
+                    turn(if (notches > 0) 1 else -1)
+                }
+            }
+
             // Down the page, the direction a wheel usually means when it is not zooming.
             ctrl -> viewport.throwBy(
                 viewport.velocity.x * 0.4f,
@@ -1305,6 +1325,9 @@ private const val FITTED_SWIPE_SHARE = 0.15f
 /** Two fingers on a trackpad: this many notches sideways turn a page; this long still ends it. */
 private const val TRACKPAD_SWIPE_NOTCHES = 2.5f
 private const val SWIPE_PAUSE_MS = 250L
+
+/** Wheel notches this close together are one turn. */
+private const val WHEEL_TURN_GAP_MS = 350L
 
 /** A trackpad swipe back the other way this soon after a turn is the fingers settling, not a swipe. */
 private const val REVERSE_AFTER_MS = 120L
