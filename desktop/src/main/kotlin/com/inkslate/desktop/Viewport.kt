@@ -167,9 +167,8 @@ class Viewport {
     fun fitClear(box: Box, padding: Float, lane: Float, laneOnLeft: Boolean = false) {
         fit(box, padding)
         if (lane <= 0f || viewSize.width <= 0f || viewSize.height <= 0f) return
-        // The lane is always down a side: a strip along the bottom wraps into two rows.
-        val spare = (viewSize.width - box.width * scale) / 2f
-        if (spare >= lane) return
+        // The lane is always down a side, and always kept whatever the page's shape, so every
+        // page of every song sits in the same place and nothing jumps as you turn.
         val w = viewSize.width - lane
         val h = viewSize.height
         val s = min((w - padding * 2f) / box.width, (h - padding * 2f) / box.height).coerceIn(MIN_SCALE, MAX_SCALE)

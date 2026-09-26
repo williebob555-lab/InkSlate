@@ -1883,6 +1883,9 @@ fun EditorScreen(
                 DocumentCanvas(
                     source = src,
                     modifier = Modifier.graphicsLayer {
+                        // Music is never seen before it is in place: not a frame in the corner at
+                        // whatever size, then a snap to the middle.
+                        if (AppFlavor.musicView && !positionRestored) { alpha = 0f; return@graphicsLayer }
                         val p = turnAnim.value
                         if (p > 0f) {
                             if (AppFlavor.turnAnimation == "fade") {
