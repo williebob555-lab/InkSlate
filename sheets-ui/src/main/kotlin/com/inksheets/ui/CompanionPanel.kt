@@ -190,7 +190,7 @@ class Companion(private val state: SheetsState) {
     private fun announce(page: Int) {
         val l = leader ?: return
         val song = state.current ?: return
-        val part = PartChoice.partFor(song, state.profile)
+        val part = state.partFor(song)
         l.show(
             CompanionLink.Showing(
                 songId = song.id, title = song.title, page = page,
@@ -206,7 +206,7 @@ class Companion(private val state: SheetsState) {
         if (!shareInk || followers == 0 || state.homeInFront) return
         val path = state.currentPath ?: return
         val song = state.current ?: return
-        val part = PartChoice.partFor(song, state.profile) ?: return
+        val part = state.partFor(song) ?: return
         if (part.instrument == null) return
         val ink = Perform.inkOf?.invoke(path) ?: return
         var signature = ink.deleted.size.toLong() * 7919 + path.hashCode()
@@ -315,7 +315,7 @@ class Companion(private val state: SheetsState) {
             val song = CompanionLink.songFor(library, at) ?: return false
             if (state.homeInFront) return true
             if (state.current?.id != song.id) return true
-            val part = PartChoice.partFor(song, state.profile) ?: return false
+            val part = state.partFor(song) ?: return false
             val page = pageFor(at, song, part) ?: return false
             return state.pageShown.second > 0 && state.pageShown.first != page.coerceAtMost(state.pageShown.second - 1)
         }
@@ -331,7 +331,7 @@ class Companion(private val state: SheetsState) {
         val library = state.library ?: return
         val song = CompanionLink.songFor(library, showing)
         if (song == null) { missing = showing.title; return }
-        val part = PartChoice.partFor(song, state.profile)
+        val part = state.partFor(song)
         if (part == null) { missing = showing.title; return }
         // Where the library says, a quick look; a file that has moved means searching the whole
         // music folder, which is never done on the screen's own thread.
@@ -390,7 +390,7 @@ class Companion(private val state: SheetsState) {
         if (pendingInk.isEmpty() || state.homeInFront) return
         val song = state.current ?: return
         val share = pendingInk[song.id] ?: return
-        val part = PartChoice.partFor(song, state.profile) ?: return
+        val part = state.partFor(song) ?: return
         val file = state.fileOf(part.file)?.takeIf { it.isFile } ?: return
         if (state.currentPath != file.absolutePath) return
         if (!CompanionLink.samePart(share.instrument, share.partNo, share.pages, part, state.pageShown.second)) return

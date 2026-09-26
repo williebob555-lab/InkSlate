@@ -31,6 +31,9 @@ object AppFlavor {
     var openSet: ((parts: List<Pair<File, String>>, focus: Int) -> Unit)? = null
     var closeSet: (() -> Unit)? = null
 
+    /** The tab showing the first file shows the second instead, in the same place in the row. */
+    var swapTab: ((old: File, new: File) -> Unit)? = null
+
     /** Told when Home is pressed in the tab row, before Home shows. */
     var onHome: (() -> Unit)? = null
 

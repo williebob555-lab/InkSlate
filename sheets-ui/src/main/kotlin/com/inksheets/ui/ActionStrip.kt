@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Switch
 import androidx.compose.runtime.toMutableStateList
@@ -136,6 +138,16 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     }
                 }
                 StripButton(Icons.Default.CenterFocusStrong, "Fit", "Fit the page to the screen", btn, named) { Perform.recentre?.invoke() }
+                // Another instrument's part: of this song only, or of every song.
+                state.current?.let { song ->
+                    var partMenu by remember { mutableStateOf(false) }
+                    Box {
+                        val shownPart = state.partShown()
+                        val label = shownPart?.let { partName(it) }?.let { if (it.length > 7) it.take(6) + "…" else it } ?: "Part"
+                        StripButton(Icons.Default.SwapHoriz, label, "Play another part - this song or all songs", btn, named) { partMenu = true }
+                        PartMenu(state, song, shownPart, partMenu, onDismiss = { partMenu = false })
+                    }
+                }
                 // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
                     val total = state.library?.setlist(setlistId)?.entries?.size ?: 0
@@ -237,6 +249,56 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     val song = state.current
     if (state.audioOpen && song != null) AudioDialog(state, song, onClose = { state.audioOpen = false })
+}
+
+/** An instrument's name for a part, or what the part calls itself. */
+private fun partName(p: com.inksheets.core.Part): String =
+    p.instrument?.let { com.inksheets.core.Instruments.byId[it]?.name } ?: p.label?.takeIf { it.isNotBlank() } ?: "Part"
+
+/**
+ * Switch part, two ways: for this song only (every other song keeps its part), or for every song
+ * - the instrument this device plays.
+ */
+@Composable
+private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: com.inksheets.core.Part?, open: Boolean, onDismiss: () -> Unit) {
+    DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        Text(
+            "This song only",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+        val names = song.parts.map { partName(it) }
+        song.parts.forEachIndexed { i, p ->
+            // Two parts for one instrument are told apart by their file.
+            val name = if (names.count { it == names[i] } > 1) names[i] + " - " + p.file.substringAfterLast('/').substringBeforeLast('.') else names[i]
+            DropdownMenuItem(
+                text = { Text(name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                leadingIcon = { if (p.id == shown?.id) Icon(Icons.Default.Check, null) },
+                onClick = { onDismiss(); if (p.id != shown?.id) state.switchThisSong(p) }
+            )
+        }
+        if (state.hasOwnPick(song)) {
+            DropdownMenuItem(
+                text = { Text("Back to ${state.profile?.name ?: "my instrument"}'s part") },
+                onClick = { onDismiss(); state.clearThisSong() }
+            )
+        }
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+        Text(
+            "All songs",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+        )
+        state.profiles.forEach { profile ->
+            DropdownMenuItem(
+                text = { Text(profile.name) },
+                leadingIcon = { if (profile.id == state.profileId) Icon(Icons.Default.Check, null) },
+                onClick = { onDismiss(); state.switchAllSongs(profile.id) }
+            )
+        }
+    }
 }
 
 @Composable

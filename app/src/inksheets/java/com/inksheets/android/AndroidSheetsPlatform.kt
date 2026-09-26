@@ -163,6 +163,10 @@ class AndroidSheetsPlatform(
         com.inkslate.AppFlavor.closeSet?.invoke()
     }
 
+    override fun swapPart(old: File, new: File) {
+        com.inkslate.AppFlavor.swapTab?.invoke(old, new) ?: openFile(new)
+    }
+
     private val main = android.os.Handler(android.os.Looper.getMainLooper())
     override fun onMain(block: () -> Unit) { main.post(block) }
 

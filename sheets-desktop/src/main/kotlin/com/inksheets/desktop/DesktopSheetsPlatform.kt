@@ -151,6 +151,10 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.closeSet?.invoke()
     }
 
+    override fun swapPart(old: File, new: File) {
+        com.inkslate.desktop.AppFlavor.swapTab?.invoke(old, new) ?: openFile(new)
+    }
+
     override fun share(file: File) {
         runCatching { com.inkslate.desktop.SystemShell.reveal(file) }
     }

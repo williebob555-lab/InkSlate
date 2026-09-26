@@ -71,6 +71,9 @@ interface SheetsPlatform {
     /** Put a setlist's tabs away. */
     fun closeSet() {}
 
+    /** [old]'s tab shows [new] instead, where it was in the row: another part of the same song. */
+    fun swapPart(old: File, new: File) {}
+
     /** Hand a file to the system to send somewhere: the share sheet, or the file manager. */
     fun share(file: File) {}
 

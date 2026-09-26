@@ -231,6 +231,15 @@ fun AppRoot(
         front?.let(::selectTab)
     }
 
+    /** [old]'s tab gives way to [new], in its place in the row - another part of the same song. */
+    fun swapTab(old: File, new: File) {
+        val was = tabs.indexOfFirst { it.file.absolutePath == old.absolutePath && !it.closeRequested.value }
+        openFile(new)
+        val fresh = tabs.indexOfFirst { it.file.absolutePath == new.absolutePath && !it.closeRequested.value }
+        if (was >= 0 && fresh > was) tabs.add(was, tabs.removeAt(fresh))
+        tabs.filter { it.file.absolutePath == old.absolutePath }.forEach { it.closeRequested.value = true }
+    }
+
     /**
      * Show [id] in the other half. The document already in front gets a second view of itself -
      * two places in one document, both written into the same marks.
@@ -285,6 +294,7 @@ fun AppRoot(
     }
     val focusedTab = tabOf(focusedRef?.tabId)
     com.inkslate.AppFlavor.openSet = ::openSet
+    com.inkslate.AppFlavor.swapTab = ::swapTab
     com.inkslate.AppFlavor.closeSet = { closeAll() }
 
     // With no document in front, a pedal has no page to turn; the focused editor sets it again.

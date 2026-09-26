@@ -179,7 +179,7 @@ class SheetsState(val platform: SheetsPlatform) {
         var focus = 0
         entries.forEachIndexed { i, e ->
             val s = lib.song(e.songId) ?: return@forEachIndexed
-            val part = com.inksheets.core.PartChoice.partFor(s, profile) ?: return@forEachIndexed
+            val part = partFor(s) ?: return@forEachIndexed
             val file = partFile(s, part) ?: return@forEachIndexed
             if (i == index) focus = tabs.size
             if (tabs.none { it.first == file }) {
@@ -221,7 +221,7 @@ class SheetsState(val platform: SheetsPlatform) {
     private fun entryFiles(setlistId: String): List<Pair<String, File?>> {
         val lib = library ?: return emptyList()
         return lib.setlist(setlistId)?.entries.orEmpty().map { e ->
-            e.id to lib.song(e.songId)?.let { s -> com.inksheets.core.PartChoice.partFor(s, profile)?.let { partFile(s, it) } }
+            e.id to lib.song(e.songId)?.let { s -> partFor(s)?.let { partFile(s, it) } }
         }
     }
 
@@ -407,6 +407,74 @@ class SheetsState(val platform: SheetsPlatform) {
     fun chooseProfile(id: String?) {
         profileId = id
         platform.setPref(K_PROFILE, id)
+    }
+
+    /**
+     * Parts picked for one song on this device, over the instrument chosen for all of them: song
+     * id to part id. Kept here, like the instrument, since each player reads their own.
+     */
+    private var partPicks by mutableStateOf(
+        platform.pref(K_PICKS).orEmpty().split(';').mapNotNull { pair ->
+            pair.split('=').takeIf { it.size == 2 && it[0].isNotEmpty() && it[1].isNotEmpty() }?.let { it[0] to it[1] }
+        }.toMap()
+    )
+
+    private fun savePicks(picks: Map<String, String>) {
+        partPicks = picks
+        platform.setPref(K_PICKS, picks.entries.joinToString(";") { "${it.key}=${it.value}" }.ifEmpty { null })
+    }
+
+    /** The part of [song] this device plays: the one picked for it, or the instrument's. */
+    fun partFor(song: com.inksheets.core.Song): com.inksheets.core.Part? =
+        partPicks[song.id]?.let { id -> song.parts.firstOrNull { it.id == id } }
+            ?: com.inksheets.core.PartChoice.partFor(song, profile)
+
+    /** Whether [song] has a part picked for it alone. */
+    fun hasOwnPick(song: com.inksheets.core.Song): Boolean = partPicks[song.id]?.let { id -> song.parts.any { it.id == id } } == true
+
+    /** The part in front: of the song in front, the one whose file is showing. */
+    fun partShown(): com.inksheets.core.Part? {
+        val song = current ?: return null
+        val path = currentPath ?: return partFor(song)
+        val here = song.parts.filter { p -> fileOf(p.file)?.absolutePath == path }
+        val page = pageShown.first + 1
+        return here.firstOrNull { p -> (p.firstPage ?: 1) <= page && page <= (p.lastPage ?: Int.MAX_VALUE) }
+            ?: here.firstOrNull() ?: partFor(song)
+    }
+
+    /** Play [part] for the song in front only - every other song keeps the instrument's part. */
+    fun switchThisSong(part: com.inksheets.core.Part) {
+        val song = current ?: return
+        savePicks(partPicks + (song.id to part.id))
+        showAgain(song)
+    }
+
+    /** The song in front back to the instrument's part. */
+    fun clearThisSong() {
+        val song = current ?: return
+        savePicks(partPicks - song.id)
+        showAgain(song)
+    }
+
+    /** Play [profileId]'s parts in every song, from now on - picks made for single songs go. */
+    fun switchAllSongs(profileId: String) {
+        chooseProfile(profileId)
+        savePicks(emptyMap())
+        current?.let { showAgain(it) }
+    }
+
+    /** Show [song] again with the part it now gets: the whole set rebuilt, or the one tab swapped. */
+    private fun showAgain(song: com.inksheets.core.Song) {
+        val (setlistId, index) = playing ?: run {
+            val part = partFor(song) ?: return
+            val file = partFile(song, part) ?: return
+            part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
+            val old = currentPath?.let(::File)
+            if (old != null && old.absolutePath != file.absolutePath) platform.swapPart(old, file) else platform.openPart(song, part, file)
+            companion.pageTurned((part.firstPage ?: 1) - 1)
+            return
+        }
+        playSetlist(setlistId, index)
     }
 
     /** Take in edits from other devices. Called off the UI thread on a timer. */
@@ -754,6 +822,7 @@ class SheetsState(val platform: SheetsPlatform) {
     companion object {
         private const val K_LIBRARY = "sheets_library"
         private const val K_PROFILE = "sheets_profile"
+        private const val K_PICKS = "sheets_part_picks"
         private const val K_TRIED = "sheets_ocr_tried"
         private const val K_EDGE_TAPS = "sheets_edge_taps"
         private const val K_TURN = "sheets_turn_style"

@@ -472,7 +472,7 @@ private fun SongsPane(state: SheetsState) {
 
 /** Open the part of [song] for the instrument being played. */
 internal fun openSong(state: SheetsState, song: Song) {
-    val part = PartChoice.partFor(song, state.profile) ?: return
+    val part = state.partFor(song) ?: return
     state.current = song
     state.noteOpened(song)
     val file = state.partFile(song, part) ?: return
