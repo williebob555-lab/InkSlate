@@ -150,6 +150,7 @@ class Companion(private val state: SheetsState) {
 
     /** The leader's message showing now, and a count that changes with each so a repeat shows again. */
     var notice by mutableStateOf<CompanionLink.Note?>(null)
+    private val REFRESH_MS = 3_000L
     private val seenNotes = HashSet<String>()
 
     /**
@@ -167,6 +168,8 @@ class Companion(private val state: SheetsState) {
         quickDrops.removeAll { now - it > 120_000 }
         if (quickDrops.size >= 3 && !networkBlocks) {
             networkBlocks = true
+            // Following: from now on a fresh link every few seconds, before the network cuts one.
+            follower?.refreshEveryMs = REFRESH_MS
             state.platform.log("Companion: links keep dropping a few seconds after connecting - the network is likely blocking devices from reaching each other")
         }
     }
@@ -286,6 +289,7 @@ class Companion(private val state: SheetsState) {
         stopLeading()
         follower?.stop()
         val f = CompanionFollower(state.platform.deviceName) { line -> state.platform.onMain { heard(line) } }
+        if (networkBlocks) f.refreshEveryMs = REFRESH_MS
         f.onLog = { line ->
             state.platform.log("Companion: $line")
             Regex("""^Lost .* after (\d+) s: nothing arrived""").find(line)?.let { m -> state.platform.onMain { linkDied(m.groupValues[1].toLong()) } }

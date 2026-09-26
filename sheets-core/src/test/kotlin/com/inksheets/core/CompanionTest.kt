@@ -57,6 +57,66 @@ class CompanionTest {
         }
     }
 
+    /**
+     * A network like eduroam: every connection between two devices is let through, then cut
+     * after a moment. Stood in for by a relay that drops each link after 1.5 s.
+     */
+    @Test
+    fun `on a network that cuts links, a follower swapping to fresh ones stays in step`() {
+        val port = freePort()
+        val leader = CompanionLeader("Director", port)
+        val log = CopyOnWriteArrayList<String>()
+        leader.onLog = { log += it }
+        assertTrue(leader.start())
+        val relayPort = freePort()
+        val relay = java.net.ServerSocket(relayPort)
+        Thread {
+            while (!relay.isClosed) {
+                val a = runCatching { relay.accept() }.getOrNull() ?: break
+                val b = java.net.Socket("127.0.0.1", port)
+                fun pipe(from: java.net.Socket, to: java.net.Socket) = Thread {
+                    runCatching { from.getInputStream().copyTo(to.getOutputStream()) }
+                    runCatching { to.close() }; runCatching { from.close() }
+                }.apply { isDaemon = true; start() }
+                pipe(a, b); pipe(b, a)
+                // The network's cut: silently, after a moment.
+                Thread { Thread.sleep(1500); runCatching { a.close() }; runCatching { b.close() } }.apply { isDaemon = true; start() }
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            val q = LinkedBlockingQueue<CompanionLink.Line>()
+            val f = follower("Tablet", q)
+            f.refreshEveryMs = 1000
+            assertTrue(f.start(CompanionLink.Leader("Director", "127.0.0.1", relayPort)))
+            waitFor { leader.followerCount == 1 }
+            val pages = CopyOnWriteArrayList<Int>()
+            val notes = CopyOnWriteArrayList<String>()
+            Thread {
+                while (true) when (val l = q.take()) {
+                    is CompanionLink.Line.Show -> pages += l.showing.page
+                    is CompanionLink.Line.Message -> notes += l.note.text
+                    else -> Unit
+                }
+            }.apply { isDaemon = true; start() }
+            for (page in 1..8) {
+                leader.show(CompanionLink.Showing(title = "Fight Song", page = page))
+                if (page == 4) leader.note(CompanionLink.Note(text = "Look up"))
+                Thread.sleep(700)
+            }
+            waitFor(4000) { pages.lastOrNull() == 8 }
+            assertEquals(8, pages.last())
+            assertTrue("Look up" in notes)
+            assertEquals(1, leader.followerCount)
+            // Five or so swaps, and not one of them in the leader's log.
+            assertEquals(1, log.count { "is following" in it })
+            assertTrue(log.none { "left" in it || "silent" in it })
+            f.stop()
+        } finally {
+            relay.close()
+            leader.stop()
+        }
+    }
+
     @Test
     fun `a message reaches every follower, and says who it is for`() {
         val port = freePort()
@@ -181,7 +241,7 @@ class CompanionTest {
             waitFor(CompanionFollower.SILENT_FOR_MS + 5000) { leader.followerCount == 0 }
             assertEquals(0, leader.followerCount)
             // The count drops a moment before the line is logged.
-            waitFor { log.any { "Ghost went silent" in it } }
+            waitFor(CompanionLeader.BACK_WITHIN_MS + 3000) { log.any { "Ghost went silent" in it } }
             assertTrue(log.toString(), log.any { "Ghost went silent" in it })
             ghost.close()
         } finally {

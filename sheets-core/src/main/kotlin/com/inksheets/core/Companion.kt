@@ -275,7 +275,8 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     private val seq = java.util.concurrent.atomic.AtomicLong()
     private val recentNotes = ArrayList<Pair<Long, String>>()
 
-    val followerCount: Int get() = followers.size
+    /** Players following, each once however many links it has open while swapping to a new one. */
+    val followerCount: Int get() = followers.map { it.name }.distinct().size
 
     /** Called whenever the number of followers changes, off the UI thread. */
     var onFollowers: ((Int) -> Unit)? = null
@@ -354,7 +355,9 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
                         when (val got = CompanionLink.read(line)) {
                             is CompanionLink.Line.Joined -> {
                                 if (got.name.isNotBlank()) f.name = got.name
-                                onLog?.invoke("${f.name} is following (${followers.size} now)")
+                                val back = lastSeen[f.name]?.let { System.currentTimeMillis() - it < BACK_WITHIN_MS } == true
+                                if (!back) onLog?.invoke("${f.name} is following ($followerCount now)")
+                                onFollowers?.invoke(followerCount)
                             }
                             is CompanionLink.Line.Pong -> {
                                 // This follower answers heartbeats, so one that stops answering is
@@ -380,9 +383,21 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         f.open = false
         runCatching { f.socket.close() }
         val secs = (System.currentTimeMillis() - f.since) / 1000
-        onLog?.invoke("${f.name} $why after ${secs} s (${followers.size} following)")
-        onFollowers?.invoke(followers.size)
+        val name = f.name
+        lastSeen[name] = System.currentTimeMillis()
+        // Said only if it does not come straight back: a follower on a network that cuts links
+        // swaps to a fresh one every few seconds, and that is not news.
+        Thread({
+            Thread.sleep(BACK_WITHIN_MS)
+            if (followers.none { it.name == name }) {
+                onLog?.invoke("$name $why after ${secs} s ($followerCount following)")
+                onFollowers?.invoke(followerCount)
+            }
+        }, "companion-left").apply { isDaemon = true; start() }
     }
+
+    /** When each follower was last connected, by name: a quick return is the same follower. */
+    private val lastSeen = ConcurrentHashMap<String, Long>()
 
     fun show(showing: CompanionLink.Showing) {
         val bare = showing.copy(leader = name, seq = 0, at = 0)
@@ -432,6 +447,9 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
 
         /** How long a message is given again to followers that join (or come back) after it. */
         const val NOTE_KEPT_MS = 30_000L
+
+        /** Back this soon, a follower never really left. */
+        const val BACK_WITHIN_MS = 4_000L
     }
 }
 
@@ -457,6 +475,15 @@ class CompanionFollower(
 
     /** A line for the event log. Off the UI thread. */
     var onLog: ((String) -> Unit)? = null
+
+    /**
+     * Swap to a fresh connection this often (0 for never). Some networks - school Wi-Fi, eduroam -
+     * let a new connection between two devices through and cut it a few seconds later; a fresh
+     * one before that happens, and the leader's greeting (where it is, recent messages) on each,
+     * keeps a follower in step anyway.
+     */
+    @Volatile var refreshEveryMs: Long = 0L
+    @Volatile private var refreshing: Socket? = null
 
     /** When something last arrived from the leader (this device's clock), 0 before anything has. */
     @Volatile var lastHeard: Long = 0L
@@ -501,9 +528,19 @@ class CompanionFollower(
                 first.complete(true)
                 val connectedAt = System.currentTimeMillis()
                 onConnected?.invoke(true)
+                val every = refreshEveryMs
+                if (every > 0) Thread({
+                    Thread.sleep(every)
+                    if (socket === s) { refreshing = s; runCatching { s.close() } }
+                }, "companion-refresh").apply { isDaemon = true; start() }
                 val why = read(s, leader)
                 runCatching { s.close() }
                 if (socket === s) socket = null
+                if (refreshing === s) {
+                    // A swap, not a loss: straight back, and nothing to say.
+                    refreshing = null
+                    continue
+                }
                 if (wanted === leader) {
                     onLog?.invoke("Lost ${leader.name} after ${(System.currentTimeMillis() - connectedAt) / 1000} s: $why")
                 }
