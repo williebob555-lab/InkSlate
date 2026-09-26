@@ -101,6 +101,21 @@ class BulkImportTest {
     }
 
     @Test
+    fun `setlists merge into one, each song once, and the songs are left as they were`() {
+        val root = tmp.newFolder("merge")
+        val library = Library(LibraryLog(root, "me"))
+        val a = library.addSong("A", listOf(Part(file = "a.pdf", instrument = "tuba", source = InstrumentSource.PERSON)))
+        val b = library.addSong("B", emptyList())
+        val one = library.addSetlist("A"); library.editSetlist(one.id) { entries = listOf(SetlistEntry(songId = a.id)) }
+        val two = library.addSetlist("B"); library.editSetlist(two.id) { entries = listOf(SetlistEntry(songId = b.id), SetlistEntry(songId = a.id)) }
+        val all = library.addSetlist("PEP BAND")
+        library.mergeSetlists(listOf(one.id, two.id), all.id)
+        assertEquals(listOf("PEP BAND"), library.setlists.map { it.name })
+        assertEquals(listOf(a.id, b.id), library.setlists.single().entries.map { it.songId })
+        assertEquals(InstrumentSource.PERSON, library.song(a.id)!!.parts.single().source)
+    }
+
+    @Test
     fun `a folder per song is not a setlist per song`() {
         val files = listOf(
             "PEP BAND/Music/24K Magic/24K Magic - Alto Sax 1.pdf",

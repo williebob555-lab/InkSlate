@@ -72,6 +72,8 @@ internal fun SetlistsPane(state: SheetsState) {
     var colouring by remember { mutableStateOf<Setlist?>(null) }
     var colouringFolder by remember { mutableStateOf<Folder?>(null) }
     var clearing by remember { mutableStateOf<Folder?>(null) }
+    var joiningFolder by remember { mutableStateOf<Folder?>(null) }
+    var joiningInto by remember { mutableStateOf<Setlist?>(null) }
 
     val version = state.version
     val library = state.library ?: return
@@ -195,6 +197,7 @@ internal fun SetlistsPane(state: SheetsState) {
                                 "Rename" to { naming = Naming.RenameFolder(f) },
                                 "Colour..." to { colouringFolder = f },
                                 "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } },
+                                "Merge its setlists into one..." to { joiningFolder = f },
                                 "Delete with its setlists..." to { clearing = f }
                             )
                         )
@@ -220,6 +223,7 @@ internal fun SetlistsPane(state: SheetsState) {
                         "Share with bandmates..." to { sharing = s.id },
                         "Colour..." to { colouring = s },
                         "Rename" to { naming = Naming.RenameSetlist(s) },
+                        "Merge into another setlist..." to { joiningInto = s },
                         "Delete" to { state.change { deleteSetlist(s.id) } }
                     )
                 )
@@ -231,6 +235,27 @@ internal fun SetlistsPane(state: SheetsState) {
     }
 
     sharing?.let { id -> ShareSetlistDialog(state, id, onClose = { sharing = null }) }
+    // Every setlist in a folder (and its folders) as one, named for the folder, in the folder.
+    joiningFolder?.let { f ->
+        val lists = library.setlistsUnder(f.id)
+        AskName("One setlist, called", f.name, "Merge ${lists.size}", onDone = { name ->
+            state.change {
+                val into = addSetlist(name.ifBlank { f.name }, f.id)
+                mergeSetlists(lists.map { it.id }, into.id)
+            }
+            joiningFolder = null
+        }, onDismiss = { joiningFolder = null })
+    }
+    joiningInto?.let { s ->
+        SetlistChooserDialog(
+            state,
+            onChosen = { target ->
+                if (target.id != s.id) state.change { mergeSetlists(listOf(s.id), target.id) }
+                joiningInto = null
+            },
+            onDismiss = { joiningInto = null }
+        )
+    }
     clearing?.let { f ->
         val lists = library.setlistsUnder(f.id)
         SheetDialog(

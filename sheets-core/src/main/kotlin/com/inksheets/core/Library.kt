@@ -479,6 +479,20 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     fun editSetlist(id: String, change: SetlistEdit.() -> Unit) = edit(SETLIST, id) { SetlistEdit(this).change() }
 
+    /**
+     * [from] put into [into], in order after its own songs - each song once - and then gone.
+     * Songs and their parts are not touched: a setlist only points at them.
+     */
+    fun mergeSetlists(from: List<String>, into: String) {
+        val target = setlist(into) ?: return
+        val have = target.entries.map { it.songId }.toMutableSet()
+        val more = from.filter { it != into }.mapNotNull { setlist(it) }.flatMap { it.entries }
+            .filter { have.add(it.songId) }
+            .map { SetlistEntry(songId = it.songId, note = it.note, tempo = it.tempo, color = it.color) }
+        if (more.isNotEmpty()) editSetlist(into) { entries = target.entries + more }
+        from.filter { it != into }.forEach { deleteSetlist(it) }
+    }
+
     /** Add [songId] to the end of a setlist, or at [index]. */
     fun addToSetlist(setlistId: String, songId: String, index: Int? = null): SetlistEntry {
         val entry = SetlistEntry(songId = songId)
