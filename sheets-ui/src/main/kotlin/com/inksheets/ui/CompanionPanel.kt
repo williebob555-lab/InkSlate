@@ -148,6 +148,25 @@ class Companion(private val state: SheetsState) {
 
     // ---- leading ----------------------------------------------------------------------
 
+    /** The leader's message showing now, and a count that changes with each so a repeat shows again. */
+    var notice by mutableStateOf<CompanionLink.Note?>(null)
+    var noticeCount by mutableStateOf(0)
+
+    /** The instruments this player reads: the part in front, and those chosen to play. */
+    private fun myInstruments(): Set<String> {
+        val ids = HashSet<String>()
+        state.partShown()?.let { p -> p.instrument?.let(ids::add); ids += p.also }
+        state.profile?.instruments?.forEach { ids += com.inksheets.core.PartChoice.seat(it).first }
+        return ids.flatMap { listOf(it) + com.inksheets.core.Instruments.sisters(it) }.toSet()
+    }
+
+    /** Send [text] to every follower, or only those playing [instruments]. */
+    fun sendNote(text: String, instruments: List<String>, urgent: Boolean = false, color: Int? = null) {
+        val l = leader ?: return
+        if (text.isBlank()) return
+        l.note(CompanionLink.Note(text = text.trim(), instruments = instruments, urgent = urgent, color = if (urgent) color else null))
+    }
+
     fun lead(): Boolean {
         stopFollowing()
         val name = state.platform.deviceName
@@ -299,6 +318,12 @@ class Companion(private val state: SheetsState) {
                 show(line.showing)
             }
             is CompanionLink.Line.Ink -> takeInk(line.share)
+            is CompanionLink.Line.Message -> {
+                if (CompanionLink.noteIsFor(line.note, myInstruments())) {
+                    notice = line.note
+                    noticeCount++
+                }
+            }
             else -> Unit
         }
     }
@@ -612,6 +637,8 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
         }
         Switch(checked = companion.shareInk, onCheckedChange = { companion.shareInk = it })
     }
+    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+    SendNote(state, onSaid)
     OutlinedButton(onClick = { companion.stopLeading() }, modifier = Modifier.padding(top = 8.dp)) { Text("Stop leading") }
 }
 

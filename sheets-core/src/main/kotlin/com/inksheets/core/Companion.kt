@@ -71,6 +71,27 @@ object CompanionLink {
         val ink: String
     )
 
+    /**
+     * A message from the leader - "Next up: Fight Song", "Trumpets: second ending" - for everyone,
+     * or only players of [instruments] (ids; empty for everyone).
+     */
+    @Serializable
+    data class Note(
+        val kind: String = "note",
+        val text: String,
+        val instruments: List<String> = emptyList(),
+        val from: String = "",
+        val at: Long = 0,
+        /** Over the music, big, until tapped away: "Stop", or a word between songs. */
+        val urgent: Boolean = false,
+        /** The colour it covers the music in (ARGB), or null for the warning colour. */
+        val color: Int? = null
+    )
+
+    /** Whether [note] is for a player of any of [mine]. */
+    fun noteIsFor(note: Note, mine: Set<String>): Boolean =
+        note.instruments.isEmpty() || note.instruments.any { it in mine }
+
     /** What a follower says on joining, so the leader's log can name it. */
     @Serializable
     data class Hello(val kind: String = "hello", val name: String = "")
@@ -79,6 +100,7 @@ object CompanionLink {
         data class Show(val showing: Showing) : Line
         data class Ink(val share: InkShare) : Line
         data class Joined(val name: String) : Line
+        data class Message(val note: Note) : Line
         /** The leader is still there. [seq] and [at] as for [Showing]; zero from older leaders. */
         data class Ping(val seq: Long = 0, val at: Long = 0) : Line
         /** A follower's answer to a [Ping], carrying the ping's own [at] back for the round trip. */
@@ -104,6 +126,7 @@ object CompanionLink {
     fun encode(s: Showing): String = json.encodeToString(Showing.serializer(), s)
     fun encode(s: InkShare): String = json.encodeToString(InkShare.serializer(), s)
     fun encode(s: Hello): String = json.encodeToString(Hello.serializer(), s)
+    fun encode(n: Note): String = json.encodeToString(Note.serializer(), n)
     fun ping(seq: Long, at: Long) = """{"kind":"ping","seq":$seq,"at":$at}"""
     fun pong(seq: Long, at: Long) = """{"kind":"pong","seq":$seq,"at":$at}"""
 
@@ -117,6 +140,7 @@ object CompanionLink {
             null, "show" -> Line.Show(json.decodeFromJsonElement(Showing.serializer(), obj))
             "ink" -> Line.Ink(json.decodeFromJsonElement(InkShare.serializer(), obj))
             "hello" -> Line.Joined(json.decodeFromJsonElement(Hello.serializer(), obj).name)
+            "note" -> Line.Message(json.decodeFromJsonElement(Note.serializer(), obj))
             "ping", "pong" -> {
                 val seq = obj["seq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0
                 val at = obj["at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0
@@ -364,6 +388,13 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         last = s
         val line = CompanionLink.encode(s)
         followers.forEach { it.queue.offer(line) }
+    }
+
+    /** A message to every follower; each shows it only if it is for its instrument. */
+    fun note(note: CompanionLink.Note) {
+        val line = CompanionLink.encode(note.copy(from = name, at = System.currentTimeMillis()))
+        followers.forEach { it.queue.offer(line) }
+        onLog?.invoke("Sent \"${note.text}\" to ${followers.size}" + if (note.instruments.isEmpty()) "" else " (for ${note.instruments.joinToString(", ")})")
     }
 
     /**

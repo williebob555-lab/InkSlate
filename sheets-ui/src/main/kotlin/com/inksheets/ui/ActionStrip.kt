@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Switch
@@ -95,6 +96,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     var menu by remember { mutableStateOf(false) }
     val shown = state.strip
     var customising by remember { mutableStateOf(false) }
+    var sendingNote by remember { mutableStateOf(false) }
     // Folded away, the strip is one button in the corner and the page has the whole width.
     androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
 
@@ -138,6 +140,10 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     }
                 }
                 StripButton(Icons.Default.CenterFocusStrong, "Fit", "Fit the page to the screen", btn, named) { Perform.recentre?.invoke() }
+                // Leading: a message to the band, one tap away.
+                if (state.companion.leading) {
+                    StripButton(Icons.Default.Campaign, "Message", "Message the band", btn, named) { sendingNote = true }
+                }
                 // Another instrument's part: of this song only, or of every song.
                 state.current?.let { song ->
                     var partMenu by remember { mutableStateOf(false) }
@@ -223,9 +229,12 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
         // Following, and wandered off: the way back to the leader, top centre.
         BackToLeader(state, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
+        // The leader's messages, where the music is not.
+        NotePopup(state)
     }
 
     if (customising) StripEditor(state, onClose = { customising = false })
+    if (sendingNote) SendNoteDialog(state, onClose = { sendingNote = false })
     SaveTabsDialog(state)
     IncomingDialog(state)
     if (state.clearingMarks) {

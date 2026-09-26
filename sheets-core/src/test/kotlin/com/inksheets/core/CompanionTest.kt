@@ -58,6 +58,33 @@ class CompanionTest {
     }
 
     @Test
+    fun `a message reaches every follower, and says who it is for`() {
+        val port = freePort()
+        val leader = CompanionLeader("Director", port)
+        assertTrue(leader.start())
+        try {
+            val q = LinkedBlockingQueue<CompanionLink.Line>()
+            val f = follower("Trumpet 2", q)
+            assertTrue(f.start(CompanionLink.Leader("Director", "127.0.0.1", port)))
+            waitFor { leader.followerCount == 1 }
+            leader.note(CompanionLink.Note(text = "Trumpets: second ending", instruments = listOf("trumpet")))
+            var note: CompanionLink.Note? = null
+            val until = System.currentTimeMillis() + 5000
+            while (note == null && System.currentTimeMillis() < until) {
+                (q.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS) as? CompanionLink.Line.Message)?.let { note = it.note }
+            }
+            assertEquals("Trumpets: second ending", note!!.text)
+            assertEquals("Director", note!!.from)
+            assertTrue(CompanionLink.noteIsFor(note!!, setOf("trumpet")))
+            assertTrue(!CompanionLink.noteIsFor(note!!, setOf("tuba")))
+            assertTrue(CompanionLink.noteIsFor(note!!.copy(instruments = emptyList()), setOf("tuba")))
+            f.stop()
+        } finally {
+            leader.stop()
+        }
+    }
+
+    @Test
     fun `a whole band follows, and the leader only logs who comes and goes`() {
         val port = freePort()
         val leader = CompanionLeader("Director", port)
