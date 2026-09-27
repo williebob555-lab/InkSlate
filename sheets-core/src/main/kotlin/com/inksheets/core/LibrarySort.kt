@@ -46,7 +46,9 @@ class LibrarySort(
 
     /** Size and the start's hash, remembered while the file stays the same size and age. */
     private fun fingerprint(f: File): String? {
-        if (!f.isFile || f.length() == 0L) return null
+        // A file this small is a blank page or a placeholder: two of them being the same says
+        // nothing about two songs being one.
+        if (!f.isFile || f.length() < MIN_PRINT_BYTES) return null
         val key = "${f.path}|${f.length()}|${f.lastModified()}"
         return prints.getOrPut(key) { "${f.length()}:${LibraryScan.hashOf(f)}" }
     }
@@ -313,6 +315,7 @@ class LibrarySort(
         // Kept between sorts: reading a file's start or opening it costs far more than the sort.
         private val prints = java.util.concurrent.ConcurrentHashMap<String, String>()
         private val pageCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+        private const val MIN_PRINT_BYTES = 8 * 1024
 
         /** "Song - 1", "Song (2)", "Song copy": a title a second copy was given. */
         private val COPY_TITLE = Regex("""(\s[-–—]\s\d+|\(\d+\)|\scopy)\s*$""", RegexOption.IGNORE_CASE)

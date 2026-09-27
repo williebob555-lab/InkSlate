@@ -148,16 +148,21 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                 )
             }
             parts.forEachIndexed { i, part ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                // Two lines: what the part is, then what can be done with it - so a phone never
+                // squeezes the name into a column a word wide beside the controls.
+                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
                     // No instrument yet: its first page right here, to read which it is. A tap
                     // shows that part alone, bigger.
                     if (part.instrument == null) {
                         PartThumbnail(state, song, part, Modifier.padding(end = 8.dp)) { state.peeking = song to part }
                     }
                     Column(Modifier.weight(1f)) {
+                        Text(Instruments.partName(part), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             part.file.substringAfterLast('/') + (part.firstPage?.let { f -> "  ·  pages $f" + (part.lastPage?.takeIf { it != f }?.let { "-$it" } ?: "") } ?: ""),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis
                         )
                         val how = when (part.source) {
                             InstrumentSource.TEXT, InstrumentSource.OCR -> "read from the page: ${part.label.orEmpty()}"
@@ -165,17 +170,21 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                             InstrumentSource.PERSON -> "set by you"
                             InstrumentSource.UNKNOWN -> "not known"
                         }
-                        Text(how, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        // A duo, or a part printed for several: it shows for each of them.
-                        if (part.instrument != null) AlsoFor(part) { also ->
-                            parts[i] = part.copy(also = also, source = InstrumentSource.PERSON)
-                        }
+                        Text(how, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                  }
+                  @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                  androidx.compose.foundation.layout.FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     InstrumentPicker(part.instrument) { chosen ->
                         parts[i] = part.copy(instrument = chosen, source = InstrumentSource.PERSON)
                     }
                     if (part.instrument != null) ChairPicker(part.chair) { chair ->
                         parts[i] = part.copy(chair = chair, source = InstrumentSource.PERSON)
+                    }
+                    TextButton(onClick = { state.peeking = song to part }) { Text("Look") }
+                    // A duo, or a part printed for several: it shows for each of them.
+                    if (part.instrument != null) AlsoFor(part) { also ->
+                        parts[i] = part.copy(also = also, source = InstrumentSource.PERSON)
                     }
                     var menu by remember { mutableStateOf(false) }
                     Box {
@@ -183,10 +192,6 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                             Icon(androidx.compose.material.icons.Icons.Default.MoreVert, "Part options")
                         }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Look at the pages") },
-                                onClick = { menu = false; state.peeking = song to part }
-                            )
                             DropdownMenuItem(
                                 text = { Text("Arrange the pages...") },
                                 onClick = { menu = false; onClose(); state.showPages(song, part) }
@@ -202,6 +207,7 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                             }
                         }
                     }
+                  }
                 }
             }
         }

@@ -504,6 +504,15 @@ class SheetsState(val platform: SheetsPlatform) {
         showAgain(song)
     }
 
+    /**
+     * Make [part] the one [song] opens on this device - or, when it is the one the instrument
+     * would open anyway, go back to that. Chosen straight from the song's list of parts.
+     */
+    fun pickPart(song: com.inksheets.core.Song, part: com.inksheets.core.Part) {
+        val natural = com.inksheets.core.PartChoice.partFor(song, profile)
+        savePicks(if (natural?.id == part.id) partPicks - song.id else partPicks + (song.id to part.id))
+    }
+
     /** The song in front back to the instrument's part. */
     fun clearThisSong() {
         val song = current ?: return

@@ -667,7 +667,7 @@ internal fun CompanionDialog(state: SheetsState, onClose: () -> Unit) {
         }
     }
 
-    SheetDialog(title = "Play together", onDismiss = onClose, wide = true) {
+    SheetDialog(title = "Play together", onDismiss = onClose, wide = true, movable = true) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
             when {
                 companion.leading -> LeadingSection(state, onSaid = { said = it })

@@ -413,6 +413,8 @@ private fun SongsPane(state: SheetsState) {
                             song = song,
                             unsure = fit == PartChoice.Fit.UNKNOWN,
                             standIn = if (fit == PartChoice.Fit.CLOSE) PartChoice.standIn(song, state.profile)?.let { Instruments.partName(it) } else null,
+                            chosenPart = state.partFor(song),
+                            onPart = { p -> state.stopPlaying(); state.pickPart(song, p); openSong(state, song) },
                             missing = song.id in counts.missing,
                             onOpen = { state.stopPlaying(); openSong(state, song) },
                             onEdit = { editing = song },
@@ -508,6 +510,10 @@ internal fun SongRow(
     missing: Boolean = false,
     /** The part opened in place of the player's own, which the song has none of: "Tuba". */
     standIn: String? = null,
+    /** The part this device opens, marked in the list of parts. */
+    chosenPart: com.inksheets.core.Part? = null,
+    /** Open the song at one of its parts, chosen from the list under its name. */
+    onPart: ((com.inksheets.core.Part) -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null
 ) {
     val tint = song.color?.let { androidx.compose.ui.graphics.Color(it).copy(alpha = 0.10f) } ?: androidx.compose.ui.graphics.Color.Transparent
@@ -526,14 +532,49 @@ internal fun SongRow(
             if (detail.isNotEmpty()) {
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (standIn != null) {
+            val partsLine = onPart != null && song.parts.size > 1
+            if (standIn != null && !partsLine) {
                 Text("Opens the $standIn part - there is none for yours", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (missing) {
                 Text("A file is not on this device", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
             val instruments = Instruments.all.filter { it.id in song.instruments }.map { it.name }
-            if (instruments.isNotEmpty() || unsure) {
+            if (onPart != null && song.parts.size > 1) {
+                // Every part in plain sight: one tap shows them, one more opens one.
+                var open by remember(song.id) { mutableStateOf(false) }
+                val opens = chosenPart?.let { Instruments.partName(it) }
+                Text(
+                    (if (open) "\u25BE " else "\u25B8 ") + "${song.parts.size} parts" + (opens?.let { "  \u00B7  opens $it" + if (standIn != null) " instead" else "" } ?: "") +
+                        if (unsure) "  \u00B7  some not yet named" else "",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (unsure) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable { open = !open }.padding(vertical = 4.dp)
+                )
+                if (open) {
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.padding(top = 2.dp)
+                    ) {
+                        // In score order, flutes to tubas, each instrument's chairs in turn.
+                        val order = Instruments.all.withIndex().associate { (i, inst) -> inst.id to i }
+                        val sorted = song.parts.sortedWith(compareBy({ order[it.instrument] ?: Int.MAX_VALUE }, { it.chair ?: 0 }))
+                        val names = sorted.map { Instruments.partName(it) }
+                        sorted.forEachIndexed { i, p ->
+                            // Two parts for one instrument are told apart by their file.
+                            val name = if (names.count { it == names[i] } > 1) names[i] + " (" + p.file.substringAfterLast('/').substringBeforeLast('.').take(24) + ")" else names[i]
+                            androidx.compose.material3.FilterChip(
+                                selected = p.id == chosenPart?.id,
+                                onClick = { onPart(p) },
+                                label = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            )
+                        }
+                        onEdit?.let { TextButton(onClick = it) { Text("Edit parts") } }
+                    }
+                }
+            } else if (instruments.isNotEmpty() || unsure) {
                 Text(
                     (instruments + if (unsure) listOf("parts not yet named") else emptyList()).joinToString(", "),
                     style = MaterialTheme.typography.labelSmall,
@@ -578,10 +619,21 @@ internal fun SongRow(
 internal fun SheetDialog(
     title: String,
     onDismiss: () -> Unit,
-    buttons: @Composable () -> Unit = { TextButton(onClick = onDismiss) { Text("Close") } },
+    /** The buttons along the foot; by default a Close (a movable window has its X instead). */
+    buttons: (@Composable () -> Unit)? = null,
     wide: Boolean = false,
+    /**
+     * A window over the music rather than a dialog in front of it: moved by its title bar, and
+     * the page underneath still turns and takes the pen while it is open.
+     */
+    movable: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    if (movable) {
+        FloatingPanel(title = title, onClose = onDismiss, width = if (wide) 440.dp else 360.dp, footer = buttons, content = content)
+        return
+    }
+    val footer: @Composable () -> Unit = buttons ?: { TextButton(onClick = onDismiss) { Text("Close") } }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = MaterialTheme.shapes.large,
@@ -594,7 +646,10 @@ internal fun SheetDialog(
                 Spacer(Modifier.size(12.dp))
                 Box(Modifier.weight(1f, fill = false)) { content() }
                 Spacer(Modifier.size(12.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { buttons() }
+                // Wrapping, so a phone puts a third button on a line of its own rather than
+                // squeezing "Close" into a column one letter wide.
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { footer() }
             }
         }
     }

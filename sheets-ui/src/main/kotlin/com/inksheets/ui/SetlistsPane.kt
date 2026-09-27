@@ -432,6 +432,11 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             song = song.copy(color = entry.color ?: song.color),
                             unsure = PartChoice.fit(song, state.profile) == PartChoice.Fit.UNKNOWN,
                             standIn = PartChoice.standIn(song, state.profile)?.let { com.inksheets.core.Instruments.partName(it) },
+                            chosenPart = state.partFor(song),
+                            onPart = { p ->
+                                state.pickPart(song, p)
+                                state.playSetlist(setlist.id, setlist.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0))
+                            },
                             onColour = { colouringEntry = entry },
                             onOpen = { state.playSetlist(setlist.id, setlist.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0)) },
                             onLook = { state.partFor(song)?.let { state.peeking = song to it } },

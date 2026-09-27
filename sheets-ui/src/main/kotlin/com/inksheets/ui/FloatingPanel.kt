@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,11 +45,21 @@ private object PanelSpots {
  * of the screen taken - the page underneath still turns and still takes the pen.
  */
 @Composable
-internal fun FloatingPanel(title: String, onClose: () -> Unit, width: Dp = 300.dp, content: @Composable () -> Unit) {
+internal fun FloatingPanel(
+    title: String,
+    onClose: () -> Unit,
+    width: Dp = 300.dp,
+    /** Buttons along the foot, wrapping onto a second line rather than squeezing. */
+    footer: (@Composable () -> Unit)? = null,
+    content: @Composable () -> Unit
+) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val room = with(density) { Offset(maxWidth.toPx(), maxHeight.toPx()) }
-        val wide = with(density) { width.toPx() }
+        // Never wider or taller than the screen it is on: a phone gets the width it has.
+        val panelWidth = minOf(width, maxWidth - 16.dp).coerceAtLeast(200.dp)
+        val panelHeight = (maxHeight - 16.dp).coerceAtLeast(160.dp)
+        val wide = with(density) { panelWidth.toPx() }
         var at by remember { mutableStateOf(PanelSpots.at[title] ?: Offset(room.x - wide - with(density) { 88.dp.toPx() }, with(density) { 72.dp.toPx() })) }
         // Kept on screen, however the window has changed since.
         val shown = Offset(at.x.coerceIn(0f, (room.x - wide).coerceAtLeast(0f)), at.y.coerceIn(0f, (room.y - with(density) { 64.dp.toPx() }).coerceAtLeast(0f)))
@@ -56,7 +67,7 @@ internal fun FloatingPanel(title: String, onClose: () -> Unit, width: Dp = 300.d
             shape = MaterialTheme.shapes.large,
             tonalElevation = 6.dp,
             shadowElevation = 8.dp,
-            modifier = Modifier.offset { IntOffset(shown.x.roundToInt(), shown.y.roundToInt()) }.width(width)
+            modifier = Modifier.offset { IntOffset(shown.x.roundToInt(), shown.y.roundToInt()) }.width(panelWidth).heightIn(max = panelHeight)
         ) {
             Column {
                 Row(
@@ -75,7 +86,14 @@ internal fun FloatingPanel(title: String, onClose: () -> Unit, width: Dp = 300.d
                     Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(start = 6.dp))
                     IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
                 }
-                Box(Modifier.padding(start = 12.dp, end = 12.dp, bottom = 12.dp)) { content() }
+                Box(Modifier.weight(1f, fill = false).padding(start = 12.dp, end = 12.dp, bottom = if (footer == null) 12.dp else 0.dp)) { content() }
+                if (footer != null) {
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End
+                    ) { footer() }
+                }
             }
         }
     }

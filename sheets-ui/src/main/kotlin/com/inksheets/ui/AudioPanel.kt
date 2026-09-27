@@ -131,7 +131,7 @@ internal object SelfRecorder {
 
 /** A song's recordings: play, loop a passage, slow it down, shift its pitch; and pair new ones. */
 @Composable
-internal fun AudioDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
+internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = false, onClose: () -> Unit) {
     var tracks by remember { mutableStateOf(song.audio) }
     var picking by remember { mutableStateOf(tracks.isEmpty()) }
     var selected by remember { mutableStateOf(0) }
@@ -190,6 +190,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
         title = "Recordings - ${song.title}",
         onDismiss = onClose,
         wide = true,
+        movable = movable,
         buttons = {
             if (SelfRecorder.recording) {
                 TextButton(onClick = {
@@ -201,7 +202,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
                 TextButton(onClick = { SelfRecorder.start(state, song) }) { Text("Record yourself") }
             }
             TextButton(onClick = { picking = true }) { Text("Pair another") }
-            TextButton(onClick = onClose) { Text("Close") }
+            if (!movable) TextButton(onClick = onClose) { Text("Close") }
         }
     ) {
         Column {

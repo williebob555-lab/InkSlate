@@ -261,7 +261,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     val song = state.current
-    if (state.audioOpen && song != null) AudioDialog(state, song, onClose = { state.audioOpen = false })
+    if (state.audioOpen && song != null) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
 }
 
 /** An instrument's name for a part, or what the part calls itself. */
