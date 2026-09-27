@@ -945,6 +945,30 @@ class DrawingView @JvmOverloads constructor(
     var onTransformChanged: (() -> Unit)? = null
     var onSelectionChanged: ((Int) -> Unit)? = null
 
+    /** A link was tapped - on text given one, or one already in the PDF. Opens it. */
+    var onLinkTapped: ((String) -> Unit)? = null
+
+    /** The links already in a page of the PDF, in page points; asked for only when a tap lands. */
+    var pageLinks: ((Int) -> List<com.inkslate.core.PageLink>)? = null
+
+    /**
+     * The link under a point on screen, if any: text given a web address first (it is on top),
+     * then a link the PDF already had.
+     */
+    fun linkAt(vx: Float, vy: Float): String? {
+        toDoc(vx, vy)
+        val page = pageAtDoc(tmpPts[0], tmpPts[1])
+        val o = originOf(page)
+        val px = tmpPts[0] - o[0]
+        val py = tmpPts[1] - o[1]
+        strokes.lastOrNull { it.pageIndex == page && it.kind == StrokeKind.TEXT && it.link != null && it.rawBounds().contains(px, py) }
+            ?.link?.let { return it }
+        return runCatching { pageLinks?.invoke(page) }.getOrNull()?.firstOrNull { it.contains(px, py) }?.uri
+    }
+
+    /** The one text object selected, for opening it in the text editor. */
+    fun selectedText(): Stroke? = selectedStrokes().singleOrNull()?.takeIf { it.kind == StrokeKind.TEXT }
+
     /** Raised when the pen/finger switch changes which settings are live, so the toolbar follows. */
     var onInputModeChanged: ((InputMode) -> Unit)? = null
 
@@ -2178,7 +2202,8 @@ class DrawingView @JvmOverloads constructor(
         align: TextAlign = TextAlign.LEFT,
         boxWidth: Float = 0f,
         boxFillColor: Int = android.graphics.Color.TRANSPARENT,
-        boxBorder: Boolean = false
+        boxBorder: Boolean = false,
+        link: String? = null
     ) {
         if (text.isBlank()) return
         val s = Stroke(
@@ -2186,7 +2211,7 @@ class DrawingView @JvmOverloads constructor(
             points = listOf(InkPoint(pageX, pageY, 1f)), text = text, textSize = size,
             bold = bold, italic = italic, font = font, align = align, pageIndex = livePage,
             boxWidth = boxWidth, boxFillColor = boxFillColor, boxBorder = boxBorder,
-            opacity = opacity, updatedUtc = now()
+            link = link, opacity = opacity, updatedUtc = now()
         )
         strokes.add(s); pushOp(Op(listOf(s), emptyList()))
         growCanvasForAll(listOf(s)); changed()
@@ -3132,6 +3157,16 @@ class DrawingView @JvmOverloads constructor(
                 // that landed and lifted without moving - so writing near the edge still writes,
                 // and the pen never turns pages at all.
                 val tapped = pending
+                // A tap on a link opens it - text given a web address, or a link the PDF already
+                // had - rather than making a dot. Not while placing text or selecting, where a tap
+                // means those.
+                if (tapped != null && tool != Tool.TEXT && tool != Tool.SELECT && onLinkTapped != null) {
+                    linkAt(event.x, event.y)?.let { link ->
+                        discardPending()
+                        onLinkTapped?.invoke(link)
+                        return true
+                    }
+                }
                 // Not while the finger has been given a pen or eraser from the strip: then a tap is
                 // a mark, a quick fix, and turning the page under it would lose the place.
                 if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0 && configFor(InputMode.TOUCH).tool == Tool.PAN) {

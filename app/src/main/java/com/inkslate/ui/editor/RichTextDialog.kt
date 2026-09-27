@@ -57,7 +57,9 @@ data class TextSpec(
     val align: TextAlign,
     val boxWidth: Float,
     val boxFillColor: Int,
-    val boxBorder: Boolean
+    val boxBorder: Boolean,
+    /** A web address the text opens when tapped; null for none. */
+    val link: String? = null
 )
 
 /**
@@ -89,6 +91,7 @@ fun RichTextDialog(
     }
     var boxFill by remember { mutableStateOf(existing?.boxFillColor ?: android.graphics.Color.TRANSPARENT) }
     var border by remember { mutableStateOf(existing?.boxBorder ?: false) }
+    var link by remember { mutableStateOf(existing?.link?.let { com.inkslate.core.Links.shown(it) }.orEmpty()) }
     var pickingText by remember { mutableStateOf(false) }
     var pickingBox by remember { mutableStateOf(false) }
 
@@ -121,6 +124,17 @@ fun RichTextDialog(
                         fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
                         fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal
                     ),
+                )
+
+                // A web address makes the text a link: underlined, opened with a tap, and a real
+                // link in the saved PDF.
+                OutlinedTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = { Text("Link (web address, optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri)
                 )
 
                 Label("Font")
@@ -201,7 +215,8 @@ fun RichTextDialog(
                             text = text, size = size, color = color,
                             bold = bold, italic = italic, font = font, align = align,
                             boxWidth = if (wrap) boxWidth else 0f,
-                            boxFillColor = boxFill, boxBorder = border
+                            boxFillColor = boxFill, boxBorder = border,
+                            link = com.inkslate.core.Links.normalise(link)
                         )
                     )
                 }

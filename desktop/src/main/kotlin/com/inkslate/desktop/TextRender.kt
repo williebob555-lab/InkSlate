@@ -34,7 +34,9 @@ fun Stroke.textStyle(): TextStyle = TextStyle(
     fontSize = TextUnit(textSize, TextUnitType.Sp),
     fontFamily = font.toFontFamily(),
     fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-    fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal
+    fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal,
+    // A link reads as one: underlined.
+    textDecoration = if (link != null) androidx.compose.ui.text.style.TextDecoration.Underline else null
 )
 
 /**

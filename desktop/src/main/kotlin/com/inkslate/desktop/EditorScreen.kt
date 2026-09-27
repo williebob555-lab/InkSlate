@@ -1833,6 +1833,9 @@ fun EditorScreen(
                     canPaste = Clipboard.contents.isNotEmpty(),
                     onPickCustomColour = { pickingColour = true },
                     onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                    // One text box selected: Edit opens it in the text editor - its words,
+                    // look and link.
+                    onEditText = selected().singleOrNull()?.takeIf { it.kind == Stroke.Kind.TEXT }?.let { t -> { editingText = t } },
                     onEditStamp = com.inkslate.core.Stamps.stampOf(selected())?.let { tag ->
                         {
                             armedSettings = null

@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.BorderColor
@@ -110,6 +111,8 @@ class ToolBarActions(
     val onToggleShapes: () -> Unit = {},
     /** Present only while the selection is one stamp, which can then be changed in place. */
     val onEditStamp: (() -> Unit)? = null,
+    /** Set when the selection is one text box: opens it in the text editor. */
+    val onEditText: (() -> Unit)? = null,
     val onToggleRuler: () -> Unit = {},
     val onInsertPicture: () -> Unit = {},
     val onCapture: () -> Unit = {},
@@ -175,6 +178,9 @@ fun ToolBar(
                     )
                     IconButton(onClick = { actions.onRestyleSelection(cfg.color, null) }) {
                         Icon(Icons.Default.BorderColor, "Apply current colour")
+                    }
+                    actions.onEditText?.let { edit ->
+                        IconButton(onClick = edit) { Icon(Icons.Default.Edit, "Edit text") }
                     }
                     actions.onEditStamp?.let { edit ->
                         IconButton(onClick = edit) { Icon(Icons.Default.Tune, "Change this stamp") }

@@ -40,6 +40,9 @@ interface DesktopSource : Closeable {
      * Null from a source that cannot do it, and the caller falls back to the whole page.
      */
     fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? = null
+
+    /** The web links a page already carries, in page points from its top-left; none by default. */
+    fun links(index: Int): List<com.inkslate.core.PageLink> = emptyList()
 }
 
 class PdfSource(
@@ -79,6 +82,31 @@ class PdfSource(
 
     override val kind = "pdf"
     override val pageCount: Int get() = doc.numberOfPages
+
+    private val linkCache = HashMap<Int, List<com.inkslate.core.PageLink>>()
+
+    /**
+     * The page's own web links, in the page's display coordinates. Only for an unrotated page -
+     * which is nearly every page - rather than a guess at the others. Kept once read.
+     */
+    override fun links(index: Int): List<com.inkslate.core.PageLink> = synchronized(lock) {
+        linkCache.getOrPut(index) {
+            if (index !in 0 until doc.numberOfPages) return@getOrPut emptyList()
+            val page = doc.getPage(index)
+            if (((page.rotation % 360) + 360) % 360 != 0) return@getOrPut emptyList()
+            val box = page.cropBox ?: page.mediaBox ?: return@getOrPut emptyList()
+            runCatching {
+                page.annotations.filterIsInstance<org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationLink>().mapNotNull { a ->
+                    val uri = (a.action as? org.apache.pdfbox.pdmodel.interactive.action.PDActionURI)?.uri ?: return@mapNotNull null
+                    val r = a.rectangle ?: return@mapNotNull null
+                    com.inkslate.core.PageLink(
+                        r.lowerLeftX - box.lowerLeftX, box.upperRightY - r.upperRightY,
+                        r.upperRightX - box.lowerLeftX, box.upperRightY - r.lowerLeftY, uri
+                    )
+                }
+            }.getOrDefault(emptyList())
+        }
+    }
 
     override fun pageDim(index: Int): PageDim = synchronized(lock) {
         if (index !in 0 until doc.numberOfPages) return PageDim(612f, 792f)

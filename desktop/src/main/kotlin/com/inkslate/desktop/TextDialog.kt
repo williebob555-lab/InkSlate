@@ -63,6 +63,7 @@ fun TextDialog(
     var boxFill by remember(initial.id) { mutableStateOf(initial.boxFillColor) }
     var border by remember(initial.id) { mutableStateOf(initial.boxBorder) }
     var wrapWidth by remember(initial.id) { mutableStateOf(initial.boxWidth) }
+    var link by remember(initial.id) { mutableStateOf(initial.link?.let { com.inkslate.core.Links.shown(it) }.orEmpty()) }
     var picking by remember { mutableStateOf<TextColourTarget?>(null) }
 
     AlertDialog(
@@ -75,6 +76,15 @@ fun TextDialog(
                     onValueChange = { text = it },
                     label = { Text("Text") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 96.dp)
+                )
+                // A web address makes the text a link: underlined, opened with a click, and a
+                // real link in the saved PDF.
+                OutlinedTextField(
+                    value = link,
+                    onValueChange = { link = it },
+                    label = { Text("Link (web address, optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
                 )
 
                 OptionLabel("Font")
@@ -168,6 +178,7 @@ fun TextDialog(
                             boxFillColor = boxFill,
                             boxBorder = border,
                             boxWidth = wrapWidth,
+                            link = com.inkslate.core.Links.normalise(link),
                             updatedUtc = System.currentTimeMillis()
                         )
                     )

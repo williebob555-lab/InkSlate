@@ -254,6 +254,7 @@ fun EditorScreen(
     /** The stamp on the page whose settings are open, or null. */
     var placedSettings by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
     var selectedStamp by remember { mutableStateOf<com.inkslate.core.StampTag?>(null) }
+    var selectedText by remember { mutableStateOf<Stroke?>(null) }
     // Set just before the tray itself puts an item down, so that is not mistaken for a stroke
     // putting it away - which folds the tray.
     var trayDisarming by remember { mutableStateOf(false) }
@@ -1967,6 +1968,11 @@ fun EditorScreen(
                         },
                         onEditPressureCurve = { pressureCurveOpen = true },
                         onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                        // Text selected: Edit opens it in the text editor, where its words, look
+                        // and link are changed.
+                        onEditText = selectedText?.let { t ->
+                            { textPrompt = TextPromptRequest(t.points.firstOrNull()?.x ?: 0f, t.points.firstOrNull()?.y ?: 0f, t) }
+                        },
                         onEditStamp = selectedStamp?.let { tag ->
                             {
                                 armedSettings = null
@@ -2159,6 +2165,7 @@ fun EditorScreen(
                                 canCrop = view.croppableSelection()
                                 val stamp = view.selectedStamp()
                                 selectedStamp = stamp
+                                selectedText = view.selectedText()
                                 // Selecting something else closes the settings of the stamp
                                 // that was being changed, as one undo step.
                                 if (placedSettings != null && stamp?.group != placedSettings?.group) {
@@ -2189,6 +2196,20 @@ fun EditorScreen(
                             }
                             view.onTextRequested = { x, y, existing ->
                                 textPrompt = TextPromptRequest(x, y, existing)
+                            }
+                            // Links: a web address on text, or one the PDF already had.
+                            view.pageLinks = { index -> doc?.source?.links(index).orEmpty() }
+                            view.onLinkTapped = { link ->
+                                if (com.inkslate.core.Links.safe(link)) {
+                                    runCatching {
+                                        context.startActivity(
+                                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link))
+                                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        )
+                                    }.onFailure { scope.launch { snackbar.showSnackbar("Nothing on this device opens $link") } }
+                                } else {
+                                    scope.launch { snackbar.showSnackbar("Not opened: $link is not a web link") }
+                                }
                             }
                             view.onCellRequested = { table, r, c ->
                                 cellPrompt = CellPromptRequest(table, r, c)
@@ -2382,6 +2403,7 @@ fun EditorScreen(
                             bold = spec.bold, italic = spec.italic, font = spec.font,
                             align = spec.align, boxWidth = spec.boxWidth,
                             boxFillColor = spec.boxFillColor, boxBorder = spec.boxBorder,
+                            link = spec.link,
                             updatedUtc = System.currentTimeMillis()
                         )
                     )
@@ -2390,7 +2412,8 @@ fun EditorScreen(
                         req.x, req.y, spec.text, spec.size, spec.color,
                         bold = spec.bold, italic = spec.italic, font = spec.font,
                         align = spec.align, boxWidth = spec.boxWidth,
-                        boxFillColor = spec.boxFillColor, boxBorder = spec.boxBorder
+                        boxFillColor = spec.boxFillColor, boxBorder = spec.boxBorder,
+                        link = spec.link
                     )
                 }
                 // remember the size for the next text object placed

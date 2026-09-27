@@ -296,6 +296,7 @@ object DocumentExport {
                     ?.let { removeOurAnnotations(it) }
 
                 val strokes = doc.strokesOn(index)
+                writeLinks(page, strokes, displayToUser(pdf, index))
                 if (strokes.isEmpty()) continue
                 val ordered = strokes.sortedBy { if (it.isHighlighter) 0 else 1 }
                 val toUser = displayToUser(pdf, index)
@@ -378,6 +379,42 @@ object DocumentExport {
      * classmate added would be far worse than leaving a stale one of ours behind, so the match
      * has to be something only this app writes.
      */
+    /**
+     * Text given a web address as a real link in the file, over where the text is, so the saved
+     * PDF opens it in any reader. Tagged apart from the ink (the same tag the tablet writes), so
+     * the check for current ink never counts them.
+     */
+    internal fun writeLinks(page: PDPage, strokes: List<Stroke>, toUser: Matrix) {
+        val existing = page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray
+        val linked = strokes.filter { it.kind == Stroke.Kind.TEXT && !it.link.isNullOrBlank() && com.inkslate.core.Links.safe(it.link!!) }
+        if (existing == null && linked.isEmpty()) return
+        val annots = existing ?: COSArray().also { page.cosObject.setItem(COSName.ANNOTS, it) }
+        for (i in annots.size() - 1 downTo 0) {
+            val dict = annots.getObject(i) as? COSDictionary ?: continue
+            if ((dict.getDictionaryObject(COSName.getPDFName(ANNOT_KEY)) as? COSString)?.string == LINK_TAG) annots.remove(i)
+        }
+        for (s in linked) {
+            val b = s.rawBoundsBox()
+            val corners = listOf(b.left to b.top, b.right to b.top, b.left to b.bottom, b.right to b.bottom).map { (x, y) -> mapPoint(toUser, x, y) }
+            val x0 = corners.minOf { it[0] }; val y0 = corners.minOf { it[1] }
+            val rect = PDRectangle(x0, y0, corners.maxOf { it[0] } - x0, corners.maxOf { it[1] } - y0)
+            annots.add(COSDictionary().apply {
+                setItem(COSName.TYPE, COSName.getPDFName("Annot"))
+                setItem(COSName.SUBTYPE, COSName.getPDFName("Link"))
+                setItem(COSName.RECT, rect.cosObject)
+                setItem(COSName.getPDFName("Border"), COSArray().apply { repeat(3) { add(org.apache.pdfbox.cos.COSInteger.ZERO) } })
+                setItem(COSName.A, COSDictionary().apply {
+                    setItem(COSName.TYPE, COSName.getPDFName("Action"))
+                    setItem(COSName.S, COSName.getPDFName("URI"))
+                    setItem(COSName.getPDFName("URI"), COSString(s.link))
+                })
+                setItem(COSName.getPDFName(ANNOT_KEY), COSString(LINK_TAG))
+            })
+        }
+    }
+
+    private const val LINK_TAG = "InkSlateLink"
+
     private fun removeOurAnnotations(annots: COSArray) {
         for (i in annots.size() - 1 downTo 0) {
             val dict = annots.getObject(i) as? COSDictionary ?: continue

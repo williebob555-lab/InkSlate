@@ -164,6 +164,8 @@ object StrokeRasteriser {
 
     private fun drawText(canvas: Canvas, s: Stroke) {
         val paint = preparedTextPaint(s)
+        // A link reads as one: underlined, as everywhere else links are.
+        paint.isUnderlineText = s.link != null
         val lines = s.wrapLines { paint.measureText(it) }
         val box = s.rawBounds()
 

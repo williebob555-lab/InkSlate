@@ -40,6 +40,9 @@ interface PageSource : Closeable {
      * being looked at is rendered sharply.
      */
     fun renderRegion(index: Int, region: RectF, targetWidthPx: Int): Bitmap?
+
+    /** The web links a page already carries, in page points from its top-left; none by default. */
+    fun links(index: Int): List<com.inkslate.core.PageLink> = emptyList()
 }
 
 /**
@@ -56,6 +59,31 @@ class PdfPageSource(private val file: File) : PageSource {
     private var closed = false
 
     override val kind = "pdf"
+
+    private val linkCache = HashMap<Int, List<com.inkslate.core.PageLink>>()
+
+    /**
+     * The page's own links, from the platform renderer - which reads them from Android 15 on.
+     * Earlier versions have no way to ask short of parsing the file, so there they are simply not
+     * tappable. Kept once read: a page's links never change while it is open.
+     */
+    override fun links(index: Int): List<com.inkslate.core.PageLink> = synchronized(lock) {
+        linkCache[index]?.let { return it }
+        val r = renderer
+        if (closed || r == null || index !in 0 until r.pageCount) return emptyList()
+        val found = if (android.os.Build.VERSION.SDK_INT >= 35) runCatching { readLinks(r, index) }.getOrDefault(emptyList()) else emptyList()
+        linkCache[index] = found
+        found
+    }
+
+    @androidx.annotation.RequiresApi(35)
+    private fun readLinks(r: PdfRenderer, index: Int): List<com.inkslate.core.PageLink> =
+        r.openPage(index).use { page ->
+            page.linkContents.flatMap { link ->
+                val uri = link.uri.toString()
+                link.bounds.map { b -> com.inkslate.core.PageLink(b.left, b.top, b.right, b.bottom, uri) }
+            }
+        }
 
     init {
         val d = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)

@@ -349,7 +349,46 @@ object InkExporter {
 
     // ---- page-level writing --------------------------------------------------
 
+    /**
+     * Text given a web address becomes a real link in the file, over where the text is, so the
+     * saved PDF opens it in any reader. Marked with a tag of their own, not the ink's: the check
+     * that a page already carries its current ink counts the ink's annotations, and links among
+     * them would make every page look out of date on every save.
+     */
+    internal fun writeLinks(page: PDPage, strokes: List<Stroke>, toUser: Matrix) {
+        val existing = page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray
+        val linked = strokes.filter { it.kind == StrokeKind.TEXT && !it.link.isNullOrBlank() && com.inkslate.core.Links.safe(it.link!!) }
+        if (existing == null && linked.isEmpty()) return
+        val annots = existing ?: COSArray().also { page.cosObject.setItem(COSName.ANNOTS, it) }
+        for (i in annots.size() - 1 downTo 0) {
+            val dict = annots.getObject(i) as? COSDictionary ?: continue
+            if ((dict.getDictionaryObject(COSName.getPDFName(ANNOT_KEY)) as? COSString)?.string == LINK_TAG) annots.remove(i)
+        }
+        for (s in linked) {
+            val b = s.rawBounds()
+            val corners = listOf(b.left to b.top, b.right to b.top, b.left to b.bottom, b.right to b.bottom).map { (x, y) -> mapPoint(toUser, x, y) }
+            val rect = PDRectangle(
+                corners.minOf { it[0] }, corners.minOf { it[1] },
+                corners.maxOf { it[0] } - corners.minOf { it[0] }, corners.maxOf { it[1] } - corners.minOf { it[1] }
+            )
+            annots.add(COSDictionary().apply {
+                setItem(COSName.TYPE, COSName.getPDFName("Annot"))
+                setItem(COSName.SUBTYPE, COSName.getPDFName("Link"))
+                setItem(COSName.RECT, rect.cosObject)
+                // No visible border: the text is underlined already.
+                setItem(COSName.getPDFName("Border"), COSArray().apply { add(com.tom_roush.pdfbox.cos.COSInteger.ZERO); add(com.tom_roush.pdfbox.cos.COSInteger.ZERO); add(com.tom_roush.pdfbox.cos.COSInteger.ZERO) })
+                setItem(COSName.A, COSDictionary().apply {
+                    setItem(COSName.TYPE, COSName.getPDFName("Action"))
+                    setItem(COSName.S, COSName.getPDFName("URI"))
+                    setItem(COSName.getPDFName("URI"), COSString(s.link))
+                })
+                setItem(COSName.getPDFName(ANNOT_KEY), COSString(LINK_TAG))
+            })
+        }
+    }
+
     internal fun flattenOntoPage(pdf: PDDocument, page: PDPage, strokes: List<Stroke>) {
+        writeLinks(page, strokes, toUserFor(page))
         PDPageContentStream(pdf, page, PDPageContentStream.AppendMode.APPEND, true, true).use { cs ->
             cs.saveGraphicsState()
             cs.transform(toUserFor(page))
@@ -365,6 +404,7 @@ object InkExporter {
         removeOurAnnotations(annots)
 
         val toUser = toUserFor(page)
+        writeLinks(page, strokes, toUser)
         for (s in strokes.sortedBy { if (it.isHighlighter) 0 else 1 }) {
             val dict = buildAnnotation(pdf, page, s, toUser) ?: continue
             annots.add(dict)
@@ -389,6 +429,7 @@ object InkExporter {
         val annots = page.cosObject.getDictionaryObject(COSName.ANNOTS) as? COSArray
             ?: COSArray().also { page.cosObject.setItem(COSName.ANNOTS, it) }
         removeOurAnnotations(annots)
+        writeLinks(page, strokes, toUserFor(page))
         if (strokes.isEmpty()) return
 
         val box = page.mediaBox
@@ -1022,6 +1063,8 @@ object InkExporter {
     /** Identifies annotations written by this app, so a rewrite replaces rather than duplicates. */
     private const val ANNOT_TAG = "InkSlate"
     private const val ANNOT_KEY = "InkSlateObject"
+    /** What marks the web links this app wrote, apart from its ink. */
+    private const val LINK_TAG = "InkSlateLink"
     /** The page signature the annotation was drawn from. The laptop writes the same key. */
     private const val SIG_KEY = "InkSlateSig"
 }

@@ -325,6 +325,11 @@ data class Stroke(
     val boxHeight: Float = 0f,
     val boxFillColor: Int = 0,
     val boxBorder: Boolean = false,
+    /**
+     * A web address a [Kind.TEXT] stroke links to: a tap opens it, and a saved PDF carries it as a
+     * real link, so it works in any reader. Null for none.
+     */
+    val link: String? = null,
     val lineSpacing: Float = 1.25f,
     val padding: Float = 3f,
     val rows: Int = 0,

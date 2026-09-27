@@ -1,5 +1,6 @@
 package com.inkslate.desktop
 
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -635,6 +636,27 @@ fun DocumentCanvas(
                     val doc = viewport.screenToDoc(down.position)
                     val slot = slotAt(doc.x, doc.y) ?: return@awaitEachGesture
                     livePage = slot.index
+
+                    // A click on a link opens it - text given a web address, or a link the PDF
+                    // already had. The mouse and a finger only: the pen always writes. Not with
+                    // the text or select tool, where a click means those.
+                    val handTool = action.mode?.let { tools.configFor(it).tool }
+                    if (device != InputDevice.PEN && handTool != com.inkslate.core.Tool.TEXT && handTool != com.inkslate.core.Tool.SELECT) {
+                        val at = slot.toInk(doc.x, doc.y)
+                        val link = strokes.lastOrNull {
+                            it.pageIndex == slot.index && it.kind == Stroke.Kind.TEXT && it.link != null &&
+                                it.rawBoundsBox().let { b -> at.x in b.left..b.right && at.y in b.top..b.bottom }
+                        }?.link ?: runCatching { source.links(slot.index) }.getOrNull()?.firstOrNull { it.contains(at.x, at.y) }?.uri
+                        if (link != null) {
+                            val up = waitForUpOrCancellation()
+                            if (up != null && (up.position - down.position).getDistance() < 12f) {
+                                if (com.inkslate.core.Links.safe(link)) runCatching { SystemShell.openUrl(link) }
+                                    .onFailure { EventLog.warn("link", "Could not open $link: ${it.message}") }
+                                else EventLog.warn("link", "Not opened, not a web link: $link")
+                            }
+                            return@awaitEachGesture
+                        }
+                    }
 
                     handlePageGesture(
                         down = down,

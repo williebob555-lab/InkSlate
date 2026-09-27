@@ -255,6 +255,7 @@ object DocumentIO {
                 val strokes = doc.strokesOn(index)
                 if (strokes.isEmpty()) continue
                 val page = pdf.getPage(index)
+                DocumentExport.writeLinks(page, strokes, displayToUser(pdf, index))
                 PDPageContentStream(
                     pdf, page, PDPageContentStream.AppendMode.APPEND, true, true
                 ).use { cs ->
