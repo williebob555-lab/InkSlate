@@ -306,7 +306,19 @@ fun AppRoot(
         when (action) {
             com.inkslate.core.PerformAction.PEN, com.inkslate.core.PerformAction.HIGHLIGHTER,
             com.inkslate.core.PerformAction.ERASER -> {
-                listOf(com.inkslate.core.InputMode.PEN, com.inkslate.core.InputMode.MOUSE).forEach {
+                if (com.inkslate.AppFlavor.fingerPans) {
+                    // Music: switches. The finger (and mouse) follow the pen while one is on.
+                    com.inkslate.core.QuickTools.toggle(
+                        tools.configFor(com.inkslate.core.InputMode.PEN),
+                        listOf(tools.configFor(com.inkslate.core.InputMode.TOUCH)),
+                        action
+                    )
+                    // The mouse writes with the pen's tool whenever the tools are out, as before;
+                    // with them away it turns pages unless the switch is on (see DocumentCanvas).
+                    if (tools.configFor(com.inkslate.core.InputMode.TOUCH).tool != com.inkslate.core.Tool.PAN) {
+                        com.inkslate.core.QuickTools.apply(tools.configFor(com.inkslate.core.InputMode.MOUSE), action)
+                    }
+                } else listOf(com.inkslate.core.InputMode.PEN, com.inkslate.core.InputMode.MOUSE).forEach {
                     com.inkslate.core.QuickTools.apply(tools.configFor(it), action)
                 }
                 tools.edit {}
@@ -329,7 +341,9 @@ fun AppRoot(
         tools.revision
         when (action) {
             com.inkslate.core.PerformAction.FULLSCREEN -> immersive.isFullscreen
-            else -> com.inkslate.core.QuickTools.current(tools.configFor(com.inkslate.core.InputMode.PEN)) == action
+            // Lit while the finger has it: that is what pressing it again takes away.
+            else -> if (com.inkslate.AppFlavor.fingerPans) com.inkslate.core.QuickTools.onForHands(listOf(tools.configFor(com.inkslate.core.InputMode.TOUCH))) == action
+                else com.inkslate.core.QuickTools.current(tools.configFor(com.inkslate.core.InputMode.PEN)) == action
         }
     }
 

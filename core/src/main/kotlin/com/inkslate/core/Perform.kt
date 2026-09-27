@@ -224,4 +224,30 @@ object QuickTools {
             else -> Unit
         }
     }
+
+    /**
+     * The strip's pen, highlighter and eraser as switches, for an app where a finger turns pages
+     * (InkSheets). On: the pen gets the tool, and so do the finger and mouse ([hands]) - a quick fix
+     * with a fingertip, no toolbar opened. Pressed again: the finger and mouse go back to turning
+     * pages. The pen itself keeps the tool it was last given either way, and never turns pages.
+     */
+    fun toggle(pen: ToolConfig, hands: List<ToolConfig>, action: PerformAction) {
+        if (hands.isNotEmpty() && hands.all { current(it) == action }) {
+            hands.forEach { it.tool = Tool.PAN }
+            return
+        }
+        apply(pen, action)
+        for (h in hands) {
+            h.tool = pen.tool
+            h.brush = pen.brush
+            h.color = pen.color
+            h.strokeWidth = pen.strokeWidth
+            h.opacity = pen.opacity
+            h.eraserRadius = pen.eraserRadius
+            h.eraserMode = pen.eraserMode
+        }
+    }
+
+    /** Which of the three the finger has, for lighting its switch; null when it turns pages. */
+    fun onForHands(hands: List<ToolConfig>): PerformAction? = hands.firstOrNull()?.let { current(it) }
 }

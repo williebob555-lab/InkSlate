@@ -1117,7 +1117,9 @@ class DrawingView @JvmOverloads constructor(
      * fitted to the screen. Zoomed in to read something small, the finger moves the page as usual.
      */
     private fun turnsWithFinger(): Boolean =
-        swipeTurns && fitWholePage && layout == PageLayout.SINGLE && toolsPutAway()
+        swipeTurns && fitWholePage && layout == PageLayout.SINGLE && toolsPutAway() &&
+            // Unless the strip has handed the finger a pen or eraser for a quick fix.
+            configFor(InputMode.TOUCH).tool == Tool.PAN
 
     /** Music with its tools put away: a finger turns pages and never moves the page sideways. */
     private fun toolsPutAway(): Boolean =
@@ -3130,7 +3132,9 @@ class DrawingView @JvmOverloads constructor(
                 // that landed and lifted without moving - so writing near the edge still writes,
                 // and the pen never turns pages at all.
                 val tapped = pending
-                if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0) {
+                // Not while the finger has been given a pen or eraser from the strip: then a tap is
+                // a mark, a quick fix, and turning the page under it would lose the place.
+                if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0 && configFor(InputMode.TOUCH).tool == Tool.PAN) {
                     val at = event.x / width
                     // On a fitted page of music any tap turns: the left half back, the right on.
                     val share = if (turnsWithFinger() && !zoomedIn()) 0.5f else EDGE_TAP_SHARE

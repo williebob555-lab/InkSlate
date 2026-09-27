@@ -527,9 +527,14 @@ fun DocumentCanvas(
                         val event = awaitPointerEvent(PointerEventPass.Initial)
                         // A finger, or - on music with its tools away - the mouse, which then turns
                         // pages rather than writing: click a half, or drag across. A pen still writes.
-                        val mouseTurns = resting() && swipe != null
+                        // Not a hand the strip has given a pen or eraser to: that one writes.
+                        val fingerTurns = tools.configFor(com.inkslate.core.InputMode.TOUCH).tool == com.inkslate.core.Tool.PAN
+                        val mouseTurns = resting() && swipe != null && fingerTurns
                         val touches = event.changes.filter { c ->
-                            c.type == PointerType.Touch || (mouseTurns && c.type == PointerType.Mouse && event.type != PointerEventType.Scroll)
+                            // Windows hands a pen over as a mouse: asked what it really is, so the pen
+                            // never turns a page - it writes with whatever tool it last had.
+                            (c.type == PointerType.Touch && fingerTurns) || (mouseTurns && c.type == PointerType.Mouse && event.type != PointerEventType.Scroll &&
+                                InputSignal.deviceOf(c) != InputDevice.PEN)
                         }
                         if (touches.isEmpty()) continue
                         touches.filter { it.type == PointerType.Mouse }.forEach { it.consume() }
@@ -598,7 +603,8 @@ fun DocumentCanvas(
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
 
                     // Music with its tools away: the mouse turns pages (see above), it does not write.
-                    if (down.type == PointerType.Mouse && resting() && swipe != null) return@awaitEachGesture
+                    if (down.type == PointerType.Mouse && resting() && swipe != null && InputSignal.deviceOf(down) != InputDevice.PEN &&
+                        tools.configFor(com.inkslate.core.InputMode.TOUCH).tool == com.inkslate.core.Tool.PAN) return@awaitEachGesture
 
                     // Name what touched the screen, then ask the table what that does. Naming
                     // and deciding are separate on purpose: everything uncertain about a device
