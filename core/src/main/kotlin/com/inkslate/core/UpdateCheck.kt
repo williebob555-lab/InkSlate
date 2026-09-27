@@ -32,8 +32,6 @@ object UpdateCheck {
     const val PROJECT_URL = "https://github.com/$OWNER/$REPO"
     const val RELEASES_URL = "$PROJECT_URL/releases"
 
-    private const val LATEST_RELEASE_API =
-        "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
 
     /**
      * Every release, newest first, including the ones marked as pre-releases.
@@ -43,7 +41,21 @@ object UpdateCheck {
      * the test channel is switched on.
      */
     private const val ALL_RELEASES_API =
-        "https://api.github.com/repos/$OWNER/$REPO/releases?per_page=20"
+        "https://api.github.com/repos/$OWNER/$REPO/releases?per_page=40"
+
+    /**
+     * Which releases are whose. The two apps are published separately - InkSlate on `v1.2.0`
+     * tags and the moving `test` tag, InkSheets on `inksheets-v1.0.0` and `inksheets-test` - so
+     * each is only ever offered its own changes. They used to share every release, and InkSlate
+     * offered an update each time only InkSheets had changed.
+     */
+    fun tagIsFor(tag: String, app: String): Boolean {
+        val sheets = tag.startsWith("inksheets-", ignoreCase = true)
+        return if (app.equals("InkSheets", ignoreCase = true)) sheets else !sheets && (tag == "test" || Version.parse(tag) != null)
+    }
+
+    /** The moving tag an app's test builds are published on. */
+    fun testTagFor(app: String) = if (app.equals("InkSheets", ignoreCase = true)) "inksheets-test" else "test"
 
     /** Long enough for a slow phone on school wifi, short enough not to hang the dialog. */
     private const val CONNECT_TIMEOUT_MS = 15_000
@@ -131,7 +143,7 @@ object UpdateCheck {
             ?: return Result.Failed("This build has no version number to compare against.")
 
         val body = try {
-            fetchJson(if (channel == Channel.TEST) ALL_RELEASES_API else LATEST_RELEASE_API)
+            fetchJson(ALL_RELEASES_API)
         } catch (e: RateLimited) {
             // The API allows so many asks an hour per internet connection, shared by every device
             // and program on it. The release pages and their downloads are not counted: read those.
@@ -141,7 +153,7 @@ object UpdateCheck {
         }
 
         val release = try {
-            if (channel == Channel.TEST) newestOf(parseReleases(body)) else parseRelease(body)
+            newestOf(parseReleases(body, app, channel))
         } catch (e: Exception) {
             return Result.Failed("GitHub sent back something unexpected.")
         } ?: return Result.Failed("The latest release has no version number in its tag.")
@@ -192,7 +204,14 @@ object UpdateCheck {
      * to date because the only releases it could see were the stable ones it had already passed.
      */
     private fun versionOf(dto: ReleaseDto): Version? =
-        Version.parse(dto.tagName) ?: dto.name?.let { Version.findIn(it) }
+        Version.parse(dto.tagName.removePrefix("inksheets-")) ?: dto.name?.let { Version.findIn(undotted(it)) }
+
+    /**
+     * InkSheets' release titles write the version with middle dots ("InkSheets test build
+     * 1·3·1-test·7"), so that updaters from before the split - which read a version out of any
+     * release's title - pass them by. Read here as the dots they stand for.
+     */
+    internal fun undotted(title: String) = title.replace('·', '.')
 
     /** Visible for tests: turns a GitHub release payload into a [Release]. */
     internal fun parseRelease(body: String): Release? {
@@ -207,9 +226,14 @@ object UpdateCheck {
         )
     }
 
-    /** Visible for tests: every release in a list payload, dropping any without a version. */
-    internal fun parseReleases(body: String): List<Release> =
-        json.decodeFromString<List<ReleaseDto>>(body).mapNotNull { dto ->
+    /**
+     * Visible for tests: every release in a list payload that is [app]'s and on [channel],
+     * dropping any without a version.
+     */
+    internal fun parseReleases(body: String, app: String = "InkSlate", channel: Channel = Channel.TEST): List<Release> =
+        json.decodeFromString<List<ReleaseDto>>(body).filter { dto ->
+            tagIsFor(dto.tagName, app) && !dto.draft && (channel == Channel.TEST || !dto.prerelease)
+        }.mapNotNull { dto ->
             versionOf(dto)?.let { version ->
                 Release(
                     version = version,
@@ -260,8 +284,9 @@ object UpdateCheck {
      */
     internal fun fromPages(installed: Version, platform: Platform, channel: Channel, app: String): Result? {
         val found = ArrayList<Pair<String, Version>>()
-        latestTag()?.let { tag -> Version.parse(tag)?.let { found += tag to it } }
-        if (channel == Channel.TEST) testVersion()?.let { found += "test" to it }
+        // "Latest" is InkSlate's; InkSheets' own stable releases are found through the API only.
+        latestTag()?.takeIf { tagIsFor(it, app) }?.let { tag -> Version.parse(tag.removePrefix("inksheets-"))?.let { found += tag to it } }
+        if (channel == Channel.TEST) testVersion(testTagFor(app))?.let { found += testTagFor(app) to it }
         val (tag, version) = found.maxByOrNull { it.second } ?: return null
         if (version <= installed) return Result.UpToDate(installed)
         val page = "$RELEASES_URL/tag/$tag"
@@ -270,7 +295,7 @@ object UpdateCheck {
             val url = "$PROJECT_URL/releases/download/$tag/$name"
             if (exists(url)) {
                 val asset = Asset(name, url, 0)
-                return Result.Available(Release(version, if (tag == "test") "Test build $version" else tag, "", page, listOf(asset)), asset)
+                return Result.Available(Release(version, if (tag.endsWith("test")) "Test build $version" else tag, "", page, listOf(asset)), asset)
             }
         }
         return Result.AvailableWithoutDownload(Release(version, tag, "", page, emptyList()))
@@ -292,8 +317,8 @@ object UpdateCheck {
     }
 
     /** The test build's version, from its release page's title: "Test build 1.2.1-test.145". */
-    private fun testVersion(): Version? {
-        val c = (URL("$RELEASES_URL/tag/test").openConnection() as HttpURLConnection).apply {
+    private fun testVersion(tag: String): Version? {
+        val c = (URL("$RELEASES_URL/tag/$tag").openConnection() as HttpURLConnection).apply {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             setRequestProperty("User-Agent", "InkSlate")
@@ -301,7 +326,7 @@ object UpdateCheck {
         return try {
             if (c.responseCode != 200) return null
             val html = c.inputStream.bufferedReader().use { it.readText() }
-            Regex("""Test build ([0-9][0-9A-Za-z.\-+]*)""").find(html)?.groupValues?.get(1)?.let { Version.parse(it) }
+            Regex("""[Tt]est build ([0-9][0-9A-Za-z.·\-+]*)""").find(html)?.groupValues?.get(1)?.let { Version.parse(undotted(it)) }
         } finally {
             c.disconnect()
         }
@@ -399,6 +424,8 @@ object UpdateCheck {
         val name: String? = null,
         val body: String? = null,
         @SerialName("html_url") val htmlUrl: String? = null,
+        val prerelease: Boolean = false,
+        val draft: Boolean = false,
         val assets: List<AssetDto> = emptyList()
     )
 

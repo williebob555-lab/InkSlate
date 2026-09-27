@@ -1106,7 +1106,9 @@ class DocumentRepo(private val context: Context) {
         val store = ImageStore(doc.file)
         InkExporter.imageResolver = { id -> store.load(id) }
         if (ink.totalStrokes == 0) {
-            EventLog.warn("export", "${doc.file.name}: nothing drawn, export skipped")
+            // Said only when a person asked for the save: the background writes of every open
+            // song (preloaded ones included) ask every few seconds, and filled the log with this.
+            if (recordHistory) EventLog.info("export", "${doc.file.name}: nothing drawn, nothing to save")
             return SaveResult.NothingToDo
         }
         EventLog.info(

@@ -155,6 +155,8 @@ fun EditorScreen(
     var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var pageDims by remember { mutableStateOf<List<PageDim?>>(emptyList()) }
     var renderFailed by remember { mutableStateOf(false) }
+    // The file opened with fewer pages than it is meant to have - none, for a damaged one.
+    var damaged by remember(doc) { mutableStateOf(false) }
     var layout by remember { mutableStateOf(if (com.inkslate.AppFlavor.musicView) PageLayout.SINGLE else PageLayout.VERTICAL) }
     var strokesLoaded by remember { mutableStateOf(false) }
     var positionRestored by remember { mutableStateOf(false) }
@@ -656,6 +658,13 @@ fun EditorScreen(
 
                         for (index in pages) {
                             if (index !in 0 until d.pageCount) continue
+                            if (d.source.kind == "pdf" && index >= d.source.pageCount) {
+                                // Not a rendering failure: the file has no such page. Said once, not
+                                // retried and logged every time the page comes into view.
+                                if (!damaged) EventLog.error("render", "${d.file.name} opened with ${d.source.pageCount} pages - the file is damaged")
+                                damaged = true
+                                continue
+                            }
                             if (view.hasBitmap(index)) continue
 
                             val result = withContext(Dispatchers.IO) {
@@ -2205,7 +2214,22 @@ fun EditorScreen(
 
             // A page that will not rasterise used to look identical to a genuinely blank one.
             // Say so, and record why, rather than leaving the user staring at white.
-            if (renderFailed && doc != null) {
+            if (damaged && doc != null) {
+                Card(
+                    modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("This file is damaged", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(
+                            "It opens with no pages to show. Another copy of the part, if there is one, " +
+                                "is used in its place once the library has been sorted.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            } else if (renderFailed && doc != null) {
                 Card(
                     modifier = Modifier
                         .align(Alignment.TopCenter)

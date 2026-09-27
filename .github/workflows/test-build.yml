@@ -27,7 +27,7 @@ on:
 concurrency:
   group: >-
     ${{ (github.event_name == 'workflow_dispatch' ||
-    contains(github.event.head_commit.message, '[build]'))
+    contains(github.event.head_commit.message, '[build'))
     && 'test-build' || format('test-build-{0}', github.sha) }}
   cancel-in-progress: true
 
@@ -40,15 +40,33 @@ jobs:
     # Everything else needs this job, so this one condition gates the whole workflow.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[build]')
+      contains(github.event.head_commit.message, '[build')
     runs-on: ubuntu-latest
     outputs:
       name: ${{ steps.derive.outputs.name }}
       code: ${{ steps.derive.outputs.code }}
+      slate: ${{ steps.apps.outputs.slate }}
+      sheets: ${{ steps.apps.outputs.sheets }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0      # tags, so the last release can be found
+
+      # Which apps this build is for. InkSlate and InkSheets are published separately - one used
+      # to offer the other's changes as its own update - so a commit says which it changed:
+      # `[build]` both, `[build sheets]` InkSheets only, `[build slate]` InkSlate only.
+      - id: apps
+        shell: bash
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          slate=true; sheets=true
+          case "$MESSAGE" in
+            *"[build sheets]"*) slate=false ;;
+            *"[build slate]"*) sheets=false ;;
+          esac
+          echo "slate=$slate" >> "$GITHUB_OUTPUT"
+          echo "sheets=$sheets" >> "$GITHUB_OUTPUT"
 
       - id: derive
         shell: bash
@@ -313,6 +331,13 @@ jobs:
       always() && (needs.android.result == 'success' || needs.windows.result == 'success' ||
       needs.linux.result == 'success')
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.name }}
+      # The first build after the two apps were split also puts InkSheets on the old shared `test`
+      # release, so InkSheets installs from before the split (which only look there) are offered
+      # the version that knows where to look next. Turn off once those have updated.
+      SHEETS_ON_OLD_TAG: 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -321,29 +346,6 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Describe what is in it
-        id: notes
-        shell: bash
-        run: |
-          {
-            echo 'body<<NOTES'
-            echo "Built from \`${GITHUB_SHA::7}\` on $(date -u '+%d %b %Y, %H:%M UTC')."
-            echo
-            # Said plainly, because a build that is missing a platform still replaces the one
-            # before it on this tag, and the other platform's installer here is then older.
-            ls artifacts/*.apk >/dev/null 2>&1 || echo '**No Android APK in this build** - that half failed; the APK here is from an earlier one.'
-            ls artifacts/*.msi >/dev/null 2>&1 || echo '**No Windows installer in this build** - that half failed; the installer here is from an earlier one.'
-            ls artifacts/*.rpm >/dev/null 2>&1 || echo '**No Fedora package in this build** - that part failed; the package here is from an earlier one.'
-            echo "$(git log -1 --pretty=%B)"
-            echo
-            echo '---'
-            echo
-            echo 'A test build. It is signed with the release key and installs over a release,'
-            echo 'but it has had less use than one. To stop being offered these, turn off'
-            echo '**Settings -> Updates -> Test builds** and reinstall the newest stable release.'
-            echo NOTES
-          } >> "$GITHUB_OUTPUT"
-
       - name: Check there is something to publish
         run: |
           if ! ls artifacts/*.apk artifacts/*.msi artifacts/*.rpm 2>/dev/null | grep -q .; then
@@ -351,60 +353,72 @@ jobs:
             exit 1
           fi
 
-      # One moving tag rather than one per push, so the releases page stays about real releases
-      # and there is only ever one test build to reason about.
+      # One moving tag per app rather than one per push, so the releases page stays about real
+      # releases and there is only ever one test build of each to reason about.
       #
-      # The new files go up before the old ones come off. It used to be the other way round, and
-      # an upload that failed once left the release with no installers in it at all. An upload
-      # can fail for reasons of GitHub's own, so it gets a second try before the run gives up.
+      # The new files go up before the old ones come off: an upload that failed once used to
+      # leave the release with no installers in it at all. Only the platforms this run built are
+      # cleared, and never a file this run uploaded.
+      #
+      # InkSheets' title writes its version with middle dots: updaters from before the split read
+      # a version out of any release's title, and would take InkSheets' release for InkSlate's.
       - name: Publish
-        id: publish
-        continue-on-error: true
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: test
-          name: Test build ${{ needs.version.outputs.name }}
-          body: ${{ steps.notes.outputs.body }}
-          prerelease: true
-          files: artifacts/**/*
-          fail_on_unmatched_files: true
-
-      - name: Publish (second try)
-        if: steps.publish.outcome == 'failure'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: test
-          name: Test build ${{ needs.version.outputs.name }}
-          body: ${{ steps.notes.outputs.body }}
-          prerelease: true
-          files: artifacts/**/*
-          fail_on_unmatched_files: true
-
-      # The tag moves, and the release under it keeps whatever was uploaded to it before - so
-      # without this the page fills with the installers of every past test build, and the updater
-      # is free to hand someone one of them instead of this one. This only runs once the new
-      # files are up, so there is never a moment with none.
-      - name: Clear the previous test build's files
-        env:
-          GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          # Only the platforms this run actually built: an APK that failed to build must not
-          # take the last working APK off the release with it. And never a file this run just
-          # uploaded.
-          have_apk=$(ls artifacts/*.apk 2>/dev/null | head -1 || true)
-          have_msi=$(ls artifacts/*.msi 2>/dev/null | head -1 || true)
-          have_rpm=$(ls artifacts/*.rpm 2>/dev/null | head -1 || true)
-          ls artifacts > /tmp/new
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/test" \
-            --jq '.assets[] | "\(.id) \(.name)"' > /tmp/assets
-          while read -r id name; do
-            [ -n "$id" ] || continue
-            grep -qxF "$name" /tmp/new && continue
-            case "$name" in
-              *.apk) [ -n "$have_apk" ] || continue ;;
-              *.msi) [ -n "$have_msi" ] || continue ;;
-              *.rpm) [ -n "$have_rpm" ] || continue ;;
-            esac
-            echo "Removing $name"
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
-          done < /tmp/assets
+          publish() {  # tag, title, files...
+            tag="$1"; title="$2"; shift 2
+            [ "$#" -gt 0 ] || return 0
+            notes="$RUNNER_TEMP/notes-$tag.md"
+            {
+              echo "Built from \`${GITHUB_SHA::7}\` on $(date -u '+%d %b %Y, %H:%M UTC')."
+              echo
+              printf '%s\n' "$@" | grep -q '\.apk$' || echo '**No Android APK in this build** - the APK here is from an earlier one.'
+              printf '%s\n' "$@" | grep -q '\.msi$' || echo '**No Windows installer in this build** - the installer here is from an earlier one.'
+              printf '%s\n' "$@" | grep -q '\.rpm$' || echo '**No Fedora package in this build** - the package here is from an earlier one.'
+              git log -1 --pretty=%B | sed 's/\[build[^]]*\]//'
+              echo
+              echo '---'
+              echo
+              echo 'A test build. It is signed with the release key and installs over a release,'
+              echo 'but it has had less use than one. To stop being offered these, turn off'
+              echo '**Settings -> Updates -> Test builds** and reinstall the newest stable release.'
+            } > "$notes"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release edit "$tag" --title "$title" --notes-file "$notes" --prerelease
+            else
+              gh release create "$tag" --title "$title" --notes-file "$notes" --prerelease --target "$GITHUB_SHA"
+            fi
+            # The tag moves to this build.
+            git tag -f "$tag" "$GITHUB_SHA" && git push -f origin "refs/tags/$tag" || true
+            for attempt in 1 2; do
+              gh release upload "$tag" "$@" --clobber && break
+              [ "$attempt" = 2 ] && exit 1
+              sleep 10
+            done
+            new=$(printf '%s\n' "$@" | xargs -n1 basename)
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '.assets[] | "\(.id) \(.name)"' |
+            while read -r id name; do
+              [ -n "$id" ] || continue
+              printf '%s\n' "$new" | grep -qxF "$name" && continue
+              ext="${name##*.}"
+              printf '%s\n' "$new" | grep -q "\.$ext\$" || continue
+              case "$name" in
+                InkSheets-*) printf '%s\n' "$new" | grep -q '^InkSheets-' || continue ;;
+                *) printf '%s\n' "$new" | grep -q '^InkSlate-' || continue ;;
+              esac
+              echo "Removing $name from $tag"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id" || true
+            done
+          }
+          git config user.name github-actions; git config user.email github-actions@users.noreply.github.com
+          shopt -s nullglob
+          slate=(artifacts/InkSlate-*)
+          sheets=(artifacts/InkSheets-*)
+          if [ "${{ needs.version.outputs.slate }}" = true ]; then
+            extra=()
+            [ "$SHEETS_ON_OLD_TAG" = true ] && [ "${{ needs.version.outputs.sheets }}" = true ] && extra=("${sheets[@]}")
+            publish test "Test build $VERSION" "${slate[@]}" "${extra[@]}"
+          fi
+          if [ "${{ needs.version.outputs.sheets }}" = true ]; then
+            publish inksheets-test "InkSheets test build $(echo "$VERSION" | sed 's/\./·/g')" "${sheets[@]}"
+          fi

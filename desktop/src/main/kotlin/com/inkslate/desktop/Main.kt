@@ -42,6 +42,7 @@ fun main() {
     LinuxDisplay.prepare()
     EventLog.installCrashHandler()
     EventLog.info("app", "${AppFlavor.name} ${DesktopUpdates.installedVersion()} started")
+    DesktopUpdates.repairLinuxLauncher(AppFlavor.name)
     ui()
 }
 

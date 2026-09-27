@@ -138,6 +138,34 @@ object DesktopUpdates {
         }
     }
 
+    /**
+     * Put the app back in the menu if an update took it out (see [installRpm]): the package's own
+     * menu file is copied into this person's applications folder, which needs no password. Done
+     * at every start on Linux; costs two file checks when nothing is wrong.
+     */
+    fun repairLinuxLauncher(appName: String) {
+        if (!AppDirs.isLinux) return
+        runCatching {
+            val pkg = appName.lowercase()
+            val entry = "$pkg-$appName.desktop"
+            val shipped = File("/opt/$pkg/lib/$entry")
+            if (!shipped.isFile) return
+            val system = listOf(File("/usr/share/applications/$entry"), File("/usr/local/share/applications/$entry"))
+            val home = System.getenv("XDG_DATA_HOME")?.takeIf { it.isNotBlank() }?.let(::File)
+                ?: File(System.getProperty("user.home"), ".local/share")
+            val mine = File(home, "applications/$entry")
+            if (system.any { it.isFile }) {
+                // The system's is back (a fresh install): a copy of our own would show it twice.
+                if (mine.isFile && mine.readText().contains("/opt/$pkg/")) mine.delete()
+                return
+            }
+            if (mine.isFile) return
+            mine.parentFile.mkdirs()
+            shipped.copyTo(mine)
+            EventLog.info("update", "Put $appName back in the applications menu")
+        }
+    }
+
     /** Show the file in the file manager, for when opening it is not what the person wants yet. */
     fun reveal(installer: File) = SystemShell.reveal(installer)
 
@@ -157,7 +185,15 @@ object DesktopUpdates {
             EventLog.info("update", "Handed ${rpm.name} to the package installer")
             return
         }
-        val process = ProcessBuilder(pkexec, "dnf", "install", "-y", rpm.absolutePath)
+        // The package jpackage makes has a flaw on upgrade: the old package's uninstall script
+        // runs after the new one's install script, and takes the app out of the menu - so after
+        // updating, the app seemed to be gone until it was uninstalled and installed again. The
+        // new package's install script is run once more after dnf is done, in the same password
+        // prompt, which puts the menu entry back.
+        val script = "dnf install -y \"\$0\" || exit \$?; " +
+            "n=\$(rpm -qp --qf '%{NAME}' \"\$0\") && rpm -q --qf '%{POSTIN}' \"\$n\" > /tmp/.inkslate-postin.sh && " +
+            "sh /tmp/.inkslate-postin.sh; rm -f /tmp/.inkslate-postin.sh; exit 0"
+        val process = ProcessBuilder(pkexec, "/bin/sh", "-c", script, rpm.absolutePath)
             .redirectErrorStream(true)
             .start()
         val output = process.inputStream.bufferedReader().readText()

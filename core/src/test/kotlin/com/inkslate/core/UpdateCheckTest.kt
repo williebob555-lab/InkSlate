@@ -275,4 +275,20 @@ class UpdateCheckTest {
         assertEquals("InkSheets-1.3.0.rpm", UpdateCheck.pickAsset(r, UpdateCheck.Platform.LINUX, "InkSheets")?.name)
         assertNull(UpdateCheck.pickAsset(release("1.3.0", "InkSlate-1.3.0.msi"), UpdateCheck.Platform.WINDOWS, "InkSheets"))
     }
+
+    /** The two apps are released apart, so neither is ever offered the other's changes. */
+    @Test
+    fun `each app sees only its own releases`() {
+        val body = "[" + releaseJson("inksheets-test", "InkSheets test build 1·2·1-test·170", listOf("InkSheets-1.2.1-test.170.apk")) + "," +
+            releaseJson("test", "Test build 1.2.1-test.168", listOf("InkSlate-1.2.1-test.168.apk")) + "," +
+            releaseJson("v1.2.0", "InkSlate 1.2.0") + "," +
+            releaseJson("inksheets-v1.2.0", "InkSheets 1·2·0") + "]"
+        val slate = UpdateCheck.newestOf(UpdateCheck.parseReleases(body, "InkSlate"))
+        assertEquals(Version.parse("1.2.1-test.168"), slate?.version)
+        val sheets = UpdateCheck.newestOf(UpdateCheck.parseReleases(body, "InkSheets"))
+        assertEquals(Version.parse("1.2.1-test.170"), sheets?.version)
+        assertEquals(listOf("InkSheets-1.2.1-test.170.apk"), sheets?.assets?.map { it.name })
+        // A version written with middle dots is no version to a reader from before the split.
+        assertNull(Version.findIn("InkSheets test build 1·2·1-test·170"))
+    }
 }
