@@ -29,7 +29,7 @@ internal fun Modifier.dragAnywhere(
         val pickedAt: androidx.compose.ui.geometry.Offset = if (down.type == PointerType.Mouse) {
             (awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() } ?: return@awaitEachGesture).position
         } else {
-            // A finger holds the row a moment - a sixth of a second, barely noticed - so a swipe
+            // A finger holds the row a moment - a quarter of a second - so a swipe
             // that is already moving still scrolls the list and a tap still opens it.
             val stillHeld = withTimeoutOrNull(HOLD_MS) {
                 while (true) {
@@ -52,4 +52,4 @@ internal fun Modifier.dragAnywhere(
 }
 
 /** How long a finger holds a row before it can be dragged. */
-private const val HOLD_MS = 150L
+private const val HOLD_MS = 250L

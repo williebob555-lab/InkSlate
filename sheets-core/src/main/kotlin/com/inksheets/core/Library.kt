@@ -186,12 +186,31 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     // ---- reading ---------------------------------------------------------------
 
+    /**
+     * Every song, in title order. Built once per change to the library and kept: a song change
+     * while playing asks for songs many times over (which song a file is, each song of a set),
+     * and building them all from the records each time was a tenth of a second on a laptop per
+     * setlist walked - several times that on a tablet, as a freeze on every turn.
+     */
     @get:Synchronized
     val songs: List<Song>
-        get() {
-            val parts = partIndex()
-            return state.live(SONG).map { (id, f) -> song(id, f, parts) }.sortedBy { sortKey(it.title) }
-        }
+        get() = built().first
+
+    /** The songs and their index by id, for the library as it is now; rebuilt after a change. */
+    @Synchronized
+    private fun built(): Triple<List<Song>, Map<String, Song>, Map<String, Song>> {
+        cache?.takeIf { cacheAt == version }?.let { return it }
+        val parts = partIndex()
+        val list = state.live(SONG).map { (id, f) -> song(id, f, parts) }.sortedBy { sortKey(it.title) }
+        val byFile = HashMap<String, Song>()
+        for (s in list) for (p in s.parts + s.duplicates) byFile.putIfAbsent(p.file, s)
+        return Triple(list, list.associateBy { it.id }, byFile).also { cache = it; cacheAt = version }
+    }
+    private var cache: Triple<List<Song>, Map<String, Song>, Map<String, Song>>? = null
+    private var cacheAt = -1L
+
+    /** The song one of whose parts is the library-relative [file]; null for none. */
+    fun songWithFile(file: String): Song? = synchronized(this) { built().third[file] }
 
     @get:Synchronized
     val setlists: List<Setlist>
@@ -203,9 +222,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         get() = saneFolders(state.live(FOLDER).map { (id, f) -> folder(id, f) })
             .sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
 
-    fun song(id: String): Song? = synchronized(this) {
-        state.live(SONG)[id]?.let { song(id, it, partIndex()) }
-    }
+    fun song(id: String): Song? = synchronized(this) { built().second[id] }
 
     // ---- parts, each a record of its own -----------------------------------------------
 

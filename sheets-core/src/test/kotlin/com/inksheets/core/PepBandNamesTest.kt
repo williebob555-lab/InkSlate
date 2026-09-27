@@ -53,4 +53,10 @@ class PepBandNamesTest {
         assertEquals("baritone-bc", seat("Hurricane Season - Baritone (B.C.).pdf"))
         assertEquals("piccolo", seat("SweetC - PiccoloFlute.pdf"))
     }
+
+    @Test
+    fun `with every instrument chosen, the score opens`() {
+        val song = Song("s", "Song", parts = listOf(Part(id = "t", file = "t.pdf", instrument = "trombone"), Part(id = "sc", file = "s.pdf", instrument = "score")))
+        assertEquals("sc", PartChoice.partFor(song, null)?.id)
+    }
 }

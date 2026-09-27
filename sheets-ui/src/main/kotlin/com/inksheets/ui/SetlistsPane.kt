@@ -451,18 +451,33 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         }
         val draggable = entrySort == EntrySort.SET
         var dragging by remember { mutableStateOf<String?>(null) }
-        var dragBy by remember { mutableStateOf(0f) }
+        // Where the lifted song should be: where its row was when picked up, plus how far the
+        // finger has gone since. Its picture is drawn there, whatever the list has done around
+        // it - so it stays under the finger. It used to be moved by the difference between two
+        // rows' places after each swap, which is right only when the rows are the same height,
+        // and with a song's parts shown under it they are not: the song jumped and sprang back.
+        var anchor by remember { mutableStateOf(0f) }
+        var finger by remember { mutableStateOf(0f) }
+        fun rowOffset(id: String?): Float? = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == id }?.offset?.toFloat()
+        fun pickUp(id: String) {
+            dragging = id
+            anchor = rowOffset(id) ?: 0f
+            finger = 0f
+        }
         fun dragTo(delta: Float) {
             val id = dragging ?: return
-            dragBy += delta
+            finger += delta
             val items = listState.layoutInfo.visibleItemsInfo
             val me = items.firstOrNull { it.key == id } ?: return
-            val centre = me.offset + me.size / 2 + dragBy
+            val centre = anchor + finger + me.size / 2f
             val over = items.firstOrNull { it.key != id && it.index in order.indices && centre > it.offset && centre < it.offset + it.size } ?: return
             val from = order.indexOfFirst { it.id == id }
-            if (from < 0) return
+            if (from < 0 || over.index == from) return
+            // The list keeps its first row in place when rows move; keep the view where it is.
+            val first = listState.firstVisibleItemIndex
+            val firstOffset = listState.firstVisibleItemScrollOffset
             order.add(over.index, order.removeAt(from))
-            dragBy -= (over.offset - me.offset)
+            listState.requestScrollToItem(first, firstOffset)
         }
         fun dropped() {
             if (dragging != null) {
@@ -470,14 +485,14 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                 state.setlistReordered(setlist.id)
             }
             dragging = null
-            dragBy = 0f
+            finger = 0f
         }
         LazyColumn(Modifier.fillMaxSize(), state = listState) {
             itemsIndexed(order, key = { _, e -> e.id }) { index, entry ->
                 val song = songs[entry.songId]
                 val lifted = dragging == entry.id
                 Column(
-                    (if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = dragBy }
+                    (if (lifted) Modifier.zIndex(1f).graphicsLayer { translationY = anchor + finger - (rowOffset(entry.id) ?: (anchor + finger)) }
                         .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     else Modifier)
                         // Anywhere on the song, not only its handle: hold it, then drag. A quick
@@ -485,7 +500,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                         .dragAnywhere(
                             entry.id,
                             enabled = draggable,
-                            onStart = { dragging = entry.id; dragBy = 0f },
+                            onStart = { pickUp(entry.id) },
                             onDrag = { dragTo(it.y) },
                             onEnd = { dropped() },
                             onCancel = { dropped() }
@@ -498,7 +513,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             modifier = Modifier
                                 .pointerInput(entry.id) {
                                     detectDragGestures(
-                                        onDragStart = { dragging = entry.id; dragBy = 0f },
+                                        onDragStart = { pickUp(entry.id) },
                                         onDragEnd = { dropped() },
                                         onDragCancel = { dropped() }
                                     ) { change, amount -> change.consume(); dragTo(amount.y) }

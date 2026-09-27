@@ -97,7 +97,7 @@ object PartChoice {
      * The part to open: the profile's most preferred instrument that the song has, then one that
      * reads the same parts, then a part printed for several instruments one of which is yours,
      * then the nearest instrument's part, then a part of unknown instrument, then the nearest of
-     * whatever is left. With no profile, the first part.
+     * whatever is left. With no profile (all instruments), the full score, or else the first part.
      */
     fun partFor(song: Song, profile: InstrumentProfile?): Part? {
         if (profile != null) {
@@ -120,7 +120,8 @@ object PartChoice {
             song.parts.firstOrNull { it.instrument == null }?.let { return it }
             near?.let { return it.first }
         }
-        return song.parts.firstOrNull()
+        // No instrument chosen - all of them: the full score, which is all of them on one page.
+        return song.parts.firstOrNull { it.instrument == "score" } ?: song.parts.firstOrNull()
     }
 
     /** The instrument whose part [partFor] falls back on, when it is not one of the profile's own. */

@@ -864,7 +864,7 @@ class SheetsState(val platform: SheetsPlatform) {
     /** The song one of whose parts is the file at [path]. */
     fun songAt(path: String): com.inksheets.core.Song? {
         val rel = relative(File(path)) ?: return null
-        return library?.songs?.firstOrNull { s -> s.parts.any { it.file == rel } }
+        return library?.songWithFile(rel)
     }
 
     // ---- markings from MobileSheets ---------------------------------------------------
