@@ -206,7 +206,7 @@ class SheetsState(val platform: SheetsPlatform) {
             }
         }
         // Opened to play, for "Recently opened" - once per set, not on every song turned to.
-        if (playing?.first != setlistId) runCatching { lib.markSetlistOpened(setlistId) }
+        if (playing?.first != setlistId) background { lib.markSetlistOpened(setlistId) }
         playing = setlistId to index
         frontEntry = entry.id
         current = song
@@ -298,7 +298,18 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /** For "Recently opened". Never in the way of opening: a failure to note it is only lost. */
     fun noteOpened(song: com.inksheets.core.Song) {
-        runCatching { change { markOpened(song.id) } }
+        // Written to disk off the screen's thread: it happens on every turn to a song, and a
+        // turn must not wait for a file to be appended to.
+        val lib = library ?: return
+        background { lib.markOpened(song.id) }
+    }
+
+    /** A small library write, on a thread of its own, the screens told when it is done. */
+    private fun background(write: () -> Unit) {
+        Thread {
+            runCatching(write)
+            platform.onMain { library?.let { version = it.version } }
+        }.apply { isDaemon = true; name = "library-write" }.start()
     }
 
     /** Put the setlist away: its tabs are saved and closed, and it is no longer being played. */

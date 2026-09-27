@@ -53,6 +53,12 @@ private sealed interface Screen {
  */
 private const val MAX_OPEN_TABS = 16
 
+/** How long after a turn the songs around it start being read: once the page has finished moving. */
+private const val PRELOAD_AFTER_TURN_MS = 700L
+
+/** And between one song read ahead and the next, so no two are built in the same moment. */
+private const val PRELOAD_BETWEEN_MS = 400L
+
 /**
  * The application: a row of tabs across the top, each an open document, plus a pinned Home tab for
  * finding the next one.
@@ -118,15 +124,31 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     }
 
     /** Put [id] in front of you: focus it where it already is, or show it in the focused pane. */
+    var preloading: kotlinx.coroutines.Job? = null
+
     fun selectTab(id: String) {
         homeShown = false
         tabOf(id)?.loaded = true
-        // A setlist's next and previous songs are read now, while this one is played, so turning
-        // to them shows them at once rather than after a moment of loading.
+        // A setlist's coming songs are read ahead, so turning to them shows them at once. Not in
+        // the same moment as this turn, though: reading a song builds its whole editor, and doing
+        // that while the page is turning is what made the turn stutter. So they wait until the
+        // turn has settled, then come in one at a time - the next first, then the one before,
+        // then the one after next.
         if (AppFlavor.musicView) {
             val at = tabs.indexOfFirst { it.id == id }
-            listOf(at + 1, at - 1).mapNotNull { tabs.getOrNull(it) }.filter { it.title != null && !it.closeRequested.value }
-                .forEach { it.loaded = true }
+            val ahead = listOf(at + 1, at - 1, at + 2).mapNotNull { tabs.getOrNull(it) }
+                .filter { it.title != null && !it.closeRequested.value && !it.loaded }
+            preloading?.cancel()
+            if (ahead.isNotEmpty()) preloading = scope.launch {
+                ahead.forEachIndexed { i, t ->
+                    kotlinx.coroutines.delay(if (i == 0) PRELOAD_AFTER_TURN_MS else PRELOAD_BETWEEN_MS)
+                    if (!t.closeRequested.value && tabs.any { it.id == t.id }) {
+                        val started = System.currentTimeMillis()
+                        t.loaded = true
+                        EventLog.info("turn", "Reading ${t.title} ahead (${System.currentTimeMillis() - started}ms to start)")
+                    }
+                }
+            }
         }
         when {
             primary?.tabId == id -> focusedPane = Pane.PRIMARY

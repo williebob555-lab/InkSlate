@@ -631,7 +631,10 @@ fun EditorScreen(
                 )
                 warmPage?.let { (index, bmp) ->
                     warmPage = null
-                    if (index == view.currentPage && !view.hasBitmap(index)) view.setPageBitmap(index, bmp) else bmp.recycle()
+                    if (index == view.currentPage && !view.hasBitmap(index)) {
+                        view.setPageBitmap(index, bmp)
+                        if (focused) com.inkslate.ui.TurnClock.shown("drawn ahead")
+                    } else bmp.recycle()
                 }
                 slot.wantedPages = listOf(view.currentPage)
             }
@@ -692,6 +695,7 @@ fun EditorScreen(
                                 }
                             } else {
                                 view.setPageBitmap(index, bmp)
+                                if (focused && index == view.currentPage) com.inkslate.ui.TurnClock.shown("drawn on arrival")
                                 if (index == view.currentPage) renderFailed = false
                             }
                         }
