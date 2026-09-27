@@ -1,5 +1,6 @@
 package com.inksheets.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInRoot
@@ -87,7 +88,11 @@ internal fun SetlistsPane(state: SheetsState) {
     var query by remember { mutableStateOf("") }
     // Searching looks in every folder: the setlists found, wherever they are.
     val folders = remember(version, folderId, query) { if (query.isBlank()) library.foldersIn(folderId) else library.folders.filter { matches(query, it.name) } }
-    val setlists = remember(version, folderId, query) { if (query.isBlank()) library.setlistsIn(folderId) else library.setlists.filter { matches(query, it.name) } }
+    val sort = state.setlistSort
+    val setlists = remember(version, folderId, query, sort) {
+        val found = if (query.isBlank()) library.setlistsIn(folderId) else library.setlists.filter { matches(query, it.name) }
+        sort.apply(found)
+    }
 
     // Dragging a setlist or folder by its handle: dropped on a folder it goes in, dropped on the
     // path at the top ("Setlists", or a folder above this one) it goes back out to there.
@@ -168,6 +173,16 @@ internal fun SetlistsPane(state: SheetsState) {
         }
         HorizontalDivider()
         ListSearch(library.setlists.size + library.folders.size, query, { query = it }, "Find a setlist", Modifier.padding(horizontal = 8.dp))
+        // How they are listed: folders stay first, in name order; the setlists follow the choice.
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val dated = remember(version) { library.setlists.any { !it.date.isNullOrBlank() } }
+            SetlistSort.entries.filter { it != SetlistSort.DATE || dated }.forEach { o ->
+                androidx.compose.material3.FilterChip(selected = sort == o, onClick = { state.setlistSort = o }, label = { Text(o.label) })
+            }
+        }
 
         if (folders.isEmpty() && setlists.isEmpty()) {
             Text(
@@ -217,12 +232,22 @@ internal fun SetlistsPane(state: SheetsState) {
                         }
                     },
                     title = s.name,
-                    detail = listOfNotNull(s.date, "${s.entries.size} songs").joinToString("  ·  "),
+                    detail = listOfNotNull(
+                        s.date?.let(::prettyDate),
+                        "${s.entries.size} songs",
+                        // What the list is ordered by, where it is not the name or the date.
+                        when (sort) {
+                            SetlistSort.OPENED -> if (s.opened > 0) "opened " + howLongAgo(s.opened, "").lowercase() else "never opened"
+                            SetlistSort.ADDED -> if (s.created > 0) "added " + howLongAgo(s.created, "").lowercase() else null
+                            else -> null
+                        }
+                    ).joinToString("  ·  "),
                     onClick = { openSetlist = s.id },
                     menu = listOf(
                         "Share with bandmates..." to { sharing = s.id },
                         "Colour..." to { colouring = s },
                         "Rename" to { naming = Naming.RenameSetlist(s) },
+                        (if (s.date.isNullOrBlank()) "Concert date..." else "Change concert date...") to { naming = Naming.SetlistDate(s) },
                         "Merge into another setlist..." to { joiningInto = s },
                         "Delete" to { state.change { deleteSetlist(s.id) } }
                     )
@@ -298,6 +323,7 @@ internal fun SetlistsPane(state: SheetsState) {
                     is Naming.NewSetlist -> state.change { addSetlist(name, n.folder) }
                     is Naming.RenameFolder -> state.change { renameFolder(n.folder.id, name) }
                     is Naming.RenameSetlist -> state.change { editSetlist(n.setlist.id) { this.name = name } }
+                    is Naming.SetlistDate -> state.change { editSetlist(n.setlist.id) { this.date = readDate(name) } }
                 }
                 naming = null
             },
@@ -322,7 +348,46 @@ private sealed class Naming(val title: String, val initial: String = "") {
     class NewSetlist(val folder: String?) : Naming("New setlist")
     class RenameFolder(val folder: Folder) : Naming("Rename folder", folder.name)
     class RenameSetlist(val setlist: Setlist) : Naming("Rename setlist", setlist.name)
+    class SetlistDate(val setlist: Setlist) : Naming("Concert date (e.g. 2026-10-03, blank for none)", setlist.date.orEmpty())
 }
+
+/** How the setlists are listed. */
+enum class SetlistSort(val label: String) {
+    AZ("A to Z"), OPENED("Recently opened"), ADDED("Recently added"), DATE("Concert date");
+
+    fun apply(list: List<Setlist>): List<Setlist> = when (this) {
+        AZ -> list
+        OPENED -> list.sortedByDescending { it.opened }
+        ADDED -> list.sortedByDescending { it.created }
+        // Soonest concert first, past ones after in the order they were, undated last.
+        DATE -> {
+            val today = java.time.LocalDate.now().toString()
+            val (dated, undated) = list.partition { !it.date.isNullOrBlank() }
+            val (coming, past) = dated.partition { it.date!! >= today }
+            coming.sortedBy { it.date } + past.sortedByDescending { it.date } + undated
+        }
+    }
+}
+
+/** How a setlist's songs are shown. Only a view: the set's own order is changed by dragging. */
+enum class EntrySort(val label: String) {
+    SET("Set order"), AZ("A to Z"), COMPOSER("Composer"), OPENED("Recently opened")
+}
+
+/** A date typed any usual way - 2026-10-03, 10/3/2026, 3 Oct 2026, Oct 3 2026 - as 2026-10-03; null when blank or unreadable. */
+internal fun readDate(text: String): String? {
+    val t = text.trim()
+    if (t.isEmpty()) return null
+    val patterns = listOf("yyyy-M-d", "M/d/yyyy", "M/d/yy", "d MMM yyyy", "MMM d yyyy", "MMM d, yyyy", "d MMMM yyyy", "MMMM d yyyy", "MMMM d, yyyy")
+    for (p in patterns) {
+        runCatching { return java.time.LocalDate.parse(t, java.time.format.DateTimeFormatter.ofPattern(p, java.util.Locale.ENGLISH)).toString() }
+    }
+    return null
+}
+
+/** 2026-10-03 as "3 Oct 2026". */
+internal fun prettyDate(iso: String): String =
+    runCatching { java.time.LocalDate.parse(iso).format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy", java.util.Locale.getDefault())) }.getOrDefault(iso)
 
 @Composable
 private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit) {
@@ -357,12 +422,34 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
             AddButton("Songs") { adding = true }
         }
         HorizontalDivider()
+        val entrySort = state.entrySort
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            EntrySort.entries.forEach { o ->
+                androidx.compose.material3.FilterChip(selected = entrySort == o, onClick = { state.entrySort = o }, label = { Text(o.label) })
+            }
+            // Seen sorted, and wanted that way: one tap makes it the order it is played in.
+            if (entrySort != EntrySort.SET) {
+                TextButton(onClick = {
+                    val sorted = sortEntries(setlist.entries, songs, entrySort)
+                    state.reorderSetlist(setlist.id, sorted.map { it.id })
+                    state.setlistReordered(setlist.id)
+                    state.entrySort = EntrySort.SET
+                }) { Text("Play in this order") }
+            }
+        }
         // Grab a song by its handle, or hold it anywhere, and drag it to its new place; it is
-        // written when let go.
+        // written when let go. Only in set order: sorted any other way, a drag would mean nothing.
         val listState = rememberLazyListState()
         // A song removed from the library is not shown, but keeps its place: brought back from the
         // trash, it is back where it was.
-        val order = remember(setlist.entries, version) { setlist.entries.filter { songs[it.songId] != null }.toMutableStateList() }
+        val order = remember(setlist.entries, version, entrySort) {
+            sortEntries(setlist.entries.filter { songs[it.songId] != null }, songs, entrySort).toMutableStateList()
+        }
+        val draggable = entrySort == EntrySort.SET
         var dragging by remember { mutableStateOf<String?>(null) }
         var dragBy by remember { mutableStateOf(0f) }
         fun dragTo(delta: Float) {
@@ -397,6 +484,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                         // swipe still scrolls the list and a tap still opens the song.
                         .dragAnywhere(
                             entry.id,
+                            enabled = draggable,
                             onStart = { dragging = entry.id; dragBy = 0f },
                             onDrag = { dragTo(it.y) },
                             onEnd = { dropped() },
@@ -448,7 +536,8 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             colourLabel = "Colour in this setlist...",
                             onColourEverywhere = { colouringSong = song },
                             trailing = {
-                                Text("${index + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
+                                // Its place in the set, however the list is sorted.
+                                Text("${setlist.entries.indexOfFirst { it.id == entry.id } + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
                                 IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {
                                     Icon(Icons.Default.Close, "Take out of setlist")
                                 }
@@ -580,4 +669,19 @@ internal fun SetlistChooserDialog(state: SheetsState, onChosen: (Setlist) -> Uni
             made?.let(onChosen)
         }, onDismiss = { creating = false })
     }
+}
+
+/** A setlist's entries in [sort]'s order; the set's own order for [EntrySort.SET]. */
+internal fun sortEntries(
+    entries: List<com.inksheets.core.SetlistEntry>,
+    songs: Map<String, com.inksheets.core.Song>,
+    sort: EntrySort
+): List<com.inksheets.core.SetlistEntry> = when (sort) {
+    EntrySort.SET -> entries
+    EntrySort.AZ -> entries.sortedBy { e -> songs[e.songId]?.title?.let { com.inksheets.core.Library.sortKey(it) } ?: "" }
+    EntrySort.COMPOSER -> entries.sortedWith(compareBy(
+        { e -> songs[e.songId]?.composers?.firstOrNull()?.lowercase() ?: "￿" },
+        { e -> songs[e.songId]?.title?.let { com.inksheets.core.Library.sortKey(it) } ?: "" }
+    ))
+    EntrySort.OPENED -> entries.sortedByDescending { e -> songs[e.songId]?.opened ?: 0L }
 }

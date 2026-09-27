@@ -21,8 +21,9 @@ internal fun Modifier.dragAnywhere(
     onStart: (Offset) -> Unit,
     onDrag: (Offset) -> Unit,
     onEnd: () -> Unit,
-    onCancel: () -> Unit
-): Modifier = pointerInput(key) {
+    onCancel: () -> Unit,
+    enabled: Boolean = true
+): Modifier = if (!enabled) this else pointerInput(key) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
         val pickedAt: androidx.compose.ui.geometry.Offset = if (down.type == PointerType.Mouse) {

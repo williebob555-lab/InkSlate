@@ -84,7 +84,9 @@ class LibraryState {
                 everWith.getOrPut(Triple(op.kind, op.field, v)) { LinkedHashSet() }.add(op.id)
             }
         }
-        val fields = records.getOrPut(Key(op.kind, op.id)) { HashMap() }
+        val key = Key(op.kind, op.id)
+        first[key]?.let { if (op.at < it) first[key] = op.at } ?: run { first[key] = op.at }
+        val fields = records.getOrPut(key) { HashMap() }
         val current = fields[op.field]
         if (current != null && current.at >= op.at) return false
         fields[op.field] = Value(op.at, op.value)
@@ -92,6 +94,11 @@ class LibraryState {
     }
 
     fun fields(kind: String, id: String): Map<String, Value>? = records[Key(kind, id)]
+
+    /** The earliest edit read for a record: near enough when it was made, for one that never said. */
+    fun firstSeen(kind: String, id: String): Stamp? = first[Key(kind, id)]
+
+    private val first = HashMap<Key, Stamp>()
 
     /** Every value a remembered field of a record has held, except its present one. */
     fun formerValues(kind: String, id: String, field: String): Set<String> {

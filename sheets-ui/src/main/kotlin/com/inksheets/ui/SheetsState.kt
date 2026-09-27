@@ -205,6 +205,8 @@ class SheetsState(val platform: SheetsPlatform) {
                 focus = tabs.indexOfFirst { it.first == file }
             }
         }
+        // Opened to play, for "Recently opened" - once per set, not on every song turned to.
+        if (playing?.first != setlistId) runCatching { lib.markSetlistOpened(setlistId) }
         playing = setlistId to index
         frontEntry = entry.id
         current = song
@@ -220,6 +222,17 @@ class SheetsState(val platform: SheetsPlatform) {
     var homeTab by mutableStateOf(0)
     var setlistFolder by mutableStateOf<String?>(null)
     var setlistShown by mutableStateOf<String?>(null)
+
+    /** How the setlists are listed, and how a setlist's songs are shown; kept on this device. */
+    var setlistSort: SetlistSort
+        get() = setlistSortState
+        set(v) { setlistSortState = v; platform.setPref(K_SETLIST_SORT, v.name) }
+    private var setlistSortState by mutableStateOf(SetlistSort.entries.firstOrNull { it.name == platform.pref(K_SETLIST_SORT) } ?: SetlistSort.AZ)
+
+    var entrySort: EntrySort
+        get() = entrySortState
+        set(v) { entrySortState = v; platform.setPref(K_ENTRY_SORT, v.name) }
+    private var entrySortState by mutableStateOf(EntrySort.entries.firstOrNull { it.name == platform.pref(K_ENTRY_SORT) } ?: EntrySort.SET)
 
     /**
      * Home, pressed while playing a set: the set is put away as "Close set" would, and Home opens
@@ -976,5 +989,7 @@ class SheetsState(val platform: SheetsPlatform) {
             com.inkslate.core.PerformAction.METRONOME
         ) + RETURNED + com.inkslate.core.PerformAction.FULLSCREEN
         private const val K_STRIP_RETURNED = "sheets_strip_returned_1"
+        private const val K_SETLIST_SORT = "sheets_setlist_sort"
+        private const val K_ENTRY_SORT = "sheets_entry_sort"
     }
 }

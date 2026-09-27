@@ -127,7 +127,11 @@ data class Setlist(
     /** When it is performed, for sorting a year's concerts; ISO date or null. */
     val date: String? = null,
     /** A colour to pick the setlist out by (ARGB), or null for the theme's own. */
-    val color: Int? = null
+    val color: Int? = null,
+    /** When it was made, on any device. */
+    val created: Long = 0,
+    /** When it was last opened to play, on any device; 0 for never. */
+    val opened: Long = 0
 )
 
 /**
@@ -494,6 +498,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         edit(SETLIST, id) {
             put("name", name)
             put("folder", folderId)
+            put("created", System.currentTimeMillis())
             put("entries", emptyList(), ENTRY_LIST)
             put("order", nextOrder(setlistsIn(folderId).map { it.order }))
         }
@@ -549,6 +554,9 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     /** Note that [id] was opened just now, for "Recently opened". */
     fun markOpened(id: String, at: Long = System.currentTimeMillis()) = edit(SONG, id) { put("opened", at) }
+    /** Note that setlist [id] was opened to play just now, for "Recently opened". */
+    fun markSetlistOpened(id: String, at: Long = System.currentTimeMillis()) = edit(SETLIST, id) { put("opened", at) }
+
     fun deleteSetlist(id: String) = edit(SETLIST, id) { put(Op.DELETED, true) }
 
     /**
@@ -717,7 +725,10 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         order = f.string("order")?.toDoubleOrNull() ?: 0.0,
         notes = f.string("notes"),
         date = f.string("date"),
-        color = f.string("color")?.toDoubleOrNull()?.toLong()?.toInt()
+        color = f.string("color")?.toDoubleOrNull()?.toLong()?.toInt(),
+        // Setlists made before this was written down: the first edit anyone made to it.
+        created = f.string("created")?.toDoubleOrNull()?.toLong() ?: state.firstSeen(SETLIST, id)?.ms ?: 0,
+        opened = f.string("opened")?.toDoubleOrNull()?.toLong() ?: 0
     )
 
     private fun folder(id: String, f: Map<String, JsonElement>) = Folder(
