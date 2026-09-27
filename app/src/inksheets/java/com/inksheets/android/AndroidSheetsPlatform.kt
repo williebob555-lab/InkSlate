@@ -53,6 +53,17 @@ class AndroidSheetsPlatform(
         openFile(file)
     }
 
+    /** Android's own renderer is what shows the page, so it is the one asked whether it opens. */
+    override fun pageCount(file: File): Int? {
+        if (!file.isFile) return null
+        if (!file.extension.equals("pdf", ignoreCase = true)) return 1
+        return runCatching {
+            android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                android.graphics.pdf.PdfRenderer(fd).use { it.pageCount }
+            }
+        }.getOrDefault(0)
+    }
+
     override fun pageText(file: File, page: Int): String? = runCatching {
         PDDocument.load(file).use { pdf ->
             if (page > pdf.numberOfPages) return null

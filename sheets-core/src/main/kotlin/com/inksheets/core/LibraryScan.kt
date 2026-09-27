@@ -32,7 +32,9 @@ class LibraryScan(
     private val root: File,
     private val library: Library,
     /** This device's own memory of the folder: never synced, one per device. */
-    private val memoryFile: File
+    private val memoryFile: File,
+    /** A file's page count (0 when it will not open), for choosing between copies of a part. */
+    private val pages: (File) -> Int? = { null }
 ) {
 
     /** What one scan did. */
@@ -42,16 +44,23 @@ class LibraryScan(
         val removed: List<String> = emptyList(),
         val merged: List<String> = emptyList(),
         val migrated: Int = 0,
+        /** What the automatic sort put right. */
+        val sorted: List<String> = emptyList(),
         /** Set when deletions were held back because too much seemed to be missing at once. */
         val heldBack: Int = 0
     ) {
-        val changed: Boolean get() = added.isNotEmpty() || moved.isNotEmpty() || removed.isNotEmpty() || merged.isNotEmpty() || migrated > 0
+        val changed: Boolean get() = added.isNotEmpty() || moved.isNotEmpty() || removed.isNotEmpty() || merged.isNotEmpty() || migrated > 0 || sorted.isNotEmpty()
     }
 
     @Serializable
     private data class Seen(val size: Long, val hash: String = "")
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    /** What the folder and library were when last sorted (kept per folder, across scans). */
+    private var lastSorted: Long
+        get() = sortedAt[root.absolutePath] ?: 0L
+        set(v) { sortedAt[root.absolutePath] = v }
     private val memorySerializer = MapSerializer(String.serializer(), Seen.serializer())
 
     private fun remember(): MutableMap<String, Seen> =
@@ -90,7 +99,7 @@ class LibraryScan(
         // device's scan and another's import make of the same file. Band packs, a page range
         // each, are left alone.
         run {
-            val claims = library.songs.flatMap { s -> s.parts.map { s to it } }.groupBy { it.second.file.lowercase() }
+            val claims = library.songs.flatMap { s -> s.all.map { s to it } }.groupBy { it.second.file.lowercase() }
             for ((_, all) in claims) {
                 if (all.size < 2) continue
                 val ranged = all.filter { it.second.firstPage != null }
@@ -119,9 +128,9 @@ class LibraryScan(
 
         // 2. Parts whose file is not where the library says.
         val referenced = HashSet<String>()
-        library.songs.forEach { s -> s.parts.forEach { referenced += it.file.lowercase() } }
+        library.songs.forEach { s -> s.all.forEach { referenced += it.file.lowercase() } }
         val unclaimed = disk.filter { it.path.lowercase() !in referenced }.toMutableList()
-        val missing = library.songs.flatMap { s -> s.parts.filter { it.file !in onDisk }.map { s to it } }
+        val missing = library.songs.flatMap { s -> s.all.filter { it.file !in onDisk }.map { s to it } }
         val gone = ArrayList<Pair<Song, Part>>()
         // Where each missing file went, decided once per file: every part of a band pack follows it.
         val movedTo = HashMap<String, Found?>()
@@ -149,7 +158,7 @@ class LibraryScan(
             // Gone: only if this device had it and watched it go.
             if (was != null) gone += song to part
         }
-        val partCount = library.songs.sumOf { it.parts.size }
+        val partCount = library.songs.sumOf { it.all.size }
         // A folder that is not really there - a card taken out, a drive not mounted - has lost
         // the library's own records too; one that is there but lost most of its music at once
         // more likely lost a folder than had it all deleted.
@@ -168,6 +177,8 @@ class LibraryScan(
         }
 
         // 3. New files: into the song they belong to, or a new one.
+        val sort = LibrarySort(root, library, pages)
+        val folderTitles = sort.folderSongs(disk)
         val songFolders = disk.filter { it.music }.groupBy { it.path.substringBeforeLast('/', "") }
             .mapValues { (_, files) -> ImportPlan.folderIsSong(files.map { it.path }) }
         for (file in unclaimed) {
@@ -178,11 +189,12 @@ class LibraryScan(
             if (removedAt != null && removedAt >= file.modified) continue
             val (home, _) = library.partHome(id)
             val planned = ImportPlan.readPart(file.path)
-            val title = ImportPlan.songTitle(file.path, songFolders[file.path.substringBeforeLast('/', "")] == true)
+            val folder = file.path.substringBeforeLast('/', "")
+            val title = folderTitles[folder] ?: ImportPlan.songTitle(file.path, songFolders[folder] == true)
             val song = home?.let { library.song(it) } ?: library.ensureSong(title)
             library.writePart(song.id, Part(
                 id = id, file = file.path, instrument = planned.instrument, source = planned.source,
-                label = planned.label, also = planned.also
+                label = planned.label, also = planned.also, chair = planned.chair
             ))
             added += "${song.title}: ${file.path}"
         }
@@ -204,6 +216,14 @@ class LibraryScan(
                 val keep = s.audio.filter { it.file in onDisk || memory[it.file] == null }
                 if (keep.size != s.audio.size) library.editSong(s.id) { audio = keep }
             }
+        }
+
+        // The automatic sort: every part in its song, no strays (see LibrarySort). Only when the
+        // folder or the library has changed since it last ran: otherwise it would find nothing.
+        val signature = disk.fold(library.version * 31) { h, f -> h * 31 + (f.path.hashCode() + f.size * 7 + f.modified).toLong() }
+        if (signature != lastSorted) {
+            sort.run(disk)
+            lastSorted = disk.fold(library.version * 31) { h, f -> h * 31 + (f.path.hashCode() + f.size * 7 + f.modified).toLong() }
         }
 
         // 4. One piece, several songs: put together (unless someone split them on purpose). Only
@@ -238,7 +258,7 @@ class LibraryScan(
 
         // 5. Songs left with nothing, and setlist entries for songs that are gone.
         for (s in library.songs) {
-            if (s.id in touched && s.parts.isEmpty() && s.audio.isEmpty()) {
+            if (s.id in touched && s.all.isEmpty() && s.audio.isEmpty()) {
                 library.deleteSong(s.id)
                 removed += s.title
             }
@@ -257,16 +277,19 @@ class LibraryScan(
         if (heldBack > 0) gone.forEach { (_, p) -> memory[p.file]?.let { next[p.file] = it } }
         keep(next)
 
-        return Report(added, moved, removed, merged, migrated, heldBack)
+        return Report(added, moved, removed, merged, migrated, sort.done, heldBack)
     }
 
     /**
      * Parts whose file is not in the folder on this device - ghosts left by an older version, or
      * files still on their way. Shown for the person to judge; [removeMissing] clears them.
      */
+    /** What still looks out of place after sorting (see [LibrarySort.strays]). */
+    fun strays(): List<String> = LibrarySort(root, library, pages).strays(listMusic(root))
+
     fun missing(): List<Pair<Song, Part>> {
         val onDisk = listMusic(root).map { it.path }.toSet()
-        return library.songs.flatMap { s -> s.parts.filter { it.file !in onDisk }.map { s to it } }
+        return library.songs.flatMap { s -> s.all.filter { it.file !in onDisk }.map { s to it } }
     }
 
     /** Remove every part whose file is not here, and songs left with nothing. The person asked. */
@@ -274,13 +297,15 @@ class LibraryScan(
     fun removeMissing(): Int {
         val gone = missing()
         gone.forEach { (_, p) -> library.deletePart(p.id) }
-        for (s in library.songs) if (s.parts.isEmpty() && s.audio.isEmpty()) library.deleteSong(s.id)
+        for (s in library.songs) if (s.all.isEmpty() && s.audio.isEmpty()) library.deleteSong(s.id)
         return gone.size
     }
 
     data class Found(val path: String, val size: Long, val modified: Long, val music: Boolean)
 
     companion object {
+        private val sortedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
         val MUSIC = setOf("pdf", "png", "jpg", "jpeg", "webp")
         val SOUND = setOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff")
 

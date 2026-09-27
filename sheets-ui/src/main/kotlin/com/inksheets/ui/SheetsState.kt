@@ -541,7 +541,7 @@ class SheetsState(val platform: SheetsPlatform) {
         val base = root ?: return null
         val lib = library ?: return null
         val name = "scan-" + Integer.toHexString(base.absolutePath.hashCode()) + ".json"
-        return com.inksheets.core.LibraryScan(base, lib, File(platform.localFolder, name))
+        return com.inksheets.core.LibraryScan(base, lib, File(platform.localFolder, name), pages = { f -> runCatching { platform.pageCount(f) }.getOrNull() })
     }
 
     /**
@@ -560,14 +560,14 @@ class SheetsState(val platform: SheetsPlatform) {
             if (report.changed) {
                 val stamp = java.text.SimpleDateFormat("MMM d HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
                 val lines = report.added.map { "Added $it" } + report.moved.map { (a, b) -> "Followed $a to $b" } +
-                    report.removed.map { "Removed $it" } + report.merged.map { "Put together $it" }
+                    report.removed.map { "Removed $it" } + report.merged.map { "Put together $it" } + report.sorted.map { "Sorted: $it" }
                 lines.forEach { scanHistory.add(0, "$stamp  $it") }
                 while (scanHistory.size > 200) scanHistory.removeAt(scanHistory.lastIndex)
                 version = library?.version ?: version
             }
         }
         if (report.changed) {
-            platform.log("Library scan: ${report.added.size} added, ${report.moved.size} moved, ${report.removed.size} removed, ${report.merged.size} put together")
+            platform.log("Library scan: ${report.added.size} added, ${report.moved.size} moved, ${report.removed.size} removed, ${report.merged.size + report.sorted.size} put together")
         }
         if (report.heldBack > 0) platform.log("Library scan: held back removing ${report.heldBack} parts - too many at once")
         return report

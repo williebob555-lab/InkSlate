@@ -38,7 +38,14 @@ data class Part(
      */
     val also: List<String> = emptyList(),
     /** Which of several parts for one instrument: 2 for "Trumpet 2", "2nd Trumpet", "Tpt. II". */
-    val chair: Int? = null
+    val chair: Int? = null,
+    /**
+     * Another copy of a part the song already has - the same file in the MobileSheets folder and
+     * in the song's own folder. Kept (so the file is not taken for new music) but not shown.
+     */
+    val dup: Boolean = false,
+    /** A person put this part in its song, so sorting never moves it out again. */
+    val placed: Boolean = false
 )
 
 /** A recording paired with a song, and the loop last used in it. */
@@ -76,6 +83,8 @@ data class Song(
     val difficulty: Int? = null,
     val notes: String? = null,
     val parts: List<Part> = emptyList(),
+    /** Copies of parts the song already has, hidden (see [Part.dup]). */
+    val duplicates: List<Part> = emptyList(),
     val audio: List<AudioTrack> = emptyList(),
     val bookmarks: List<Bookmark> = emptyList(),
     val created: Long = 0,
@@ -215,7 +224,9 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
                 source = f.string("source")?.let { v -> InstrumentSource.entries.firstOrNull { it.name == v } } ?: InstrumentSource.UNKNOWN,
                 label = f.string("label"),
                 also = f.list("also", STRING_LIST),
-                chair = f.string("chair")?.toDoubleOrNull()?.toInt()
+                chair = f.string("chair")?.toDoubleOrNull()?.toInt(),
+                dup = f.string("dup") == "true",
+                placed = f.string("placed") == "true"
             ))
         }.groupBy({ it.first }, { it.second to it.third })
             .mapValues { (_, list) -> list.sortedWith(compareBy({ it.first }, { it.second.id })).map { it.second } }
@@ -234,6 +245,15 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         val deleted = (f[Op.DELETED]?.value as? JsonPrimitive)?.content == "true"
         song to !deleted
     }
+
+    /**
+     * Songs a part used to be in, before it was moved to the one it is in now - from every edit
+     * this device has read. An empty song whose parts all went somewhere else is that song.
+     */
+    fun formerHomes(partId: String): Set<String> = synchronized(this) { state.formerValues(PART, partId, "song") }
+
+    /** Every part record that ever named [songId] as its song, live or not. */
+    fun partsEverIn(songId: String): List<String> = synchronized(this) { state.recordsEverWith(PART, "song", songId) }
 
     /** When a part record was deleted, or null when it never was (or has been brought back). */
     fun partDeletedAt(partId: String): Long? = synchronized(this) {
@@ -275,6 +295,9 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
             "chair" to (p.chair?.let(::JsonPrimitive) ?: JsonNull),
             Op.DELETED to JsonPrimitive(false)
         )
+        // Only written once either has been set, so an ordinary part's record stays as it was.
+        if (p.dup || f?.get("dup") != null) want["dup"] = JsonPrimitive(p.dup)
+        if (p.placed || f?.get("placed") != null) want["placed"] = JsonPrimitive(p.placed)
         if (f == null || f["order"] == null) want["order"] = JsonPrimitive(order ?: System.currentTimeMillis().toDouble())
         val changed = want.filter { (k, v) -> !same(k, v) }
         if (changed.isNotEmpty()) edit(PART, p.id) { changed.forEach { (k, v) -> put(k, v) } }
@@ -344,7 +367,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         if (fromId == intoId) return
         val from = song(fromId) ?: return
         val into = song(intoId) ?: return
-        from.parts.forEach { writePart(intoId, it) }
+        (from.parts + from.duplicates).forEach { writePart(intoId, it) }
         val audio = into.audio + from.audio.filter { a -> into.audio.none { it.file == a.file } }
         editSong(intoId) {
             if (audio != into.audio) this.audio = audio
@@ -379,7 +402,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
                 put("apart", true)
             }
         }
-        writePart(target, part)
+        writePart(target, part.copy(placed = true, dup = false))
         if (from.parts.size == 1 && from.audio.isEmpty()) deleteSong(from.id)
         return target
     }
@@ -676,7 +699,8 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         tempoRead = f.string("tempoRead") == "true",
         difficulty = f.string("difficulty")?.toDoubleOrNull()?.toInt(),
         notes = f.string("notes"),
-        parts = partsOf(id, f, index),
+        parts = partsOf(id, f, index).filter { !it.dup },
+        duplicates = partsOf(id, f, index).filter { it.dup },
         audio = f.list("audio", AUDIO_LIST),
         bookmarks = f.list("bookmarks", BOOKMARK_LIST),
         created = f.string("created")?.toLongOrNull() ?: 0,

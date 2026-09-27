@@ -98,7 +98,7 @@ object Instruments {
         Instrument("bass-clarinet", "Bass Clarinet", listOf("bass clarinet"), transpose = 14, clef = "treble"),
         Instrument("contra-clarinet", "Contrabass Clarinet", listOf("contrabass clarinet", "contra alto clarinet", "contra clarinet"), transpose = 26, clef = "treble"),
         Instrument("soprano-sax", "Soprano Saxophone", listOf("soprano saxophone", "soprano sax"), transpose = 2, clef = "treble"),
-        Instrument("alto-sax", "Alto Saxophone", listOf("alto saxophone", "alto sax", "eb alto saxophone"), transpose = 9, clef = "treble"),
+        Instrument("alto-sax", "Alto Saxophone", listOf("alto saxophone", "alto sax", "eb alto saxophone", "alto"), transpose = 9, clef = "treble"),
         Instrument("tenor-sax", "Tenor Saxophone", listOf("tenor saxophone", "tenor sax"), transpose = 14, clef = "treble"),
         Instrument("bari-sax", "Baritone Saxophone", listOf("baritone saxophone", "baritone sax", "bari sax", "bari saxophone"), transpose = 21, clef = "treble"),
         Instrument("trumpet", "Trumpet", listOf("trumpet", "bb trumpet", "cornet", "flugelhorn"), transpose = 2, clef = "treble"),
@@ -117,10 +117,12 @@ object Instruments {
             listOf(
                 "percussion", "mallets", "mallet percussion", "timpani", "snare drum", "snare", "bass drum",
                 "bells", "orchestra bells", "glockenspiel", "xylophone", "marimba", "vibraphone", "chimes",
-                "auxiliary percussion", "crash cymbals", "suspended cymbal", "tambourine", "triangle"
+                "auxiliary percussion", "crash cymbals", "suspended cymbal", "tambourine", "triangle",
+                "cymbals", "cymbal", "tenor drum", "hand clap", "hand claps", "claps", "cowbell", "congas", "bongos"
             )
         ),
-        Instrument("drumline", "Drum Line", listOf("drum line", "drumline", "battery", "marching percussion", "drum cadence"), clef = "percussion"),
+        Instrument("drumline", "Drum Line", listOf("drum line", "drumline", "battery", "marching percussion", "drum cadence", "quads", "quints", "tenors"), clef = "percussion"),
+        Instrument("steel-pan", "Steel Pan", listOf("steel pan", "pan", "tenor pan", "lead pan", "double tenor", "double second", "double seconds", "double guitar", "cello pan", "guitar pan", "bass pan", "pan score"), clef = "treble"),
         Instrument("drums", "Drum Set", listOf("drums", "drum set", "drumset", "drum kit")),
         Instrument("piano", "Piano", listOf("piano", "keyboard", "keys")),
         Instrument("guitar", "Guitar", listOf("guitar", "electric guitar", "acoustic guitar"), transpose = 12, clef = "treble"),
@@ -189,7 +191,8 @@ object InstrumentReader {
         "perc" to "percussion", "vln" to "violin", "vla" to "viola", "vc" to "cello", "vlc" to "cello",
         "pno" to "piano", "kbd" to "keyboard",
         "el" to "electric", "elec" to "electric",
-        "bs" to "bass",
+        "bs" to "bass", "bones" to "trombone", "btone" to "baritone", "bari's" to "baritone",
+        "dl" to "drumline", "pans" to "pan", "clap" to "claps", "piccolos" to "piccolo", "tubas's" to "tuba",
         "treble" to "tc", "tc" to "tc", "bc" to "bc"
     )
 
@@ -217,8 +220,19 @@ object InstrumentReader {
                 }
             }
         }
+        // "Barbie Girl - DL - Bass Drums": a drum line's bass drum, not a bass guitar or a concert
+        // band's bass drum. A part that says it is the drum line's is the drum line's, whatever
+        // drum it goes on to name.
+        val line = drumLine.firstOrNull { d -> lines.any { containsRun(normalise(it), d.split(' ')) } }
+        val dl = among.firstOrNull { it.id == "drumline" }
+        if (line != null && dl != null && best != null && best.instrument.id in DRUM_KIN) {
+            return Match(dl, lines.filter { l -> normalise(l).let { w -> w.any { it in nameWords } } }.joinToString(" ").trim(), best.strength)
+        }
         return best
     }
+
+    private val drumLine = listOf("drumline", "drum line")
+    private val DRUM_KIN = setOf("percussion", "drums", "bass-guitar", "drumline")
 
     private var nameWordsFor = -1
     private var nameWordsCache: Set<String> = emptySet()
@@ -262,6 +276,7 @@ object InstrumentReader {
         // the bass trombone, as "B. Cl." is the bass clarinet.
         return words.mapIndexed { i, w ->
             when {
+                w == "drums" && words.getOrNull(i - 1) in setOf("bass", "snare", "tenor", "field", "steel") -> "drum"
                 w == "bari" -> "baritone"
                 w == "sax" -> "saxophone"
                 w == "b" && words.getOrNull(i + 1) in setOf("trombone", "clarinet") -> "bass"

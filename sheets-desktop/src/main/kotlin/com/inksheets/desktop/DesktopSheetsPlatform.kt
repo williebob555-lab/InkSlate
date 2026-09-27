@@ -44,6 +44,8 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
      * The first lines of text on a page - where a part's instrument is printed. A scan has no
      * text of its own; for those see [recognise].
      */
+    override fun pageCount(file: File): Int? = DesktopPages.count(file)
+
     override fun pageText(file: File, page: Int): String? = runCatching {
         Loader.loadPDF(file).use { pdf ->
             if (page > pdf.numberOfPages) return null

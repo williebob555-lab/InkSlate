@@ -77,6 +77,13 @@ class LibraryState {
      * library.
      */
     fun apply(op: Op): Boolean {
+        if (op.field in REMEMBERED) {
+            val v = (op.value as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.content
+            if (v != null) {
+                history.getOrPut(Key(op.kind, op.id)) { HashSet() }.add(v)
+                everWith.getOrPut(Triple(op.kind, op.field, v)) { LinkedHashSet() }.add(op.id)
+            }
+        }
         val fields = records.getOrPut(Key(op.kind, op.id)) { HashMap() }
         val current = fields[op.field]
         if (current != null && current.at >= op.at) return false
@@ -85,6 +92,22 @@ class LibraryState {
     }
 
     fun fields(kind: String, id: String): Map<String, Value>? = records[Key(kind, id)]
+
+    /** Every value a remembered field of a record has held, except its present one. */
+    fun formerValues(kind: String, id: String, field: String): Set<String> {
+        val now = (records[Key(kind, id)]?.get(field)?.value as? kotlinx.serialization.json.JsonPrimitive)?.content
+        return history[Key(kind, id)].orEmpty() - setOfNotNull(now)
+    }
+
+    /** Records of [kind] whose [field] has ever held [value]. */
+    fun recordsEverWith(kind: String, field: String, value: String): List<String> =
+        everWith[Triple(kind, field, value)]?.toList().orEmpty()
+
+    // Which song a part has been in, over time: only "song" is remembered, being the only field
+    // whose past says something (where a part came from).
+    private val history = HashMap<Key, MutableSet<String>>()
+    private val everWith = HashMap<Triple<String, String, String>, MutableSet<String>>()
+    private val REMEMBERED = setOf("song")
 
     /** Every live (not deleted) record of [kind], with its fields. */
     fun live(kind: String): Map<String, Map<String, JsonElement>> =

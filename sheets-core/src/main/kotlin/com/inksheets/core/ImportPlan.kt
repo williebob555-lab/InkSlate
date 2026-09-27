@@ -60,8 +60,22 @@ object ImportPlan {
         recognise: (String) -> String? = { null }
     ): PlannedPart {
         val name = file.substringAfterLast('/')
-        val nameText = readableName(name)
+        val nameText = readableName(name).let { n -> if (InstrumentReader.read(n) == null) unglued(n) else n }
         val fromName = InstrumentReader.read(nameText)
+        // A name that says plainly which part it is - "24K Magic - Electric Bass", "Score" - is
+        // how whoever made the parts labelled them, and the first page's words are a worse
+        // witness: a score's first page names every staff, a part's may start with the title.
+        // The page is still read, for a part number the name left out.
+        if (fromName != null && namesPartPlainly(nameText)) {
+            val text = textOf(file)
+            val fromPage = text?.let { InstrumentReader.read(it) }
+            val id = fromName.instrument.id
+            val samePage = fromPage?.takeIf { it.instrument.id == id || it.instrument.id in Instruments.sisters(id) }
+            val all = InstrumentReader.readAll(fromName.label).map { it.id }.takeIf { it.size in 2..4 && id != "score" && id != "drumline" }.orEmpty()
+            val main = all.firstOrNull() ?: id
+            val chair = chairOf(fromName.label) ?: samePage?.let { chairOf(it.label) }
+            return PlannedPart(file, main, InstrumentSource.FILE_NAME, fromName.label, all.filter { it != main }, chair)
+        }
         val ownText = textOf(file)?.let { t -> InstrumentReader.read(t)?.let { it to t } }
         // Recognising a scan takes a moment a page, so it is kept for the files that need it:
         // no text of their own, and nothing in the name either.
@@ -86,6 +100,30 @@ object ImportPlan {
             ?: fromName?.takeIf { it.instrument.id == main }?.let { chairOf(it.label) }
         return PlannedPart(file, main, chosen.second, chosen.first.label, all.filter { it != main }, chair)
     }
+
+    /** Whether some piece of a file's name ("Title - Trumpet 2", "(Score)") is nothing but a part name. */
+    fun namesPartPlainly(nameText: String): Boolean =
+        nameText.split(Regex("""\s+[-–—]\s+|[()\[\]]""")).map { it.trim() }.filter { it.isNotEmpty() }
+            .any { piece -> onlyPartName(piece) }
+
+    /**
+     * A name with an instrument glued to the end of a word pulled apart: "neckalto" is
+     * "neck alto", "necktbn 1" is "neck tbn 1". Only a word that is not itself a word the reader
+     * knows, and only where what is left is a few letters long.
+     */
+    fun unglued(name: String): String = name.split(' ').joinToString(" ") { word ->
+        val lower = word.lowercase()
+        if (lower.length < 6 || !lower.all { it.isLetter() } || InstrumentReader.normalise(lower).any { it in INSTRUMENT_WORDS }) return@joinToString word
+        val tail = GLUE_TAILS.filter { lower.endsWith(it) && lower.length - it.length >= 3 }.maxByOrNull { it.length }
+            ?: return@joinToString word
+        word.substring(0, word.length - tail.length) + " " + word.substring(word.length - tail.length)
+    }
+
+    private val GLUE_TAILS = listOf(
+        "alto", "tenor", "bari", "btone", "tbn", "tpt", "trumpet", "trombone", "tuba", "flute", "piccolo", "picc",
+        "clarinet", "clar", "mello", "mellophone", "horn", "euph", "euphonium", "baritone", "sax", "bass", "drums",
+        "snare", "cymbals", "score", "sousaphone", "perc", "percussion", "glock", "bells", "guitar", "keys", "piano"
+    )
 
     /**
      * Which chair a part name is for: "Trumpet 2", "2nd Trumpet", "Tpt. II", "Horn in F 3" - the
@@ -133,6 +171,87 @@ object ImportPlan {
         val folder = path.substringBeforeLast('/', "").substringAfterLast('/')
         if (folder.isBlank() || isGenericFolder(folder)) return own
         return cleanFolderName(folder)
+    }
+
+    /**
+     * The song a folder of parts is, when it is one: "Pep Band/Music/Sweet Caroline" holding
+     * "SweetC - Trumpet 1.pdf", "Sweet Caroline - Electric Bass.pdf" and "SweetC - Click track.pdf"
+     * is all one song, whatever each file's own name says. Null for a folder of many songs, a
+     * library's general folders, or one whose files do not look like one piece's parts.
+     *
+     * [files] are the music files directly in the folder, library-relative. A folder is taken for
+     * one song when most of its files name an instrument, hardly any instrument (and chair) comes
+     * twice - two songs' parts side by side would repeat every one - and the names that are left
+     * once the instruments are taken off come to only a few titles. Its title is the one of those
+     * nearest the folder's own name; failing that the most common; failing that the folder's name.
+     */
+    fun folderSong(folder: String, files: List<String>): String? {
+        val folderName = folder.substringAfterLast('/')
+        if (folder.isBlank() || isGenericFolder(folderName) || files.isEmpty() || files.size > 60) return null
+        // "River Deep Mountain High (Waverly)": who arranged it, not part of the title.
+        val own = cleanFolderName(folderName.replace(Regex("""\s*\([^)]*\)\s*$"""), "").ifBlank { folderName })
+        if (folderIsSong(files)) return own
+        val read = files.map { f -> f to namePart(f) }
+        val named = read.filter { it.second.instrument != null }
+        if (named.size < 2 || named.size * 2 < files.size) return null
+        // Drum line and pan parts are several to one instrument by nature; so are unnamed ones.
+        val seats = named.filter { it.second.instrument !in MANY_TO_ONE }
+            .groupBy { "${it.second.instrument}#${it.second.chair ?: 0}" }
+        val repeated = seats.values.count { it.size > 1 }
+        if (repeated > maxOf(1, seats.size / 4)) return null
+        val titles = files.map { f -> fileTitle(f) }.filter { it.isNotBlank() && !onlyPartName(it) }
+        val groups = titles.groupBy { Library.matchKey(it) }
+        if (groups.count { it.value.size >= 2 } > 3) return null
+        val ownKey = Library.matchKey(own)
+        // The folder's own name, where a file says the same (it is spelt the way a person wrote it).
+        if (groups.containsKey(ownKey)) return own
+        val nearest = groups.values.map { it.first() }.maxByOrNull { likeness(it, own) }
+        if (nearest != null && likeness(nearest, own) >= 0.6) return nearest
+        val common = groups.values.maxByOrNull { it.size }
+        if (common != null && common.size * 2 >= files.size) return common.first()
+        return own
+    }
+
+    // What a file's name alone says, kept: every scan asks again for every file.
+    private val nameParts = java.util.concurrent.ConcurrentHashMap<String, Pair<Int, PlannedPart>>()
+
+    /** [readPart] from the file's name only, remembered until the instruments known change. */
+    fun namePart(path: String): PlannedPart {
+        nameParts[path]?.takeIf { it.first == Instruments.revision }?.let { return it.second }
+        return readPart(path).also { nameParts[path] = Instruments.revision to it }
+    }
+
+    /** A file's song title from its name alone, with an instrument glued on taken off. */
+    fun fileTitle(path: String): String {
+        val name = path.substringAfterLast('/')
+        val plain = titleOf(name)
+        if (InstrumentReader.read(readableName(name)) != null) return plain
+        val unglued = unglued(readableName(name))
+        return if (InstrumentReader.read(unglued) != null) stripTrailingInstrument(cleanTitle(unglued)) else plain
+    }
+
+    private val MANY_TO_ONE = setOf("drumline", "percussion", "steel-pan", "score")
+
+    /**
+     * How alike two titles are, 0 to 1: letters in common, in order, over the longer title, with
+     * case, punctuation, spaces and a leading article ignored. "Talkin Out the Side of Your Neck"
+     * and "Talking Out the Side of Your Neck" are 0.97.
+     */
+    fun likeness(a: String, b: String): Double {
+        val x = Library.matchKey(a)
+        val y = Library.matchKey(b)
+        if (x.isEmpty() || y.isEmpty()) return 0.0
+        if (x == y) return 1.0
+        val prev = IntArray(y.length + 1) { it }
+        val cur = IntArray(y.length + 1)
+        for (i in 1..x.length) {
+            cur[0] = i
+            for (j in 1..y.length) {
+                cur[j] = minOf(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + if (x[i - 1] == y[j - 1]) 0 else 1)
+            }
+            System.arraycopy(cur, 0, prev, 0, cur.size)
+        }
+        return 1.0 - prev[y.length].toDouble() / maxOf(x.length, y.length)
     }
 
     /** Folders that hold a library's music, not one song's parts: never a song's title. */
@@ -245,7 +364,7 @@ object ImportPlan {
         get() {
             if (instrumentWordsFor != Instruments.revision) {
                 instrumentWords = Instruments.all.flatMap { i -> i.names.flatMap { it.split(' ') } }.toSet() +
-                    setOf("in", "f", "bb", "eb", "c", "tc", "bc", "part", "and", "solo", "optional", "opt", "divisi", "div", "flex")
+                    setOf("in", "f", "bb", "eb", "c", "tc", "bc", "part", "parts", "and", "solo", "optional", "opt", "divisi", "div", "flex")
                 instrumentWordsFor = Instruments.revision
             }
             return instrumentWords

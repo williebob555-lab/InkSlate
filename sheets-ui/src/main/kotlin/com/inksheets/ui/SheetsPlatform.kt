@@ -31,6 +31,9 @@ interface SheetsPlatform {
      */
     fun pageText(file: File, page: Int = 1): String?
 
+    /** How many pages [file] has: 0 when it will not open, null when that cannot be told here. */
+    fun pageCount(file: File): Int? = null
+
     /**
      * The words recognised in the top part of a page of [file] (a PDF or a picture) - for scans,
      * which have no text of their own. Null where this device cannot recognise text. Slow, and

@@ -412,6 +412,7 @@ private fun SongsPane(state: SheetsState) {
                         SongRow(
                             song = song,
                             unsure = fit == PartChoice.Fit.UNKNOWN,
+                            standIn = if (fit == PartChoice.Fit.CLOSE) PartChoice.standIn(song, state.profile)?.let { Instruments.partName(it) } else null,
                             missing = song.id in counts.missing,
                             onOpen = { state.stopPlaying(); openSong(state, song) },
                             onEdit = { editing = song },
@@ -505,6 +506,8 @@ internal fun SongRow(
     colourLabel: String = "Colour...",
     onColourEverywhere: (() -> Unit)? = null,
     missing: Boolean = false,
+    /** The part opened in place of the player's own, which the song has none of: "Tuba". */
+    standIn: String? = null,
     trailing: (@Composable () -> Unit)? = null
 ) {
     val tint = song.color?.let { androidx.compose.ui.graphics.Color(it).copy(alpha = 0.10f) } ?: androidx.compose.ui.graphics.Color.Transparent
@@ -522,6 +525,9 @@ internal fun SongRow(
             ).joinToString("  ·  ")
             if (detail.isNotEmpty()) {
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (standIn != null) {
+                Text("Opens the $standIn part - there is none for yours", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (missing) {
                 Text("A file is not on this device", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
