@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Construction
 import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayCircle
@@ -167,6 +168,17 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     val lit = (action == PerformAction.METRONOME && SharedMetronome.running) ||
                         (action != PerformAction.FULLSCREEN && Perform.on(action))
                     val fullscreen = Perform.on(PerformAction.FULLSCREEN)
+                    if (action == PerformAction.SWITCH_PART) {
+                        // Named for the part showing, so which part this is never needs looking up.
+                        val song = state.current ?: continue
+                        val showing = state.partShown()?.let { partName(it) } ?: "Part"
+                        Box {
+                            StripButton(iconOf(action, fullscreen), showing, "Switch part (now $showing)", btn, named, state.hasOwnPick(song)) { state.partPicker = true }
+                            PartMenu(state, song, state.partShown(), state.partPicker, onDismiss = { state.partPicker = false })
+                        }
+                        continue
+                    }
+                    if ((action == PerformAction.RECORDINGS) && state.current == null) continue
                     StripButton(iconOf(action, fullscreen), shortName(action, fullscreen), action.label, btn, named, lit) { Perform.run(action) }
                     // The tempo right under the button: one tap to change it, never a menu away.
                     if (action == PerformAction.METRONOME) {
@@ -184,7 +196,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 Box {
                     StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }
                     StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
-                    // Another instrument's part, from More: opens where More was.
+                    // Another instrument's part, from More (when Part is not on the strip): opens where More was.
                     state.current?.let { song -> PartMenu(state, song, state.partShown(), partMenu, onDismiss = { partMenu = false }) }
                 }
             }
@@ -308,7 +320,9 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
 @Composable
 private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
-        state.current?.let { _ ->
+        // Only what is not on the strip already: one way to each thing.
+        val onStrip = state.strip
+        if (PerformAction.SWITCH_PART !in onStrip) state.current?.let { _ ->
             val part = state.partShown()?.let { partName(it) }
             DropdownMenuItem(
                 text = { Text("Switch part" + (part?.let { " (now $it)" } ?: "") + "...") },
@@ -333,20 +347,20 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
                 onClick = { onDismiss(); Perform.run(PerformAction.PREVIOUS_SONG) }
             )
         }
-        DropdownMenuItem(
+        if (PerformAction.TUNER !in onStrip) DropdownMenuItem(
             text = { Text("Tuner") },
             leadingIcon = { Icon(Icons.Default.GraphicEq, null) },
             onClick = { onDismiss(); Perform.run(PerformAction.TUNER) }
         )
         HorizontalDivider()
-        state.current?.let { song ->
+        if (PerformAction.RECORDINGS !in onStrip) state.current?.let { song ->
             DropdownMenuItem(
                 text = { Text("Recordings...") },
                 leadingIcon = { Icon(Icons.Default.PlayCircle, null) },
                 onClick = { onDismiss(); state.audioOpen = true }
             )
         }
-        DropdownMenuItem(
+        if (PerformAction.PLAY_TOGETHER !in onStrip) DropdownMenuItem(
             text = { Text("Play together (lead or follow)...") },
             leadingIcon = { Icon(Icons.Default.Devices, null) },
             onClick = { onDismiss(); state.companionOpen = true }
@@ -521,7 +535,10 @@ private fun shortName(action: PerformAction, fullscreen: Boolean): String = when
     PerformAction.PREVIOUS_SONG -> "Last song"
     PerformAction.METRONOME -> "Metronome"
     PerformAction.TUNER -> "Tuner"
-    PerformAction.PLAY_AUDIO -> "Recording"
+    PerformAction.PLAY_AUDIO -> "Play"
+    PerformAction.RECORDINGS -> "Recordings"
+    PerformAction.PLAY_TOGETHER -> "Together"
+    PerformAction.SWITCH_PART -> "Part"
     PerformAction.PEN -> "Pen"
     PerformAction.HIGHLIGHTER -> "Highlight"
     PerformAction.ERASER -> "Eraser"
@@ -534,7 +551,8 @@ private fun shortName(action: PerformAction, fullscreen: Boolean): String = when
 private fun groupOf(action: PerformAction): Int = when (action) {
     PerformAction.PEN, PerformAction.HIGHLIGHTER, PerformAction.ERASER, PerformAction.UNDO, PerformAction.REDO -> 1
     PerformAction.NEXT_SONG, PerformAction.PREVIOUS_SONG -> 2
-    PerformAction.METRONOME, PerformAction.TUNER, PerformAction.PLAY_AUDIO -> 3
+    PerformAction.METRONOME, PerformAction.TUNER, PerformAction.PLAY_AUDIO, PerformAction.RECORDINGS -> 3
+    PerformAction.SWITCH_PART, PerformAction.PLAY_TOGETHER -> 5
     PerformAction.FULLSCREEN -> 4
     else -> 0
 }
@@ -551,6 +569,9 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
     PerformAction.METRONOME -> Icons.Default.Timer
     PerformAction.TUNER -> Icons.Default.GraphicEq
     PerformAction.PLAY_AUDIO -> if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayCircle
+    PerformAction.RECORDINGS -> Icons.Default.LibraryMusic
+    PerformAction.PLAY_TOGETHER -> Icons.Default.Devices
+    PerformAction.SWITCH_PART -> Icons.Default.SwapHoriz
     PerformAction.PEN -> Icons.Default.Edit
     PerformAction.HIGHLIGHTER -> Icons.Default.Highlight
     PerformAction.ERASER -> Icons.Default.CleaningServices

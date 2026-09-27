@@ -119,9 +119,22 @@ class SheetsState(val platform: SheetsPlatform) {
     /** The actions on the strip over the page, in order. Held as state so every screen showing it follows a change. */
     var strip by mutableStateOf(
         platform.pref(K_STRIP)?.split(',')?.mapNotNull { n -> com.inkslate.core.PerformAction.entries.firstOrNull { it.name == n } }
+            ?.let { saved ->
+                // Recordings, the tuner, Play together and switching part were tucked into More
+                // for a while and asked back onto the strip: added once to a strip saved then.
+                if (platform.pref(K_STRIP_RETURNED) == "true") saved
+                else (saved.filter { it != com.inkslate.core.PerformAction.FULLSCREEN } + RETURNED.filter { it !in saved } +
+                    saved.filter { it == com.inkslate.core.PerformAction.FULLSCREEN }).also {
+                    platform.setPref(K_STRIP_RETURNED, "true")
+                    platform.setPref(K_STRIP, it.joinToString(",") { a -> a.name })
+                }
+            }
             ?: DEFAULT_STRIP
     )
         private set
+
+    /** The part picker, opened from the strip's Part button or a pedal. */
+    var partPicker by mutableStateOf(false)
 
     fun stripActions(): List<com.inkslate.core.PerformAction> = strip
 
@@ -147,6 +160,9 @@ class SheetsState(val platform: SheetsPlatform) {
                 com.inkslate.core.PerformAction.METRONOME -> { toggleMetronome(); true }
                 com.inkslate.core.PerformAction.TUNER -> { tunerOpen = true; true }
                 com.inkslate.core.PerformAction.PLAY_AUDIO -> { Recording.toggle(this); true }
+                com.inkslate.core.PerformAction.RECORDINGS -> { if (current != null) audioOpen = true; current != null }
+                com.inkslate.core.PerformAction.PLAY_TOGETHER -> { companionOpen = true; true }
+                com.inkslate.core.PerformAction.SWITCH_PART -> { if (current != null) partPicker = true; current != null }
                 else -> false
             }
         }
@@ -937,12 +953,19 @@ class SheetsState(val platform: SheetsPlatform) {
          * Lean: pages and songs turn by tap and swipe, so the strip is for marking up and the
          * metronome. The rest is in More, or added back under Customise.
          */
+        /** Back on the strip by request, after a spell in More. */
+        val RETURNED = listOf(
+            com.inkslate.core.PerformAction.SWITCH_PART,
+            com.inkslate.core.PerformAction.RECORDINGS,
+            com.inkslate.core.PerformAction.TUNER,
+            com.inkslate.core.PerformAction.PLAY_TOGETHER
+        )
         val DEFAULT_STRIP = listOf(
             com.inkslate.core.PerformAction.PEN,
             com.inkslate.core.PerformAction.ERASER,
             com.inkslate.core.PerformAction.UNDO,
-            com.inkslate.core.PerformAction.METRONOME,
-            com.inkslate.core.PerformAction.FULLSCREEN
-        )
+            com.inkslate.core.PerformAction.METRONOME
+        ) + RETURNED + com.inkslate.core.PerformAction.FULLSCREEN
+        private const val K_STRIP_RETURNED = "sheets_strip_returned_1"
     }
 }
