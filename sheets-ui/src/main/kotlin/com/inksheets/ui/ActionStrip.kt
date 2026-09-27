@@ -257,6 +257,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             Text("Every mark on every page of $title is taken off, on all your devices. This cannot be undone.")
         }
     }
+    if (state.pickingOneOff) OneOffInstrumentDialog(state)
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -310,10 +311,15 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
         state.profiles.forEach { profile ->
             DropdownMenuItem(
                 text = { Text(profile.name) },
-                leadingIcon = { if (profile.id == state.profileId) Icon(Icons.Default.Check, null) },
+                leadingIcon = { if (state.oneOff == null && profile.id == state.profileId) Icon(Icons.Default.Check, null) },
                 onClick = { onDismiss(); state.switchAllSongs(profile.id) }
             )
         }
+        state.oneOff?.let { _ ->
+            DropdownMenuItem(text = { Text(state.profile?.name ?: "") }, leadingIcon = { Icon(Icons.Default.Check, null) }, onClick = onDismiss)
+        }
+        // Any instrument at all, just for now: not added to the ones you play.
+        DropdownMenuItem(text = { Text("Another instrument, for now...") }, onClick = { onDismiss(); state.pickingOneOff = true })
     }
 }
 

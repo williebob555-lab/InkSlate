@@ -39,7 +39,26 @@ class SheetsState(val platform: SheetsPlatform) {
         private set
 
     val profile: InstrumentProfile?
-        get() = profiles.firstOrNull { it.id == profileId }
+        get() = oneOff?.let { id -> InstrumentProfile(ONE_OFF, (Instruments.byId[id]?.name ?: id) + " (for now)", listOf(id)) }
+            ?: profiles.firstOrNull { it.id == profileId }
+
+    /**
+     * An instrument picked for now only, from every instrument there is - to read the tuba part
+     * once without adding a tuba to the instruments you play. Not remembered past this session,
+     * and gone as soon as one of your own is chosen again.
+     */
+    var oneOff by mutableStateOf<String?>(null)
+        private set
+
+    /** Showing the list of every instrument, to pick one for now. */
+    var pickingOneOff by mutableStateOf(false)
+
+    /** Show [instrumentId]'s parts, for now, in every song - the one in front changing at once. */
+    fun chooseOneOff(instrumentId: String) {
+        oneOff = instrumentId
+        savePicks(emptyMap())
+        current?.let { showAgain(it) }
+    }
 
     /** The tuner and metronome panels, which a pedal or a button over the page can open. */
     var tunerOpen by mutableStateOf(false)
@@ -484,6 +503,7 @@ class SheetsState(val platform: SheetsPlatform) {
     }
 
     fun chooseProfile(id: String?) {
+        oneOff = null
         profileId = id
         platform.setPref(K_PROFILE, id)
     }
@@ -1001,6 +1021,7 @@ class SheetsState(val platform: SheetsPlatform) {
         ) + RETURNED + com.inkslate.core.PerformAction.FULLSCREEN
         private const val K_STRIP_RETURNED = "sheets_strip_returned_1"
         private const val K_SETLIST_SORT = "sheets_setlist_sort"
+        const val ONE_OFF = "one-off"
         private const val K_ENTRY_SORT = "sheets_entry_sort"
     }
 }

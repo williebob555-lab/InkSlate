@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Devices
@@ -209,6 +210,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     }
 
     }
+    if (state.pickingOneOff) OneOffInstrumentDialog(state)
     if (showMetronome) MetronomeDialog(state, onClose = { showMetronome = false })
     if (showTuner || state.tunerOpen) TunerDialog(state, onClose = { showTuner = false; state.tunerOpen = false })
     if (showImport) AddMusicDialog(state, onClose = { showImport = false })
@@ -263,10 +265,14 @@ private fun InstrumentChooser(state: SheetsState) {
             Icon(Icons.Default.ArrowDropDown, null)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            state.oneOff?.let { _ ->
+                DropdownMenuItem(text = { Text(state.profile?.name ?: "") }, leadingIcon = { Icon(Icons.Default.Check, null) }, onClick = { open = false })
+            }
             DropdownMenuItem(text = { Text("All instruments") }, onClick = { state.chooseProfile(null); open = false })
             state.profiles.forEach { p ->
                 DropdownMenuItem(text = { Text(p.name) }, onClick = { state.chooseProfile(p.id); open = false })
             }
+            DropdownMenuItem(text = { Text("Another instrument, for now...") }, onClick = { open = false; state.pickingOneOff = true })
             HorizontalDivider()
             DropdownMenuItem(text = { Text("Edit instruments...") }, onClick = { open = false; editing = true })
         }

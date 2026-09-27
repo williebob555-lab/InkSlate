@@ -136,3 +136,29 @@ private fun ProfileEditor(profile: InstrumentProfile, onSave: (InstrumentProfile
         }
     }
 }
+
+/**
+ * Every instrument there is, to read one's parts for now: picked with one tap, searched by any of
+ * its names, and never added to the instruments you play.
+ */
+@Composable
+internal fun OneOffInstrumentDialog(state: SheetsState) {
+    var query by remember { mutableStateOf("") }
+    val all = com.inksheets.core.Instruments.all
+    SheetDialog(title = "Show parts for", onDismiss = { state.pickingOneOff = false }) {
+        Column {
+            ListSearch(all.size, query, { query = it }, "Find an instrument")
+            LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                items(all.filter { matches(query, it) }, key = { it.id }) { inst ->
+                    ListRow(
+                        icon = {},
+                        title = inst.name,
+                        detail = null,
+                        onClick = { state.pickingOneOff = false; state.chooseOneOff(inst.id) },
+                        menu = emptyList()
+                    )
+                }
+            }
+        }
+    }
+}
