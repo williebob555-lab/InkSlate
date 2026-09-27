@@ -99,7 +99,7 @@ object Instruments {
         Instrument("contra-clarinet", "Contrabass Clarinet", listOf("contrabass clarinet", "contra alto clarinet", "contra clarinet"), transpose = 26, clef = "treble"),
         Instrument("soprano-sax", "Soprano Saxophone", listOf("soprano saxophone", "soprano sax"), transpose = 2, clef = "treble"),
         Instrument("alto-sax", "Alto Saxophone", listOf("alto saxophone", "alto sax", "eb alto saxophone", "alto"), transpose = 9, clef = "treble"),
-        Instrument("tenor-sax", "Tenor Saxophone", listOf("tenor saxophone", "tenor sax"), transpose = 14, clef = "treble"),
+        Instrument("tenor-sax", "Tenor Saxophone", listOf("tenor saxophone", "tenor sax", "tenor"), transpose = 14, clef = "treble"),
         Instrument("bari-sax", "Baritone Saxophone", listOf("baritone saxophone", "baritone sax", "bari sax", "bari saxophone"), transpose = 21, clef = "treble"),
         Instrument("trumpet", "Trumpet", listOf("trumpet", "bb trumpet", "cornet", "flugelhorn"), transpose = 2, clef = "treble"),
         Instrument("horn", "Horn in F", listOf("horn", "french horn", "horn in f", "f horn"), transpose = 7, clef = "treble"),

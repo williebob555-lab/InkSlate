@@ -70,8 +70,11 @@ class LibrarySort(
             val readable = ImportPlan.readableName(p.file.substringAfterLast('/'))
             val plain = ImportPlan.namesPartPlainly(readable)
             if (!plain && p.instrument != null) continue
-            val n = ImportPlan.namePart(p.file)
+            var n = ImportPlan.namePart(p.file)
             if (n.instrument == null) continue
+            // A lone "Tenor" beside "Double Tenor" and "Double Second" is the pans' tenor, not a saxophone.
+            if (n.instrument == "tenor-sax" && InstrumentReader.normalise(n.label.orEmpty()).filterNot { it.all(Char::isDigit) } == listOf("tenor") &&
+                s.all.any { it.instrument == "steel-pan" || ImportPlan.namePart(it.file).instrument == "steel-pan" }) n = n.copy(instrument = "steel-pan")
             val chair = n.chair ?: p.chair.takeIf { n.instrument == p.instrument }
             if (n.instrument == p.instrument && chair == p.chair && n.also == p.also) continue
             library.writePart(s.id, p.copy(instrument = n.instrument, source = InstrumentSource.FILE_NAME, label = n.label, also = n.also, chair = chair))
@@ -269,7 +272,8 @@ class LibrarySort(
 
     private fun tidyTitle(s: Song): String? {
         if (s.apart) return null
-        val tidy = ImportPlan.titleOf(s.title).trim()
+        // A second download's "(2)", carried into a title as " - 2", goes with the rest.
+        val tidy = ImportPlan.titleOf(s.title).trim().replace(Regex("""\s+[-–]\s+\d{1,2}$"""), "")
         if (tidy.isBlank() || Library.matchKey(tidy) == Library.matchKey(s.title)) return null
         val words = Library.titleKey(tidy).split(' ')
         // "Studies for Trombone", "Escape for Euph": the instrument is part of the title.

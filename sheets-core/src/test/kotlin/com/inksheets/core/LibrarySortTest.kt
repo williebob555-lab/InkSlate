@@ -84,4 +84,42 @@ class LibrarySortTest {
         assertEquals(shape(la), shape(lb))
         assertEquals(4, la.songs.size)
     }
+
+    /** "neck" plus the instrument, loose among other music: still one song, however each is spelt. */
+    @Test
+    fun `neck parts loose in a shared folder are one song`() {
+        val root = tmp.newFolder("loose")
+        listOf("neckalto", "necktbn1", "necktbn2", "necktbn3", "necktpt1", "necktpt2", "neckbtone", "neckmello",
+            "necktuba", "neckflute", "neckclarinet", "necktenor", "Other Song - Trombone 1")
+            .forEach { write(root, "Downloads/$it.pdf") }
+        val library = Library(LibraryLog(root, "tablet"))
+        val scan = LibraryScan(root, library, File(tmp.root, "loose.json"))
+        scan.run()
+        val neck = library.songs.filter { Library.matchKey(it.title) == "neck" }
+        assertEquals(library.songs.map { it.title + ":" + it.parts.size }.toString(), 1, neck.size)
+        assertEquals(12, neck.single().parts.size)
+        assertEquals(2, library.songs.size)
+    }
+
+    /** Score-and-parts packs, copies and single parts named after the song: one song each, even loose. */
+    @Test
+    fun `packs, copies and single parts join their song without a folder`() {
+        val root = tmp.newFolder("flat")
+        listOf(
+            "We Like To Party - Trombone 1", "We Like To Party - Tuba", "We Like To Party - Full Score", "We Like To Party - Score and Parts",
+            "Tom Sawyer - Trombone 1", "Tom Sawyer - Electric Bass", "Tom Sawyer - Full Score", "Tom Sawyer - Score and parts",
+            "Take On Me - Trombone 1", "Take On Me - Full Score", "Take On Me - Full Score copy", "Take On Me - Alto 1", "Take On Me - Alto 2", "Take On Me - Mello 1"
+        ).forEach { write(root, "MobileSheets/$it.pdf") }
+        val library = Library(LibraryLog(root, "tablet"))
+        // As an older version left them: a song per stray file.
+        library.addSong("We Like To Party - Score and Parts", listOf(Part(id = Library.partIdFor("MobileSheets/We Like To Party - Score and Parts.pdf"), file = "MobileSheets/We Like To Party - Score and Parts.pdf", instrument = "piccolo")))
+        library.addSong("Take On Me - Alto 1", listOf(Part(id = Library.partIdFor("MobileSheets/Take On Me - Alto 1.pdf"), file = "MobileSheets/Take On Me - Alto 1.pdf", instrument = "alto-sax", source = InstrumentSource.OCR)))
+        LibraryScan(root, library, File(tmp.root, "flat.json")).run()
+        assertEquals(library.songs.map { it.title + ":" + it.parts.size }.toString(),
+            listOf("Take On Me", "Tom Sawyer", "We Like To Party"), library.songs.map { it.title }.sorted())
+        // The "copy" of the full score is kept as a hidden copy, not a second score to choose from.
+        val take = library.songs.single { it.title == "Take On Me" }
+        assertEquals(5, take.parts.size)
+        assertEquals(1, take.duplicates.size)
+    }
 }

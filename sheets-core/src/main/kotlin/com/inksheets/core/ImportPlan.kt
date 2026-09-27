@@ -222,8 +222,13 @@ object ImportPlan {
     }
 
     /** A file's song title from its name alone, with an instrument glued on taken off. */
-    fun fileTitle(path: String): String {
-        val name = path.substringAfterLast('/')
+    fun fileTitle(path: String): String = titleOfTitle(path.substringAfterLast('/'))
+
+    /**
+     * [titleOf], and where that finds no instrument, the same with one glued to a word pulled
+     * off: "necktbn 1", "neckalto" and "necktuba" are all the song "neck".
+     */
+    fun titleOfTitle(name: String): String {
         val plain = titleOf(name)
         if (InstrumentReader.read(readableName(name)) != null) return plain
         val unglued = unglued(readableName(name))
@@ -298,6 +303,13 @@ object ImportPlan {
     fun readableName(fileName: String): String {
         var base = fileName.substringBeforeLast('.').takeIf { '.' in fileName && fileName.substringAfterLast('.').let { e -> e.length in 2..4 && e.all(Char::isLetterOrDigit) } } ?: fileName
         base = base.replace(Regex("""\s*\(\d{1,2}\)\s*$"""), "")
+        // "Take On Me - Full Score copy", "Copy of Tuba", "Tuba - Copy (2)": a copy is the same part.
+        base = base.replace(Regex("""\s*[-–]?\s*\bcopy(\s*\(?\d{1,2}\)?)?\s*$""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""^copy of\s+""", RegexOption.IGNORE_CASE), "")
+        // "Score Parts I'm A Believer", "Harry Potter - Score-combined": how a pack of every part
+        // is labelled, not part of the title.
+        base = base.replace(Regex("""^score\s*(and|&)?\s*parts?\s+(?=\p{L})""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""[\s_-]*combined\s*$""", RegexOption.IGNORE_CASE), "")
         base = base.replace('_', ' ')
         // A copy MobileSheets made carries its own id on the end: "Song-Trombone_1_89562782".
         base = base.replace(Regex("""\s+\d{6,}$"""), "")

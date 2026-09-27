@@ -232,17 +232,19 @@ class LibraryScan(
         run {
             // Grouped by the title with any instrument still stuck to it taken off: a download
             // named "Song-Trumpet_1.pdf" once made a song per part before that was read.
-            val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(ImportPlan.titleOf(it.title).ifBlank { it.title }) }
+            val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(ImportPlan.titleOfTitle(it.title).ifBlank { it.title }) }
             for ((_, same) in groups) {
                 if (same.size < 2) continue
                 // The same choice on every device: the title's own id if one has it, else the smallest.
-                val clean = same.filter { ImportPlan.titleOf(it.title) == it.title.trim() }
+                val clean = same.filter { ImportPlan.titleOfTitle(it.title) == it.title.trim() }
                 val keep = (clean.ifEmpty { same }).let { c -> c.firstOrNull { it.id == Library.songIdFor(it.title) } ?: c.minBy { it.id } }
                 val have = HashSet(library.song(keep.id)?.seats.orEmpty())
                 var took = false
                 for (s in same) if (s.id != keep.id) {
                     val theirs = s.seats
-                    if (theirs.any { it in have }) continue
+                    // A second score, or a second drum line or pan part, is no sign of another
+                    // piece: "Take On Me - Full Score copy", "We Like to Party - Score and Parts".
+                    if (theirs.any { it in have && it.substringBefore('#') !in SHARED_SEATS }) continue
                     library.mergeSongs(s.id, keep.id)
                     have += theirs
                     took = true
@@ -250,7 +252,7 @@ class LibraryScan(
                 }
                 // Kept a title with an instrument on it: it is the song's now, so it goes.
                 if (took) {
-                    val title = ImportPlan.titleOf(keep.title)
+                    val title = ImportPlan.titleOfTitle(keep.title)
                     if (title.isNotBlank() && title != keep.title) library.editSong(keep.id) { this.title = title }
                 }
             }
@@ -304,6 +306,7 @@ class LibraryScan(
     data class Found(val path: String, val size: Long, val modified: Long, val music: Boolean)
 
     companion object {
+        private val SHARED_SEATS = setOf("score", "drumline", "steel-pan", "percussion")
         private val sortedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
         val MUSIC = setOf("pdf", "png", "jpg", "jpeg", "webp")
