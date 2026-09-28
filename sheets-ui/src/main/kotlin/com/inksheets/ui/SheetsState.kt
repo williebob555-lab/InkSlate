@@ -50,6 +50,46 @@ class SheetsState(val platform: SheetsPlatform) {
     var oneOff by mutableStateOf<String?>(null)
         private set
 
+    /** The bookmark on the page in front, if it has one. */
+    fun bookmarkHere(): com.inksheets.core.Bookmark? {
+        version   // read, so the Bookmark button lights up and goes out as soon as it is pressed
+        val song = current?.let { s -> library?.song(s.id) } ?: return null
+        val part = partShown() ?: return null
+        val page = pageShown.first + 1
+        return song.bookmarks.firstOrNull { it.part == part.id && it.page == page }
+    }
+
+    /**
+     * Bookmark the page in front, or take its bookmark off: the song goes under Bookmarks on Home
+     * and opens there at this page, in this part. Kept with the song, so every device has it.
+     */
+    fun toggleBookmark(): Boolean {
+        val song = current?.let { s -> library?.song(s.id) } ?: return false
+        val part = partShown() ?: return false
+        val page = pageShown.first + 1
+        val here = song.bookmarks.firstOrNull { it.part == part.id && it.page == page }
+        val next = if (here != null) song.bookmarks - here
+            else song.bookmarks + com.inksheets.core.Bookmark(label = "Page $page", part = part.id, page = page)
+        change { editSong(song.id) { bookmarks = next.sortedBy { it.page } } }
+        return true
+    }
+
+    /** Open [song] at [mark]: the whole song, in the bookmarked part, at its page. */
+    fun openBookmark(song: com.inksheets.core.Song, mark: com.inksheets.core.Bookmark) {
+        val part = song.parts.firstOrNull { it.id == mark.part } ?: partFor(song) ?: return
+        val file = partFile(song, part) ?: return
+        stopPlaying()
+        current = song
+        noteOpened(song)
+        com.inkslate.core.Perform.requestPage(file.absolutePath, mark.page - 1)
+        platform.openPart(song, part, file)
+        companion.pageTurned(mark.page - 1)
+    }
+
+    /** Take [mark] off [song]. */
+    fun removeBookmark(song: com.inksheets.core.Song, mark: com.inksheets.core.Bookmark) =
+        change { editSong(song.id) { bookmarks = song.bookmarks - mark } }
+
     /** Writing a reminder for the song in front; and the song whose reminder is up. */
     var writingReminder by mutableStateOf(false)
     var reminderShown by mutableStateOf<String?>(null)
@@ -156,6 +196,14 @@ class SheetsState(val platform: SheetsPlatform) {
                     platform.setPref(K_STRIP, it.joinToString(",") { a -> a.name })
                 }
             }
+            ?.let { saved ->
+                if (platform.pref(K_STRIP_ADDED) == "true") saved
+                else (saved.filter { it != com.inkslate.core.PerformAction.FULLSCREEN } + ADDED_LATER.filter { it !in saved } +
+                    saved.filter { it == com.inkslate.core.PerformAction.FULLSCREEN }).also {
+                    platform.setPref(K_STRIP_ADDED, "true")
+                    platform.setPref(K_STRIP, it.joinToString(",") { a -> a.name })
+                }
+            }
             ?: DEFAULT_STRIP
     )
         private set
@@ -190,6 +238,7 @@ class SheetsState(val platform: SheetsPlatform) {
                 com.inkslate.core.PerformAction.RECORDINGS -> { if (current != null) audioOpen = true; current != null }
                 com.inkslate.core.PerformAction.PLAY_TOGETHER -> { companionOpen = true; true }
                 com.inkslate.core.PerformAction.SWITCH_PART -> { if (current != null) partPicker = true; current != null }
+                com.inkslate.core.PerformAction.BOOKMARK -> toggleBookmark()
                 else -> false
             }
         }
@@ -1075,6 +1124,10 @@ class SheetsState(val platform: SheetsPlatform) {
          * Lean: pages and songs turn by tap and swipe, so the strip is for marking up and the
          * metronome. The rest is in More, or added back under Customise.
          */
+        /** Added to the strip by request after it was first laid out, once, for strips saved before. */
+        val ADDED_LATER = listOf(com.inkslate.core.PerformAction.BOOKMARK)
+        private const val K_STRIP_ADDED = "sheets_strip_added_bookmark"
+
         /** Back on the strip by request, after a spell in More. */
         val RETURNED = listOf(
             com.inkslate.core.PerformAction.SWITCH_PART,
@@ -1087,7 +1140,7 @@ class SheetsState(val platform: SheetsPlatform) {
             com.inkslate.core.PerformAction.ERASER,
             com.inkslate.core.PerformAction.UNDO,
             com.inkslate.core.PerformAction.METRONOME
-        ) + RETURNED + com.inkslate.core.PerformAction.FULLSCREEN
+        ) + RETURNED + ADDED_LATER + com.inkslate.core.PerformAction.FULLSCREEN
         private const val K_STRIP_RETURNED = "sheets_strip_returned_1"
         private const val K_SETLIST_SORT = "sheets_setlist_sort"
         const val ONE_OFF = "one-off"

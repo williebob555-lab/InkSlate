@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tune
@@ -166,7 +167,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                         else VerticalDivider(Modifier.height(24.dp).padding(horizontal = 2.dp))
                     }
                     lastGroup = group
-                    val lit = (action == PerformAction.METRONOME && SharedMetronome.running) ||
+                    val lit = (action == PerformAction.BOOKMARK && state.bookmarkHere() != null) ||
+                        (action == PerformAction.METRONOME && SharedMetronome.running) ||
                         (action != PerformAction.FULLSCREEN && Perform.on(action))
                     val fullscreen = Perform.on(PerformAction.FULLSCREEN)
                     if (action == PerformAction.SWITCH_PART) {
@@ -566,6 +568,7 @@ private fun shortName(action: PerformAction, fullscreen: Boolean): String = when
     PerformAction.RECORDINGS -> "Recordings"
     PerformAction.PLAY_TOGETHER -> "Together"
     PerformAction.SWITCH_PART -> "Part"
+    PerformAction.BOOKMARK -> "Bookmark"
     PerformAction.PEN -> "Pen"
     PerformAction.HIGHLIGHTER -> "Highlight"
     PerformAction.ERASER -> "Eraser"
@@ -579,7 +582,7 @@ private fun groupOf(action: PerformAction): Int = when (action) {
     PerformAction.PEN, PerformAction.HIGHLIGHTER, PerformAction.ERASER, PerformAction.UNDO, PerformAction.REDO -> 1
     PerformAction.NEXT_SONG, PerformAction.PREVIOUS_SONG -> 2
     PerformAction.METRONOME, PerformAction.TUNER, PerformAction.PLAY_AUDIO, PerformAction.RECORDINGS -> 3
-    PerformAction.SWITCH_PART, PerformAction.PLAY_TOGETHER -> 5
+    PerformAction.SWITCH_PART, PerformAction.PLAY_TOGETHER, PerformAction.BOOKMARK -> 5
     PerformAction.FULLSCREEN -> 4
     else -> 0
 }
@@ -599,6 +602,7 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
     PerformAction.RECORDINGS -> Icons.Default.LibraryMusic
     PerformAction.PLAY_TOGETHER -> Icons.Default.Devices
     PerformAction.SWITCH_PART -> Icons.Default.SwapHoriz
+    PerformAction.BOOKMARK -> Icons.Default.Bookmark
     PerformAction.PEN -> Icons.Default.Edit
     PerformAction.HIGHLIGHTER -> Icons.Default.Highlight
     PerformAction.ERASER -> Icons.Default.CleaningServices

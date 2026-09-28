@@ -1,5 +1,6 @@
 package com.inksheets.ui
 
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
@@ -21,6 +22,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Fullscreen
@@ -216,15 +220,20 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                     }
                 }
             }
+            // Bookmarks is a tab only while there are some.
+            val marked = remember(state.version) { state.library?.songs.orEmpty().filter { it.bookmarks.isNotEmpty() } }
+            if (tab == 2 && marked.isEmpty()) tab = 0
             TabRow(selectedTabIndex = tab) {
                 Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Songs") })
                 Tab(selected = tab == 1, onClick = {
                     // Also the way back to the top of the setlists, from inside a folder or a setlist.
                     tab = 1; state.setlistFolder = null; state.setlistShown = null
                 }, text = { Text("Setlists") })
+                if (marked.isNotEmpty()) Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Bookmarks") })
             }
             when (tab) {
                 0 -> SongsPane(state)
+                2 -> BookmarksPane(state, marked)
                 else -> SetlistsPane(state)
             }
         }
@@ -540,6 +549,8 @@ internal fun SongRow(
     missing: Boolean = false,
     /** The part opened in place of the player's own, which the song has none of: "Tuba". */
     standIn: String? = null,
+    /** A line of its own under the title: which page of which part, for a bookmark. */
+    note: String? = null,
     /** The part this device opens, marked in the list of parts. */
     chosenPart: com.inksheets.core.Part? = null,
     /** Open the song at one of its parts, chosen from the list under its name. */
@@ -563,6 +574,9 @@ internal fun SongRow(
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val partsLine = onPart != null && song.parts.size > 1
+            if (note != null) {
+                Text(note, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
             if (standIn != null && !partsLine) {
                 Text("Opens the $standIn part - there is none for yours", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -722,3 +736,69 @@ private data class FilterCounts(
 internal enum class SongSort(val label: String) {
     AZ("A to Z"), OPENED("Recently opened"), ADDED("Recently added"), COMPOSER("Composer")
 }
+
+/**
+ * Every bookmarked page, as a song each: a tap opens the whole song at that page. Its bookmark,
+ * lit, beside its menu takes the bookmark off - fading out over a few seconds, while a second tap
+ * puts it back - and once it has gone, the rest move up into its place.
+ */
+@Composable
+private fun BookmarksPane(state: SheetsState, marked: List<Song>) {
+    var editing by remember { mutableStateOf<Song?>(null) }
+    var addingToSetlist by remember { mutableStateOf<Song?>(null) }
+    // Bookmarks on their way out: pressed off, not yet gone.
+    val leaving = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
+    val rows = marked.flatMap { song -> song.bookmarks.map { song to it } }
+    androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize()) {
+        items(rows, key = { (song, mark) -> song.id + "|" + mark.part + "|" + mark.page + "|" + mark.label }) { (song, mark) ->
+            val key = song.id + "|" + mark.part + "|" + mark.page + "|" + mark.label
+            val going = leaving[key] == true
+            val alpha by androidx.compose.animation.core.animateFloatAsState(
+                if (going) 0f else 1f,
+                androidx.compose.animation.core.tween(if (going) FADE_MS else 200), label = "bookmark"
+            )
+            androidx.compose.runtime.LaunchedEffect(going) {
+                if (going) {
+                    kotlinx.coroutines.delay(FADE_MS.toLong())
+                    if (leaving[key] == true) {
+                        leaving.remove(key)
+                        state.library?.song(song.id)?.let { now -> state.removeBookmark(now, mark) }
+                    }
+                }
+            }
+            val part = song.parts.firstOrNull { it.id == mark.part }
+            Column(Modifier.animateItem().graphicsLayer { this.alpha = 0.15f + 0.85f * alpha }) {
+                SongRow(
+                    song = song,
+                    unsure = false,
+                    note = mark.label + (part?.let { "  \u00B7  " + Instruments.partName(it) } ?: ""),
+                    onOpen = { if (!going) state.openBookmark(song, mark) },
+                    onEdit = { editing = song },
+                    onAddToSetlist = { addingToSetlist = song },
+                    onLook = { part?.let { state.peeking = song to it } },
+                    trailing = {
+                        IconButton(onClick = { if (going) leaving.remove(key) else leaving[key] = true }) {
+                            Icon(
+                                if (going) Icons.Default.BookmarkBorder else Icons.Default.Bookmark,
+                                if (going) "Keep the bookmark" else "Take the bookmark off",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                )
+                HorizontalDivider()
+            }
+        }
+    }
+    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    addingToSetlist?.let { song ->
+        SetlistChooserDialog(
+            state,
+            onChosen = { setlist -> state.change { addToSetlist(setlist.id, song.id) }; addingToSetlist = null },
+            onDismiss = { addingToSetlist = null }
+        )
+    }
+}
+
+/** How long a bookmark taken off takes to fade and go - time enough to change your mind. */
+private const val FADE_MS = 3000

@@ -28,6 +28,7 @@ enum class PerformAction(val label: String) {
     RECORDINGS("Recordings of the song"),
     PLAY_TOGETHER("Play together (lead or follow)"),
     SWITCH_PART("Switch to another part"),
+    BOOKMARK("Bookmark this page"),
     PEN("Pen"),
     HIGHLIGHTER("Highlighter"),
     ERASER("Eraser"),
