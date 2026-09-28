@@ -1,5 +1,6 @@
 package com.inkslate.desktop
 
+import androidx.compose.ui.graphics.asSkiaBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import org.apache.pdfbox.Loader
@@ -167,7 +168,7 @@ class PdfSource(
                         region.height
                     )
                 )
-                pictureOf(doc).renderImage(index, scale).toComposeImageBitmap()
+                pictureOf(doc).renderImage(index, scale).toComposeImageBitmap().frozen()
             }.also {
                 page.setCropBox(kept)
             }.getOrNull()
@@ -180,7 +181,7 @@ class PdfSource(
             val scale = targetWidthPx / dim.width
             // renderImage takes a scale factor relative to 72dpi, which is exactly page points
             val image: BufferedImage = renderer.renderImage(index, scale.coerceIn(0.2f, 6f))
-            image.toComposeImageBitmap()
+            image.toComposeImageBitmap().frozen()
         }.getOrNull()
     }
 
@@ -234,7 +235,7 @@ class ImageSource(private val file: File) : DesktopSource {
         PageDim((image?.width ?: 1000).toFloat(), (image?.height ?: 1000).toFloat())
 
     override fun render(index: Int, targetWidthPx: Int): ImageBitmap? =
-        image?.toComposeImageBitmap()
+        image?.toComposeImageBitmap()?.frozen()
 
     override fun close() = Unit
 }
@@ -258,3 +259,12 @@ object DesktopSources {
 
     fun fingerprint(file: File) = "${file.length()}-${file.lastModified()}"
 }
+
+/**
+ * A rendered page marked as finished, so drawing it uses its pixels as they are. Unmarked, the
+ * graphics library copies the whole picture into a new image every time it is drawn - every
+ * frame - which for a page fitted to the screen is tens of megabytes a frame, and was most of
+ * what the screen's thread was doing in the moments a turn to another song stuttered.
+ */
+internal fun androidx.compose.ui.graphics.ImageBitmap.frozen(): androidx.compose.ui.graphics.ImageBitmap =
+    also { runCatching { it.asSkiaBitmap().setImmutable() } }

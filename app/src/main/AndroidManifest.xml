@@ -37,6 +37,10 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.InkSlate">
 
+        <!-- Lets a computer attached over USB sample what the app is doing (simpleperf), to find
+             a stall by measuring rather than guessing. Nothing changes for anyone else. -->
+        <profileable android:shell="true" tools:targetApi="29" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
