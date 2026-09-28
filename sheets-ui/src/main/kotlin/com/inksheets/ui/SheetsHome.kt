@@ -272,7 +272,7 @@ private fun InstrumentChooser(state: SheetsState) {
             state.profiles.forEach { p ->
                 DropdownMenuItem(text = { Text(p.name) }, onClick = { state.chooseProfile(p.id); open = false })
             }
-            DropdownMenuItem(text = { Text("Another instrument, for now...") }, onClick = { open = false; state.pickingOneOff = true })
+            DropdownMenuItem(text = { Text("Another instrument, for now...") }, onClick = { open = false; state.oneOffReshows = false; state.pickingOneOff = true })
             HorizontalDivider()
             DropdownMenuItem(text = { Text("Edit instruments...") }, onClick = { open = false; editing = true })
         }

@@ -53,11 +53,15 @@ class SheetsState(val platform: SheetsPlatform) {
     /** Showing the list of every instrument, to pick one for now. */
     var pickingOneOff by mutableStateOf(false)
 
+    /** Whether the song in front is shown again with the pick - from the Part button, not Home. */
+    var oneOffReshows = false
+
     /** Show [instrumentId]'s parts, for now, in every song - the one in front changing at once. */
     fun chooseOneOff(instrumentId: String) {
         oneOff = instrumentId
         savePicks(emptyMap())
-        current?.let { showAgain(it) }
+        // From Home, only which parts are listed changes; nothing opens.
+        if (oneOffReshows) current?.let { showAgain(it) }
     }
 
     /** The tuner and metronome panels, which a pedal or a button over the page can open. */
@@ -196,7 +200,10 @@ class SheetsState(val platform: SheetsPlatform) {
         com.inkslate.core.Perform.onPage = { path, page ->
             currentPath = path
             if (pagesWanted == path) { pagesWanted = null; com.inkslate.core.Perform.openPages?.invoke() }
-            songAt(path)?.let { if (current?.id != it.id) current = it }
+            songAt(path)?.let { song ->
+                if (current?.id != song.id) current = song
+                followInSet(song)
+            }
             companion.pageTurned(page)
         }
     }
@@ -597,7 +604,29 @@ class SheetsState(val platform: SheetsPlatform) {
             companion.pageTurned((part.firstPage ?: 1) - 1)
             return
         }
-        playSetlist(setlistId, index)
+        // Where the song in front is in the set now - reached by a swipe or a tab as well as by
+        // Next song - not where the last Next song left it, which reopened an old song.
+        val at = placeInSet(setlistId, song.id, index)
+        playSetlist(setlistId, at)
+    }
+
+    /**
+     * Keep the set's place on the song in front, however it got there: a swipe past the last
+     * page and a tap on a tab move to another song without going through [step].
+     */
+    private fun followInSet(song: com.inksheets.core.Song) {
+        val (setlistId, index) = playing ?: return
+        val at = placeInSet(setlistId, song.id, index)
+        if (at != index) {
+            playing = setlistId to at
+            frontEntry = library?.setlist(setlistId)?.entries?.getOrNull(at)?.id
+        }
+    }
+
+    /** The place of [songId] in the set nearest [near] (a song can be in a set twice); [near] if absent. */
+    private fun placeInSet(setlistId: String, songId: String, near: Int): Int {
+        val entries = library?.setlist(setlistId)?.entries ?: return near
+        return entries.indices.filter { entries[it].songId == songId }.minByOrNull { kotlin.math.abs(it - near) } ?: near
     }
 
     /** Take in edits from other devices. Called off the UI thread on a timer. */
