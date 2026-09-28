@@ -319,7 +319,7 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
             DropdownMenuItem(text = { Text(state.profile?.name ?: "") }, leadingIcon = { Icon(Icons.Default.Check, null) }, onClick = onDismiss)
         }
         // Any instrument at all, just for now: not added to the ones you play.
-        DropdownMenuItem(text = { Text("Another instrument, for now...") }, onClick = { onDismiss(); state.oneOffReshows = true; state.pickingOneOff = true })
+        DropdownMenuItem(text = { Text("Select instrument...") }, onClick = { onDismiss(); state.oneOffReshows = true; state.pickingOneOff = true })
     }
 }
 

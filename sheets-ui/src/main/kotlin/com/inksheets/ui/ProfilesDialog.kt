@@ -145,7 +145,7 @@ private fun ProfileEditor(profile: InstrumentProfile, onSave: (InstrumentProfile
 internal fun OneOffInstrumentDialog(state: SheetsState) {
     var query by remember { mutableStateOf("") }
     val all = com.inksheets.core.Instruments.all
-    SheetDialog(title = "Show parts for", onDismiss = { state.pickingOneOff = false }) {
+    SheetDialog(title = "Select instrument", onDismiss = { state.pickingOneOff = false }) {
         Column {
             ListSearch(all.size, query, { query = it }, "Find an instrument")
             LazyColumn(Modifier.heightIn(max = 420.dp)) {
