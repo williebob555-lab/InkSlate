@@ -703,6 +703,14 @@ class SheetsState(val platform: SheetsPlatform) {
         change { }
     }
 
+    /** Take one part out of its song, its file to the library's Trash for 30 days. */
+    fun removePart(song: com.inksheets.core.Song, part: com.inksheets.core.Part) {
+        importing++
+        try { runCatching { trash()?.removePart(song, part) }.onFailure { platform.log("Could not remove ${part.file}: ${it.message}") } }
+        finally { importing-- }
+        change { }
+    }
+
     fun restore(entry: com.inksheets.core.LibraryTrash.Entry) {
         importing++
         try { trash()?.restore(entry) } finally { importing-- }

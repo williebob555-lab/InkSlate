@@ -61,6 +61,31 @@ class LibraryTrash(private val root: File, private val library: Library) {
         return entry.copy(folder = folder.name)
     }
 
+    /**
+     * Take one part out of [song], its file into the trash - kept, like a removed song, for
+     * [KEEP_DAYS]. A file another part still uses (a pack of several parts) stays where it is;
+     * only this part goes.
+     */
+    fun removePart(song: Song, part: Part): Entry {
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val name = "${song.title} - ${Instruments.partName(part)}"
+        val safe = name.map { if (it.isLetterOrDigit() || it in " -_") it else '_' }.joinToString("").trim().take(40)
+        val folder = File(dir, "$stamp $safe").apply { mkdirs() }
+        val othersUse = library.songs.flatMap { s -> (s.parts + s.duplicates).filter { it.id != part.id }.map { it.file } + s.audio.map { it.file } }.toSet()
+        if (part.file !in othersUse) {
+            val from = File(root, part.file)
+            if (from.isFile) {
+                val to = File(folder, part.file)
+                to.parentFile?.mkdirs()
+                if (!from.renameTo(to)) { from.copyTo(to, overwrite = true); from.delete() }
+            }
+        }
+        val entry = Entry(song.id, name, System.currentTimeMillis(), listOf(part.id to part.file), emptyList())
+        File(folder, MANIFEST).writeText(json.encodeToString(Entry.serializer(), entry))
+        library.deletePart(part.id)
+        return entry.copy(folder = folder.name)
+    }
+
     /** Put a removed song back: its files where they were, and the song and its parts as they were. */
     fun restore(entry: Entry): Boolean {
         val folder = File(dir, entry.folder)

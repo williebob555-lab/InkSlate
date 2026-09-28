@@ -122,4 +122,22 @@ class LibrarySortTest {
         assertEquals(5, take.parts.size)
         assertEquals(1, take.duplicates.size)
     }
+
+    @Test
+    fun `a part's file deleted goes to the trash, stays gone, and comes back whole`() {
+        val root = tmp.newFolder("del")
+        write(root, "Band/Song - Trombone 1.pdf"); write(root, "Band/Song - Tuba.pdf")
+        val library = Library(LibraryLog(root, "tablet"))
+        val scan = LibraryScan(root, library, File(tmp.root, "del.json"))
+        scan.run()
+        val song = library.songs.single()
+        val tuba = song.parts.single { it.instrument == "tuba" }
+        val entry = LibraryTrash(root, library).removePart(song, tuba)
+        assertTrue(!File(root, tuba.file).exists())
+        scan.run()
+        assertEquals(listOf("trombone"), library.songs.single().parts.map { it.instrument })
+        LibraryTrash(root, library).restore(entry)
+        scan.run()
+        assertEquals(setOf("trombone", "tuba"), library.songs.single().parts.map { it.instrument }.toSet())
+    }
 }

@@ -205,6 +205,25 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                             if (parts.size > 1) {
                                 DropdownMenuItem(text = { Text("Make it a song of its own...") }, onClick = { menu = false; splitting = part })
                             }
+                            // The file itself, gone from the library - to its Trash, for 30 days.
+                            var confirm by remember { mutableStateOf(false) }
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (confirm) "Tap again: the file goes to the Trash for 30 days" else "Delete this file...",
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = if (confirm) androidx.compose.ui.text.font.FontWeight.Bold else null
+                                    )
+                                },
+                                onClick = {
+                                    if (!confirm) confirm = true
+                                    else {
+                                        menu = false
+                                        parts.removeAt(i)
+                                        state.removePart(song, part)
+                                    }
+                                }
+                            )
                         }
                     }
                   }
