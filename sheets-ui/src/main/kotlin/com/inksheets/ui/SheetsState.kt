@@ -50,6 +50,10 @@ class SheetsState(val platform: SheetsPlatform) {
     var oneOff by mutableStateOf<String?>(null)
         private set
 
+    /** Writing a reminder for the song in front; and the song whose reminder is up. */
+    var writingReminder by mutableStateOf(false)
+    var reminderShown by mutableStateOf<String?>(null)
+
     /** Showing the list of every instrument, to pick one for now. */
     var pickingOneOff by mutableStateOf(false)
 

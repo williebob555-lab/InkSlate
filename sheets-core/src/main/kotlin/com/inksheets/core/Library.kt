@@ -80,6 +80,8 @@ data class Song(
     val tempoMark: String? = null,
     /** The tempo was read from the page, not set by a person - reading again may change it. */
     val tempoRead: Boolean = false,
+    /** A note left for the next time the song is opened ("Watch the key change at D"); null for none. */
+    val reminder: String? = null,
     val difficulty: Int? = null,
     val notes: String? = null,
     val parts: List<Part> = emptyList(),
@@ -740,6 +742,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         tempo = f.string("tempo")?.toDoubleOrNull()?.toInt(),
         tempoMark = f.string("tempoMark"),
         tempoRead = f.string("tempoRead") == "true",
+        reminder = f.string("reminder")?.takeIf { it.isNotBlank() },
         difficulty = f.string("difficulty")?.toDoubleOrNull()?.toInt(),
         notes = f.string("notes"),
         parts = partsOf(id, f, index).filter { !it.dup },
@@ -862,6 +865,7 @@ class SongEdit internal constructor(private val edit: Library.Edit) {
     var tempo: Int? = null; set(v) { field = v; edit.put("tempo", v) }
     var tempoMark: String? = null; set(v) { field = v; edit.put("tempoMark", v) }
     var tempoRead: Boolean? = null; set(v) { field = v; edit.put("tempoRead", v ?: false) }
+    var reminder: String? = null; set(v) { field = v; edit.put("reminder", v?.takeIf { it.isNotBlank() }) }
     var difficulty: Int? = null; set(v) { field = v; edit.put("difficulty", v) }
     var notes: String? = null; set(v) { field = v; edit.put("notes", v) }
     /** The song's parts, all together: written as a part record each, never as one list. */

@@ -1,5 +1,6 @@
 package com.inkslate.desktop
 
+import androidx.compose.runtime.getValue
 import java.io.File
 
 import androidx.compose.foundation.layout.fillMaxSize
@@ -62,16 +63,31 @@ private fun ui() = application {
     // On Windows a program always on the whole screen is a borderless window exactly covering it,
     // not Java's full-screen mode: Windows minimises a window in that mode the moment anything
     // else - a file picker - is put in front of it.
-    val covering = AppFlavor.alwaysFullscreen && WindowsFileDialog.available
+    // Covering unless asked for an ordinary window, which InkSheets offers in its menu.
+    val covering by androidx.compose.runtime.derivedStateOf { AppFlavor.alwaysFullscreen && WindowsFileDialog.available && !AppFlavor.windowed }
     val state = remember {
         WindowMemory.restore().also {
             // Straight to the whole screen, so the window never shows a frame first.
             if (covering) WindowMemory.cover(it)
-            else if (AppFlavor.alwaysFullscreen) it.placement = androidx.compose.ui.window.WindowPlacement.Fullscreen
+            else if (AppFlavor.alwaysFullscreen && !AppFlavor.windowed) it.placement = androidx.compose.ui.window.WindowPlacement.Fullscreen
         }
     }
     AppFlavor.quit = ::exitApplication
     AppFlavor.minimise = { state.isMinimized = true }
+    AppFlavor.moveToScreen = { index -> if (covering) WindowMemory.coverScreen(state, index) else WindowMemory.centreOnScreen(state, index) }
+    // Between covering the screen and an ordinary window: the window comes back as it was left.
+    LaunchedEffect(state) {
+        var first = true
+        snapshotFlow { covering }.collect { cover ->
+            if (first) { first = false; return@collect }
+            if (cover) WindowMemory.cover(state)
+            else WindowMemory.restore().let { back ->
+                state.placement = androidx.compose.ui.window.WindowPlacement.Floating
+                state.size = back.size
+                state.position = back.position
+            }
+        }
+    }
 
     // The screen can change shape under the window - the machine folds into a tablet and the
     // display turns - and the toolkit has no event for it, so it is looked at rather than waited
@@ -214,7 +230,19 @@ private fun ui() = application {
         InterceptPlatformTextInput(keyboard) {
             InkSlateTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                    AppRoot(shortcuts, navigation)
+                    // A frameless app shown in an ordinary window gets a slim title bar of its own
+                    // to move it by, with the usual three buttons, and edges to size it by.
+                    if (AppFlavor.alwaysFullscreen && !covering) {
+                        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                            androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+                                WindowTitleBar(state, onClose = ::exitApplication)
+                                androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { AppRoot(shortcuts, navigation) }
+                            }
+                            ResizeEdges(state)
+                        }
+                    } else {
+                        AppRoot(shortcuts, navigation)
+                    }
                 }
             }
         }

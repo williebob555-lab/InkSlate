@@ -82,6 +82,26 @@ object AppFlavor {
     var quit: (() -> Unit)? = null
     var minimise: (() -> Unit)? = null
 
+    /**
+     * For an app that covers the whole screen ([alwaysFullscreen]): shown in an ordinary window
+     * instead, moved and sized by hand. Remembered.
+     */
+    var windowed by androidx.compose.runtime.mutableStateOf(DesktopPrefs.get(K_WINDOWED) == "true")
+        private set
+
+    fun chooseWindowed(on: Boolean) {
+        windowed = on
+        DesktopPrefs.put(K_WINDOWED, on.toString())
+    }
+
+    /** The screens there are, by name ("Screen 2 - 2560 x 1440"); more than one to choose between. */
+    fun screens(): List<String> = WindowMemory.screenNames()
+
+    /** Move the window to screen [index] of [screens]: covering it, or in the middle of it. */
+    var moveToScreen: ((Int) -> Unit)? = null
+
+    private const val K_WINDOWED = "window/windowed"
+
     /** The action strip over music sits down the left side rather than the right. */
     @Volatile
     var stripOnLeft: Boolean = false

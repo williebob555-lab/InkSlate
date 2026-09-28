@@ -208,6 +208,11 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     }
 
     override val canQuit: Boolean get() = com.inkslate.desktop.AppFlavor.quit != null
+    override val canWindow: Boolean get() = true
+    override val windowed: Boolean get() = com.inkslate.desktop.AppFlavor.windowed
+    override fun setWindowed(on: Boolean) = com.inkslate.desktop.AppFlavor.chooseWindowed(on)
+    override fun screens(): List<String> = com.inkslate.desktop.AppFlavor.screens()
+    override fun moveToScreen(index: Int) { com.inkslate.desktop.AppFlavor.moveToScreen?.invoke(index) }
     override fun quit() { com.inkslate.desktop.AppFlavor.quit?.invoke() }
     override fun minimise() { com.inkslate.desktop.AppFlavor.minimise?.invoke() }
 

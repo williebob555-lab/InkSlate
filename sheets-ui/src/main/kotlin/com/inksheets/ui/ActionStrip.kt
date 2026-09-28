@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -258,6 +259,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
     }
     if (state.pickingOneOff) OneOffInstrumentDialog(state)
+    ReminderDialogs(state)
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -371,12 +373,31 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
             leadingIcon = { Icon(Icons.Default.Devices, null) },
             onClick = { onDismiss(); state.companionOpen = true }
         )
+        state.current?.let { song ->
+            DropdownMenuItem(
+                text = { Text(if (song.reminder == null) "Reminder..." else "Change the reminder...") },
+                leadingIcon = { Icon(Icons.Default.NotificationsActive, null) },
+                onClick = { onDismiss(); state.writingReminder = true }
+            )
+        }
         state.currentPath?.let {
             DropdownMenuItem(
                 text = { Text("Clear all markings on this part...") },
                 leadingIcon = { Icon(Icons.Default.CleaningServices, null) },
                 onClick = { onDismiss(); state.clearingMarks = true }
             )
+        }
+        if (state.platform.canWindow) {
+            HorizontalDivider()
+            val windowed = state.platform.windowed
+            DropdownMenuItem(
+                text = { Text(if (windowed) "Cover the whole screen" else "Show in a window") },
+                onClick = { onDismiss(); state.platform.setWindowed(!windowed) }
+            )
+            val screens = state.platform.screens()
+            if (screens.size > 1) screens.forEachIndexed { i, name ->
+                DropdownMenuItem(text = { Text("Move to $name") }, onClick = { onDismiss(); state.platform.moveToScreen(i) })
+            }
         }
         HorizontalDivider()
         DropdownMenuItem(
@@ -587,3 +608,65 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
 }
 
 private const val K_COLLAPSED = "sheets_strip_collapsed"
+
+/**
+ * A reminder left on a song: written from More, and shown the next time the song is opened - on
+ * any device, since it lives with the song. "Done" clears it; "Keep it" shows it again next time.
+ */
+@Composable
+private fun ReminderDialogs(state: SheetsState) {
+    val song = state.current
+    // Shown once each time a song with a reminder comes in front.
+    var shownFor by remember { mutableStateOf<String?>(null) }
+    androidx.compose.runtime.LaunchedEffect(song?.id) {
+        if (song != null && song.reminder != null && shownFor != song.id) {
+            shownFor = song.id
+            state.reminderShown = song.id
+        } else if (song?.id != shownFor) shownFor = null
+    }
+    val showing = state.reminderShown?.let { id -> state.library?.song(id) }?.takeIf { it.reminder != null }
+    if (showing != null) {
+        SheetDialog(
+            title = "Reminder - ${showing.title}",
+            onDismiss = { state.reminderShown = null },
+            buttons = {
+                TextButton(onClick = { state.reminderShown = null }) { Text("Keep it") }
+                TextButton(onClick = {
+                    state.change { editSong(showing.id) { reminder = null } }
+                    state.reminderShown = null
+                }) { Text("Done") }
+            }
+        ) {
+            Text(showing.reminder.orEmpty(), style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+    if (state.writingReminder && song != null) {
+        var text by remember(song.id) { mutableStateOf(song.reminder.orEmpty()) }
+        SheetDialog(
+            title = "Reminder for next time",
+            onDismiss = { state.writingReminder = false },
+            buttons = {
+                if (song.reminder != null) TextButton(onClick = {
+                    state.change { editSong(song.id) { reminder = null } }
+                    state.writingReminder = false
+                }) { Text("Remove") }
+                TextButton(onClick = { state.writingReminder = false }) { Text("Cancel") }
+                TextButton(onClick = {
+                    state.change { editSong(song.id) { reminder = text.trim() } }
+                    state.writingReminder = false
+                }) { Text("Save") }
+            }
+        ) {
+            Column {
+                Text("Shown the next time ${song.title} is opened.", style = MaterialTheme.typography.bodySmall)
+                androidx.compose.material3.OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Reminder") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                )
+            }
+        }
+    }
+}

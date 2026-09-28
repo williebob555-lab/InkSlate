@@ -154,6 +154,13 @@ interface SheetsPlatform {
 
     /** Whether the app can be closed from its own menu (a window with no title bar to close it by). */
     val canQuit: Boolean get() = false
+
+    /** On a computer: whether the window covers the screen or is an ordinary one, and which screen. */
+    val canWindow: Boolean get() = false
+    val windowed: Boolean get() = false
+    fun setWindowed(on: Boolean) {}
+    fun screens(): List<String> = emptyList()
+    fun moveToScreen(index: Int) {}
     fun quit() {}
     fun minimise() {}
 }

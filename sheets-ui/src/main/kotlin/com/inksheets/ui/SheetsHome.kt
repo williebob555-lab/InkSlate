@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Monitor
+import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -149,6 +152,24 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                             onClick = { more = false; onOpenSettings() }
                         )
                         // The window covers the whole screen, title bar and all, so it closes from here.
+                        if (state.platform.canWindow) {
+                            HorizontalDivider()
+                            val windowed = state.platform.windowed
+                            DropdownMenuItem(
+                                text = { Text(if (windowed) "Cover the whole screen" else "Show in a window") },
+                                leadingIcon = { Icon(if (windowed) Icons.Default.Fullscreen else Icons.Default.FullscreenExit, null) },
+                                onClick = { more = false; state.platform.setWindowed(!windowed) }
+                            )
+                            // Another screen, where there is one: covered, or the window put there.
+                            val screens = state.platform.screens()
+                            if (screens.size > 1) screens.forEachIndexed { i, name ->
+                                DropdownMenuItem(
+                                    text = { Text("Move to $name") },
+                                    leadingIcon = { Icon(Icons.Default.Monitor, null) },
+                                    onClick = { more = false; state.platform.moveToScreen(i) }
+                                )
+                            }
+                        }
                         if (state.platform.canQuit) {
                             HorizontalDivider()
                             DropdownMenuItem(

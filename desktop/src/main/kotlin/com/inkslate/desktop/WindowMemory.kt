@@ -128,12 +128,49 @@ object WindowMemory {
             val at = state.position as? WindowPosition.Absolute
             val cx = (at?.x?.value ?: 0f) + state.size.width.value / 2f
             val cy = (at?.y?.value ?: 0f) + state.size.height.value / 2f
-            screens.firstOrNull { at != null && it.contains(cx.toDouble(), cy.toDouble()) }
+            chosenScreen()
+                ?: screens.firstOrNull { at != null && it.contains(cx.toDouble(), cy.toDouble()) }
                 ?: java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration.bounds
         }.getOrNull() ?: return
         state.placement = WindowPlacement.Floating
         state.position = WindowPosition(bounds.x.dp, bounds.y.dp)
         state.size = DpSize(bounds.width.dp, bounds.height.dp)
+    }
+
+    private const val K_SCREEN = "window/screen"
+
+    /** The screens attached, each by its bounds on the desktop. */
+    private fun screenBounds(): List<java.awt.Rectangle> = runCatching {
+        java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.map { it.defaultConfiguration.bounds }
+    }.getOrDefault(emptyList())
+
+    fun screenNames(): List<String> {
+        val primary = runCatching { java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration.bounds }.getOrNull()
+        return screenBounds().mapIndexed { i, b -> "Screen ${i + 1} - ${b.width} x ${b.height}" + if (b == primary) " (main)" else "" }
+    }
+
+    /** The screen chosen to cover, if it is still attached. */
+    private fun chosenScreen(): java.awt.Rectangle? =
+        DesktopPrefs.get(K_SCREEN)?.toIntOrNull()?.let { screenBounds().getOrNull(it) }
+
+    /** Cover screen [index], and cover it again next time. */
+    fun coverScreen(state: WindowState, index: Int) {
+        val b = screenBounds().getOrNull(index) ?: return
+        DesktopPrefs.put(K_SCREEN, index.toString())
+        state.placement = WindowPlacement.Floating
+        state.position = WindowPosition(b.x.dp, b.y.dp)
+        state.size = DpSize(b.width.dp, b.height.dp)
+    }
+
+    /** A window moved to screen [index]: its own size, in the middle of that screen. */
+    fun centreOnScreen(state: WindowState, index: Int) {
+        val b = screenBounds().getOrNull(index) ?: return
+        DesktopPrefs.put(K_SCREEN, index.toString())
+        state.placement = WindowPlacement.Floating
+        val w = state.size.width.value.coerceAtMost(b.width.toFloat())
+        val h = state.size.height.value.coerceAtMost(b.height.toFloat())
+        state.size = DpSize(w.dp, h.dp)
+        state.position = WindowPosition((b.x + (b.width - w) / 2f).dp, (b.y + (b.height - h) / 2f).dp)
     }
 
     fun screenSize(): DpSize = runCatching {
