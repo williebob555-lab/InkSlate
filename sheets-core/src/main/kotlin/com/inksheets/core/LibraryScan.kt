@@ -47,7 +47,9 @@ class LibraryScan(
         /** What the automatic sort put right. */
         val sorted: List<String> = emptyList(),
         /** Set when deletions were held back because too much seemed to be missing at once. */
-        val heldBack: Int = 0
+        val heldBack: Int = 0,
+        /** Every music and recording file found, library-relative: what is on this device now. */
+        val onDisk: Set<String> = emptySet()
     ) {
         val changed: Boolean get() = added.isNotEmpty() || moved.isNotEmpty() || removed.isNotEmpty() || merged.isNotEmpty() || migrated > 0 || sorted.isNotEmpty()
     }
@@ -63,10 +65,20 @@ class LibraryScan(
         set(v) { sortedAt[root.absolutePath] = v }
     private val memorySerializer = MapSerializer(String.serializer(), Seen.serializer())
 
-    private fun remember(): MutableMap<String, Seen> =
+    /** What was last written to [memoryFile], so an unchanged memory is not written again. */
+    private var remembered: Map<String, Seen>?
+        get() = written[memoryFile.absolutePath]
+        set(v) { if (v == null) written.remove(memoryFile.absolutePath) else written[memoryFile.absolutePath] = v }
+
+    private fun remember(): MutableMap<String, Seen> = remembered?.toMutableMap() ?: readMemory()
+
+    private fun readMemory(): MutableMap<String, Seen> =
         runCatching { json.decodeFromString(memorySerializer, memoryFile.readText()).toMutableMap() }.getOrDefault(HashMap())
 
     private fun keep(memory: Map<String, Seen>) {
+        // Unchanged, as it is on nearly every scan: nothing to write.
+        if (memory == remembered) return
+        remembered = memory
         runCatching {
             memoryFile.parentFile?.mkdirs()
             val temp = File(memoryFile.parentFile, memoryFile.name + ".tmp")
@@ -178,7 +190,8 @@ class LibraryScan(
 
         // 3. New files: into the song they belong to, or a new one.
         val sort = LibrarySort(root, library, pages)
-        val folderTitles = sort.folderSongs(disk)
+        // Worked out only if a new file needs placing: on a scan that finds nothing new, never.
+        val folderTitles by lazy { sort.folderSongs(disk) }
         val songFolders = disk.filter { it.music }.groupBy { it.path.substringBeforeLast('/', "") }
             .mapValues { (_, files) -> ImportPlan.folderIsSong(files.map { it.path }) }
         for (file in unclaimed) {
@@ -226,15 +239,13 @@ class LibraryScan(
         fun signature() = library.songs.fold(disk.fold(17L) { h, f -> h * 31 + (f.path.hashCode() + f.size * 7 + f.modified) }) { h, s ->
             s.all.fold(h * 31 + s.id.hashCode() + s.title.hashCode()) { g, p -> g * 31 + p.id.hashCode() + p.file.hashCode() + (if (p.dup) 1 else 0) + (p.instrument?.hashCode() ?: 0) }
         }
-        if (signature() != lastSorted) {
-            sort.run(disk)
-            lastSorted = signature()
-        }
+        val structureChanged = signature() != lastSorted
+        if (structureChanged) sort.run(disk)
 
         // 4. One piece, several songs: put together (unless someone split them on purpose). Only
         // songs whose parts are for different instruments: two Euphonium parts under one title
         // are two editions, or two pieces, and stay two songs.
-        run {
+        if (structureChanged) run {
             // Grouped by the title with any instrument still stuck to it taken off: a download
             // named "Song-Trumpet_1.pdf" once made a song per part before that was read.
             val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(ImportPlan.titleOfTitle(it.title).ifBlank { it.title }) }
@@ -263,6 +274,8 @@ class LibraryScan(
             }
         }
 
+        if (structureChanged) lastSorted = signature()
+
         // 5. Songs left with nothing, and setlist entries for songs that are gone.
         for (s in library.songs) {
             if (s.id in touched && s.all.isEmpty() && s.audio.isEmpty()) {
@@ -284,7 +297,7 @@ class LibraryScan(
         if (heldBack > 0) gone.forEach { (_, p) -> memory[p.file]?.let { next[p.file] = it } }
         keep(next)
 
-        return Report(added, moved, removed, merged, migrated, sort.done, heldBack)
+        return Report(added, moved, removed, merged, migrated, sort.done, heldBack, onDisk.keys)
     }
 
     /**
@@ -313,6 +326,7 @@ class LibraryScan(
     companion object {
         private val SHARED_SEATS = setOf("score", "drumline", "steel-pan", "percussion")
         private val sortedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        private val written = java.util.concurrent.ConcurrentHashMap<String, Map<String, Seen>>()
 
         val MUSIC = setOf("pdf", "png", "jpg", "jpeg", "webp")
         val SOUND = setOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff")
@@ -320,16 +334,32 @@ class LibraryScan(
         /** The music and recordings in [root], library-relative, skipping dot folders and sync debris. */
         fun listMusic(root: File): List<Found> {
             if (!root.isDirectory) return emptyList()
-            return root.walkTopDown()
-                .onEnter { it == root || !it.name.startsWith(".") }
-                .filter { it.isFile && !ignored(it.name) }
-                .mapNotNull { f ->
-                    val ext = f.extension.lowercase()
+            // One walk that is handed each file's size and date with its name, as the system lists
+            // them - not three questions per file afterwards (is it a file, how long, how old),
+            // which was most of what a scan every few seconds cost.
+            val base = root.toPath()
+            val out = ArrayList<Found>()
+            java.nio.file.Files.walkFileTree(base, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+                override fun preVisitDirectory(dir: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
+                    if (dir != base && dir.fileName.toString().startsWith(".")) java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    else java.nio.file.FileVisitResult.CONTINUE
+
+                override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                    if (!attrs.isRegularFile) return java.nio.file.FileVisitResult.CONTINUE
+                    val name = file.fileName.toString()
+                    if (ignored(name)) return java.nio.file.FileVisitResult.CONTINUE
+                    val ext = name.substringAfterLast('.', "").lowercase()
                     val music = ext in MUSIC
-                    if (!music && ext !in SOUND) return@mapNotNull null
-                    Found(f.relativeTo(root).invariantSeparatorsPath, f.length(), f.lastModified(), music)
+                    if (music || ext in SOUND) {
+                        out += Found(base.relativize(file).toString().replace('\\', '/'), attrs.size(), attrs.lastModifiedTime().toMillis(), music)
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE
                 }
-                .toList()
+
+                // A file that vanished mid-walk (Syncthing replacing it) is simply not there this time.
+                override fun visitFileFailed(file: java.nio.file.Path, exc: java.io.IOException) = java.nio.file.FileVisitResult.CONTINUE
+            })
+            return out
         }
 
         /** Syncthing's files in flight and its conflict copies, and other apps' leftovers. */

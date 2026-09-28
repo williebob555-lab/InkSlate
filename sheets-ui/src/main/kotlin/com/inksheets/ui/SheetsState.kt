@@ -639,6 +639,7 @@ class SheetsState(val platform: SheetsPlatform) {
         val report = runCatching { scanner()?.run(allowMassRemoval) }
             .onFailure { platform.log("Library scan failed: ${it.message}") }
             .getOrNull() ?: return null
+        root?.let { base -> byName = report.onDisk.groupBy { it.substringAfterLast('/').lowercase() }.mapValues { (_, l) -> l.map { File(base, it) } } }
         platform.onMain {
             lastScan = report
             if (report.changed) {
@@ -934,6 +935,9 @@ class SheetsState(val platform: SheetsPlatform) {
     private var byName: Map<String, List<File>>? = null
 
     private fun filesByName(fresh: Boolean = false): Map<String, List<File>> {
+        // Kept up to date by the folder scan, off the screen's thread; asked for on it, this
+        // never walks the folder itself.
+        // Only before the first scan has built it is the folder walked here.
         if (!fresh) byName?.let { return it }
         val base = root ?: return emptyMap()
         return base.walkTopDown().onEnter { !it.name.startsWith(".") }
@@ -953,7 +957,10 @@ class SheetsState(val platform: SheetsPlatform) {
      */
     fun partFile(song: com.inksheets.core.Song, part: com.inksheets.core.Part): File? {
         fileOf(part.file)?.takeIf { it.isFile }?.let { return it }
-        val found = findMoved(part.file, fresh = false)?.takeIf { it.isFile } ?: findMoved(part.file, fresh = true) ?: return null
+        // Only what is already known about moved files. Walking the whole music folder for it
+        // here, on the screen's thread, stopped the screen each time; the folder scan follows a
+        // moved file anyway, and the next look finds it where it went.
+        val found = findMoved(part.file, fresh = false)?.takeIf { it.isFile } ?: return null
         val rel = relative(found) ?: return found
         val latest = library?.song(song.id) ?: return found
         change { editSong(song.id) { parts = latest.parts.map { if (it.id == part.id) it.copy(file = rel) else it } } }
@@ -995,6 +1002,12 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /** A file on this device as the library records it: relative, forward slashes. */
     fun relative(file: File): String? {
+        // The usual case, a file under the library folder as given, needs no trip to the disk:
+        // asked on every page turned, the resolving below was a system call each time.
+        root?.absolutePath?.let { r ->
+            val p = file.absolutePath
+            if (p.startsWith(r + File.separator) && !p.contains("..")) return p.substring(r.length + 1).replace(File.separatorChar, '/')
+        }
         val base = root?.canonicalFile ?: return null
         val canonical = file.canonicalFile
         if (!canonical.path.startsWith(base.path)) return null

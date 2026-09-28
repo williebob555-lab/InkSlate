@@ -298,7 +298,8 @@ private fun SongsPane(state: SheetsState) {
     val version = state.version
     // What each filter would pick out of the whole library - a filter that would show nothing,
     // or everything, is not offered.
-    val counts = remember(version) {
+    val onDisk = state.lastScan?.onDisk
+    val counts = remember(version, onDisk) {
         val lib = state.library
         val all = lib?.songs.orEmpty()
         val inSets = lib?.setlists.orEmpty().flatMap { l -> l.entries.map { it.songId } }.toSet()
@@ -308,7 +309,9 @@ private fun SongsPane(state: SheetsState) {
             notInSet = all.count { it.id !in inSets },
             noInstrument = all.count { s -> s.parts.any { it.instrument == null } },
             noTempo = all.count { it.tempo == null },
-            missing = all.filter { s -> s.parts.any { state.fileOf(it.file)?.isFile == false } }.map { it.id }.toSet()
+            // From what the last folder scan found, not a look at the disk for every part - that
+            // was a thousand and more file checks on the screen's thread each time anything changed.
+            missing = if (onDisk == null) emptySet() else all.filter { s -> s.parts.any { it.file !in onDisk } }.map { it.id }.toSet()
         )
     }
     val songs = remember(version, state.profileId, query, sort, withRecording, notInSet, noInstrument, noTempo, missingOnly) {

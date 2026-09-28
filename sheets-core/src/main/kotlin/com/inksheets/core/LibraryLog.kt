@@ -69,6 +69,9 @@ class LibraryState {
 
     private val records = LinkedHashMap<Key, MutableMap<String, Value>>()
 
+    /** The same records, by kind: asking for the setlists walks the setlists, not every part too. */
+    private val byKind = HashMap<String, LinkedHashMap<String, MutableMap<String, Value>>>()
+
     /**
      * Fold one edit in. Returns true when it changed anything.
      *
@@ -86,7 +89,7 @@ class LibraryState {
         }
         val key = Key(op.kind, op.id)
         first[key]?.let { if (op.at < it) first[key] = op.at } ?: run { first[key] = op.at }
-        val fields = records.getOrPut(key) { HashMap() }
+        val fields = records.getOrPut(key) { HashMap<String, Value>().also { byKind.getOrPut(op.kind) { LinkedHashMap() }[op.id] = it } }
         val current = fields[op.field]
         if (current != null && current.at >= op.at) return false
         fields[op.field] = Value(op.at, op.value)
@@ -118,9 +121,9 @@ class LibraryState {
 
     /** Every live (not deleted) record of [kind], with its fields. */
     fun live(kind: String): Map<String, Map<String, JsonElement>> =
-        records.asSequence()
-            .filter { (key, fields) -> key.kind == kind && !isDeleted(fields) }
-            .associate { (key, fields) -> key.id to fields.mapValues { it.value.value } }
+        byKind[kind].orEmpty().asSequence()
+            .filter { (_, fields) -> !isDeleted(fields) }
+            .associate { (id, fields) -> id to fields.mapValues { it.value.value } }
 
     fun latestOf(kind: String, id: String, field: String): Stamp? = records[Key(kind, id)]?.get(field)?.at
 

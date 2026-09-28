@@ -212,15 +212,29 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     /** The song one of whose parts is the library-relative [file]; null for none. */
     fun songWithFile(file: String): Song? = synchronized(this) { built().third[file] }
 
+    // Setlists, folders and profiles are asked for on every redraw of a list and every song
+    // turned to; each is built once per change to the library, like the songs.
     @get:Synchronized
     val setlists: List<Setlist>
-        get() = state.live(SETLIST).map { (id, f) -> setlist(id, f) }
-            .sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
+        get() = kept("setlists") {
+            state.live(SETLIST).map { (id, f) -> setlist(id, f) }.sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
+        }
 
     @get:Synchronized
     val folders: List<Folder>
-        get() = saneFolders(state.live(FOLDER).map { (id, f) -> folder(id, f) })
-            .sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
+        get() = kept("folders") {
+            saneFolders(state.live(FOLDER).map { (id, f) -> folder(id, f) }).sortedWith(compareBy({ sortKey(it.name) }, { it.id }))
+        }
+
+    private val keptAt = HashMap<String, Pair<Long, Any>>()
+
+    /** [build]'s answer, kept until the library next changes. */
+    @Suppress("UNCHECKED_CAST")
+    @Synchronized
+    private fun <T : Any> kept(name: String, build: () -> T): T {
+        keptAt[name]?.takeIf { it.first == version }?.let { return it.second as T }
+        return build().also { keptAt[name] = version to it }
+    }
 
     fun song(id: String): Song? = synchronized(this) { built().second[id] }
 
@@ -428,7 +442,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         return target
     }
 
-    fun setlist(id: String): Setlist? = setlists.firstOrNull { it.id == id }
+    fun setlist(id: String): Setlist? = kept("setlistsById") { setlists.associateBy { it.id } }[id]
 
     /** Folders directly inside [parentId]; null for the top level. */
     fun foldersIn(parentId: String?): List<Folder> = folders.filter { it.parentId == parentId }
@@ -593,7 +607,9 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
      * The instrument profiles: the built-in ones (unless changed or removed here) and any made
      * here. Kept in the library so every device offers the same choices.
      */
-    fun profiles(): List<InstrumentProfile> = synchronized(this) {
+    fun profiles(): List<InstrumentProfile> = kept("profiles") { buildProfiles() }
+
+    private fun buildProfiles(): List<InstrumentProfile> = synchronized(this) {
         val stored = state.live(PROFILE).map { (id, f) ->
             InstrumentProfile(id, f.string("name") ?: "Instrument", f.list("instruments", STRING_LIST))
         }.associateBy { it.id }
@@ -621,7 +637,9 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
      * Instruments added in this library, and names added to built-in ones (a record with a
      * built-in's id). Kept in the library so every device reads parts the same way.
      */
-    fun instruments(): List<Instrument> = synchronized(this) {
+    fun instruments(): List<Instrument> = kept("instruments") { buildInstruments() }
+
+    private fun buildInstruments(): List<Instrument> = synchronized(this) {
         state.live(INSTRUMENT).map { (id, f) ->
             Instrument(
                 id = id,

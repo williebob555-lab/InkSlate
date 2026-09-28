@@ -197,17 +197,38 @@ object InstrumentReader {
     )
 
     /** Find the instrument named in [text], or null when none is. */
+    /**
+     * The same name is read over and over - every song title and file name on every scan of the
+     * folder - and reads the same until the instruments known change, so each answer is kept.
+     */
+    private val memo = java.util.concurrent.ConcurrentHashMap<String, java.util.Optional<Match>>()
+    @Volatile private var memoFor = -1
+
     fun read(text: String, among: List<Instrument> = Instruments.all): Match? {
+        if (among !== Instruments.all) return readNow(text, among)
+        if (memoFor != Instruments.revision) { memo.clear(); memoFor = Instruments.revision }
+        memo[text]?.let { return it.orElse(null) }
+        return readNow(text, among).also {
+            if (memo.size > 50_000) memo.clear()
+            memo[text] = java.util.Optional.ofNullable(it)
+        }
+    }
+
+    private val SEPARATORS = Regex("""\s+[-–—]\s+|[()\[\]]""")
+    private val MARKER = Regex("""\d+(st|nd|rd|th)?|i{1,3}|iv|v|and|in|part""")
+
+    private fun readNow(text: String, among: List<Instrument>): Match? {
         // " - " and brackets part a title from a part name as a line break does:
         // "All About That Bass - Trombone 1" is not a bass trombone.
-        val lines = text.lines().flatMap { it.split(Regex("""\s+[-–—]\s+|[()\[\]]""")) }.filter { it.isNotBlank() }
+        val lines = text.lines().flatMap { it.split(SEPARATORS) }.filter { it.isNotBlank() }
+        val normalised = lines.map { normalise(it) }
         var best: Match? = null
         var bestScore = -1
-        for (line in lines) {
-            val words = normalise(line)
+        for ((li, line) in lines.withIndex()) {
+            val words = normalised[li]
             if (words.isEmpty()) continue
             // A line that is nothing but a part name beats one where the name is a word in a title.
-            val pure = words.all { w -> w in nameWords || w.matches(Regex("""\d+(st|nd|rd|th)?|i{1,3}|iv|v|and|in|part""")) }
+            val pure = words.all { w -> w in nameWords || MARKER.matches(w) }
             for (instrument in among) {
                 for (name in instrument.names) {
                     val run = name.split(' ')
@@ -223,10 +244,10 @@ object InstrumentReader {
         // "Barbie Girl - DL - Bass Drums": a drum line's bass drum, not a bass guitar or a concert
         // band's bass drum. A part that says it is the drum line's is the drum line's, whatever
         // drum it goes on to name.
-        val line = drumLine.firstOrNull { d -> lines.any { containsRun(normalise(it), d.split(' ')) } }
+        val line = drumLine.firstOrNull { d -> normalised.any { containsRun(it, d.split(' ')) } }
         val dl = among.firstOrNull { it.id == "drumline" }
         if (line != null && dl != null && best != null && best.instrument.id in DRUM_KIN) {
-            return Match(dl, lines.filter { l -> normalise(l).let { w -> w.any { it in nameWords } } }.joinToString(" ").trim(), best.strength)
+            return Match(dl, lines.filterIndexed { i, _ -> normalised[i].any { it in nameWords } }.joinToString(" ").trim(), best.strength)
         }
         return best
     }
