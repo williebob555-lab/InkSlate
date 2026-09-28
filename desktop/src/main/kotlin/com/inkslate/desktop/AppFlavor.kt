@@ -78,6 +78,9 @@ object AppFlavor {
     /** Files dropped on the window; null where the app does nothing with them. */
     var onFilesDropped: ((List<File>) -> Unit)? = null
 
+    /** The song in front fading out before another comes in (music): 1 shown, 0 gone. */
+    var songShown by androidx.compose.runtime.mutableStateOf(1f)
+
     /** Close the app, and put its window away; set once the window is up. */
     var quit: (() -> Unit)? = null
     var minimise: (() -> Unit)? = null

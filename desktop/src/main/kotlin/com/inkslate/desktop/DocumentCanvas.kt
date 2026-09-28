@@ -260,6 +260,18 @@ fun DocumentCanvas(
 
     var renderTick by remember { mutableStateOf(0) }
 
+    // The clock a sharp page fades in by: ticking only while one is fading.
+    var fadeNow by remember { mutableStateOf(System.nanoTime()) }
+    val newestFade = rasters.values.maxOfOrNull { it.fadeFrom } ?: 0L
+    LaunchedEffect(newestFade) {
+        if (newestFade == 0L) return@LaunchedEffect
+        while (System.nanoTime() - newestFade < TILE_FADE_NS) {
+            androidx.compose.runtime.withFrameNanos { }
+            fadeNow = System.nanoTime()
+        }
+        fadeNow = System.nanoTime()
+    }
+
     // A live gesture, kept out of the committed list so that is not rewritten on every move.
     var live by remember { mutableStateOf<List<com.inkslate.core.InkPoint>>(emptyList()) }
     var livePage by remember { mutableStateOf(0) }
@@ -397,6 +409,9 @@ fun DocumentCanvas(
 
             val across = RasterLadder.rungFor((want.width * scale).roundToInt())
                 .coerceAtMost(MAX_TILE_PX)
+            // The width a whole page of music is drawn at here, for drawing the next songs' pages
+            // at the same width before they are turned to.
+            if (want.left <= 0.5f && want.top <= 0.5f && want.right >= pageWidth - 0.5f && want.bottom >= pageHeight - 0.5f) PageWarm.across = across
             val bmp = withContext(Dispatchers.IO) {
                 runCatching {
                     source.renderRegion(slot.index, want, across)
@@ -419,7 +434,13 @@ fun DocumentCanvas(
                         "falling back to the whole page"
                 )
             }
-            if (trustworthy) rasters[slot.index] = PageTile(want, bmp!!)
+            if (trustworthy) {
+                // The first sharp picture of a page whose soft one has been showing a while fades
+                // in over it; one that came at once (kept from before) just appears.
+                val soft = overviews[slot.index]
+                val late = held == null && soft != null && System.nanoTime() - soft.arrived > TILE_SNAP_NS
+                rasters[slot.index] = PageTile(want, bmp!!, fadeFrom = if (late) System.nanoTime() else 0L)
+            }
         }
 
         // Pictures of pages nowhere near the window are memory and nothing else. A document read
@@ -714,6 +735,7 @@ fun DocumentCanvas(
                                 slot = slot,
                                 visibleInPage = onScreen,
                                 tile = rasters[slot.index],
+                                tileAlpha = rasters[slot.index]?.shown(fadeNow) ?: 1f,
                                 overview = overviews[slot.index],
                                 strokes = byPage[slot.index].orEmpty(),
                                 selection = selection,
@@ -794,7 +816,20 @@ private fun DrawScope.drawImageStroke(s: Stroke, images: (String) -> ImageBitmap
  * hold on to between frames, so it was being sent across again for every frame at around forty
  * milliseconds a page. What is on screen is never bigger than the window.
  */
-class PageTile(val region: InkBox, val bitmap: ImageBitmap) {
+class PageTile(
+    val region: InkBox,
+    val bitmap: ImageBitmap,
+    /**
+     * When it began fading in over the soft picture under it (System.nanoTime), or 0 to show at
+     * once. A sharp page arriving after its soft picture fades in, rather than snapping sharp.
+     */
+    val fadeFrom: Long = 0L,
+    /** When it arrived, for telling whether a later, sharper picture came too late to snap in. */
+    val arrived: Long = System.nanoTime()
+) {
+    /** How far faded in it is at [now], 0 to 1. */
+    fun shown(now: Long): Float = if (fadeFrom == 0L) 1f else ((now - fadeFrom) / TILE_FADE_NS.toFloat()).coerceIn(0f, 1f)
+
 
     /** Whether this piece covers everything now being looked at. */
     fun covers(seen: InkBox): Boolean =
@@ -811,8 +846,10 @@ private fun DrawScope.drawTile(
     tile: PageTile,
     offsetX: Float,
     offsetY: Float,
-    pageFilter: PageFilter
+    pageFilter: PageFilter,
+    alpha: Float = 1f
 ) {
+    if (alpha <= 0f) return
     if (tile.bitmap.width <= 0 || tile.bitmap.height <= 0) return
     translate(offsetX + tile.region.left, offsetY + tile.region.top) {
         scale(
@@ -820,7 +857,7 @@ private fun DrawScope.drawTile(
             tile.region.height / tile.bitmap.height,
             pivot = Offset.Zero
         ) {
-            drawImage(tile.bitmap, colorFilter = pageFilter.colorFilter)
+            drawImage(tile.bitmap, alpha = alpha, colorFilter = pageFilter.colorFilter)
         }
     }
 }
@@ -837,7 +874,18 @@ private const val TILE_MARGIN = 0.15f
 private const val MAX_TILE_PX = 3_000
 
 /** How wide the small picture of a whole page is. Soft, but never missing. */
-private const val OVERVIEW_PX = 1_100
+internal const val OVERVIEW_PX = 1_100
+
+/** How long a sharp page takes to fade in over its soft picture. */
+private const val TILE_FADE_NS = 180_000_000L
+
+/** A sharp picture arriving within this of its soft one is shown straight away: no fade. */
+private const val TILE_SNAP_NS = 90_000_000L
+
+/** The width whole pages of music were last drawn at, to draw coming songs' pages at ahead. */
+object PageWarm {
+    @Volatile var across: Int? = null
+}
 
 /**
  * Whether a rendered piece of a page resembles the same part of the whole page.
@@ -930,6 +978,8 @@ private fun DrawScope.drawPage(
     tile: PageTile?,
     /** The whole page, small, drawn under [tile] so there is never bare paper. */
     overview: PageTile?,
+    /** How far [tile] has faded in over [overview]. */
+    tileAlpha: Float = 1f,
     /** This page's marks, already ordered - see the caller. */
     strokes: List<Stroke>,
     selection: Set<String>,
@@ -966,7 +1016,7 @@ private fun DrawScope.drawPage(
             // edge visible at close zoom. A page somebody brought with them is drawn as it is.
             if (!canvas.paperIsOurs) {
                 overview?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter) }
-                tile?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter) }
+                tile?.let { drawTile(it, canvas.paperLeft, canvas.paperTop, pageFilter, tileAlpha) }
             }
             RenderStats.addRaster(System.nanoTime() - pageAt)
         }
@@ -977,7 +1027,7 @@ private fun DrawScope.drawPage(
         // page, so it is drawn shifted by the trimmed margin. Stroke coordinates stay relative to
         // the whole page, which is what makes turning the crop on and off unable to move ink.
         overview?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter) }
-        tile?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter) }
+        tile?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter, tileAlpha) }
         RenderStats.addRaster(System.nanoTime() - pageAt)
     }
 

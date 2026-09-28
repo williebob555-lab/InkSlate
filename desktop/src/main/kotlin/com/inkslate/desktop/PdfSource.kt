@@ -138,7 +138,17 @@ class PdfSource(
      * A rotated page is refused rather than guessed at: the caller renders the whole page, which
      * is what it did before, and the only cost is a picture bigger than it needs to be.
      */
-    override fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? =
+    override fun renderRegion(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? {
+        // The whole page asked for as a region - a page of music fitted to the window - is a
+        // whole page, and kept like one.
+        val dim = pageDim(index)
+        if (region.left <= 0.5f && region.top <= 0.5f && region.right >= dim.width - 0.5f && region.bottom >= dim.height - 0.5f) {
+            return render(index, targetWidthPx)
+        }
+        return renderPiece(index, region, targetWidthPx)
+    }
+
+    private fun renderPiece(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? =
         synchronized(lock) {
             if (index !in 0 until doc.numberOfPages) return null
             if (region.width <= 0f || region.height <= 0f) return null
@@ -174,15 +184,23 @@ class PdfSource(
             }.getOrNull()
         }
 
-    override fun render(index: Int, targetWidthPx: Int): ImageBitmap? = synchronized(lock) {
-        if (index !in 0 until doc.numberOfPages) return null
-        return runCatching {
-            val dim = pageDim(index)
-            val scale = targetWidthPx / dim.width
-            // renderImage takes a scale factor relative to 72dpi, which is exactly page points
-            val image: BufferedImage = renderer.renderImage(index, scale.coerceIn(0.2f, 6f))
-            image.toComposeImageBitmap().frozen()
-        }.getOrNull()
+    override fun render(index: Int, targetWidthPx: Int): ImageBitmap? {
+        // Drawn before at this width: shown again, not drawn again. See PageCache.
+        val key = PageCache.key(file, index, targetWidthPx)
+        PageCache.get(key)?.let { return it }
+        val drawn = synchronized(lock) {
+            if (index !in 0 until doc.numberOfPages) return null
+            runCatching {
+                val dim = pageDim(index)
+                val scale = targetWidthPx / dim.width
+                // renderImage takes a scale factor relative to 72dpi, which is exactly page points
+                val image: BufferedImage = renderer.renderImage(index, scale.coerceIn(0.2f, 6f))
+                image to image.toComposeImageBitmap().frozen()
+            }.getOrNull()
+        } ?: return null
+        // Kept outside the lock: writing it down must not hold up the next page being drawn.
+        PageCache.put(key, drawn.first, drawn.second)
+        return drawn.second
     }
 
     /** The underlying document, for export. */

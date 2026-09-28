@@ -171,6 +171,18 @@ fun EditorScreen(
     val loadedImages = remember(file) { mutableStateMapOf<String, ImageBitmap>() }
 
     var source by remember(file) { mutableStateOf<DesktopSource?>(null) }
+
+    // A song in a set, read ahead of being turned to: its first page drawn now - small and sharp,
+    // at the width pages are shown at - so arriving on it shows it at once. Kept by PageCache,
+    // which is where the page is fetched from when it comes on screen.
+    LaunchedEffect(source) {
+        val src = source ?: return@LaunchedEffect
+        if (!AppFlavor.musicView || src.pageCount == 0) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            runCatching { src.render(0, OVERVIEW_PX) }
+            PageWarm.across?.let { w -> runCatching { src.render(0, w) } }
+        }
+    }
     var ink by remember(file) { mutableStateOf(InkDocument.create("", "pdf", 0, 0L, "")) }
     val strokes = remember(file) { mutableStateListOf<Stroke>() }
     val undo = remember(file) { mutableStateListOf<Op>() }
@@ -216,6 +228,11 @@ fun EditorScreen(
     var pageReadFor by remember(file) { mutableStateOf<com.inkslate.core.Box?>(null) }
     // Restored once per open, or every recomposition would drag the view back.
     var positionRestored by remember(file) { mutableStateOf(false) }
+    // Music fades in once it is in place, rather than appearing in one frame.
+    val appear = remember(file) { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(positionRestored) {
+        if (positionRestored) appear.animateTo(1f, androidx.compose.animation.core.tween(220))
+    }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var controlsOpen by remember { mutableStateOf(false) }
@@ -1889,6 +1906,8 @@ fun EditorScreen(
                         // Music is never seen before it is in place: not a frame in the corner at
                         // whatever size, then a snap to the middle.
                         if (AppFlavor.musicView && !positionRestored) { alpha = 0f; return@graphicsLayer }
+                        // A song coming in fades in; the one leaving fades out (AppFlavor.songShown).
+                        if (AppFlavor.musicView) alpha = appear.value * AppFlavor.songShown
                         val p = turnAnim.value
                         if (p > 0f) {
                             if (AppFlavor.turnAnimation == "fade") {

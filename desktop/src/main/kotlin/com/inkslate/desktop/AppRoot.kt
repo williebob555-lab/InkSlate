@@ -59,6 +59,9 @@ private const val PRELOAD_AFTER_TURN_MS = 700L
 /** And between one song read ahead and the next, so no two are built in the same moment. */
 private const val PRELOAD_BETWEEN_MS = 400L
 
+/** How long the song in front takes to fade out when turning to another. */
+private const val SONG_FADE_OUT_MS = 150f
+
 /**
  * The application: a row of tabs across the top, each an open document, plus a pinned Home tab for
  * finding the next one.
@@ -126,7 +129,9 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     /** Put [id] in front of you: focus it where it already is, or show it in the focused pane. */
     var preloading: kotlinx.coroutines.Job? = null
 
-    fun selectTab(id: String) {
+    var songFading: kotlinx.coroutines.Job? = null
+
+    fun showTab(id: String) {
         homeShown = false
         tabOf(id)?.loaded = true
         // A setlist's coming songs are read ahead, so turning to them shows them at once. Not in
@@ -160,6 +165,28 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
             }
         }
     }
+
+    fun selectTab(id: String) {
+        // Music: the song in front fades out, then the next one comes in (and fades in itself).
+        if (AppFlavor.musicView && !homeShown && primary != null && primary?.tabId != id && secondary == null) {
+            songFading?.cancel()
+            songFading = scope.launch {
+                val from = AppFlavor.songShown
+                val start = System.nanoTime()
+                while (true) {
+                    val t = ((System.nanoTime() - start) / 1e6f / SONG_FADE_OUT_MS).coerceIn(0f, 1f)
+                    AppFlavor.songShown = from * (1f - t)
+                    if (t >= 1f) break
+                    androidx.compose.runtime.withFrameNanos { }
+                }
+                showTab(id)
+                AppFlavor.songShown = 1f
+            }
+            return
+        }
+        showTab(id)
+    }
+
 
     fun openFile(f: File) {
         repo.noteOpened(f)

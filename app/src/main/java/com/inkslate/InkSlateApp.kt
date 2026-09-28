@@ -11,6 +11,7 @@ class InkSlateApp : Application() {
         // First, so a failure in anything below still produces a readable report.
         CrashLog.install(this)
         EventLog.init(this)
+        com.inkslate.pdf.PageCache.init(this)
         // Only ever reaches devices you have paired with, and only while the app is open.
         com.inkslate.data.AppPeers.init(this)
         com.inkslate.data.AppPeers.start()

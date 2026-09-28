@@ -1110,7 +1110,9 @@ class DrawingView @JvmOverloads constructor(
         /** Shown as a fade whatever the setting - a song arriving with no direction to it. */
         val fade: Boolean = false,
         /** The picture is this turn's own, let go when it ends. */
-        val owned: Boolean = false
+        val owned: Boolean = false,
+        /** Another song arriving: the last one fades out, then this one fades in. */
+        val song: Boolean = false
     )
 
     /** A finger on a page of music with its tools away: a tap or a swipe, still to be told apart. */
@@ -1175,7 +1177,9 @@ class DrawingView @JvmOverloads constructor(
             }
             arriving = null
             if (ready && fits && turnAnimation != TURN_NONE) {
-                turnAnim = TurnAnim(arr.shot, if (arr.dir == 0) 1 else arr.dir, 0f, System.nanoTime(), fade = arr.dir == 0, owned = true)
+                // Another song: a fade out and in, whichever way it was turned to. Pages within a
+                // song still turn the way the setting says.
+                turnAnim = TurnAnim(arr.shot, if (arr.dir == 0) 1 else arr.dir, 0f, System.nanoTime(), fade = true, owned = true, song = true)
             } else {
                 arr.shot.recycle()
             }
@@ -1192,8 +1196,28 @@ class DrawingView @JvmOverloads constructor(
             }
             return
         }
-        val raw = ((System.nanoTime() - anim.startNs) / 1_000_000f) / TURN_MS
+        val raw = ((System.nanoTime() - anim.startNs) / 1_000_000f) / (if (anim.song) SONG_FADE_MS else TURN_MS)
         val t = raw.coerceIn(0f, 1f)
+        if (anim.song) {
+            // Out to the backdrop, then the new song up from it.
+            if (t < 0.5f) {
+                canvas.drawColor(pageFilter.backdropColor)
+                turnPaint.alpha = ((1f - t * 2f) * 255).toInt().coerceIn(0, 255)
+                canvas.drawBitmap(anim.from, 0f, 0f, turnPaint)
+            } else {
+                canvas.drawColor(pageFilter.backdropColor)
+                val a = (((t - 0.5f) * 2f) * 255).toInt().coerceIn(0, 255)
+                canvas.saveLayerAlpha(0f, 0f, width.toFloat(), height.toFloat(), a)
+                super.draw(canvas)
+                canvas.restore()
+            }
+            if (t < 1f) postInvalidateOnAnimation() else {
+                turnAnim = null
+                if (anim.owned) anim.from.recycle()
+                reportVisiblePages(); scheduleDetail(); postInvalidateOnAnimation()
+            }
+            return
+        }
         val eased = 1f - (1f - t) * (1f - t) * (1f - t)
         val w = width.toFloat()
         when (if (anim.fade) TURN_FADE else turnAnimation) {
@@ -4801,6 +4825,9 @@ class DrawingView @JvmOverloads constructor(
         const val TURN_SLIDE = 1
         const val TURN_FADE = 2
         private const val TURN_MS = 260f
+
+        /** A song changing: half fading the last one out, half fading this one in. */
+        private const val SONG_FADE_MS = 420f
 
         /** A swipe this far across the view, or this quick, turns the page. */
         private const val SWIPE_TURN_SHARE = 0.18f

@@ -20,6 +20,11 @@ kotlin {
 //     ./gradlew :desktop:test -Dinkslate.pdfs="C:/Users/me/Documents"
 // Gradle keeps a -D to itself, so it has to be handed on to the tests deliberately.
 tasks.withType<Test>().configureEach {
+    // A real library to measure against, named on the command line (-Dinksheets.lib=...).
+    System.getProperty("inksheets.lib")?.let {
+        systemProperty("inksheets.lib", it)
+        outputs.upToDateWhen { false }
+    }
     // The app keeps its settings, event log and working copies in %LOCALAPPDATA%\InkSlate, and
     // the tests exercise that code for real. Pointed at the real folder, a test run on a machine
     // that also has the app installed rewrote that person's save rules and cleared their per-file

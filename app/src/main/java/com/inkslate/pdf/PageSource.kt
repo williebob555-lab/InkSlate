@@ -118,10 +118,17 @@ class PdfPageSource(private val file: File) : PageSource {
         }
 
         var width = targetWidthPx.coerceIn(MIN_RASTER_PX, MAX_RASTER_PX)
+        // Drawn before at this width: read back instead of drawn again. See PageCache.
+        val key = PageCache.key(file, index, width)
+        PageCache.get(key)?.let { return it }
         var lastFailure: Throwable? = null
         repeat(4) {
             val attempt = runCatching { renderAt(r, index, width) }
-            attempt.getOrNull()?.let { return it }
+            attempt.getOrNull()?.let { drawn ->
+                // Kept at the width asked for; a page drawn smaller for want of memory is not.
+                if (width == targetWidthPx.coerceIn(MIN_RASTER_PX, MAX_RASTER_PX)) PageCache.put(key, drawn)
+                return drawn
+            }
             lastFailure = attempt.exceptionOrNull()
             // Only memory pressure is worth retrying smaller; anything else will fail identically.
             if (lastFailure !is OutOfMemoryError) throw lastFailure ?: return null
