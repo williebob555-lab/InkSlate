@@ -74,6 +74,9 @@ interface SheetsPlatform {
     /** Put a setlist's tabs away. */
     fun closeSet() {}
 
+    /** Bring the open set's tab for [file] to the front; false when there is none. */
+    fun focusSetTab(file: File): Boolean = false
+
     /** [file]'s pages as pictures, to read without opening it as a song; null where it cannot be read. */
     fun peek(file: File): PagePeek? = null
 

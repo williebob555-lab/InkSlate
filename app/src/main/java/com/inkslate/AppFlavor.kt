@@ -34,6 +34,12 @@ object AppFlavor {
     /** The tab showing the first file shows the second instead, in the same place in the row. */
     var swapTab: ((old: File, new: File) -> Unit)? = null
 
+    /**
+     * Bring the open tab of [file] to the front, as a turn to the next song in a set does. False
+     * when no tab has it, and the set has to be opened again instead.
+     */
+    var focusFile: ((file: File) -> Boolean)? = null
+
     /** Told when Home is pressed in the tab row, before Home shows. */
     var onHome: (() -> Unit)? = null
 

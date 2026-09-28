@@ -149,6 +149,8 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.openSet?.invoke(parts, focus) ?: parts.getOrNull(focus)?.let { openFile(it.first) }
     }
 
+    override fun focusSetTab(file: File): Boolean = com.inkslate.desktop.AppFlavor.focusFile?.invoke(file) ?: false
+
     override fun closeSet() {
         com.inkslate.desktop.AppFlavor.closeSet?.invoke()
     }

@@ -255,6 +255,13 @@ fun AppRoot(
     }
 
     /** [old]'s tab gives way to [new], in its place in the row - another part of the same song. */
+    /** [file]'s tab to the front, if one is open for it. */
+    fun focusFile(file: File): Boolean {
+        val tab = tabs.firstOrNull { it.file.absolutePath == file.absolutePath && !it.closeRequested.value } ?: return false
+        selectTab(tab.id)
+        return true
+    }
+
     fun swapTab(old: File, new: File) {
         val was = tabs.indexOfFirst { it.file.absolutePath == old.absolutePath && !it.closeRequested.value }
         openFile(new)
@@ -318,6 +325,7 @@ fun AppRoot(
     val focusedTab = tabOf(focusedRef?.tabId)
     com.inkslate.AppFlavor.openSet = ::openSet
     com.inkslate.AppFlavor.swapTab = ::swapTab
+    com.inkslate.AppFlavor.focusFile = ::focusFile
     com.inkslate.AppFlavor.closeSet = { closeAll() }
 
     // With no document in front, a pedal has no page to turn; the focused editor sets it again.

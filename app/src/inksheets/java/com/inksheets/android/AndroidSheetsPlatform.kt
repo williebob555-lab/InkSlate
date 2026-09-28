@@ -172,6 +172,8 @@ class AndroidSheetsPlatform(
         com.inkslate.AppFlavor.openSet?.invoke(parts, focus) ?: parts.getOrNull(focus)?.let { openFile(it.first) }
     }
 
+    override fun focusSetTab(file: File): Boolean = com.inkslate.AppFlavor.focusFile?.invoke(file) ?: false
+
     override fun closeSet() {
         com.inkslate.AppFlavor.closeSet?.invoke()
     }

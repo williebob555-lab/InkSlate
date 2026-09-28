@@ -352,6 +352,21 @@ class SheetsState(val platform: SheetsPlatform) {
         val size = library?.setlist(setlistId)?.entries?.size ?: return false
         val next = index + by
         if (next !in 0 until size) return false
+        // The set's songs are open as tabs already: turn to the next one, rather than working out
+        // every song's part and file again and handing the whole set over anew - which is what
+        // made each turn to another song stop the screen.
+        val lib = library ?: return false
+        val entry = lib.setlist(setlistId)?.entries?.getOrNull(next)
+        val song = entry?.let { lib.song(it.songId) }
+        val file = song?.let { s -> partFor(s)?.let { partFile(s, it) } }
+        if (entry != null && song != null && file != null && platform.focusSetTab(file)) {
+            playing = setlistId to next
+            frontEntry = entry.id
+            current = song
+            noteOpened(song)
+            companion.pageTurned(0)
+            return true
+        }
         playSetlist(setlistId, next)
         return true
     }

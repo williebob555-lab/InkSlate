@@ -220,10 +220,15 @@ class LibraryScan(
 
         // The automatic sort: every part in its song, no strays (see LibrarySort). Only when the
         // folder or the library has changed since it last ran: otherwise it would find nothing.
-        val signature = disk.fold(library.version * 31) { h, f -> h * 31 + (f.path.hashCode() + f.size * 7 + f.modified).toLong() }
-        if (signature != lastSorted) {
+        // What the sort looks at is the files and which song each part is in - not when a song
+        // was last opened, which changes on every turn in a set and used to set off a whole sort
+        // (the start of every file read again) while the music was being played.
+        fun signature() = library.songs.fold(disk.fold(17L) { h, f -> h * 31 + (f.path.hashCode() + f.size * 7 + f.modified) }) { h, s ->
+            s.all.fold(h * 31 + s.id.hashCode() + s.title.hashCode()) { g, p -> g * 31 + p.id.hashCode() + p.file.hashCode() + (if (p.dup) 1 else 0) + (p.instrument?.hashCode() ?: 0) }
+        }
+        if (signature() != lastSorted) {
             sort.run(disk)
-            lastSorted = disk.fold(library.version * 31) { h, f -> h * 31 + (f.path.hashCode() + f.size * 7 + f.modified).toLong() }
+            lastSorted = signature()
         }
 
         // 4. One piece, several songs: put together (unless someone split them on purpose). Only

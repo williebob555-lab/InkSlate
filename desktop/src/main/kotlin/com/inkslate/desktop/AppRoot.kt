@@ -216,6 +216,14 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         front?.let(::selectTab)
     }
 
+
+    /** [file]'s tab to the front, if one is open for it. */
+    fun focusFile(file: File): Boolean {
+        val tab = tabs.firstOrNull { it.file.absolutePath == file.absolutePath && !it.closeRequested.value } ?: return false
+        selectTab(tab.id)
+        return true
+    }
+
     /** [old]'s tab gives way to [new], in its place in the row - another part of the same song. */
     fun swapTab(old: File, new: File) {
         val was = tabs.indexOfFirst { it.file.absolutePath == old.absolutePath && !it.closeRequested.value }
@@ -270,6 +278,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     val focusedTab = tabOf(focusedRef?.tabId)
     AppFlavor.openSet = ::openSet
     AppFlavor.swapTab = ::swapTab
+    AppFlavor.focusFile = ::focusFile
     AppFlavor.closeSet = { closeAll() }
 
     // With no document in front, a pedal has no page to turn; the focused editor sets it again.
