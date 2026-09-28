@@ -337,7 +337,7 @@ jobs:
       # The first build after the two apps were split also puts InkSheets on the old shared `test`
       # release, so InkSheets installs from before the split (which only look there) are offered
       # the version that knows where to look next. Turn off once those have updated.
-      SHEETS_ON_OLD_TAG: 'true'
+      SHEETS_ON_OLD_TAG: 'false'
     steps:
       - uses: actions/checkout@v4
 
