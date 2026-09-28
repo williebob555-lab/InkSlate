@@ -1357,6 +1357,12 @@ private suspend fun AwaitPointerEventScope.wheelLoop(
                 )
             }
 
+            // Music, where the wheel turns pages: with Ctrl held it zooms, around the pointer.
+            !trackpad && ctrl && turn != null && notches != 0f -> {
+                viewport.stop()
+                viewport.zoomBy(zoomFor(notches), change.position)
+            }
+
             !trackpad && !ctrl && !shift && turn != null && resting() && notches != 0f -> {
                 if (now - wheelTurnedAt > WHEEL_TURN_GAP_MS) {
                     wheelTurnedAt = now

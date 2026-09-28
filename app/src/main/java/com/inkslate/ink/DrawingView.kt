@@ -1106,14 +1106,17 @@ class DrawingView @JvmOverloads constructor(
     private var swipeCarry: Float? = null
 
     private class TurnAnim(
-        val from: Bitmap, val dir: Int, val carry: Float, val startNs: Long,
+        val from: Bitmap, val dir: Int, val carry: Float, var startNs: Long,
         /** Shown as a fade whatever the setting - a song arriving with no direction to it. */
         val fade: Boolean = false,
         /** The picture is this turn's own, let go when it ends. */
         val owned: Boolean = false,
         /** Another song arriving: the last one fades out, then this one fades in. */
         val song: Boolean = false
-    )
+    ) {
+        /** When the turn was asked for, for how long it may wait for the new page. */
+        val heldSince: Long = System.nanoTime()
+    }
 
     /** A finger on a page of music with its tools away: a tap or a swipe, still to be told apart. */
     private class FingerTurn(val downX: Float, val downY: Float, val at: Long) {
@@ -1195,6 +1198,20 @@ class DrawingView @JvmOverloads constructor(
                 super.draw(canvas)
             }
             return
+        }
+        // A page turn waits, with the page it is leaving still whole on screen, until the page it
+        // is going to has been drawn - then the whole turn plays. Starting at once meant the turn
+        // ran out part way across onto a page not there yet, and the page popped in after it.
+        if (!anim.song && !hasBitmap(currentPage)) {
+            val waited = (System.nanoTime() - anim.heldSince) / 1_000_000
+            if (waited < TURN_WAIT_MS) {
+                anim.startNs = System.nanoTime()
+                canvas.drawColor(pageFilter.backdropColor)
+                turnPaint.alpha = 255
+                canvas.drawBitmap(anim.from, anim.carry, 0f, turnPaint)
+                postInvalidateOnAnimation()
+                return
+            }
         }
         val raw = ((System.nanoTime() - anim.startNs) / 1_000_000f) / (if (anim.song) SONG_FADE_MS else TURN_MS)
         val t = raw.coerceIn(0f, 1f)
@@ -4828,6 +4845,9 @@ class DrawingView @JvmOverloads constructor(
 
         /** A song changing: half fading the last one out, half fading this one in. */
         private const val SONG_FADE_MS = 420f
+
+        /** The longest a page turn waits for the next page to be drawn before turning anyway. */
+        private const val TURN_WAIT_MS = 700L
 
         /** A swipe this far across the view, or this quick, turns the page. */
         private const val SWIPE_TURN_SHARE = 0.18f

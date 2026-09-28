@@ -1,5 +1,8 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 package com.inkslate.desktop
 
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -274,8 +277,23 @@ fun TabStrip(
                     }
                 }
             }
+            val scroll = rememberScrollState()
             Row(
-                Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
+                Modifier.weight(1f).fillMaxHeight()
+                    // The mouse wheel scrolls the tabs sideways, either way it is turned.
+                    .onPointerEvent(androidx.compose.ui.input.pointer.PointerEventType.Scroll) { event ->
+                        val d = event.changes.firstOrNull()?.scrollDelta ?: return@onPointerEvent
+                        scroll.dispatchRawDelta((d.y + d.x) * 48f)
+                        event.changes.forEach { it.consume() }
+                    }
+                    // Clicked and dragged, by mouse or pen as well as by finger: the row follows.
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures { change, dx ->
+                            change.consume()
+                            scroll.dispatchRawDelta(-dx)
+                        }
+                    }
+                    .horizontalScroll(scroll),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 for (tab in tabs) key(tab.id) {
@@ -399,14 +417,16 @@ private fun DocumentTabChip(
                 translationX = dragOffset ?: 0f
                 if (dragOffset != null) shadowElevation = 6.dp.toPx()
             }
+            // Held a moment, then dragged: the tab moves along the row. Dragged straight away, it is
+            // the row that moves - scrolled like any list.
             .pointerInput(tab.id) {
-                detectHorizontalDragGestures(
+                detectDragGesturesAfterLongPress(
                     onDragStart = { onDragStart() },
                     onDragEnd = { onDragEnd() },
                     onDragCancel = { onDragEnd() }
-                ) { change, dx ->
+                ) { change, amount ->
                     change.consume()
-                    onDragBy(dx)
+                    onDragBy(amount.x)
                 }
             }
     ) {
