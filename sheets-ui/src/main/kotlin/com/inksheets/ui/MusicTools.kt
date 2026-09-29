@@ -3,6 +3,7 @@ package com.inksheets.ui
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,19 +66,8 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
         SharedMetronome.bpm = s.bpm
     }
 
-    fun start() {
-        if (out == null) return
-        engine.reset()
-        engine.onBeat = { SharedMetronome.beat = it }
-        out.start { engine.fill(it) }
-        SharedMetronome.running = true
-    }
-
-    fun stop() {
-        out?.stop()
-        SharedMetronome.running = false
-        SharedMetronome.beat = -1
-    }
+    fun start() { if (Click.purpose == null) Click.toggle(state) }
+    fun stop() = Click.stop(state)
 
     FloatingPanel(title = "Metronome", onClose = onClose) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
@@ -129,6 +119,19 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
                     Button(onClick = { start() }, enabled = out != null) { Text("Start") }
                 }
             }
+            // Counting the band in: a bar or two, then quiet - and the count before recording
+            // yourself or playing a recording.
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Count in", style = MaterialTheme.typography.labelMedium)
+                listOf(0 to "Off", 1 to "1 bar", 2 to "2 bars").forEach { (n, label) ->
+                    FilterChip(selected = Click.countInBars(state) == n, onClick = { Click.setCountInBars(state, n) }, label = { Text(label) })
+                }
+            }
+            OutlinedButton(onClick = { Click.countOff(state) }, enabled = out != null) {
+                Text(if (Click.counting > 0) "Counting in... ${Click.counting}" else "Count in now (${Click.countInBars(state).coerceAtLeast(1)} bar${if (Click.countInBars(state) > 1) "s" else ""}, then quiet)")
+            }
+            SwitchRow("Click while recording yourself", Click.withRecording(state)) { Click.setWithRecording(state, it) }
+            SwitchRow("Click with recordings, in time with them", Click.withPlayback(state)) { Click.setWithPlayback(state, it) }
             if (out == null) Text("No sound output on this device.", color = MaterialTheme.colorScheme.error)
         }
     }
@@ -235,5 +238,16 @@ private fun Needle(cents: Double?, good: Boolean) {
             val x = mid + (cents.coerceIn(-50.0, 50.0) / 50.0 * mid).toFloat()
             drawLine(mark, Offset(x, 2f), Offset(x, size.height - 2f), strokeWidth = 10f)
         }
+    }
+}
+
+@Composable
+private fun SwitchRow(label: String, on: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable { onChange(!on) }.padding(vertical = 2.dp)
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        androidx.compose.material3.Switch(checked = on, onCheckedChange = onChange)
     }
 }

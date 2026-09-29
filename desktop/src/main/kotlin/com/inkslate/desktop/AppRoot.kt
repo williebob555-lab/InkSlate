@@ -407,6 +407,8 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
         Column(Modifier.fillMaxSize()) {
             // Focus mode takes away the app bar, but the tabs stay so other documents are still a
             // click away; the way back out sits at the end of them.
+            // A remote can ask for Home, as the Home button in the tab row does.
+            androidx.compose.runtime.SideEffect { com.inkslate.core.Perform.showHome = { AppFlavor.onHome?.invoke(); homeShown = true } }
             if (tabs.isNotEmpty()) {
                 TabStrip(
                     tabs = tabs,

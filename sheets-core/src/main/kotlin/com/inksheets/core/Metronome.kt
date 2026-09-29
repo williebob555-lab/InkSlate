@@ -41,6 +41,39 @@ class Metronome(private val sampleRate: Int = 48_000) {
     private var voice: FloatArray? = null
     private var voiceAt = 0
 
+    /** Samples written since [reset]: the clock count-ins and cues are measured on. */
+    private var written = 0L
+    /** Silence still to write before the first click, when the first beat is still to come. */
+    private var silentFor = 0L
+    @Volatile private var phaseWanted: Double? = null
+    @Volatile private var cue: Pair<Long, () -> Unit>? = null
+
+    /** Written silently: the clock (and [onBeat]) carries on, nothing is heard. */
+    @Volatile
+    var muted = false
+
+    /**
+     * Put the clicks where [msSinceFirstBeat] says the music is - negative for a first beat still
+     * to come. Taken at the next buffer, so a recording jumping (a loop, a seek) is followed.
+     */
+    fun phaseTo(msSinceFirstBeat: Double) {
+        phaseWanted = msSinceFirstBeat
+    }
+
+    /** Call [action] (on the audio thread) once [samplesFromStart] samples have been written since [reset]. */
+    fun cueAt(samplesFromStart: Long, action: () -> Unit) {
+        cue = samplesFromStart to action
+    }
+
+    /** How many samples [bars] bars last at the tempo set now. */
+    fun samplesFor(bars: Int): Long {
+        val s = settings
+        return (bars * s.beatsPerBar.coerceAtLeast(1) * sampleRate * 60.0 / s.bpm).toLong()
+    }
+
+    /** How long [bars] bars last at the tempo set now, in ms. */
+    fun msFor(bars: Int): Double = bars * settings.beatsPerBar.coerceAtLeast(1) * 60_000.0 / settings.bpm
+
     private val strong = click(1760.0, 0.035)
     private val normal = click(1320.0, 0.03)
     private val sub = click(990.0, 0.02, gain = 0.45f)
@@ -50,13 +83,36 @@ class Metronome(private val sampleRate: Int = 48_000) {
         sampleInTick = 0
         tick = 0
         voice = null
+        written = 0
+        silentFor = 0
+        phaseWanted = null
+        cue = null
+        muted = false
+    }
+
+    private fun applyPhase(ms: Double, samplesPerTick: Double) {
+        voice = null
+        if (ms < 0) {
+            silentFor = (-ms * sampleRate / 1000.0).toLong()
+            tick = 0
+            sampleInTick = 0
+            return
+        }
+        silentFor = 0
+        val ticks = ms * sampleRate / 1000.0 / samplesPerTick
+        tick = ticks.toLong()
+        sampleInTick = ((ticks - tick) * samplesPerTick).toLong()
     }
 
     /** Write the next [out].size mono samples. */
     fun fill(out: FloatArray) {
         val s = settings
         val samplesPerTick = sampleRate * 60.0 / s.bpm / s.subdivision.coerceAtLeast(1)
+        phaseWanted?.let { phaseWanted = null; applyPhase(it, samplesPerTick) }
         for (i in out.indices) {
+            written++
+            cue?.let { (at, action) -> if (written >= at) { cue = null; action() } }
+            if (silentFor > 0) { silentFor--; out[i] = 0f; continue }
             if (sampleInTick == 0L) start(s)
             var v = 0f
             val playing = voice
@@ -64,7 +120,7 @@ class Metronome(private val sampleRate: Int = 48_000) {
                 v = playing[voiceAt++] * s.volume
                 if (voiceAt >= playing.size) voice = null
             }
-            out[i] = v
+            out[i] = if (muted) 0f else v
             sampleInTick++
             if (sampleInTick >= samplesPerTick) {
                 sampleInTick = 0

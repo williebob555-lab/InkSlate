@@ -46,17 +46,55 @@ data class MessagePreset(
 }
 
 /**
- * One button on a remote: an action ([ACTION], [id] a PerformAction name), a chosen song or
- * setlist to go straight to, or a list to pick from - any song ([SONGS]) or the set's ([SET]).
+ * One button on a remote. What it does is [kind] - a [com.inkslate.core.PerformAction] ([ACTION],
+ * named by [id]), a song or setlist to go straight to, a list to pick from, a tempo, a message,
+ * a sequence of other buttons ([MACRO]) - with [value] and [text] where it takes them ("page
+ * [value]", "tempo + [value]"). [label] and [color] are the player's own for any button.
  */
 @Serializable
-data class RemoteButton(val kind: String, val id: String? = null, val title: String? = null) {
+data class RemoteButton(
+    val kind: String,
+    val id: String? = null,
+    val title: String? = null,
+    val value: Double? = null,
+    val text: String? = null,
+    val label: String? = null,
+    val color: Int? = null,
+    /** For [MACRO]: the buttons pressed in turn. */
+    val steps: List<RemoteButton> = emptyList(),
+    /** For a message: it covers the music until tapped away. */
+    val urgent: Boolean = false
+) {
     companion object {
         const val ACTION = "action"
         const val SONG = "song"
         const val SETLIST = "setlist"
         const val SONGS = "songs"
         const val SET = "set"
+        const val PAGE = "page"
+        const val PARTS = "parts"
+        const val PROFILES = "profiles"
+        const val BOOKMARKS = "bookmarks"
+        const val TEMPO = "tempo"
+        const val TEMPO_SET = "tempo-set"
+        const val TAP = "tap"
+        const val COUNT_IN = "count-in"
+        const val COUNT_BARS = "count-bars"
+        const val CLICK_RECORDING = "click-recording"
+        const val CLICK_PLAYBACK = "click-playback"
+        const val RECORD = "record"
+        const val AUDIO_SEEK = "audio-seek"
+        const val AUDIO_RESTART = "audio-restart"
+        const val AUDIO_SPEED = "audio-speed"
+        const val MESSAGE = "message"
+        const val MESSAGE_TYPE = "message-type"
+        const val STRIP = "strip"
+        const val TOOLS = "tools"
+        const val FIT = "fit"
+        const val HOME = "home"
+        const val LEADER = "leader"
+        const val LEAD = "lead"
+        const val MACRO = "macro"
 
         fun action(name: String) = RemoteButton(ACTION, name)
 
@@ -65,7 +103,8 @@ data class RemoteButton(val kind: String, val id: String? = null, val title: Str
             action("PREVIOUS_SONG"), action("NEXT_SONG"),
             RemoteButton(SET), RemoteButton(SONGS),
             action("BOOKMARK"), action("METRONOME"),
-            action("PLAY_AUDIO"), action("FULLSCREEN")
+            RemoteButton(COUNT_IN), action("PLAY_AUDIO"),
+            RemoteButton(STRIP), RemoteButton(TOOLS)
         )
     }
 }
@@ -114,7 +153,21 @@ object RemoteLink {
         val recordingPlaying: Boolean = false,
         val bookmarked: Boolean = false,
         val toolsShown: Boolean = false,
-        val home: Boolean = false
+        val home: Boolean = false,
+        /** The parts of the song in front, and which is showing. */
+        val parts: List<Item> = emptyList(),
+        val partId: String? = null,
+        val beatsPerBar: Int = 4,
+        /** Beats of count-in still to come. */
+        val counting: Int = 0,
+        val recording: Boolean = false,
+        val recordingSeconds: Int = 0,
+        val countInBars: Int = 0,
+        val clickRecording: Boolean = false,
+        val clickPlayback: Boolean = false,
+        val stripOpen: Boolean = false,
+        /** The instrument chosen for every song (a profile id). */
+        val profileId: String? = null
     )
 
     /** The library to pick a song or setlist from; sent on joining and when it changes. */
@@ -122,7 +175,11 @@ object RemoteLink {
     data class Library(
         val kind: String = "library",
         val songs: List<Item> = emptyList(),
-        val setlists: List<Item> = emptyList()
+        val setlists: List<Item> = emptyList(),
+        /** Every bookmark: id "songId|part|page|label", title "Song - Page 3". */
+        val bookmarks: List<Item> = emptyList(),
+        /** The instruments this player plays (profiles). */
+        val profiles: List<Item> = emptyList()
     )
 
     /**
@@ -135,7 +192,10 @@ object RemoteLink {
         val action: String,
         val id: String? = null,
         val index: Int? = null,
-        val text: String? = null
+        val text: String? = null,
+        val value: Double? = null,
+        val color: Int? = null,
+        val urgent: Boolean = false
     )
 
     @Serializable

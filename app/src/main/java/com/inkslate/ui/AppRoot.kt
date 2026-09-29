@@ -448,6 +448,8 @@ fun AppRoot(
             Column(Modifier.fillMaxSize()) {
                 // Fullscreen takes away the app bar and the system bars, but the tabs stay so other
                 // documents are still a tap away; the way back out sits at the end of them.
+                // A remote can ask for Home, as the Home button in the tab row does.
+                androidx.compose.runtime.SideEffect { com.inkslate.core.Perform.showHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true } }
                 if (tabs.isNotEmpty()) {
                     TabStrip(
                         modifier = Modifier.statusBarsPadding(),

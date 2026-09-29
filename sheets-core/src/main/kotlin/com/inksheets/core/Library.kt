@@ -58,7 +58,12 @@ data class AudioTrack(
     /** Playback speed, 1.0 = as recorded. Kept per track because each is practised at its own. */
     val speed: Double = 1.0,
     /** Semitones to shift the pitch by, independent of the speed. */
-    val pitch: Int = 0
+    val pitch: Int = 0,
+    /** The tempo it was played at, for a click in time with it; null for the song's tempo. */
+    val clickBpm: Double? = null,
+    val beatsPerBar: Int? = null,
+    /** Where its first beat is, in ms; null when not known (taken as the start). */
+    val firstBeatMs: Long? = null
 )
 
 /** A place to jump to by name: "Letter C", "Coda". */

@@ -604,21 +604,7 @@ class SheetsState(val platform: SheetsPlatform) {
         platform.setPref(K_TEMPO_TRIED, tried.joinToString(","))
     }
 
-    fun toggleMetronome() {
-        val out = platform.audioOut ?: return
-        val engine = SharedMetronome.engine
-            ?: com.inksheets.core.Metronome(out.sampleRate).also { SharedMetronome.engine = it }
-        if (SharedMetronome.running) {
-            out.stop()
-            SharedMetronome.running = false
-            SharedMetronome.beat = -1
-        } else {
-            engine.reset()
-            engine.onBeat = { SharedMetronome.beat = it }
-            out.start { engine.fill(it) }
-            SharedMetronome.running = true
-        }
-    }
+    fun toggleMetronome() = Click.toggle(this)
 
     fun open(folder: File) {
         val lib = runCatching { Library(LibraryLog(folder, platform.deviceId)) }.getOrNull() ?: return

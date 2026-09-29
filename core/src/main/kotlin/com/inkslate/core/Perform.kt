@@ -122,6 +122,10 @@ object Perform {
     @Volatile
     var openPages: (() -> Unit)? = null
 
+    /** Bring Home to the front, as the Home button in the tab row does; set by the app's root. */
+    @Volatile
+    var showHome: (() -> Unit)? = null
+
     /** Fit the page in front back to the screen, whole and centred. */
     @Volatile
     var recentre: (() -> Unit)? = null

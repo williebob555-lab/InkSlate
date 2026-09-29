@@ -1,6 +1,30 @@
 package com.inksheets.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Construction
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SlowMotionVideo
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TouchApp
+import androidx.compose.material.icons.filled.ViewSidebar
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -144,9 +168,16 @@ class RemoteControl(private val state: SheetsState) {
         val lib = state.library
         if (lib != null && state.version != libraryVersion) {
             libraryVersion = state.version
+            val songs = lib.songs.sortedBy { it.title.lowercase() }
             h.library(RemoteLink.Library(
-                songs = lib.songs.sortedBy { it.title.lowercase() }.map { RemoteLink.Item(it.id, it.title, it.color) },
-                setlists = lib.setlists.sortedBy { it.name.lowercase() }.map { RemoteLink.Item(it.id, it.name, it.color) }
+                songs = songs.map { RemoteLink.Item(it.id, it.title, it.color) },
+                setlists = lib.setlists.sortedBy { it.name.lowercase() }.map { RemoteLink.Item(it.id, it.name, it.color) },
+                bookmarks = songs.flatMap { s ->
+                    s.bookmarks.sortedWith(compareBy(nullsLast()) { it.rank }).map { b ->
+                        RemoteLink.Item(listOf(s.id, b.part.orEmpty(), b.page, b.label).joinToString("|"), "${s.title} - ${b.label}", b.color ?: s.color)
+                    }
+                },
+                profiles = state.profiles.map { RemoteLink.Item(it.id, it.name) }
             ))
         }
         val song = state.current
@@ -178,7 +209,18 @@ class RemoteControl(private val state: SheetsState) {
             recordingPlaying = Recording.playing,
             bookmarked = song != null && state.bookmarkHere() != null,
             toolsShown = !Perform.on(PerformAction.FULLSCREEN),
-            home = state.homeInFront
+            home = state.homeInFront,
+            parts = song?.parts.orEmpty().map { RemoteLink.Item(it.id, com.inksheets.core.Instruments.partName(it)) },
+            partId = if (song != null) state.partShown()?.id else null,
+            beatsPerBar = SharedMetronome.engine?.settings?.beatsPerBar ?: 4,
+            counting = Click.counting,
+            recording = SelfRecorder.recording,
+            recordingSeconds = SelfRecorder.seconds,
+            countInBars = Click.countInBars(state),
+            clickRecording = Click.withRecording(state),
+            clickPlayback = Click.withPlayback(state),
+            stripOpen = !state.stripCollapsed,
+            profileId = state.profileId
         ))
     }
 
@@ -197,7 +239,53 @@ class RemoteControl(private val state: SheetsState) {
             RemoteLink.SETLIST -> c.id?.let { state.playSetlist(it, c.index ?: 0) }
             RemoteLink.SET_ENTRY -> state.playing?.let { (id, _) -> c.index?.let { state.playSetlist(id, it) } }
             RemoteLink.PRESET -> c.index?.let { state.presets.getOrNull(it) }?.let { state.sendPreset(it) }
-            RemoteLink.NOTE -> c.text?.takeIf { it.isNotBlank() }?.let { state.companion.sendNote(it, emptyList()) }
+            RemoteLink.NOTE, RemoteButton.MESSAGE -> c.text?.takeIf { it.isNotBlank() }?.let {
+                if (state.companion.leading) state.companion.sendNote(it, emptyList(), c.urgent, c.color)
+            }
+            RemoteButton.PAGE -> {
+                val path = state.currentPath
+                val n = c.value?.toInt()
+                if (path != null && n != null) Perform.jumpTo?.invoke(path, (n - 1).coerceIn(0, (state.pageShown.second - 1).coerceAtLeast(0)))
+            }
+            RemoteButton.PARTS -> state.current?.let { s -> lib?.song(s.id) ?: s }?.parts?.firstOrNull { it.id == c.id }?.let { state.switchThisSong(it) }
+            RemoteButton.PROFILES -> c.id?.let { state.switchAllSongs(it) }
+            RemoteButton.BOOKMARKS -> c.id?.split('|')?.takeIf { it.size >= 4 }?.let { (songId, part, page, label) ->
+                val song = lib?.song(songId) ?: return@let
+                song.bookmarks.firstOrNull { it.part.orEmpty() == part && it.page.toString() == page && it.label == label }
+                    ?.let { state.openBookmark(song, it) }
+            }
+            RemoteButton.TEMPO -> Click.setBpm(state, SharedMetronome.bpm + (c.value ?: 0.0))
+            RemoteButton.TEMPO_SET, RemoteButton.TAP -> c.value?.let { Click.setBpm(state, it) }
+            RemoteButton.COUNT_IN -> Click.countOff(state, c.value?.toInt())
+            RemoteButton.COUNT_BARS -> c.value?.let { Click.setCountInBars(state, it.toInt()) }
+            RemoteButton.CLICK_RECORDING -> Click.setWithRecording(state, !Click.withRecording(state))
+            RemoteButton.CLICK_PLAYBACK -> Click.setWithPlayback(state, !Click.withPlayback(state))
+            RemoteButton.RECORD -> if (SelfRecorder.recording) SelfRecorder.stop(state) else state.current?.let { SelfRecorder.start(state, it) }
+            RemoteButton.AUDIO_SEEK -> Recording.player?.let { p ->
+                val to = p.positionMs + ((c.value ?: 0.0) * 1000).toLong()
+                p.seek(to.coerceIn(0L, p.durationMs.coerceAtLeast(0L)))
+            }
+            RemoteButton.AUDIO_RESTART -> Recording.player?.seek(0L)
+            RemoteButton.AUDIO_SPEED -> Recording.player?.let { p -> p.speed = ((p.speed * 100 + (c.value ?: 0.0)) / 100).coerceIn(0.5, 1.25) }
+            RemoteButton.STRIP -> {
+                state.stripCollapsed = !state.stripCollapsed
+                if (state.stripCollapsed) Perform.recentre?.invoke()
+            }
+            RemoteButton.TOOLS -> {
+                val shown = !Perform.on(PerformAction.FULLSCREEN)
+                if (shown) {
+                    Perform.run(PerformAction.FULLSCREEN)
+                    state.stripCollapsed = true
+                    Perform.recentre?.invoke()
+                } else {
+                    state.stripCollapsed = false
+                    Perform.run(PerformAction.FULLSCREEN)
+                }
+            }
+            RemoteButton.FIT -> Perform.recentre?.invoke()
+            RemoteButton.HOME -> Perform.showHome?.invoke()
+            RemoteButton.LEADER -> state.companion.goToLeader()
+            RemoteButton.LEAD -> if (state.companion.leading) state.companion.stopLeading() else state.companion.lead()
             else -> PerformAction.entries.firstOrNull { it.name == c.action }?.let { Perform.run(it) }
         }
         publish()
@@ -297,15 +385,6 @@ class RemoteControl(private val state: SheetsState) {
         private val DECK_JSON = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private val DECK_LIST = kotlinx.serialization.builtins.ListSerializer(RemoteButton.serializer())
 
-        /** Actions a remote can offer: those that do something on the other device, not open a window there. */
-        val REMOTE_ACTIONS = listOf(
-            PerformAction.PREVIOUS_PAGE, PerformAction.NEXT_PAGE,
-            PerformAction.PREVIOUS_SONG, PerformAction.NEXT_SONG,
-            PerformAction.HALF_PAGE_BACK, PerformAction.HALF_PAGE_FORWARD,
-            PerformAction.FIRST_PAGE, PerformAction.LAST_PAGE,
-            PerformAction.BOOKMARK, PerformAction.METRONOME, PerformAction.PLAY_AUDIO,
-            PerformAction.UNDO, PerformAction.REDO, PerformAction.FULLSCREEN
-        )
     }
 }
 
@@ -462,8 +541,39 @@ private fun RemoteDeck(state: SheetsState) {
     val shown = remote.shown
     var editing by remember { mutableStateOf(false) }
     var adding by remember { mutableStateOf(false) }
+    var changing by remember { mutableStateOf<Int?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
-    fun send(action: String, id: String? = null, index: Int? = null) = remote.send(RemoteLink.Command(action = action, id = id, index = index))
+    var typing by remember { mutableStateOf(false) }
+    val taps = remember { mutableStateListOf<Long>() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    fun send(b: RemoteButton) = remote.send(RemoteLink.Command(
+        action = if (b.kind == RemoteButton.ACTION) b.id.orEmpty() else b.kind,
+        id = b.id, text = b.text, value = b.value, color = b.color, urgent = b.urgent
+    ))
+
+    /** What a press does: most go straight across; lists open here; a sequence goes step by step. */
+    fun press(b: RemoteButton) {
+        when (b.kind) {
+            RemoteButton.SONGS, RemoteButton.SET, RemoteButton.PARTS, RemoteButton.PROFILES, RemoteButton.BOOKMARKS -> picking = b.kind
+            RemoteButton.MESSAGE_TYPE -> typing = true
+            RemoteButton.TAP -> {
+                taps += System.currentTimeMillis()
+                while (taps.size > 12) taps.removeAt(0)
+                com.inksheets.core.Metronome.tapTempo(taps)?.let { bpm ->
+                    remote.send(RemoteLink.Command(action = RemoteButton.TAP, value = kotlin.math.round(bpm).coerceIn(20.0, 300.0)))
+                }
+            }
+            RemoteButton.MACRO -> scope.launch {
+                // A step at a time, with a moment between: a song has to open before its page turns.
+                for (step in b.steps) {
+                    send(step)
+                    kotlinx.coroutines.delay(if (step.kind == RemoteButton.SONG || step.kind == RemoteButton.SETLIST) 900 else 300)
+                }
+            }
+            else -> send(b)
+        }
+    }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp)) {
         // What the other device is on: big enough to read on a music stand.
@@ -472,26 +582,37 @@ private fun RemoteDeck(state: SheetsState) {
                 if (shown == null) {
                     Text(if (remote.connected) "Waiting for it to say where it is..." else "Not connected yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
-                    Text(
-                        shown.title ?: if (shown.home) "On Home" else "No song open",
-                        style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            shown.title ?: if (shown.home) "On Home" else "No song open",
+                            style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (shown.counting > 0) Text("${shown.counting}", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                    }
                     val line = listOfNotNull(
                         shown.part,
                         if (shown.pages > 0) "page ${shown.page + 1} of ${shown.pages}" else null,
                         shown.setlist?.let { "song ${shown.setIndex + 1} of ${shown.set.size} in $it" }
                     ).joinToString("  ·  ")
                     if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val group = when {
-                        shown.leading -> "Leading" + if (shown.followers > 0) " · ${shown.followers} following" else ""
-                        shown.following != null -> "Following ${shown.following}"
-                        else -> null
-                    }
-                    group?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
+                    val extra = listOfNotNull(
+                        when {
+                            shown.leading -> "Leading" + if (shown.followers > 0) " · ${shown.followers} following" else ""
+                            shown.following != null -> "Following ${shown.following}"
+                            else -> null
+                        },
+                        if (shown.metronome) "♩ ${shown.bpm}" else null,
+                        if (shown.recording) "● Recording ${shown.recordingSeconds / 60}:${"%02d".format(shown.recordingSeconds % 60)}" else null
+                    ).joinToString("  ·  ")
+                    if (extra.isNotEmpty()) Text(extra, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
         Spacer(Modifier.height(10.dp))
+        if (editing) {
+            Text("Tap a button to change what it does, its name or its colour.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
+        }
 
         // The buttons: as many across as fit, each big enough to hit without looking.
         BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -502,22 +623,14 @@ private fun RemoteDeck(state: SheetsState) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.forEachIndexed { i, b ->
                             val at = rowIndex * across + i
-                            DeckButton(state, b, shown, editing, Modifier.weight(1f),
-                                onPress = {
-                                    when (b.kind) {
-                                        RemoteButton.ACTION -> b.id?.let { send(it) }
-                                        RemoteButton.SONG -> send(RemoteLink.SONG, id = b.id)
-                                        RemoteButton.SETLIST -> send(RemoteLink.SETLIST, id = b.id)
-                                        RemoteButton.SONGS, RemoteButton.SET -> picking = b.kind
-                                    }
-                                },
+                            DeckButton(b, shown, remote.hostLibrary, editing, Modifier.weight(1f),
+                                onPress = { if (editing) changing = at else press(b) },
                                 onMove = { by ->
                                     val list = deck.toMutableList()
                                     val to = (at + by).coerceIn(0, list.lastIndex)
                                     list.add(to, list.removeAt(at))
                                     remote.saveDeck(list)
-                                },
-                                onRemove = { remote.saveDeck(deck.filterIndexed { j, _ -> j != at }) }
+                                }
                             )
                         }
                         repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
@@ -534,7 +647,7 @@ private fun RemoteDeck(state: SheetsState) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     shown.presets.withIndex().chunked(across).forEach { row ->
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { (i, p) -> PresetTile(p, Modifier.weight(1f)) { send(RemoteLink.PRESET, index = i) } }
+                            row.forEach { (i, p) -> PresetTile(p, Modifier.weight(1f)) { remote.send(RemoteLink.Command(action = RemoteLink.PRESET, index = i)) } }
                             repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
                         }
                     }
@@ -556,81 +669,197 @@ private fun RemoteDeck(state: SheetsState) {
         }
     }
 
-    if (adding) AddDeckButtonDialog(state, onAdd = { remote.saveDeck(remote.deck + it); adding = false }, onDismiss = { adding = false })
+    if (adding) AddDeckButtonDialog(state, forStep = false, onAdd = { remote.saveDeck(remote.deck + it); adding = false }, onDismiss = { adding = false })
+    changing?.let { at ->
+        val b = remote.deck.getOrNull(at)
+        if (b == null) changing = null else ButtonEditor(
+            state, b, isNew = false,
+            onSave = { changed -> remote.saveDeck(remote.deck.toMutableList().also { it[at] = changed }); changing = null },
+            onRemove = { remote.saveDeck(remote.deck.filterIndexed { j, _ -> j != at }); changing = null },
+            onDismiss = { changing = null }
+        )
+    }
+    if (typing) AskName(
+        title = "A message for the band", initial = "", confirm = "Send",
+        onDone = { text -> typing = false; remote.send(RemoteLink.Command(action = RemoteButton.MESSAGE, text = text)) },
+        onDismiss = { typing = false }
+    )
+    fun pick(id: String) = remote.send(RemoteLink.Command(action = picking.orEmpty(), id = id))
     when (picking) {
         RemoteButton.SONGS -> PickRemoteItem(
             "Go to a song", remote.hostLibrary?.songs.orEmpty(),
-            onChosen = { send(RemoteLink.SONG, id = it.id); picking = null }, onDismiss = { picking = null }
+            onChosen = { remote.send(RemoteLink.Command(action = RemoteLink.SONG, id = it.id)); picking = null }, onDismiss = { picking = null }
         )
-        RemoteButton.SET -> {
-            val set = shown?.set.orEmpty()
-            PickRemoteItem(
-                shown?.setlist ?: "The set", set, numbered = true, current = shown?.setIndex ?: -1,
-                empty = "No set is being played there. Open a setlist on it, or use Songs.",
-                onChosenAt = { i -> send(RemoteLink.SET_ENTRY, index = i); picking = null }, onDismiss = { picking = null }
-            )
-        }
+        RemoteButton.SET -> PickRemoteItem(
+            shown?.setlist ?: "The set", shown?.set.orEmpty(), numbered = true, current = shown?.setIndex ?: -1,
+            empty = "No set is being played there. Open a setlist on it, or use Songs.",
+            onChosenAt = { i -> remote.send(RemoteLink.Command(action = RemoteLink.SET_ENTRY, index = i)); picking = null }, onDismiss = { picking = null }
+        )
+        RemoteButton.PARTS -> PickRemoteItem(
+            "Show which part?", shown?.parts.orEmpty(), current = shown?.parts.orEmpty().indexOfFirst { it.id == shown?.partId },
+            empty = "No song is open there.",
+            onChosen = { pick(it.id); picking = null }, onDismiss = { picking = null }
+        )
+        RemoteButton.PROFILES -> PickRemoteItem(
+            "Play which instrument, in every song?", remote.hostLibrary?.profiles.orEmpty(),
+            current = remote.hostLibrary?.profiles.orEmpty().indexOfFirst { it.id == shown?.profileId },
+            onChosen = { pick(it.id); picking = null }, onDismiss = { picking = null }
+        )
+        RemoteButton.BOOKMARKS -> PickRemoteItem(
+            "Go to a bookmark", remote.hostLibrary?.bookmarks.orEmpty(), empty = "No bookmarks there yet.",
+            onChosen = { pick(it.id); picking = null }, onDismiss = { picking = null }
+        )
     }
 }
 
-@Composable
-private fun DeckButton(
-    state: SheetsState,
-    b: RemoteButton,
-    shown: RemoteLink.State?,
-    editing: Boolean,
-    modifier: Modifier,
-    onPress: () -> Unit,
-    onMove: (Int) -> Unit,
-    onRemove: () -> Unit
-) {
-    val action = if (b.kind == RemoteButton.ACTION) PerformAction.entries.firstOrNull { it.name == b.id } else null
-    val tools = shown?.toolsShown == true
-    val (icon, label) = when (b.kind) {
-        RemoteButton.ACTION -> (action?.let { iconOf(it, !tools) } ?: Icons.Default.MusicNote) to (action?.let { a ->
+/** How much a button that takes a number wants, and what it is called: null for none. */
+private fun valueHint(kind: String): Pair<String, Double?>? = when (kind) {
+    RemoteButton.PAGE -> "Page number" to 1.0
+    RemoteButton.TEMPO -> "Change the tempo by (a minus slows it)" to 5.0
+    RemoteButton.TEMPO_SET -> "Tempo (beats a minute)" to 120.0
+    RemoteButton.COUNT_IN -> "Bars to count (blank: the count-in setting)" to null
+    RemoteButton.COUNT_BARS -> "Count-in bars, 0 to 4" to 1.0
+    RemoteButton.AUDIO_SEEK -> "Seconds (a minus goes back)" to -5.0
+    RemoteButton.AUDIO_SPEED -> "Percent (a minus slows it)" to -5.0
+    else -> null
+}
+
+private fun num(v: Double?): String = v?.let { if (it == kotlin.math.floor(it)) it.toLong().toString() else it.toString() } ?: ""
+
+/** A button's own name, when the player has given it none. */
+private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLink.Library?): String {
+    val v = b.value
+    return when (b.kind) {
+        RemoteButton.ACTION -> PerformAction.entries.firstOrNull { it.name == b.id }?.let { a ->
+            val tools = shown?.toolsShown == true
             when (a) {
-                PerformAction.FULLSCREEN -> if (tools) "Hide tools" else "Tools"
+                PerformAction.FULLSCREEN -> if (tools) "Hide tools" else "Show tools"
                 PerformAction.NEXT_PAGE -> "Next page"
                 PerformAction.PREVIOUS_PAGE -> "Previous page"
                 PerformAction.NEXT_SONG -> "Next song"
                 PerformAction.PREVIOUS_SONG -> "Previous song"
+                PerformAction.METRONOME -> if (shown?.metronome == true) "Stop metronome" else "Metronome"
                 else -> shortName(a, !tools)
             }
-        } ?: "?")
-        RemoteButton.SONG -> Icons.Default.MusicNote to (b.title ?: "Song")
-        RemoteButton.SETLIST -> Icons.AutoMirrored.Filled.QueueMusic to (b.title ?: "Setlist")
-        RemoteButton.SONGS -> Icons.Default.LibraryMusic to "Songs..."
-        else -> Icons.AutoMirrored.Filled.QueueMusic to "The set..."
+        } ?: "?"
+        RemoteButton.SONG -> b.title ?: "Song"
+        RemoteButton.SETLIST -> b.title ?: "Setlist"
+        RemoteButton.SONGS -> "Songs..."
+        RemoteButton.SET -> "The set..."
+        RemoteButton.PAGE -> "Page ${num(v)}"
+        RemoteButton.PARTS -> "Part..."
+        RemoteButton.PROFILES -> "Instrument..."
+        RemoteButton.BOOKMARKS -> "Bookmarks..."
+        RemoteButton.TEMPO -> if ((v ?: 0.0) < 0) "Tempo −${num(-(v ?: 0.0))}" else "Tempo +${num(v)}"
+        RemoteButton.TEMPO_SET -> "♩ = ${num(v)}"
+        RemoteButton.TAP -> "Tap tempo"
+        RemoteButton.COUNT_IN -> if (v != null) "Count in ${num(v)} bar${if (v == 1.0) "" else "s"}" else "Count in"
+        RemoteButton.COUNT_BARS -> "Count-in: ${num(v)} bar${if (v == 1.0) "" else "s"}"
+        RemoteButton.CLICK_RECORDING -> "Click when recording"
+        RemoteButton.CLICK_PLAYBACK -> "Click with recordings"
+        RemoteButton.RECORD -> if (shown?.recording == true) "Stop recording" else "Record yourself"
+        RemoteButton.AUDIO_SEEK -> if ((v ?: 0.0) < 0) "Back ${num(-(v ?: 0.0))} s" else "On ${num(v)} s"
+        RemoteButton.AUDIO_RESTART -> "Recording from the start"
+        RemoteButton.AUDIO_SPEED -> if ((v ?: 0.0) < 0) "Slower ${num(-(v ?: 0.0))}%" else "Faster ${num(v)}%"
+        RemoteButton.MESSAGE -> b.text ?: "Message"
+        RemoteButton.MESSAGE_TYPE -> "Write a message..."
+        RemoteButton.STRIP -> if (shown?.stripOpen == true) "Hide toolbar" else "Toolbar"
+        RemoteButton.TOOLS -> if (shown?.toolsShown == true) "Put tools away" else "All tools"
+        RemoteButton.FIT -> "Fit the page"
+        RemoteButton.HOME -> "Home"
+        RemoteButton.LEADER -> "Back to the leader"
+        RemoteButton.LEAD -> if (shown?.leading == true) "Stop leading" else "Lead"
+        RemoteButton.MACRO -> "${b.steps.size} steps"
+        else -> b.kind
     }
-    val lit = when (action) {
-        PerformAction.METRONOME -> shown?.metronome == true
-        PerformAction.BOOKMARK -> shown?.bookmarked == true
-        PerformAction.PLAY_AUDIO -> shown?.recordingPlaying == true
-        PerformAction.FULLSCREEN -> tools
+}
+
+private fun iconFor(b: RemoteButton, shown: RemoteLink.State?): ImageVector = when (b.kind) {
+    RemoteButton.ACTION -> PerformAction.entries.firstOrNull { it.name == b.id }?.let { iconOf(it, shown?.toolsShown != true) } ?: Icons.Default.MusicNote
+    RemoteButton.SONG -> Icons.Default.MusicNote
+    RemoteButton.SETLIST, RemoteButton.SET -> Icons.AutoMirrored.Filled.QueueMusic
+    RemoteButton.SONGS -> Icons.Default.LibraryMusic
+    RemoteButton.PAGE -> Icons.Default.FormatListNumbered
+    RemoteButton.PARTS -> Icons.Default.SwapHoriz
+    RemoteButton.PROFILES -> Icons.Default.Person
+    RemoteButton.BOOKMARKS -> Icons.Default.Bookmarks
+    RemoteButton.TEMPO, RemoteButton.TEMPO_SET -> Icons.Default.Speed
+    RemoteButton.TAP -> Icons.Default.TouchApp
+    RemoteButton.COUNT_IN, RemoteButton.COUNT_BARS -> Icons.Default.HourglassTop
+    RemoteButton.CLICK_RECORDING, RemoteButton.CLICK_PLAYBACK -> Icons.Default.GraphicEq
+    RemoteButton.RECORD -> Icons.Default.FiberManualRecord
+    RemoteButton.AUDIO_SEEK -> if ((b.value ?: 0.0) < 0) Icons.Default.FastRewind else Icons.Default.FastForward
+    RemoteButton.AUDIO_RESTART -> Icons.Default.SkipPrevious
+    RemoteButton.AUDIO_SPEED -> Icons.Default.SlowMotionVideo
+    RemoteButton.MESSAGE -> Icons.Default.Campaign
+    RemoteButton.MESSAGE_TYPE -> Icons.Default.Edit
+    RemoteButton.STRIP -> Icons.Default.ViewSidebar
+    RemoteButton.TOOLS -> Icons.Default.Construction
+    RemoteButton.FIT -> Icons.Default.CenterFocusStrong
+    RemoteButton.HOME -> Icons.Default.Home
+    RemoteButton.LEADER, RemoteButton.LEAD -> Icons.Default.Groups
+    RemoteButton.MACRO -> Icons.Default.AutoAwesome
+    else -> Icons.Default.MusicNote
+}
+
+@Composable
+private fun DeckButton(
+    b: RemoteButton,
+    shown: RemoteLink.State?,
+    lib: RemoteLink.Library?,
+    editing: Boolean,
+    modifier: Modifier,
+    onPress: () -> Unit,
+    onMove: (Int) -> Unit
+) {
+    val action = if (b.kind == RemoteButton.ACTION) PerformAction.entries.firstOrNull { it.name == b.id } else null
+    val lit = when {
+        action == PerformAction.METRONOME -> shown?.metronome == true
+        action == PerformAction.BOOKMARK -> shown?.bookmarked == true
+        action == PerformAction.PLAY_AUDIO -> shown?.recordingPlaying == true
+        action == PerformAction.FULLSCREEN -> shown?.toolsShown == true
+        b.kind == RemoteButton.RECORD -> shown?.recording == true
+        b.kind == RemoteButton.CLICK_RECORDING -> shown?.clickRecording == true
+        b.kind == RemoteButton.CLICK_PLAYBACK -> shown?.clickPlayback == true
+        b.kind == RemoteButton.STRIP -> shown?.stripOpen == true
+        b.kind == RemoteButton.TOOLS -> shown?.toolsShown == true
+        b.kind == RemoteButton.LEAD -> shown?.leading == true
+        b.kind == RemoteButton.COUNT_IN -> (shown?.counting ?: 0) > 0
+        b.kind == RemoteButton.COUNT_BARS -> shown?.countInBars == b.value?.toInt()
+        b.kind == RemoteButton.PROFILES -> false
         else -> false
     }
-    val fill = if (lit) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+    val own = b.color?.let { Color(it) }
+    val fill = when {
+        lit -> MaterialTheme.colorScheme.primaryContainer
+        own != null -> own
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val ink = if (!lit && own != null) (if (own.luminance() > 0.45f) Color.Black else Color.White) else MaterialTheme.colorScheme.onSurface
+    val detail = when {
+        action == PerformAction.METRONOME && (shown?.bpm ?: 0) > 0 -> "♩ ${shown?.bpm}"
+        b.kind == RemoteButton.PARTS -> shown?.part
+        b.kind == RemoteButton.COUNT_IN && (shown?.counting ?: 0) > 0 -> "${shown?.counting}"
+        b.kind == RemoteButton.MACRO && b.label != null -> "${b.steps.size} steps"
+        else -> null
+    }
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = fill,
+        contentColor = ink,
         modifier = modifier.height(104.dp)
             .clip(RoundedCornerShape(18.dp))
-            .clickable(enabled = !editing, onClick = onPress)
+            .clickable(onClick = onPress)
     ) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.align(Alignment.Center).padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(icon, null, modifier = Modifier.size(32.dp))
-                Text(label, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (action == PerformAction.METRONOME && (shown?.bpm ?: 0) > 0) {
-                    Text("♩ ${shown?.bpm}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                }
+                Icon(iconFor(b, shown), null, modifier = Modifier.size(30.dp))
+                Text(b.label ?: defaultName(b, shown, lib), style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                detail?.let { Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
             if (editing) {
-                Row(Modifier.align(Alignment.BottomCenter)) {
-                    IconButton(onClick = { onMove(-1) }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Move earlier") }
-                    IconButton(onClick = { onMove(1) }) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "Move later") }
-                }
-                IconButton(onClick = onRemove, modifier = Modifier.align(Alignment.TopEnd)) { Icon(Icons.Default.Close, "Take this button off") }
+                IconButton(onClick = { onMove(-1) }, modifier = Modifier.align(Alignment.BottomStart)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Move earlier") }
+                IconButton(onClick = { onMove(1) }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "Move later") }
             }
         }
     }
@@ -663,7 +892,7 @@ private fun PresetTile(p: MessagePreset, modifier: Modifier, onSend: () -> Unit)
     }
 }
 
-/** A song or setlist of the other device's library, picked from a list that searches. */
+/** A song, setlist, part, bookmark or instrument of the other device's, picked from a list that searches. */
 @Composable
 private fun PickRemoteItem(
     title: String,
@@ -703,11 +932,70 @@ private fun PickRemoteItem(
     }
 }
 
-/** Adding a button to the remote: an action, a song or setlist to go straight to, or a list. */
+/** One thing a remote button can do, as offered in Add a button. */
+private class Offer(val section: String, val name: String, val button: RemoteButton)
+
+private fun offers(shown: RemoteLink.State?): List<Offer> {
+    fun a(section: String, action: PerformAction, name: String = action.label) = Offer(section, name, RemoteButton.action(action.name))
+    fun k(section: String, name: String, kind: String, value: Double? = null) = Offer(section, name, RemoteButton(kind, value = value))
+    val pages = "Pages"; val songs = "Songs and sets"; val parts = "Parts"; val click = "Metronome and count-in"
+    val rec = "Recordings"; val marks = "Marking"; val view = "The screen"; val band = "Playing together"; val more = "More than one thing"
+    return listOf(
+        a(pages, PerformAction.NEXT_PAGE), a(pages, PerformAction.PREVIOUS_PAGE),
+        a(pages, PerformAction.HALF_PAGE_FORWARD), a(pages, PerformAction.HALF_PAGE_BACK),
+        a(pages, PerformAction.FIRST_PAGE), a(pages, PerformAction.LAST_PAGE),
+        k(pages, "Go to a page...", RemoteButton.PAGE, 1.0),
+        a(songs, PerformAction.NEXT_SONG), a(songs, PerformAction.PREVIOUS_SONG),
+        k(songs, "Go to a song you choose now", RemoteButton.SONG),
+        k(songs, "Play a setlist you choose now", RemoteButton.SETLIST),
+        k(songs, "Songs... (pick any song each time)", RemoteButton.SONGS),
+        k(songs, "The set... (pick a song of the set being played)", RemoteButton.SET),
+        k(songs, "Bookmarks... (pick a bookmark)", RemoteButton.BOOKMARKS),
+        k(songs, "Home", RemoteButton.HOME),
+        k(parts, "Part... (pick a part of the song in front)", RemoteButton.PARTS),
+        k(parts, "Instrument... (for every song)", RemoteButton.PROFILES),
+        a(parts, PerformAction.SWITCH_PART, "Open the part picker there"),
+        a(click, PerformAction.METRONOME),
+        k(click, "Count in now, then quiet", RemoteButton.COUNT_IN),
+        k(click, "Tempo up or down by...", RemoteButton.TEMPO, 5.0),
+        k(click, "Set the tempo to...", RemoteButton.TEMPO_SET, 120.0),
+        k(click, "Tap tempo", RemoteButton.TAP),
+        k(click, "Count-in length...", RemoteButton.COUNT_BARS, 1.0),
+        k(click, "Click when recording yourself (on/off)", RemoteButton.CLICK_RECORDING),
+        k(click, "Click with recordings (on/off)", RemoteButton.CLICK_PLAYBACK),
+        a(click, PerformAction.TUNER, "Open the tuner there"),
+        a(rec, PerformAction.PLAY_AUDIO),
+        k(rec, "Record yourself (start/stop)", RemoteButton.RECORD),
+        k(rec, "Back or on by seconds...", RemoteButton.AUDIO_SEEK, -5.0),
+        k(rec, "The recording from the start", RemoteButton.AUDIO_RESTART),
+        k(rec, "Slower or faster by...", RemoteButton.AUDIO_SPEED, -5.0),
+        a(rec, PerformAction.RECORDINGS, "Open the recordings there"),
+        a(marks, PerformAction.BOOKMARK), a(marks, PerformAction.PEN), a(marks, PerformAction.HIGHLIGHTER),
+        a(marks, PerformAction.ERASER), a(marks, PerformAction.UNDO), a(marks, PerformAction.REDO),
+        k(view, "The toolbar (show/hide)", RemoteButton.STRIP),
+        k(view, "All tools and the toolbar (show/hide)", RemoteButton.TOOLS),
+        a(view, PerformAction.FULLSCREEN, "Only the tools (show/hide)"),
+        k(view, "Fit the page to the screen", RemoteButton.FIT),
+        k(band, "Lead (start/stop)", RemoteButton.LEAD),
+        k(band, "Back to the leader", RemoteButton.LEADER),
+        k(band, "A message you write now", RemoteButton.MESSAGE),
+        k(band, "Write a message each time...", RemoteButton.MESSAGE_TYPE),
+        a(band, PerformAction.PLAY_TOGETHER, "Open Play together there")
+    ) + shown?.presets.orEmpty().map { p ->
+        Offer(band, "One-tap: ${p.text}", RemoteButton(RemoteButton.MESSAGE, text = p.text, urgent = p.urgent, color = p.color))
+    } + Offer(more, "A sequence: several of these in one press", RemoteButton(RemoteButton.MACRO))
+}
+
+/** Kinds that need something more before they are added: a number, words, a choice or steps. */
+private fun needsMore(b: RemoteButton) =
+    valueHint(b.kind) != null || b.kind == RemoteButton.MACRO || (b.kind == RemoteButton.MESSAGE && b.text == null)
+
+/** Adding a button to the remote - or, [forStep], a step of a sequence (no lists, no sequences). */
 @Composable
-private fun AddDeckButtonDialog(state: SheetsState, onAdd: (RemoteButton) -> Unit, onDismiss: () -> Unit) {
+private fun AddDeckButtonDialog(state: SheetsState, forStep: Boolean, onAdd: (RemoteButton) -> Unit, onDismiss: () -> Unit) {
     val remote = state.remote
     var choosing by remember { mutableStateOf<String?>(null) }
+    var configuring by remember { mutableStateOf<RemoteButton?>(null) }
     when (choosing) {
         RemoteButton.SONG -> {
             PickRemoteItem("A button for which song?", remote.hostLibrary?.songs.orEmpty(),
@@ -720,21 +1008,124 @@ private fun AddDeckButtonDialog(state: SheetsState, onAdd: (RemoteButton) -> Uni
             return
         }
     }
-    SheetDialog(title = "Add a button", onDismiss = onDismiss) {
-        Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
-            val items: List<Triple<ImageVector, String, () -> Unit>> =
-                listOf(
-                    Triple(Icons.Default.MusicNote, "Go to a song you choose now", { choosing = RemoteButton.SONG }),
-                    Triple(Icons.AutoMirrored.Filled.QueueMusic, "Play a setlist you choose now", { choosing = RemoteButton.SETLIST }),
-                    Triple(Icons.Default.LibraryMusic, "Songs... (pick any song each time)", { onAdd(RemoteButton(RemoteButton.SONGS)) }),
-                    Triple(Icons.AutoMirrored.Filled.QueueMusic, "The set... (pick a song of the set being played)", { onAdd(RemoteButton(RemoteButton.SET)) })
-                ) + RemoteControl.REMOTE_ACTIONS.map { a -> Triple(iconOf(a, true), a.label, { onAdd(RemoteButton.action(a.name)) }) }
-            items.forEach { (icon, text, go) ->
-                Row(Modifier.fillMaxWidth().clickable(onClick = go).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(icon, null)
-                    Spacer(Modifier.width(12.dp))
-                    Text(text)
+    configuring?.let { b ->
+        ButtonEditor(state, b, isNew = true, onSave = onAdd, onRemove = null, onDismiss = { configuring = null })
+        return
+    }
+    val pickers = setOf(RemoteButton.SONGS, RemoteButton.SET, RemoteButton.PARTS, RemoteButton.PROFILES, RemoteButton.BOOKMARKS,
+        RemoteButton.MESSAGE_TYPE, RemoteButton.TAP, RemoteButton.MACRO)
+    val all = offers(remote.shown).filter { !forStep || it.button.kind !in pickers }
+    var query by remember { mutableStateOf("") }
+    SheetDialog(title = if (forStep) "Add a step" else "Add a button", onDismiss = onDismiss) {
+        Column {
+            OutlinedTextField(query, { query = it }, placeholder = { Text("Find") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+                var section = ""
+                for (o in all.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }) {
+                    if (o.section != section) {
+                        section = o.section
+                        Text(section, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().clickable {
+                            when {
+                                o.button.kind == RemoteButton.SONG || o.button.kind == RemoteButton.SETLIST -> choosing = o.button.kind
+                                needsMore(o.button) -> configuring = o.button
+                                else -> onAdd(o.button)
+                            }
+                        }.padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(iconFor(o.button, remote.shown), null)
+                        Spacer(Modifier.width(12.dp))
+                        Text(o.name)
+                    }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * One button, changed: its name and colour, the number or words it sends, and for a sequence
+ * its steps in order. [onRemove] takes it off the remote (null while adding).
+ */
+@Composable
+private fun ButtonEditor(
+    state: SheetsState,
+    button: RemoteButton,
+    isNew: Boolean,
+    onSave: (RemoteButton) -> Unit,
+    onRemove: (() -> Unit)?,
+    onDismiss: () -> Unit
+) {
+    val remote = state.remote
+    var label by remember { mutableStateOf(button.label.orEmpty()) }
+    var value by remember { mutableStateOf(num(button.value ?: valueHint(button.kind)?.second)) }
+    var text by remember { mutableStateOf(button.text.orEmpty()) }
+    var urgent by remember { mutableStateOf(button.urgent) }
+    var colour by remember { mutableStateOf(button.color) }
+    val steps = remember { mutableStateListOf(*button.steps.toTypedArray()) }
+    var addingStep by remember { mutableStateOf(false) }
+    fun built() = button.copy(
+        label = label.trim().ifEmpty { null },
+        value = if (valueHint(button.kind) != null) value.trim().replace(',', '.').toDoubleOrNull() else button.value,
+        text = if (button.kind == RemoteButton.MESSAGE) text.trim().ifEmpty { null } else button.text,
+        urgent = urgent,
+        color = colour,
+        steps = steps.toList()
+    )
+    if (addingStep) {
+        AddDeckButtonDialog(state, forStep = true, onAdd = { steps += it; addingStep = false }, onDismiss = { addingStep = false })
+        return
+    }
+    val preview = built()
+    val ready = (button.kind != RemoteButton.MESSAGE || text.isNotBlank()) && (button.kind != RemoteButton.MACRO || steps.isNotEmpty()) &&
+        (valueHint(button.kind)?.second == null || preview.value != null)
+    SheetDialog(title = if (isNew) "New button" else "This button", onDismiss = onDismiss, buttons = {
+        onRemove?.let { TextButton(onClick = it) { Text("Take it off", color = MaterialTheme.colorScheme.error) } }
+        TextButton(onClick = onDismiss) { Text("Cancel") }
+        TextButton(onClick = { onSave(built()) }, enabled = ready) { Text(if (isNew) "Add" else "Save") }
+    }) {
+        Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
+            Text("Does: " + defaultName(preview.copy(label = null), remote.shown, remote.hostLibrary), style = MaterialTheme.typography.bodyMedium)
+            OutlinedTextField(label, { label = it }, label = { Text("Name on the button (blank: as above)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            valueHint(button.kind)?.let { (hint, _) ->
+                OutlinedTextField(value, { value = it }, label = { Text(hint) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            }
+            if (button.kind == RemoteButton.MESSAGE) {
+                OutlinedTextField(text, { text = it }, label = { Text("The message") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { urgent = !urgent }) {
+                    Text("Cover the music until tapped away", modifier = Modifier.weight(1f))
+                    Switch(checked = urgent, onCheckedChange = { urgent = it })
+                }
+                Text("Sent only while that device is leading.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text("Colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.FilterChip(selected = colour == null, onClick = { colour = null }, label = { Text("None") })
+                for (c in MARK_COLOURS) {
+                    Box(
+                        Modifier.size(30.dp).background(Color(c), androidx.compose.foundation.shape.CircleShape)
+                            .then(if (c == colour) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, androidx.compose.foundation.shape.CircleShape) else Modifier)
+                            .clickable { colour = c }
+                    )
+                }
+            }
+            if (button.kind == RemoteButton.MACRO) {
+                Text("Steps, in order", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
+                if (steps.isEmpty()) Text("None yet - for example: a song, then Count in, then Record yourself.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                steps.forEachIndexed { i, step ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Text("${i + 1}.", modifier = Modifier.width(28.dp))
+                        Icon(iconFor(step, remote.shown), null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(step.label ?: defaultName(step, remote.shown, remote.hostLibrary), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        IconButton(onClick = { if (i > 0) steps.add(i - 1, steps.removeAt(i)) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, "Earlier") }
+                        IconButton(onClick = { steps.removeAt(i) }) { Icon(Icons.Default.Close, "Take this step out") }
+                    }
+                }
+                TextButton(onClick = { addingStep = true }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Add a step") }
             }
         }
     }

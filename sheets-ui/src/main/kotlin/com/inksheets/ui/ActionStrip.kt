@@ -242,6 +242,18 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         BackToLeader(state, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
         // The leader's messages, where the music is not.
         NotePopup(state)
+        // Counting in: the beat, big, over the music - seen as well as heard.
+        if (Click.counting > 0 && SharedMetronome.beat >= 0) {
+            Surface(
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                modifier = Modifier.align(Alignment.Center).size(160.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("${SharedMetronome.beat + 1}", fontSize = 96.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                }
+            }
+        }
     }
 
     if (customising) StripEditor(state, onClose = { customising = false })

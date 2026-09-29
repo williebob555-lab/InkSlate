@@ -46,7 +46,24 @@ class RemoteScreensTest {
 
     private val opened = ArrayList<String>()
 
-    private inner class FakePlatform(root: File, override val deviceName: String = "Test stand") : SheetsPlatform {
+    /** Sound out that is pulled in real time, as a sound card would, and thrown away. */
+    private class FakeOut : AudioOut {
+        override val sampleRate = 48_000
+        @Volatile private var thread: Thread? = null
+        override fun start(fill: (FloatArray) -> Unit) {
+            stop()
+            thread = Thread {
+                val buf = FloatArray(480)
+                while (!Thread.currentThread().isInterrupted) {
+                    fill(buf)
+                    try { Thread.sleep(10) } catch (e: InterruptedException) { break }
+                }
+            }.apply { isDaemon = true; start() }
+        }
+        override fun stop() { thread?.interrupt(); thread = null }
+    }
+
+    private inner class FakePlatform(root: File, override val deviceName: String = "Test stand", out: AudioOut? = null) : SheetsPlatform {
         private val prefs = HashMap<String, String?>().apply { put("sheets_library", root.absolutePath) }
         override val deviceId = deviceName.replace(' ', '-')
         override val startFolder = root
@@ -54,7 +71,7 @@ class RemoteScreensTest {
         override fun setPref(key: String, value: String?) { prefs[key] = value }
         override fun openPart(song: Song, part: Part, file: File) { opened += part.file }
         override fun pageText(file: File, page: Int): String? = null
-        override val audioOut: AudioOut? = null
+        override val audioOut: AudioOut? = out
         override val microphone: Microphone? = null
         override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)  // as the desktop app does
         override val localFolder: File get() = File(startFolder.parentFile, "local-$deviceId")
@@ -66,10 +83,10 @@ class RemoteScreensTest {
         ImageIO.write(image, "png", File(dir, "$name.png"))
     }
 
-    private fun library(root: File): SheetsState {
+    private fun library(root: File, out: AudioOut? = null): SheetsState {
         listOf("Band/Take On Me - Alto Sax.pdf", "Band/Tom Sawyer - Alto Sax.pdf", "Band/Fight Song - Alto Sax.pdf")
             .forEach { File(root, it).apply { parentFile.mkdirs(); writeText(it) } }
-        val state = SheetsState(FakePlatform(root))
+        val state = SheetsState(FakePlatform(root, out = out))
         // Ids as the folder scan makes them, so the scan finds these songs already there.
         fun part(path: String) = Part(id = com.inksheets.core.Library.partIdFor(path), file = path, instrument = "alto-sax")
         val take = part("Band/Take On Me - Alto Sax.pdf")
@@ -195,6 +212,52 @@ class RemoteScreensTest {
         } finally {
             stand.remote.stopHosting()
             Perform.document = null
+        }
+    }
+
+    @Test
+    fun `a remote sets the tempo, counts in, and runs a sequence of steps in one press`() {
+        val stand = library(tmp.newFolder("Music"), out = FakeOut())
+        val phone = SheetsState(FakePlatform(tmp.newFolder("PhoneMusic"), deviceName = "Phone"))
+        assertTrue(stand.remote.startHosting())
+        try {
+            val link = stand.remote.pairLink!!.replace(Regex("hosts=[^&]*"), "hosts=127.0.0.1")
+            val fight = stand.library!!.songs.first { it.title == "Fight Song" }
+            phone.remote.saveDeck(listOf(
+                com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.TEMPO_SET, value = 90.0),
+                com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.COUNT_IN, value = 1.0),
+                com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.MACRO, label = "Warm up", color = 0xFF43A047.toInt(), steps = listOf(
+                    com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.SONG, id = fight.id, title = fight.title),
+                    com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.TEMPO_SET, value = 132.0)
+                )),
+                com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.TAP),
+                com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.AUDIO_SEEK, value = -5.0),
+                com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.RECORD)
+            ))
+            phone.remote.remoteOpen = true
+            runDesktopComposeUiTest(width = 480, height = 1000) {
+                setContent { MaterialTheme { Surface { SheetsHome(phone, onOpenSettings = {}) } } }
+                phone.remote.connect(com.inksheets.core.RemoteLink.parsePair(link)!!)
+                waitUntil(timeoutMillis = 5000) { phone.remote.shown != null }
+                onNodeWithText("♩ = 90").performClick()
+                waitUntil(timeoutMillis = 3000) { phone.remote.shown?.bpm == 90 }
+                onNodeWithText("Count in 1 bar").performClick()
+                waitUntil(timeoutMillis = 3000) { (phone.remote.shown?.counting ?: 0) > 0 }
+                waitForIdle()
+                shoot("remote-counting", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                // One bar of 4 at 90 is 2.7 s; then quiet.
+                waitUntil(timeoutMillis = 6000) { phone.remote.shown?.counting == 0 && phone.remote.shown?.metronome == false }
+                onNodeWithText("Warm up").performClick()
+                waitUntil(timeoutMillis = 5000) { phone.remote.shown?.title == "Fight Song" && phone.remote.shown?.bpm == 132 }
+                assertTrue(opened.any { it.contains("Fight Song") })
+                onNodeWithText("Change buttons").performClick()
+                onNodeWithText("Add a button").performClick()
+                waitForIdle()
+                shoot("remote-add", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                phone.remote.disconnect()
+            }
+        } finally {
+            stand.remote.stopHosting()
         }
     }
 }

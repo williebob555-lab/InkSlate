@@ -83,11 +83,82 @@ internal object Recording {
     /** The strip's play button and the pedal: the current song's first recording, played or paused. */
     fun toggle(state: SheetsState) {
         val p = playerFor(state) ?: return
-        if (p.playing) { p.pause(); playing = false; return }
+        if (p.playing || Click.purpose == Click.Purpose.PLAYBACK) { pause(state); return }
         val track = state.current?.audio?.firstOrNull() ?: return
+        val song = state.current
         Thread {
-            if (load(state, track)) { p.play(); playing = true }
+            if (load(state, track)) state.platform.onMain { play(state, track, song) }
         }.apply { isDaemon = true; start() }
+    }
+
+    /** The metronome as it was before a recording set it to its own tempo, to put back after. */
+    private var before: com.inksheets.core.Metronome.Settings? = null
+
+    /**
+     * Play [track] (loaded) from where it is: counted in first when a count-in is set, and with the
+     * click under it, in time with it, when that is turned on. The click's tempo is the one the
+     * recording was made at, else the song's, else the metronome's - all scaled by the speed.
+     */
+    fun play(state: SheetsState, track: AudioTrack, song: Song?) {
+        val p = playerFor(state) ?: return
+        val click = Click.withPlayback(state)
+        val e = Click.engine(state)
+        if (e == null || (!click && Click.countInBars(state) == 0)) { p.play(); playing = true; return }
+        before = before ?: e.settings
+        val base = track.clickBpm ?: song?.tempo?.toDouble() ?: e.settings.bpm
+        e.settings = e.settings.copy(bpm = (base * track.speed).coerceIn(20.0, 300.0), beatsPerBar = track.beatsPerBar ?: e.settings.beatsPerBar)
+        SharedMetronome.bpm = e.settings.bpm
+        val first = track.firstBeatMs ?: 0L
+        val phase = (p.positionMs - first) / track.speed
+        playing = true
+        Click.countInThen(state, Click.Purpose.PLAYBACK, keepGoing = click, phaseMs = phase) {
+            Thread({ p.play() }, "play-after-count").apply { isDaemon = true; start() }
+        }
+        if (click) follow(state, p, e, track)
+    }
+
+    fun pause(state: SheetsState) {
+        player?.pause()
+        playing = false
+        if (Click.purpose == Click.Purpose.PLAYBACK) Click.stop(state)
+        before?.let { b -> Click.engine(state)?.settings = b; SharedMetronome.bpm = b.bpm }
+        before = null
+    }
+
+    /**
+     * Keep the click in time with the recording while it plays: a loop going round, a seek, or the
+     * player catching up after a stall, and the click is put where the music is. When the recording
+     * ends, the click stops too.
+     */
+    private fun follow(state: SheetsState, p: AudioPlayer, e: com.inksheets.core.Metronome, track: AudioTrack) {
+        val first = track.firstBeatMs ?: 0L
+        Thread({
+            var last = -1L
+            var lastAt = 0L
+            var began = false
+            var quietSince = 0L
+            while (Click.live == Click.Purpose.PLAYBACK) {
+                Thread.sleep(50)
+                val now = System.currentTimeMillis()
+                if (!p.playing) {
+                    last = -1
+                    if (began) {
+                        if (quietSince == 0L) quietSince = now
+                        if (now - quietSince > 600) { state.platform.onMain { if (playing) pause(state) }; return@Thread }
+                    }
+                    continue
+                }
+                began = true
+                quietSince = 0L
+                val pos = p.positionMs
+                if (last >= 0) {
+                    val expected = last + (now - lastAt) * track.speed
+                    if (kotlin.math.abs(pos - expected) > 300) e.phaseTo((pos - first) / track.speed)
+                }
+                last = pos
+                lastAt = now
+            }
+        }, "click-follow").apply { isDaemon = true; start() }
     }
 }
 
@@ -108,7 +179,22 @@ internal object SelfRecorder {
         val file = java.io.File(root, "Recordings/${folderName(song.title)}/$stamp.wav")
         file.parentFile?.mkdirs()
         val w = com.inksheets.core.WavWriter(file, mic.sampleRate)
-        val started = mic.start { chunk ->
+        // Counted in first when a count-in is set; the count-in itself is left out of the take, so
+        // the recording starts on the first beat - and a click played with it later lines up.
+        val e = Click.engine(state)
+        val bars = if (e != null) Click.countInBars(state) else 0
+        val clickOn = e != null && Click.withRecording(state)
+        clicked = e != null && (bars > 0 || clickOn)
+        bpm = e?.settings?.bpm
+        beatsPerBar = e?.settings?.beatsPerBar
+        var skip = if (e != null && bars > 0) (mic.sampleRate * e.msFor(bars) / 1000.0).toLong() else 0L
+        val started = mic.start { whole ->
+            var chunk = whole
+            if (skip > 0) {
+                if (whole.size <= skip) { skip -= whole.size; return@start }
+                chunk = whole.copyOfRange(skip.toInt(), whole.size)
+                skip = 0
+            }
             w.write(chunk)
             val s = w.seconds.toInt()
             if (s != seconds) state.platform.onMain { seconds = s }
@@ -122,12 +208,18 @@ internal object SelfRecorder {
         this.song = song
         seconds = 0
         recording = true
+        if (clicked) Click.countInThen(state, Click.Purpose.RECORD, keepGoing = clickOn) { }
         return true
     }
+
+    private var clicked = false
+    private var bpm: Double? = null
+    private var beatsPerBar: Int? = null
 
     /** Stop, and pair the take with the song, labelled with when it was made. */
     fun stop(state: SheetsState) {
         state.platform.microphone?.stop()
+        if (Click.purpose == Click.Purpose.RECORD) Click.stop(state)
         val w = writer ?: return
         writer = null
         recording = false
@@ -136,7 +228,10 @@ internal object SelfRecorder {
         val rel = state.relative(w.file) ?: return
         val label = "Me, " + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm"))
         val current = state.library?.song(s.id) ?: return
-        state.change { editSong(s.id) { audio = current.audio + AudioTrack(file = rel, label = label) } }
+        // Made to a click: its tempo kept, so a click played with it later is in time.
+        val track = if (clicked) AudioTrack(file = rel, label = label, clickBpm = bpm, beatsPerBar = beatsPerBar, firstBeatMs = 0)
+            else AudioTrack(file = rel, label = label)
+        state.change { editSong(s.id) { audio = current.audio + track } }
     }
 }
 
@@ -212,6 +307,22 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                     Text("Pair a recording")
                 }
             }
+            if (state.platform.microphone != null && state.platform.audioOut != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { Click.setWithRecording(state, !Click.withRecording(state)) }) {
+                    Text("Click while recording", style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
+                    androidx.compose.material3.Switch(checked = Click.withRecording(state), onCheckedChange = { Click.setWithRecording(state, it) })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Count in", style = MaterialTheme.typography.labelSmall)
+                    listOf(0 to "Off", 1 to "1 bar", 2 to "2 bars").forEach { (n, label) ->
+                        FilterChip(selected = Click.countInBars(state) == n, onClick = { Click.setCountInBars(state, n) }, label = { Text(label) })
+                    }
+                    Text("\u2669 = ${SharedMetronome.bpm.roundToInt()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (SelfRecorder.recording && Click.counting > 0) {
+                    Text("Counting in... ${Click.counting}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleMedium)
+                }
+            }
             when {
                 state.platform.microphone == null -> Hint("This device has no microphone to record with.")
                 couldNotRecord -> Hint("The microphone could not be opened. Is it allowed for InkSheets?", error = true)
@@ -266,7 +377,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                                     onClick = {
                                         menu = false
                                         if (Recording.loadedFile == t.file) {
-                                            Recording.player?.pause(); Recording.playing = false; Recording.loadedFile = null
+                                            Recording.pause(state); Recording.loadedFile = null
                                         }
                                         save(tracks.filterIndexed { j, _ -> j != i })
                                         selected = selected.coerceAtMost(tracks.lastIndex).coerceAtLeast(0)
@@ -278,7 +389,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                 }
                 tracks.getOrNull(selected)?.let { track ->
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    TrackControls(state, track) { change ->
+                    TrackControls(state, song.id, track) { change ->
                         val at = tracks.indexOfFirst { it.file == track.file }.takeIf { it >= 0 } ?: return@TrackControls
                         val t = change(track)
                         save(tracks.toMutableList().also { it[at] = t })
@@ -311,7 +422,7 @@ private fun Hint(text: String, error: Boolean = false) {
 
 /** The picked recording: play, loop a passage, slow it down, shift its pitch. */
 @Composable
-private fun TrackControls(state: SheetsState, track: AudioTrack, update: ((AudioTrack) -> AudioTrack) -> Unit) {
+private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack, update: ((AudioTrack) -> AudioTrack) -> Unit) {
     val player = remember { Recording.playerFor(state) }
     var loaded by remember(track.file) { mutableStateOf(Recording.loadedFile == track.file) }
     var failed by remember(track.file) { mutableStateOf(false) }
@@ -329,7 +440,8 @@ private fun TrackControls(state: SheetsState, track: AudioTrack, update: ((Audio
         while (loaded) {
             position = player?.positionMs ?: 0
             duration = player?.durationMs ?: 0
-            Recording.playing = player?.playing == true
+            // Counting in, it is not playing yet, but it is on its way.
+            if (Click.purpose != Click.Purpose.PLAYBACK) Recording.playing = player?.playing == true
             delay(100)
         }
     }
@@ -346,8 +458,7 @@ private fun TrackControls(state: SheetsState, track: AudioTrack, update: ((Audio
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             FilledIconButton(onClick = {
-                if (player.playing) player.pause() else player.play()
-                Recording.playing = player.playing
+                if (Recording.playing) Recording.pause(state) else Recording.play(state, track, state.library?.song(songId))
             }, enabled = loaded) {
                 Icon(if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause")
             }
@@ -379,6 +490,7 @@ private fun TrackControls(state: SheetsState, track: AudioTrack, update: ((Audio
             valueRange = 0.5f..1.25f,
             steps = 14
         )
+        ClickWithTrack(state, songId, track, position, update)
         Text("Pitch ${if (track.pitch > 0) "+" else ""}${track.pitch} semitones", style = MaterialTheme.typography.labelMedium)
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { update { it.copy(pitch = (it.pitch - 1).coerceAtLeast(-12)) } }) { Text("−1") }
@@ -450,4 +562,41 @@ internal fun importRecording(root: File, song: Song, from: File): File {
     while (target.exists()) target = File(dir, "$base ($n).${from.extension}").also { n++ }
     from.copyTo(target)
     return target
+}
+
+/**
+ * The click under a recording: on or off, the count-in before it, and the tempo and first beat it
+ * keeps to - read from how it was made, else the song's tempo, and set here for any other.
+ */
+@Composable
+private fun ClickWithTrack(state: SheetsState, songId: String, track: AudioTrack, position: Long, update: ((AudioTrack) -> AudioTrack) -> Unit) {
+    val songTempo = state.library?.song(songId)?.tempo
+    val bpm = track.clickBpm ?: songTempo?.toDouble()
+    Column(Modifier.padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { Click.setWithPlayback(state, !Click.withPlayback(state)) }) {
+            Column(Modifier.weight(1f)) {
+                Text("Click with the recording", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    (bpm?.let { "\u2669 = ${it.roundToInt()}" + if (track.clickBpm == null) " (the song's tempo)" else "" } ?: "\u2669 = the metronome's tempo") +
+                        (track.firstBeatMs?.takeIf { it > 0 }?.let { "  \u00B7  first beat at ${clock(it)}" } ?: ""),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            androidx.compose.material3.Switch(checked = Click.withPlayback(state), onCheckedChange = { Click.setWithPlayback(state, it) })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Tempo", style = MaterialTheme.typography.labelSmall)
+            TextButton(onClick = { update { it.copy(clickBpm = ((bpm ?: SharedMetronome.bpm) - 1).coerceAtLeast(20.0)) } }) { Text("\u22121") }
+            Text("${(bpm ?: SharedMetronome.bpm).roundToInt()}", style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = { update { it.copy(clickBpm = ((bpm ?: SharedMetronome.bpm) + 1).coerceAtMost(300.0)) } }) { Text("+1") }
+            TextButton(onClick = { update { it.copy(firstBeatMs = position) } }) { Text("First beat here") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Count in", style = MaterialTheme.typography.labelSmall)
+            listOf(0 to "Off", 1 to "1 bar", 2 to "2 bars").forEach { (n, label) ->
+                FilterChip(selected = Click.countInBars(state) == n, onClick = { Click.setCountInBars(state, n) }, label = { Text(label) })
+            }
+        }
+    }
 }
