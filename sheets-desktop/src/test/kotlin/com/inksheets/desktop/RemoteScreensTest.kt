@@ -277,6 +277,57 @@ class RemoteScreensTest {
     }
 
     @Test
+    fun `the touchpad pinches and drags the other device's page with two fingers, and goes when they lift`() {
+        val stand = library(tmp.newFolder("Music"))
+        val phone = SheetsState(FakePlatform(tmp.newFolder("PhoneMusic"), deviceName = "Phone"))
+        val moves = java.util.Collections.synchronizedList(ArrayList<FloatArray>())
+        Perform.viewBy = { dx, dy, zoom, fx, fy -> moves += floatArrayOf(dx, dy, zoom, fx, fy) }
+        assertTrue(stand.remote.startHosting())
+        try {
+            val link = stand.remote.pairLink!!.replace(Regex("hosts=[^&]*"), "hosts=127.0.0.1")
+            phone.remote.saveDeck(listOf(com.inksheets.core.RemoteButton(com.inksheets.core.RemoteButton.TOUCHPAD)))
+            phone.remote.remoteOpen = true
+            runDesktopComposeUiTest(width = 390, height = 844) {
+                setContent { MaterialTheme { Surface { SheetsHome(phone, onOpenSettings = {}) } } }
+                phone.remote.connect(com.inksheets.core.RemoteLink.parsePair(link)!!)
+                waitUntil(timeoutMillis = 5000) { phone.remote.connected }
+                onNodeWithText("Pan and zoom").performClick()
+                waitForIdle()
+                val pad = onNodeWithText("Two fingers: move and zoom the page")
+                pad.assertExists()
+                shoot("remote-touchpad", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                // Fingers apart (zoom in), then both down the pad together (pan).
+                pad.performTouchInput {
+                    val c = center
+                    down(0, c + androidx.compose.ui.geometry.Offset(-20f, 0f))
+                    down(1, c + androidx.compose.ui.geometry.Offset(20f, 0f))
+                    for (i in 1..10) {
+                        moveTo(0, c + androidx.compose.ui.geometry.Offset(-20f - i * 8f, 0f), delayMillis = 40)
+                        moveTo(1, c + androidx.compose.ui.geometry.Offset(20f + i * 8f, 0f), delayMillis = 40)
+                    }
+                    for (i in 1..10) {
+                        moveTo(0, c + androidx.compose.ui.geometry.Offset(-100f, i * 6f), delayMillis = 40)
+                        moveTo(1, c + androidx.compose.ui.geometry.Offset(100f, i * 6f), delayMillis = 40)
+                    }
+                    up(0); up(1)
+                }
+                waitForIdle()
+                onNodeWithText("Two fingers: move and zoom the page").assertDoesNotExist()
+                waitUntil(timeoutMillis = 3000) { moves.isNotEmpty() && moves.fold(1f) { z, m -> z * m[2] } > 2f }
+                val zoom = moves.fold(1f) { z, m -> z * m[2] }
+                val down = moves.sumOf { it[1].toDouble() }
+                println("touchpad: ${moves.size} moves, zoom x$zoom, down ${"%.3f".format(down)} of the view")
+                assertTrue("zoomed in: $zoom", zoom > 2f)
+                assertTrue("moved down: $down", down > 0.1)
+                phone.remote.disconnect()
+            }
+        } finally {
+            stand.remote.stopHosting()
+            Perform.viewBy = null
+        }
+    }
+
+    @Test
     fun `a remote pairs with a device, shows where it is and turns its pages`() {
         val stand = library(tmp.newFolder("Music"))
         val phoneRoot = tmp.newFolder("PhoneMusic")

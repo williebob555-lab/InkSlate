@@ -1456,6 +1456,13 @@ fun EditorScreen(
         com.inkslate.core.Perform.jumpTo = { path, target ->
             if (path == file.absolutePath) goToPage(target)
         }
+        // A remote's touchpad: as two fingers on this screen would move it.
+        com.inkslate.core.Perform.viewBy = { dx, dy, zoom, fx, fy ->
+            val size = viewport.viewSize
+            val side = minOf(size.width, size.height)
+            viewport.panBy(dx * side, dy * side, freely = true)
+            if (zoom != 1f) viewport.zoomBy(zoom, androidx.compose.ui.geometry.Offset(fx * size.width, fy * size.height))
+        }
         // A leading tablet's marks, for a player on the same part - see Perform.mergeInk.
         com.inkslate.core.Perform.inkOf = { path -> if (path == file.absolutePath) currentInk() else null }
         com.inkslate.core.Perform.mergeInk = { path, incoming ->

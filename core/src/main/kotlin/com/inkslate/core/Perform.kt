@@ -106,6 +106,14 @@ object Perform {
 
     // ---- telling the app where the reader is ---------------------------------------
 
+    /**
+     * Move and zoom the document in front as two fingers would - a remote's touchpad: moved by
+     * fractions of the view's shorter side, zoomed by a factor about a point given as fractions
+     * of the view. Set by whichever editor has focus; on the UI thread.
+     */
+    @Volatile
+    var viewBy: ((dx: Float, dy: Float, zoom: Float, fx: Float, fy: Float) -> Unit)? = null
+
     /** Show a page (0-based) of the document in front; set by whichever editor has focus. */
     @Volatile
     var jumpTo: ((path: String, page: Int) -> Unit)? = null

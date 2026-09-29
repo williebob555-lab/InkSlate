@@ -96,6 +96,10 @@ import com.inksheets.core.RemoteLink
 import com.inksheets.core.RemoteScanner
 import com.inksheets.core.RemoteBluetooth
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.alpha
@@ -341,6 +345,7 @@ class RemoteControl(private val state: SheetsState) {
                 }
             }
             RemoteButton.FIT -> Perform.recentre?.invoke()
+            RemoteButton.VIEW -> Perform.viewBy?.invoke(c.dx.toFloat(), c.dy.toFloat(), c.zoom.toFloat(), c.fx.toFloat(), c.fy.toFloat())
             RemoteButton.HOME -> Perform.showHome?.invoke()
             RemoteButton.LEADER -> state.companion.goToLeader()
             RemoteButton.LEAD -> if (state.companion.leading) state.companion.stopLeading() else state.companion.lead()
@@ -457,6 +462,15 @@ class RemoteControl(private val state: SheetsState) {
                 }, PRESS_ANSWER_MS)
             }
         }, "remote-send").apply { isDaemon = true; start() }
+    }
+
+    /** One thread for a stream of small commands (the touchpad), so they arrive in the order made. */
+    private val streamer = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "remote-stream").apply { isDaemon = true } }
+
+    /** A command sent as part of a stream: no press shown, not answered. */
+    fun stream(command: RemoteLink.Command) {
+        val c = client ?: return
+        streamer.execute { c.send(command) }
     }
 
     /** This remote's own id, kept: the device counts it once however often it connects. */
@@ -712,6 +726,7 @@ private fun RemoteDeck(state: SheetsState) {
     var changing by remember { mutableStateOf<Int?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
     var typing by remember { mutableStateOf(false) }
+    var touchpad by remember { mutableStateOf(false) }
     val taps = remember { mutableStateListOf<Long>() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -725,6 +740,7 @@ private fun RemoteDeck(state: SheetsState) {
         when (b.kind) {
             RemoteButton.SONGS, RemoteButton.SET, RemoteButton.PARTS, RemoteButton.PROFILES, RemoteButton.BOOKMARKS -> picking = b.kind
             RemoteButton.MESSAGE_TYPE -> typing = true
+            RemoteButton.TOUCHPAD -> touchpad = true
             RemoteButton.TAP -> {
                 taps += System.currentTimeMillis()
                 while (taps.size > 12) taps.removeAt(0)
@@ -958,6 +974,11 @@ private fun RemoteDeck(state: SheetsState) {
             }
         }
 
+        // The touchpad: over everything, until the fingers leave it or it is tapped.
+        if (touchpad) Touchpad(onMove = { dx, dy, zoom, fx, fy ->
+            remote.stream(RemoteLink.Command(action = RemoteButton.VIEW, dx = dx, dy = dy, zoom = zoom, fx = fx, fy = fy))
+        }, onDone = { touchpad = false })
+
         // The button under the finger while it is dragged.
         drag?.let { (b, _) ->
             val d = androidx.compose.ui.platform.LocalDensity.current
@@ -1083,6 +1104,7 @@ private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLi
         RemoteButton.STRIP -> if (shown?.stripOpen == true) "Hide toolbar" else "Toolbar"
         RemoteButton.TOOLS -> if (shown?.toolsShown == true) "Put tools away" else "All tools"
         RemoteButton.FIT -> "Fit the page"
+        RemoteButton.TOUCHPAD -> "Pan and zoom"
         RemoteButton.HOME -> "Home"
         RemoteButton.LEADER -> "Back to the leader"
         RemoteButton.LEAD -> if (shown?.leading == true) "Stop leading" else "Lead"
@@ -1114,6 +1136,7 @@ private fun iconFor(b: RemoteButton, shown: RemoteLink.State?): ImageVector = wh
     RemoteButton.STRIP -> Icons.Default.ViewSidebar
     RemoteButton.TOOLS -> Icons.Default.Construction
     RemoteButton.FIT -> Icons.Default.CenterFocusStrong
+    RemoteButton.TOUCHPAD -> Icons.Default.PanTool
     RemoteButton.HOME -> Icons.Default.Home
     RemoteButton.LEADER, RemoteButton.LEAD -> Icons.Default.Groups
     RemoteButton.MACRO -> Icons.Default.AutoAwesome
@@ -1186,6 +1209,87 @@ private fun DeckButton(
                 tint = ink.copy(alpha = 0.5f),
                 modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp)
             )
+        }
+    }
+}
+
+/**
+ * A big square for moving the other device's page: two fingers drag and pinch it, one finger drags.
+ * Moves go out a few dozen times a second, as fractions of the square, so the page follows the
+ * fingers whatever the two screens' sizes. Letting go, or a tap, puts it away.
+ */
+@Composable
+private fun Touchpad(onMove: (dx: Double, dy: Double, zoom: Double, fx: Double, fy: Double) -> Unit, onDone: () -> Unit) {
+    val move by androidx.compose.runtime.rememberUpdatedState(onMove)
+    val done by androidx.compose.runtime.rememberUpdatedState(onDone)
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))
+            .pointerInput(Unit) { detectTapGestures { done() } },
+        contentAlignment = Alignment.Center
+    ) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
+            val side = minOf(maxWidth, maxHeight)
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                tonalElevation = 6.dp,
+                modifier = Modifier.size(side).pointerInput(Unit) {
+                    val w = size.width.toFloat()
+                    val h = size.height.toFloat()
+                    val slop = viewConfiguration.touchSlop
+                    awaitEachGesture {
+                        val first = awaitFirstDown(requireUnconsumed = false)
+                        var moved = false
+                        var lastC: androidx.compose.ui.geometry.Offset? = null
+                        var lastSpan = 0f
+                        var lastCount = 0
+                        var dx = 0.0; var dy = 0.0; var zoom = 1.0; var fx = 0.5; var fy = 0.5
+                        var sentAt = 0L
+                        fun flush(force: Boolean) {
+                            val now = System.currentTimeMillis()
+                            if ((dx != 0.0 || dy != 0.0 || zoom != 1.0) && (force || now - sentAt >= 30)) {
+                                move(dx, dy, zoom, fx, fy)
+                                dx = 0.0; dy = 0.0; zoom = 1.0; sentAt = now
+                            }
+                        }
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val down = event.changes.filter { it.pressed }
+                            if (down.isEmpty()) break
+                            val c = down.fold(androidx.compose.ui.geometry.Offset.Zero) { a, p -> a + p.position } / down.size.toFloat()
+                            val span = if (down.size > 1) down.map { (it.position - c).getDistance() }.average().toFloat() else 0f
+                            // A finger added or lifted: start measuring again from here, no jump.
+                            if (down.size != lastCount || lastC == null) {
+                                lastC = c; lastSpan = span; lastCount = down.size
+                            } else {
+                                val step = c - lastC!!
+                                if (!moved && ((c - first.position).getDistance() > slop || down.size > 1 && kotlin.math.abs(span - lastSpan) > 2f)) moved = true
+                                if (moved) {
+                                    dx += step.x / minOf(w, h)
+                                    dy += step.y / minOf(w, h)
+                                    if (down.size > 1 && lastSpan > 8f && span > 8f) zoom *= (span / lastSpan).toDouble()
+                                    fx = (c.x / w).toDouble().coerceIn(0.0, 1.0)
+                                    fy = (c.y / h).toDouble().coerceIn(0.0, 1.0)
+                                    flush(false)
+                                }
+                                lastC = c; lastSpan = span
+                            }
+                            event.changes.forEach { it.consume() }
+                        }
+                        flush(true)
+                        // Let go after moving, or tapped: either way, it is done.
+                        done()
+                    }
+                }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.PanTool, null, modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Two fingers: move and zoom the page", style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center)
+                        Text("Let go or tap to close", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
         }
     }
 }
@@ -1401,6 +1505,7 @@ private fun offers(shown: RemoteLink.State?): List<Offer> {
         k(view, "All tools and the toolbar (show/hide)", RemoteButton.TOOLS),
         a(view, PerformAction.FULLSCREEN, "Only the tools (show/hide)"),
         k(view, "Fit the page to the screen", RemoteButton.FIT),
+        k(view, "Pan and zoom (a touchpad for two fingers)", RemoteButton.TOUCHPAD),
         k(band, "Lead (start/stop)", RemoteButton.LEAD),
         k(band, "Back to the leader", RemoteButton.LEADER),
         k(band, "A message you write now", RemoteButton.MESSAGE),

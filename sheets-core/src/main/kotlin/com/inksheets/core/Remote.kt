@@ -101,6 +101,9 @@ data class RemoteButton(
         const val LEADER = "leader"
         const val LEAD = "lead"
         const val MACRO = "macro"
+        /** A square to pan and zoom the page on with two fingers; it sends [VIEW] commands. */
+        const val TOUCHPAD = "touchpad"
+        const val VIEW = "view"
 
         fun action(name: String) = RemoteButton(ACTION, name)
 
@@ -285,7 +288,16 @@ object RemoteLink {
         val color: Int? = null,
         val urgent: Boolean = false,
         /** Numbers each press, so the device can say which it got ([Line.Got]). 0 from an old remote. */
-        val seq: Int = 0
+        val seq: Int = 0,
+        /**
+         * For [RemoteButton.VIEW], the touchpad: moved by [dx], [dy] (fractions of the view's
+         * shorter side), zoomed by [zoom] about ([fx], [fy]) (fractions of the view).
+         */
+        val dx: Double = 0.0,
+        val dy: Double = 0.0,
+        val zoom: Double = 1.0,
+        val fx: Double = 0.5,
+        val fy: Double = 0.5
     )
 
     /**
@@ -587,8 +599,10 @@ class RemoteHost(
                         }
                         is RemoteLink.Line.Do -> if (c.admitted) {
                             val cmd = got.command
-                            if (cmd.seq != 0) c.queue.offerFirst(RemoteLink.encode(RemoteLink.Got(seq = cmd.seq)))
-                            onLog?.invoke("Remote ${c.name}: ${cmd.action}" + listOfNotNull(cmd.id, cmd.index, cmd.value).joinToString("") { " $it" })
+                            // The touchpad sends a stream of these: not answered, not logged.
+                            val stream = cmd.action == RemoteButton.VIEW
+                            if (cmd.seq != 0 && !stream) c.queue.offerFirst(RemoteLink.encode(RemoteLink.Got(seq = cmd.seq)))
+                            if (!stream) onLog?.invoke("Remote ${c.name}: ${cmd.action}" + listOfNotNull(cmd.id, cmd.index, cmd.value).joinToString("") { " $it" })
                             onCommand?.invoke(cmd)
                         }
                         else -> Unit

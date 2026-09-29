@@ -2641,6 +2641,24 @@ class DrawingView @JvmOverloads constructor(
     /** The eraser's reach for the gesture in progress, on the same terms. */
     private var liveEraser: Float = 8f
 
+    /**
+     * Moved and zoomed from outside, as two fingers would move it - a remote's touchpad. Moves are
+     * fractions of the view's shorter side (so a square pad maps the same both ways); [factor]
+     * zooms about ([fx], [fy]), fractions of the view.
+     */
+    fun moveBy(dx: Float, dy: Float, factor: Float, fx: Float, fy: Float) {
+        val side = minOf(width, height).toFloat()
+        pageToView.postTranslate(dx * side, dy * side)
+        if (factor != 1f) {
+            val cur = currentScale()
+            val f = (cur * factor).coerceIn(minScale, maxScale) / cur
+            pageToView.postScale(f, f, fx * width, fy * height)
+        }
+        scheduleDetail()
+        clampTranslation(); syncInverse(); invalidate()
+        onTransformChanged?.invoke(); reportVisiblePages()
+    }
+
     fun zoomBy(factor: Float) {
         val s = currentScale()
         val f = (s * factor).coerceIn(minScale, maxScale) / s

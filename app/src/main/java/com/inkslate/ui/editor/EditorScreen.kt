@@ -1592,6 +1592,7 @@ fun EditorScreen(
         com.inkslate.core.Perform.jumpTo = { path, target ->
             if (path == file.absolutePath) drawingView.value?.goToPage(target)
         }
+        com.inkslate.core.Perform.viewBy = { dx, dy, zoom, fx, fy -> drawingView.value?.moveBy(dx, dy, zoom, fx, fy) }
         // A leading tablet's marks, for a player on the same part - see Perform.mergeInk.
         com.inkslate.core.Perform.inkOf = { path ->
             if (path != file.absolutePath || restructuring) null else { syncPage(); doc?.ink }
