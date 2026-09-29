@@ -55,7 +55,7 @@ class RemoteTest {
             waitFor { host.remotes == 1 }
 
             // A page turn, and a song picked from the list.
-            waitFor { remote.send(RemoteLink.Command(action = "NEXT_PAGE")) }
+            waitFor { remote.send(RemoteLink.Command(action = "NEXT_PAGE")) != 0 }
             assertEquals("NEXT_PAGE", commands.poll(3, TimeUnit.SECONDS)!!.action)
             remote.send(RemoteLink.Command(action = RemoteLink.SONG, id = "s1"))
             assertEquals("s1", commands.poll(3, TimeUnit.SECONDS)!!.id)

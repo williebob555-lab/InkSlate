@@ -77,11 +77,23 @@ object NetAddresses {
     fun mine(): List<String> = runCatching {
         NetworkInterface.getNetworkInterfaces().toList()
             .filter { runCatching { it.isUp && !it.isLoopback }.getOrDefault(false) }
-            .flatMap { nic -> nic.inetAddresses.toList().filterIsInstance<Inet4Address>().map { it.hostAddress } }
-            .filter { !it.startsWith("169.254.") }
-            .distinct()
-            .sortedBy { if (isTailnet(it)) 1 else 0 }
+            .flatMap { nic ->
+                val virtual = isVirtual(nic.name + " " + (runCatching { nic.displayName }.getOrNull() ?: ""))
+                nic.inetAddresses.toList().filterIsInstance<Inet4Address>().map { it.hostAddress to virtual }
+            }
+            .filter { !it.first.startsWith("169.254.") }
+            .distinctBy { it.first }
+            // A virtual machine's or container's network (Docker, libvirt, Hyper-V, WSL) is on
+            // this computer only: after the real ones, so another device tries those first.
+            .sortedBy { (address, virtual) -> if (isTailnet(address)) 2 else if (virtual) 1 else 0 }
+            .map { it.first }
     }.getOrDefault(emptyList())
+
+    fun isVirtual(nicName: String): Boolean {
+        val n = nicName.lowercase()
+        return listOf("docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "virtualbox", "hyper-v", "vethernet", "wsl", "vmware", "podman", "lxc", "lxd")
+            .any { it in n }
+    }
 
     fun isTailnet(address: String): Boolean {
         val parts = address.split('.').mapNotNull { it.toIntOrNull() }

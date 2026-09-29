@@ -154,6 +154,15 @@ private fun ui() = application {
             // there is somewhere to look up what the shortcuts are.
             if (event.type != KeyEventType.KeyDown) {
                 false
+            } else if (event.isCtrlPressed && event.isShiftPressed && event.key in SIZE_KEYS) {
+                // Everything bigger or smaller, anywhere - the size in Settings.
+                val now = UiScale.current(UiScale.javaScale())
+                when (event.key) {
+                    Key.Equals, Key.Plus, Key.NumPadAdd -> UiScale.step(now, 1)
+                    Key.Minus, Key.NumPadSubtract -> UiScale.step(now, -1)
+                    else -> UiScale.choose(null)
+                }
+                true
             } else {
                 val stroke = KeyStroke(
                     event.key.keyCode,
@@ -228,7 +237,7 @@ private fun ui() = application {
         }
 
         InterceptPlatformTextInput(keyboard) {
-            InkSlateTheme {
+            UiScaled { InkSlateTheme {
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     // A frameless app shown in an ordinary window gets a slim title bar of its own
                     // to move it by, with the usual three buttons, and edges to size it by.
@@ -244,10 +253,13 @@ private fun ui() = application {
                         AppRoot(shortcuts, navigation)
                     }
                 }
-            }
+            } }
         }
     }
 }
+
+/** Ctrl+Shift with these: everything bigger, smaller, or back to the screen's size. */
+private val SIZE_KEYS = setOf(Key.Equals, Key.Plus, Key.NumPadAdd, Key.Minus, Key.NumPadSubtract, Key.Zero, Key.NumPad0)
 
 /**
  * Actions the window's key handler can invoke, filled in by whichever screen is on top.

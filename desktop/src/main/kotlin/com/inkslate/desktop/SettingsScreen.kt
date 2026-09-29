@@ -1,5 +1,7 @@
 package com.inkslate.desktop
 
+import kotlin.math.roundToInt
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import com.inkslate.core.InputAction
@@ -82,6 +85,8 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
         }
     ) { pad ->
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) {
+            SizeSection()
+            HorizontalDivider(Modifier.padding(top = 14.dp))
             AppFlavor.settingsSection?.let { it(); HorizontalDivider(Modifier.padding(top = 14.dp)) }
             SavingSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
@@ -310,6 +315,37 @@ private fun SwitchRow(
         }
         Switch(checked = checked, onCheckedChange = onChange)
     }
+}
+
+/** How big everything is drawn: the screen's own scale, or bigger or smaller. */
+@Composable
+private fun SizeSection() {
+    val javaScale = remember { UiScale.javaScale() }
+    val now = UiScale.current(javaScale)
+    val auto = UiScale.automatic(javaScale)
+    fun pct(f: Float) = "${(f * 100).roundToInt()}%"
+    SectionHeader("Size on screen")
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            pct(now) + if (UiScale.chosen == null) " (automatic)" else "",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f)
+        )
+        OutlinedButton(onClick = { UiScale.step(now, -1) }, enabled = now > UiScale.MIN + 0.001f) { Text("Smaller") }
+        OutlinedButton(onClick = { UiScale.step(now, 1) }, enabled = now < UiScale.MAX - 0.001f) { Text("Bigger") }
+        if (UiScale.chosen != null) TextButton(onClick = { UiScale.choose(null) }) { Text("Automatic (${pct(auto)})") }
+    }
+    Text(
+        "Ctrl+Shift+Plus and Ctrl+Shift+Minus change it anywhere; Ctrl+Shift+0 goes back to automatic." +
+            if (AppDirs.isLinux) " Automatic is your desktop's scale" + (UiScale.desktopScale?.let { ", ${pct(it.toFloat())} (from ${UiScale.source})." } ?: " - it could not be read here, so choose one.") else "",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 16.dp)
+    )
 }
 
 @Composable

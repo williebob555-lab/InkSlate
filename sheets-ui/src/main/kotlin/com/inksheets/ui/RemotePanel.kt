@@ -124,7 +124,11 @@ class RemoteControl(private val state: SheetsState) {
         if (host != null) return true
         val name = state.platform.deviceName
         val h = RemoteHost(name, key)
-        h.onCommand = { c -> state.platform.onMain { perform(c) } }
+        h.onCommand = { c ->
+            state.platform.onMain {
+                runCatching { perform(c) }.onFailure { state.platform.log("Remote: ${c.action} failed - ${it.message}") }
+            }
+        }
         h.onLog = { line -> state.platform.log("Remote: $line") }
         h.onRemotes = { n -> state.platform.onMain { remotes = n; publish() } }
         if (!h.start()) return false
@@ -322,14 +326,17 @@ class RemoteControl(private val state: SheetsState) {
 
     fun connect(t: RemoteLink.Target) {
         client?.stop()
+        answered.clear()
         refused = null
         shown = null
         hostLibrary = null
         target = t
         state.platform.setPref(K_LAST, RemoteLink.pairLink(t.name, t.hosts, t.key, t.port))
-        val c = RemoteClient(state.platform.deviceName) { line ->
+        val c = RemoteClient(state.platform.deviceName, myId) { line ->
+            if (line is RemoteLink.Line.Got) answered += line.seq
             state.platform.onMain {
                 when (line) {
+                    is RemoteLink.Line.Got -> lastPress?.takeIf { it.seq == line.seq }?.let { lastPress = it.copy(got = true) }
                     is RemoteLink.Line.Shows -> shown = line.state
                     is RemoteLink.Line.Songs -> hostLibrary = line.library
                     RemoteLink.Line.Refused -> {
@@ -343,6 +350,7 @@ class RemoteControl(private val state: SheetsState) {
             }
         }
         c.onConnected = { on -> state.platform.onMain { connected = on } }
+        c.onLog = { line -> state.platform.log("Remote: $line") }
         client = c
         c.start(t)
         state.platform.log("Remote: controlling ${t.name}")
@@ -355,10 +363,39 @@ class RemoteControl(private val state: SheetsState) {
         shown = null
     }
 
-    fun send(command: RemoteLink.Command) {
-        val c = client ?: return
-        Thread({ c.send(command) }, "remote-send").apply { isDaemon = true; start() }
+    /** The last press on this remote: [got] null while waiting, then whether the device got it. */
+    data class Press(val name: String, val seq: Int, val got: Boolean?, val unanswered: Boolean = false)
+
+    var lastPress by mutableStateOf<Press?>(null)
+        private set
+
+    /** Presses the device has said it got. */
+    private val answered: MutableSet<Int> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+
+    fun send(command: RemoteLink.Command, name: String = command.action) {
+        val c = client ?: run { lastPress = Press(name, 0, false); return }
+        Thread({
+            val seq = c.send(command)
+            state.platform.onMain {
+                val press = Press(name, seq, if (seq == 0) false else if (seq in answered) true else null)
+                lastPress = press
+                if (seq != 0) java.util.Timer("remote-press", true).schedule(object : java.util.TimerTask() {
+                    override fun run() = state.platform.onMain {
+                        if (lastPress?.seq != seq || lastPress?.got != null) return@onMain
+                        val got = seq in answered
+                        // A device on an older version never answers: it was sent, and that is all that is known.
+                        if (!got && answered.isEmpty() && shown != null) { lastPress = lastPress?.copy(unanswered = true); return@onMain }
+                        lastPress = lastPress?.copy(got = got)
+                        // Sent but never answered: this connection carries nothing back. A new one.
+                        if (!got) { state.platform.log("Remote: $name was not answered - connecting again"); client?.reconnect() }
+                    }
+                }, PRESS_ANSWER_MS)
+            }
+        }, "remote-send").apply { isDaemon = true; start() }
     }
+
+    /** This remote's own id, kept: the device counts it once however often it connects. */
+    private val myId: String = state.platform.pref(K_ID) ?: java.util.UUID.randomUUID().toString().also { state.platform.setPref(K_ID, it) }
 
     /** The buttons on this remote, in order. Kept on this device. */
     var deck by mutableStateOf(loadDeck())
@@ -382,6 +419,9 @@ class RemoteControl(private val state: SheetsState) {
         private const val K_HOSTING = "sheets_remote_hosting"
         private const val K_LAST = "sheets_remote_last"
         private const val K_DECK = "sheets_remote_deck"
+        private const val K_ID = "sheets_remote_id"
+        /** A press the device has not answered in this long did not reach it. */
+        private const val PRESS_ANSWER_MS = 2_500L
         private val DECK_JSON = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
         private val DECK_LIST = kotlinx.serialization.builtins.ListSerializer(RemoteButton.serializer())
 
@@ -550,7 +590,7 @@ private fun RemoteDeck(state: SheetsState) {
     fun send(b: RemoteButton) = remote.send(RemoteLink.Command(
         action = if (b.kind == RemoteButton.ACTION) b.id.orEmpty() else b.kind,
         id = b.id, text = b.text, value = b.value, color = b.color, urgent = b.urgent
-    ))
+    ), b.label ?: defaultName(b, shown, remote.hostLibrary))
 
     /** What a press does: most go straight across; lists open here; a sequence goes step by step. */
     fun press(b: RemoteButton) {
@@ -608,6 +648,19 @@ private fun RemoteDeck(state: SheetsState) {
                     if (extra.isNotEmpty()) Text(extra, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                 }
             }
+        }
+        // Each press says whether it reached the other device - never a button that silently does nothing.
+        remote.lastPress?.let { p ->
+            Text(
+                when (p.got) {
+                    true -> "${p.name} ✓"
+                    null -> if (p.unanswered) "${p.name} - sent (update the other device to see it arrive)" else "${p.name}..."
+                    false -> if (!remote.connected) "${p.name} - not sent: not connected" else "${p.name} - not received. Reconnecting..."
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = if (p.got == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp, start = 4.dp)
+            )
         }
         Spacer(Modifier.height(10.dp))
         if (editing) {

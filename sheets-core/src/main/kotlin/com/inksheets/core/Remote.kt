@@ -195,11 +195,21 @@ object RemoteLink {
         val text: String? = null,
         val value: Double? = null,
         val color: Int? = null,
-        val urgent: Boolean = false
+        val urgent: Boolean = false,
+        /** Numbers each press, so the device can say which it got ([Line.Got]). 0 from an old remote. */
+        val seq: Int = 0
     )
 
+    /**
+     * [id] is the remote's own, the same on every connection it makes: a remote connecting again
+     * replaces its old connection instead of counting as another remote. [v] 2 and up pings the
+     * device every [RemoteHost.PING_EVERY_MS], so a remote that goes quiet is let go.
+     */
     @Serializable
-    data class Hello(val kind: String = "hello", val name: String = "", val key: String = "")
+    data class Hello(val kind: String = "hello", val name: String = "", val key: String = "", val id: String = "", val v: Int = 1)
+
+    @Serializable
+    data class Got(val kind: String = "got", val seq: Int)
 
     const val SONG = "song"
     const val SETLIST = "setlist"
@@ -214,6 +224,8 @@ object RemoteLink {
         data class Do(val command: Command) : Line
         data class Joined(val hello: Hello) : Line
         data object Ping : Line
+        /** The device has the press numbered [seq]. */
+        data class Got(val seq: Int) : Line
         /** The key was wrong: this device was paired again, or the code was mistyped. */
         data object Refused : Line
     }
@@ -224,6 +236,7 @@ object RemoteLink {
     fun encode(s: Library): String = json.encodeToString(Library.serializer(), s)
     fun encode(c: Command): String = json.encodeToString(Command.serializer(), c)
     fun encode(h: Hello): String = json.encodeToString(Hello.serializer(), h)
+    fun encode(g: Got): String = json.encodeToString(Got.serializer(), g)
     const val PING = """{"kind":"ping"}"""
     const val REFUSED = """{"kind":"refused"}"""
 
@@ -235,6 +248,7 @@ object RemoteLink {
             "do" -> Line.Do(json.decodeFromJsonElement(Command.serializer(), obj))
             "hello" -> Line.Joined(json.decodeFromJsonElement(Hello.serializer(), obj))
             "ping" -> Line.Ping
+            "got" -> Line.Got(json.decodeFromJsonElement(Got.serializer(), obj).seq)
             "refused" -> Line.Refused
             else -> null
         }
@@ -286,7 +300,14 @@ object RemoteLink {
  * is and may send it commands. Any number of remotes; one that gives the wrong key is told so and
  * let go. Nothing about remotes comes to the screen - it goes to [onLog].
  */
-class RemoteHost(private val name: String, @Volatile var key: String, private val port: Int = RemoteLink.PORT) {
+class RemoteHost(
+    private val name: String,
+    @Volatile var key: String,
+    private val port: Int = RemoteLink.PORT,
+    /** A remote that pings and then says nothing for this long is let go. */
+    private val silentMs: Long = SILENT_FOR_MS,
+    private val pingEveryMs: Long = PING_EVERY_MS
+) {
 
     private class Client(val socket: Socket) {
         val queue = LinkedBlockingDeque<String>()
@@ -295,6 +316,12 @@ class RemoteHost(private val name: String, @Volatile var key: String, private va
         /** Told its key is wrong: let go once that has been sent, not before. */
         @Volatile var refusing = false
         @Volatile var name = socket.inetAddress?.hostAddress ?: "?"
+        val address: String = socket.inetAddress?.hostAddress ?: "?"
+        /** The remote's own id, from its hello. */
+        @Volatile var id = ""
+        /** It pings, so silence means it is gone. */
+        @Volatile var pings = false
+        @Volatile var heard = System.currentTimeMillis()
     }
 
     private val clients = ConcurrentHashMap.newKeySet<Client>()
@@ -306,13 +333,14 @@ class RemoteHost(private val name: String, @Volatile var key: String, private va
     /** A command from a remote, off the UI thread. */
     var onCommand: ((RemoteLink.Command) -> Unit)? = null
 
-    /** Remotes connecting and leaving; off the UI thread. */
+    /** Remotes connecting and leaving, and every press; off the UI thread. */
     var onLog: ((String) -> Unit)? = null
 
     /** The number of remotes connected changed; off the UI thread. */
     var onRemotes: ((Int) -> Unit)? = null
 
-    val remotes: Int get() = clients.count { it.admitted }
+    /** Remotes connected now: one each, however many times one has connected. */
+    val remotes: Int get() = clients.filter { it.admitted }.distinctBy { it.id.ifBlank { it.toString() } }.size
 
     fun start(): Boolean = runCatching {
         val socket = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(port)) }
@@ -334,10 +362,20 @@ class RemoteHost(private val name: String, @Volatile var key: String, private va
                 if (tick++ % 2 == 0) runCatching {
                     announce?.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), RemoteLink.ANNOUNCE_PORT))
                 }
+                val now = System.currentTimeMillis()
                 clients.forEach { c ->
-                    if (c.admitted) { c.queue.removeIf { it == RemoteLink.PING }; c.queue.offer(RemoteLink.PING) }
+                    if (!c.admitted) return@forEach
+                    // Gone without a word - out of the Wi-Fi, asleep, a connection the network
+                    // lost: let go, rather than counted as a remote for the quarter of an hour
+                    // it takes the network to say so. Closing it also frees a send stuck on it.
+                    if (c.pings && now - c.heard > silentMs) {
+                        onLog?.invoke("Remote ${c.name} (${c.address}) went quiet for ${(now - c.heard) / 1000}s - let go")
+                        drop(c)
+                        return@forEach
+                    }
+                    c.queue.removeIf { it == RemoteLink.PING }; c.queue.offer(RemoteLink.PING)
                 }
-                Thread.sleep(PING_EVERY_MS)
+                runCatching { Thread.sleep(pingEveryMs) }
             }
             announce?.close()
         }, "remote-ping").apply { isDaemon = true; start() }
@@ -348,52 +386,70 @@ class RemoteHost(private val name: String, @Volatile var key: String, private va
         clients += c
         Thread({
             val out = runCatching { OutputStreamWriter(c.socket.getOutputStream(), Charsets.UTF_8) }.getOrNull()
+            var why = if (out == null) "could not send to it" else "closed"
             while (c.open && running && out != null) {
                 val line = runCatching { c.queue.poll(2, TimeUnit.SECONDS) }.getOrNull() ?: continue
-                if (runCatching { out.write(line + "\n"); out.flush() }.isFailure) break
+                val sent = runCatching { out.write(line + "\n"); out.flush() }
+                if (sent.isFailure) { why = "sending failed: ${sent.exceptionOrNull()?.message}"; break }
                 if (line == RemoteLink.REFUSED) break
             }
+            if (c.open && c.admitted) onLog?.invoke("Remote ${c.name} (${c.address}): $why")
             drop(c)
         }, "remote-send").apply { isDaemon = true; start() }
         Thread({
-            runCatching {
+            val heard = runCatching {
                 // A remote that says nothing (not even the key) in a while is let go.
                 c.socket.soTimeout = HELLO_WITHIN_MS
                 val reader = BufferedReader(InputStreamReader(c.socket.getInputStream(), Charsets.UTF_8))
                 while (c.open) {
                     val line = reader.readLine() ?: break
+                    c.heard = System.currentTimeMillis()
                     when (val got = RemoteLink.read(line)) {
                         is RemoteLink.Line.Joined -> {
                             if (!RemoteLink.sameKey(got.hello.key, key)) {
-                                onLog?.invoke("A remote (${got.hello.name.ifBlank { c.name }}) gave the wrong key - turned away")
+                                onLog?.invoke("A remote (${got.hello.name.ifBlank { c.name }}, ${c.address}) gave the wrong key - turned away")
                                 c.refusing = true
                                 c.queue.offer(RemoteLink.REFUSED)
                                 return@runCatching
                             }
                             c.socket.soTimeout = 0
                             if (got.hello.name.isNotBlank()) c.name = got.hello.name
+                            c.id = got.hello.id
+                            c.pings = got.hello.v >= 2
+                            // The same remote connecting again: its old connection is dead, or
+                            // about to be. Let it go, so one remote is never counted twice.
+                            if (c.id.isNotBlank()) clients.filter { it !== c && it.id == c.id }.forEach { old ->
+                                onLog?.invoke("Remote ${c.name} connected again from ${c.address} - its old connection (${old.address}) let go")
+                                drop(old, quietly = true)
+                            }
                             c.admitted = true
                             lastLibrary?.let(c.queue::offer)
                             lastState?.let(c.queue::offer)
-                            onLog?.invoke("Remote ${c.name} connected")
+                            onLog?.invoke("Remote ${c.name} connected from ${c.address}")
                             onRemotes?.invoke(remotes)
                         }
-                        is RemoteLink.Line.Do -> if (c.admitted) onCommand?.invoke(got.command)
+                        is RemoteLink.Line.Do -> if (c.admitted) {
+                            val cmd = got.command
+                            if (cmd.seq != 0) c.queue.offerFirst(RemoteLink.encode(RemoteLink.Got(seq = cmd.seq)))
+                            onLog?.invoke("Remote ${c.name}: ${cmd.action}" + listOfNotNull(cmd.id, cmd.index, cmd.value).joinToString("") { " $it" })
+                            onCommand?.invoke(cmd)
+                        }
                         else -> Unit
                     }
                 }
             }
+            if (c.open && c.admitted) onLog?.invoke("Remote ${c.name} (${c.address}) " + (heard.exceptionOrNull()?.let { "stopped: ${it.message}" } ?: "hung up"))
             // A remote being turned away is let go by the sender, once it has been told.
             if (!c.refusing) drop(c)
         }, "remote-hear").apply { isDaemon = true; start() }
     }
 
-    private fun drop(c: Client) {
+    private fun drop(c: Client, quietly: Boolean = false) {
         if (!clients.remove(c)) return
         c.open = false
         runCatching { c.socket.close() }
         if (c.admitted) {
-            onLog?.invoke("Remote ${c.name} disconnected")
+            if (!quietly) onLog?.invoke("Remote ${c.name} disconnected")
             onRemotes?.invoke(remotes)
         }
     }
@@ -429,69 +485,169 @@ class RemoteHost(private val name: String, @Volatile var key: String, private va
     companion object {
         const val PING_EVERY_MS = 2_000L
         const val HELLO_WITHIN_MS = 10_000
+        /** Three missed pings. */
+        const val SILENT_FOR_MS = 7_000L
     }
 }
 
 /**
  * The remote's side: connect to [RemoteLink.Target], and keep connected - a dropped link is tried
  * again at once, then every couple of seconds, on each of the device's addresses, until [stop].
+ *
+ * Connected means the device has been heard from, not only that a connection opened: a network
+ * that lets a connection open but carries nothing back shows as not connected, and is given up on.
  */
-class RemoteClient(private val myName: String, private val onLine: (RemoteLink.Line) -> Unit) {
+class RemoteClient(
+    private val myName: String,
+    /** This remote's own id: the device counts a remote by it. */
+    private val myId: String = java.util.UUID.randomUUID().toString(),
+    private val silentMs: Int = SILENT_FOR_MS,
+    private val pingEveryMs: Long = RemoteHost.PING_EVERY_MS,
+    /** Addresses of this device itself, never connected to (unless they are all there is). */
+    private val ownAddresses: () -> Collection<String> = ::localAddresses,
+    private val onLine: (RemoteLink.Line) -> Unit
+) {
+    constructor(myName: String, onLine: (RemoteLink.Line) -> Unit) : this(myName, java.util.UUID.randomUUID().toString(), onLine = onLine)
+
     @Volatile private var wanted: RemoteLink.Target? = null
     @Volatile private var socket: Socket? = null
     @Volatile private var out: OutputStreamWriter? = null
+    private var seq = 0
+    /** The address that answered last, tried first next time. */
+    @Volatile private var lastGood: String? = null
 
-    /** Told true on connecting and false on losing the connection. Off the UI thread. */
+    /** Told true once the device is heard from, and false on losing it. Off the UI thread. */
     var onConnected: ((Boolean) -> Unit)? = null
+
+    /** What happened, for the log; off the UI thread. */
+    var onLog: ((String) -> Unit)? = null
 
     fun start(target: RemoteLink.Target) {
         stop()
         wanted = target
         Thread({
+            var failures = 0
             while (wanted === target) {
-                val s = target.hosts.firstNotNullOfOrNull { host ->
-                    runCatching { Socket().apply { connect(InetSocketAddress(host, target.port), 3000); tcpNoDelay = true } }.getOrNull()
+                val s = open(target)
+                if (s == null) {
+                    if (failures++ % 15 == 0) onLog?.invoke("Could not reach ${target.name} on ${target.hosts.joinToString()} port ${target.port}")
+                    sleepWhileWanted(target, 2_000)
+                    continue
                 }
-                if (s == null) { sleepWhileWanted(target, 2_000); continue }
+                failures = 0
                 if (wanted !== target) { runCatching { s.close() }; break }
+                val at = s.inetAddress?.hostAddress
                 socket = s
-                out = runCatching {
+                val o = runCatching {
                     OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8).apply {
-                        write(RemoteLink.encode(RemoteLink.Hello(name = myName, key = target.key)) + "\n"); flush()
+                        write(RemoteLink.encode(RemoteLink.Hello(name = myName, key = target.key, id = myId, v = 2)) + "\n"); flush()
                     }
                 }.getOrNull()
-                onConnected?.invoke(true)
+                out = o
+                // Pings, so the device can tell this remote from one that has gone.
+                val pinger = Thread({
+                    while (socket === s && o != null) {
+                        try { Thread.sleep(pingEveryMs) } catch (_: InterruptedException) { break }
+                        if (socket !== s) break
+                        if (runCatching { synchronized(o) { o.write(RemoteLink.PING + "\n"); o.flush() } }.isFailure) break
+                    }
+                }, "remote-client-ping").apply { isDaemon = true; start() }
                 var refused = false
-                runCatching {
-                    s.soTimeout = SILENT_FOR_MS
+                var heard = false
+                val ended = runCatching {
+                    s.soTimeout = silentMs
                     val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
                     while (wanted === target) {
                         val line = reader.readLine() ?: break
+                        if (!heard) {
+                            heard = true
+                            lastGood = at
+                            onLog?.invoke("Connected to ${target.name} at $at")
+                            onConnected?.invoke(true)
+                        }
                         val got = RemoteLink.read(line) ?: continue
                         if (got is RemoteLink.Line.Refused) { refused = true; onLine(got); break }
                         if (got !is RemoteLink.Line.Ping) onLine(got)
                     }
-                }
-                runCatching { s.close() }
+                }.exceptionOrNull()
                 if (socket === s) { socket = null; out = null }
-                onConnected?.invoke(false)
+                runCatching { s.close() }
+                pinger.interrupt()
+                if (wanted === target) onLog?.invoke(
+                    when {
+                        refused -> "${target.name} turned this remote away"
+                        !heard -> "${target.name} at $at let this remote connect but sent nothing back" + (ended?.message?.let { " ($it)" } ?: "")
+                        ended != null -> "Lost ${target.name}: ${ended.message}"
+                        else -> "${target.name} hung up"
+                    }
+                )
+                if (heard) onConnected?.invoke(false)
                 // Told the key is wrong: trying again would be told the same.
                 if (refused) { if (wanted === target) wanted = null; break }
+                // Heard nothing at all: another of its addresses may carry more than this one.
+                if (!heard) lastGood = target.hosts.firstOrNull { it != at && it !in ownOrNone() }
                 sleepWhileWanted(target, 300)
             }
         }, "remote-client").apply { isDaemon = true; start() }
     }
 
-    /** Send [command]; false when not connected. Off the UI thread is not needed - it is one short line. */
-    fun send(command: RemoteLink.Command): Boolean {
-        val o = out ?: return false
-        val line = RemoteLink.encode(command) + "\n"
-        return runCatching { synchronized(o) { o.write(line); o.flush() } }.isSuccess
+    private fun ownOrNone(): Collection<String> = runCatching { ownAddresses() }.getOrDefault(emptyList())
+
+    /**
+     * A connection to the device: every address it gave tried at once, the first to answer kept -
+     * an address that goes nowhere costs nothing then. Never this device's own address: a device
+     * letting remotes in itself would answer there, and turn this remote away.
+     */
+    private fun open(target: RemoteLink.Target): Socket? {
+        val mine = ownOrNone().toSet()
+        val hosts = target.hosts.filter { it !in mine }.ifEmpty { target.hosts }
+        lastGood?.takeIf { it in hosts }?.let { first -> connectTo(first, target.port)?.let { return it } }
+        val won = java.util.concurrent.LinkedBlockingQueue<Socket>()
+        val left = java.util.concurrent.CountDownLatch(hosts.size)
+        hosts.forEach { host ->
+            Thread({
+                connectTo(host, target.port)?.let(won::offer)
+                left.countDown()
+            }, "remote-connect").apply { isDaemon = true; start() }
+        }
+        var s: Socket? = null
+        val until = System.currentTimeMillis() + CONNECT_MS + 500
+        while (s == null && System.currentTimeMillis() < until) {
+            s = won.poll(100, TimeUnit.MILLISECONDS)
+            if (s == null && left.count == 0L) { s = won.poll(); break }
+        }
+        // Any other address that answered too is not needed.
+        Thread({
+            runCatching { left.await(CONNECT_MS + 1_000L, TimeUnit.MILLISECONDS) }
+            while (true) { val extra = won.poll() ?: break; runCatching { extra.close() } }
+        }, "remote-connect-tidy").apply { isDaemon = true; start() }
+        return s
+    }
+
+    private fun connectTo(host: String, port: Int): Socket? = runCatching {
+        Socket().apply { connect(InetSocketAddress(host, port), CONNECT_MS); tcpNoDelay = true }
+    }.getOrNull()
+
+    /**
+     * Send [command], numbered; the number (the device answers [RemoteLink.Line.Got] with it), or
+     * 0 when not connected. Off the UI thread - it writes to the network.
+     */
+    fun send(command: RemoteLink.Command): Int {
+        val o = out ?: return 0
+        val n = synchronized(this) { ++seq }
+        val line = RemoteLink.encode(command.copy(seq = n)) + "\n"
+        return if (runCatching { synchronized(o) { o.write(line); o.flush() } }.isSuccess) n else 0
     }
 
     private fun sleepWhileWanted(target: RemoteLink.Target, ms: Long) {
         var left = ms
         while (left > 0 && wanted === target) { Thread.sleep(100); left -= 100 }
+    }
+
+    /** Drop this connection and make a new one - it has stopped carrying anything back. */
+    fun reconnect() {
+        val s = socket ?: return
+        Thread({ runCatching { s.close() } }, "remote-reconnect").apply { isDaemon = true; start() }
     }
 
     fun stop() {
@@ -505,6 +661,13 @@ class RemoteClient(private val myName: String, private val onLine: (RemoteLink.L
     companion object {
         /** Three missed heartbeats. */
         const val SILENT_FOR_MS = 7_000
+        const val CONNECT_MS = 3_000
+
+        /** Every IPv4 address of this device. */
+        fun localAddresses(): List<String> = runCatching {
+            java.net.NetworkInterface.getNetworkInterfaces().toList()
+                .flatMap { nic -> nic.inetAddresses.toList().filterIsInstance<java.net.Inet4Address>().map { it.hostAddress } }
+        }.getOrDefault(emptyList())
     }
 }
 

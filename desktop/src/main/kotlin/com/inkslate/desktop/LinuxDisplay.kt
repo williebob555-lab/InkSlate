@@ -14,6 +14,9 @@ import java.io.File
  *
  * Anything explicit wins: a `GDK_SCALE` in the environment, or a `-Dsun.java2d.uiScale` given on
  * the command line.
+ *
+ * Java on Linux takes only the whole part of the scale (1.5 is drawn as 1), so only that part is
+ * handed over here; [UiScale] makes up the rest, and lets the player choose another size.
  */
 object LinuxDisplay {
 
@@ -22,10 +25,11 @@ object LinuxDisplay {
         if (System.getProperty("sun.java2d.uiScale") != null) return
         if (!System.getenv("GDK_SCALE").isNullOrBlank()) return
         val scale = kwinXwaylandScale() ?: return
-        if (scale <= 1.01) return
+        val whole = kotlin.math.floor(scale + 0.01).toInt()
+        if (whole < 2) return
         System.setProperty("sun.java2d.uiScale.enabled", "true")
-        System.setProperty("sun.java2d.uiScale", "%.2f".format(java.util.Locale.ROOT, scale))
-        EventLog.info("display", "Scaling the window by $scale, as KWin scales XWayland")
+        System.setProperty("sun.java2d.uiScale", whole.toString())
+        EventLog.info("display", "Scaling the window by $whole of KWin's $scale for XWayland; the rest in the app")
     }
 
     /** `[Xwayland] Scale=` in `~/.config/kwinrc`. */
