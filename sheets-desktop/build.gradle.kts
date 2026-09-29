@@ -34,6 +34,8 @@ dependencies {
     // Decoders for paired recordings; Java Sound reads WAV and AIFF on its own.
     implementation("com.googlecode.soundlibs:mp3spi:1.9.5.4")
     implementation("com.googlecode.soundlibs:vorbisspi:1.0.3.3")
+    // Bluetooth sockets for remotes: Winsock's and BlueZ's, which Java has no way to reach itself.
+    implementation(libs.jna)
     testImplementation("junit:junit:4.13.2")
 }
 
@@ -110,7 +112,7 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     }
     testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null || System.getProperty("inksheets.msdb") != null
-    for (name in listOf("inksheets.msdb", "inksheets.lib")) {
+    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth")) {
         System.getProperty(name)?.let {
             systemProperty(name, it)
             outputs.upToDateWhen { false }

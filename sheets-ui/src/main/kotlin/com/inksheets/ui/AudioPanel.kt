@@ -76,6 +76,7 @@ internal object Recording {
         }
         p.speed = track.speed
         p.pitch = track.pitch
+        p.volume = track.volume
         p.setLoop(track.loopStartMs, track.loopEndMs)
         return true
     }
@@ -99,8 +100,16 @@ internal object Recording {
      * click under it, in time with it, when that is turned on. The click's tempo is the one the
      * recording was made at, else the song's, else the metronome's - all scaled by the speed.
      */
+    /** The song whose recording is playing; its tab closing stops it (and nothing else does). */
+    var songId: String? = null
+    /** That song had a tab open while it played - one played from Home without a tab is left alone. */
+    var hadTab = false
+
     fun play(state: SheetsState, track: AudioTrack, song: Song?) {
         val p = playerFor(state) ?: return
+        watch(state)
+        songId = song?.id
+        hadTab = song != null && state.hasTab(song.id)
         val click = Click.withPlayback(state)
         val e = Click.engine(state)
         if (e == null || (!click && Click.countInBars(state) == 0)) { p.play(); playing = true; return }
@@ -115,6 +124,30 @@ internal object Recording {
             Thread({ p.play() }, "play-after-count").apply { isDaemon = true; start() }
         }
         if (click) follow(state, p, e, track)
+    }
+
+    @Volatile private var watching = false
+
+    /**
+     * [playing] kept true to the player while no panel is open to read it, so a recording that
+     * ends by itself does not leave a stop button behind (and one still playing always has one).
+     */
+    private fun watch(state: SheetsState) {
+        if (watching) return
+        watching = true
+        Thread({
+            var quiet = 0
+            try {
+                while (true) {
+                    Thread.sleep(300)
+                    val p = player ?: break
+                    val still = p.playing || Click.purpose == Click.Purpose.PLAYBACK
+                    quiet = if (still) 0 else quiet + 1
+                    // Twice in a row: a count-in handing over to the player is not an end.
+                    if (quiet >= 2) { state.platform.onMain { if (player?.playing != true && Click.purpose != Click.Purpose.PLAYBACK) playing = false }; break }
+                }
+            } finally { watching = false }
+        }, "recording-watch").apply { isDaemon = true; start() }
     }
 
     fun pause(state: SheetsState) {
@@ -393,7 +426,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                         val at = tracks.indexOfFirst { it.file == track.file }.takeIf { it >= 0 } ?: return@TrackControls
                         val t = change(track)
                         save(tracks.toMutableList().also { it[at] = t })
-                        Recording.player?.let { p -> p.speed = t.speed; p.pitch = t.pitch; p.setLoop(t.loopStartMs, t.loopEndMs) }
+                        Recording.player?.let { p -> p.speed = t.speed; p.pitch = t.pitch; p.volume = t.volume; p.setLoop(t.loopStartMs, t.loopEndMs) }
                     }
                 }
             }
@@ -483,6 +516,17 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
         }
 
         Spacer(Modifier.padding(4.dp))
+        // Heard at once while dragging; kept with the recording, like its speed.
+        Text("Volume ${(track.volume * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = kotlin.math.sqrt(track.volume).toFloat(),
+            onValueChange = { v ->
+                val vol = ((v * v) * 100).roundToInt() / 100.0
+                player.volume = vol
+                update { it.copy(volume = vol) }
+            },
+            valueRange = 0f..1f
+        )
         Text("Speed ${(track.speed * 100).roundToInt()}%  (the pitch stays)", style = MaterialTheme.typography.labelMedium)
         Slider(
             value = track.speed.toFloat(),

@@ -30,6 +30,10 @@ class JavaSoundPlayer : AudioPlayer {
     override var pitch: Int = 0
         set(v) { field = v; stretch?.pitch = v }
 
+    @Volatile
+    override var volume: Double = 1.0
+        set(v) { field = v.coerceIn(0.0, 1.0) }
+
     override fun load(file: File): Boolean = runCatching {
         pause()
         AudioSystem.getAudioInputStream(file).use { raw ->
@@ -83,8 +87,9 @@ class JavaSoundPlayer : AudioPlayer {
                     }
                     if (ts.atEnd) { playing = false; break }
                     ts.read(block)
+                    val gain = volume.toFloat()
                     for (i in block.indices) {
-                        val v = (block[i].coerceIn(-1f, 1f) * 32767).toInt()
+                        val v = ((block[i] * gain).coerceIn(-1f, 1f) * 32767).toInt()
                         bytes[2 * i] = v.toByte()
                         bytes[2 * i + 1] = (v shr 8).toByte()
                     }

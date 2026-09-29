@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Gamepad
@@ -125,8 +126,23 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
             title = { if (!narrow) Text("InkSheets", maxLines = 1) },
             actions = {
                 InstrumentChooser(state)
-                IconButton(onClick = { showMetronome = true }) { Icon(Icons.Default.Timer, "Metronome") }
-                IconButton(onClick = { showTuner = true }) { Icon(Icons.Default.GraphicEq, "Tuner") }
+                // A recording still playing from a song left behind: stopped from here.
+                if (Recording.playing) {
+                    IconButton(
+                        onClick = { Recording.pause(state) },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape)
+                    ) { Icon(Icons.Default.Pause, "Stop the recording") }
+                }
+                // Each opens its window and closes it again; lit while it is open.
+                val tunerShown = showTuner || state.tunerOpen
+                IconButton(
+                    onClick = { showMetronome = !showMetronome },
+                    modifier = if (showMetronome) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
+                ) { Icon(Icons.Default.Timer, "Metronome") }
+                IconButton(
+                    onClick = { if (tunerShown) { showTuner = false; state.tunerOpen = false } else showTuner = true },
+                    modifier = if (tunerShown) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
+                ) { Icon(Icons.Default.GraphicEq, "Tuner") }
                 if (state.library != null) {
                     IconButton(onClick = { showImport = true }) { Icon(Icons.Default.LibraryAdd, "Add music") }
                 }

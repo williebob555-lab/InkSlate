@@ -41,6 +41,12 @@ import javax.imageio.ImageIO
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 class RemoteScreensTest {
 
+    /** A port of the tests' own: the real app on this laptop may be letting remotes in on the usual one. */
+    @org.junit.Before
+    fun ownPort() {
+        com.inksheets.ui.RemoteControl.port = java.net.ServerSocket(0).use { it.localPort }
+    }
+
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -179,6 +185,25 @@ class RemoteScreensTest {
             onNodeWithText("Record yourself").assertExists()
             onNodeWithText("Pair a recording").assertExists()
             shoot("recordings-none", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+        }
+    }
+
+    @Test
+    fun `the code a remote scans leaves its words readable, on a phone and a tablet`() {
+        for ((w, h) in listOf(380 to 800, 700 to 900, 1100 to 800)) {
+            val stand = library(tmp.newFolder("Music$w"))
+            assertTrue(stand.remote.startHosting())
+            try {
+                stand.remote.remoteOpen = true
+                runDesktopComposeUiTest(width = w, height = h) {
+                    setContent { MaterialTheme { Surface { SheetsHome(stand, onOpenSettings = {}) } } }
+                    waitForIdle()
+                    onNodeWithText("On the remote: Home, More, Remote, then scan this.").assertExists()
+                    shoot("remote-host-$w", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                }
+            } finally {
+                stand.remote.stopHosting()
+            }
         }
     }
 

@@ -73,6 +73,7 @@ object FlavorSetup {
         AppFlavor.onHome = { state?.backToSetlist() }
         AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(stateFor(LocalContext.current)) }
         AppFlavor.onTabsMoved = { state?.tabsMoved(it) }
+        AppFlavor.onOpenTabs = { state?.openTabs(it) }
         AppFlavor.onHomeShown = { home -> state?.homeInFront = home }
         AppFlavor.pagesActions = { path, pages, close ->
             com.inksheets.ui.MusicPageActions(stateFor(LocalContext.current), path, pages, close)

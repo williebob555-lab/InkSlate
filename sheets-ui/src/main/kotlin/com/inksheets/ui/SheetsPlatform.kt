@@ -83,6 +83,9 @@ interface SheetsPlatform {
     /** Bluetooth broadcasts for Play together (experimental); null where there are none. */
     fun meshRadio(): MeshRadio? = null
 
+    /** Bluetooth connections for remotes - round a Wi-Fi that will not carry them; null where there are none. */
+    val remoteBluetooth: com.inksheets.core.RemoteBluetooth? get() = null
+
     /** [old]'s tab shows [new] instead, where it was in the row: another part of the same song. */
     fun swapPart(old: File, new: File) {}
 
@@ -182,6 +185,10 @@ interface AudioPlayer {
     val durationMs: Long
     var speed: Double
     var pitch: Int
+    /** How loud, 0 (silent) to 1 (as recorded). */
+    var volume: Double
+        get() = 1.0
+        set(_) {}
     /** Loop between two places; nulls for no loop. */
     fun setLoop(startMs: Long?, endMs: Long?)
     fun release()

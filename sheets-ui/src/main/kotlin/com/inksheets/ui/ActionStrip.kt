@@ -166,7 +166,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 for (action in shown) {
                     val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
                     if (songAction && state.playing == null) continue
-                    if (action == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty()) continue
+                    // Kept while a recording plays, whatever is in front now: there is always a way to stop it.
+                    if (action == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty() && !Recording.playing) continue
                     val group = groupOf(action)
                     if (lastGroup >= 0 && group != lastGroup) {
                         if (side) HorizontalDivider(Modifier.width(24.dp).padding(vertical = 2.dp))
@@ -175,6 +176,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     lastGroup = group
                     val lit = (action == PerformAction.BOOKMARK && state.bookmarkHere() != null) ||
                         (action == PerformAction.METRONOME && SharedMetronome.running) ||
+                        state.windowOpen(action) ||
                         (action != PerformAction.FULLSCREEN && Perform.on(action))
                     val fullscreen = Perform.on(PerformAction.FULLSCREEN)
                     if (action == PerformAction.SWITCH_PART) {
@@ -182,7 +184,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                         val song = state.current ?: continue
                         val showing = state.partShown()?.let { partName(it) } ?: "Part"
                         Box {
-                            StripButton(iconOf(action, fullscreen), showing, "Switch part (now $showing)", btn, named, state.hasOwnPick(song)) { state.partPicker = true }
+                            StripButton(iconOf(action, fullscreen), showing, "Switch part (now $showing)", btn, named, state.hasOwnPick(song) || state.partPicker) { state.partPicker = !state.partPicker }
                             PartMenu(state, song, state.partShown(), state.partPicker, onDismiss = { state.partPicker = false })
                         }
                         continue
@@ -197,7 +199,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { state.metronomeOpen = true }
+                                .then(if (state.metronomeOpen) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier)
+                                .clickable { state.metronomeOpen = !state.metronomeOpen }
                                 .padding(horizontal = 6.dp, vertical = 6.dp)
                         )
                     }

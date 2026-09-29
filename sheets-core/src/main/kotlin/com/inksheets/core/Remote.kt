@@ -6,7 +6,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
+import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.net.DatagramPacket
 import java.net.DatagramSocket
@@ -86,6 +88,7 @@ data class RemoteButton(
         const val AUDIO_SEEK = "audio-seek"
         const val AUDIO_RESTART = "audio-restart"
         const val AUDIO_SPEED = "audio-speed"
+        const val AUDIO_VOLUME = "audio-volume"
         const val MESSAGE = "message"
         const val MESSAGE_TYPE = "message-type"
         const val STRIP = "strip"
@@ -167,7 +170,9 @@ object RemoteLink {
         val clickPlayback: Boolean = false,
         val stripOpen: Boolean = false,
         /** The instrument chosen for every song (a profile id). */
-        val profileId: String? = null
+        val profileId: String? = null,
+        /** The windows open over the music: [com.inkslate.core.PerformAction] names (TUNER, RECORDINGS, ...). */
+        val windows: List<String> = emptyList()
     )
 
     /** The library to pick a song or setlist from; sent on joining and when it changes. */
@@ -254,13 +259,27 @@ object RemoteLink {
         }
     }.getOrNull()
 
-    /** A device to control: its name, every address it has, its port and its key. */
-    data class Target(val name: String, val hosts: List<String>, val port: Int = PORT, val key: String)
+    /**
+     * A device to control: its name, every address it has, its port and its key - and its
+     * Bluetooth address ([bt], "AA:BB:CC:DD:EE:FF") where it takes remotes over Bluetooth too, with
+     * the [channel] to use where its service cannot be looked up.
+     */
+    data class Target(
+        val name: String,
+        val hosts: List<String>,
+        val port: Int = PORT,
+        val key: String,
+        val bt: String? = null,
+        val channel: Int? = null
+    )
 
-    /** The text of a device's remote code: `inksheets://remote?name=Stand&hosts=192.168.1.4&port=47822&key=K7Q2PX`. */
-    fun pairLink(name: String, hosts: List<String>, key: String, port: Int = PORT): String =
+    /** The text of a device's remote code: `inksheets://remote?name=Stand&hosts=192.168.1.4&port=47822&key=K7Q2PX&bt=AA:BB:CC:DD:EE:FF`. */
+    fun pairLink(name: String, hosts: List<String>, key: String, port: Int = PORT, bt: String? = null, channel: Int? = null): String =
         "${CompanionLink.SCHEME}://remote?name=" + URLEncoder.encode(name, "UTF-8").replace("+", "%20") +
-            "&hosts=" + hosts.joinToString(",") + "&port=$port&key=$key"
+            "&hosts=" + hosts.joinToString(",") + "&port=$port&key=$key" +
+            (bt?.let { "&bt=$it" } ?: "") + (channel?.let { "&ch=$it" } ?: "")
+
+    fun pairLink(t: Target): String = pairLink(t.name, t.hosts, t.key, t.port, t.bt, t.channel)
 
     fun parsePair(text: String): Target? {
         val t = text.trim()
@@ -271,8 +290,12 @@ object RemoteLink {
         }.toMap()
         val hosts = params["hosts"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
         val key = params["key"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
-        if (hosts.isEmpty()) return null
-        return Target(params["name"]?.takeIf { it.isNotBlank() } ?: hosts.first(), hosts, params["port"]?.toIntOrNull() ?: PORT, key)
+        val bt = params["bt"]?.trim()?.uppercase()?.takeIf { it.matches(Regex("([0-9A-F]{2}:){5}[0-9A-F]{2}")) }
+        if (hosts.isEmpty() && bt == null) return null
+        return Target(
+            params["name"]?.takeIf { it.isNotBlank() } ?: hosts.firstOrNull() ?: bt!!,
+            hosts, params["port"]?.toIntOrNull() ?: PORT, key, bt, params["ch"]?.toIntOrNull()
+        )
     }
 
     /** A pairing key: six letters and digits that read aloud without mix-ups (no O/0, I/1). */
@@ -300,6 +323,52 @@ object RemoteLink {
  * is and may send it commands. Any number of remotes; one that gives the wrong key is told so and
  * let go. Nothing about remotes comes to the screen - it goes to [onLog].
  */
+/** A connection to or from a remote, whatever carries it: a TCP socket, or Bluetooth. */
+interface RemotePipe {
+    val input: InputStream
+    val output: OutputStream
+    /** Where it is: an IP address, or `bt:AA:BB:CC:DD:EE:FF`. */
+    val address: String
+    fun close()
+}
+
+class SocketPipe(val socket: Socket) : RemotePipe {
+    override val input: InputStream get() = socket.getInputStream()
+    override val output: OutputStream get() = socket.getOutputStream()
+    override val address: String = socket.inetAddress?.hostAddress ?: "?"
+    override fun close() { runCatching { socket.close() } }
+}
+
+/**
+ * Remotes over Bluetooth: classic RFCOMM, one link a Wi-Fi that drops connections (eduroam) cannot
+ * touch. The platform's, where it has one - Android's own, Winsock's on Windows, BlueZ's on Linux.
+ */
+interface RemoteBluetooth {
+    /** Where remotes reach this device: its address where it can be read, and the channel when not looked up by [UUID]. */
+    data class Listening(val address: String?, val channel: Int?)
+
+    /** Take remotes until [stopListening], each connection handed to [take]; null when it could not start. */
+    fun listen(take: (RemotePipe) -> Unit): Listening?
+    fun stopListening()
+
+    /** A connection to [address], found by [UUID] - or on [channel] where given. Blocks; off the UI thread. */
+    fun connect(address: String, channel: Int?): RemotePipe?
+
+    /** Devices paired with this one in the system's Bluetooth settings: name to address. */
+    fun paired(): List<Pair<String, String>>
+
+    /** Asks for anything missing (permission, Bluetooth off); true when it can be used. */
+    fun ready(): Boolean
+
+    companion object {
+        /** InkSheets' remote service, as Bluetooth looks it up. */
+        val UUID: java.util.UUID = java.util.UUID.fromString("7a1c3e52-0d4b-4f6e-9b8a-5e2f1c6d4b21")
+        const val NAME = "InkSheets remote"
+        /** The channel used where a service cannot be put in the device's list (Linux). */
+        const val CHANNEL = 23
+    }
+}
+
 class RemoteHost(
     private val name: String,
     @Volatile var key: String,
@@ -309,19 +378,20 @@ class RemoteHost(
     private val pingEveryMs: Long = PING_EVERY_MS
 ) {
 
-    private class Client(val socket: Socket) {
+    private class Client(val pipe: RemotePipe) {
         val queue = LinkedBlockingDeque<String>()
         @Volatile var open = true
         @Volatile var admitted = false
         /** Told its key is wrong: let go once that has been sent, not before. */
         @Volatile var refusing = false
-        @Volatile var name = socket.inetAddress?.hostAddress ?: "?"
-        val address: String = socket.inetAddress?.hostAddress ?: "?"
+        val address: String = pipe.address
+        @Volatile var name = address
         /** The remote's own id, from its hello. */
         @Volatile var id = ""
         /** It pings, so silence means it is gone. */
         @Volatile var pings = false
-        @Volatile var heard = System.currentTimeMillis()
+        val since = System.currentTimeMillis()
+        @Volatile var heard = since
     }
 
     private val clients = ConcurrentHashMap.newKeySet<Client>()
@@ -350,7 +420,7 @@ class RemoteHost(
             while (running) {
                 val s = runCatching { socket.accept() }.getOrNull() ?: continue
                 runCatching { s.tcpNoDelay = true }
-                serve(Client(s))
+                take(SocketPipe(s))
             }
         }, "remote-accept").apply { isDaemon = true; start() }
         Thread({
@@ -364,7 +434,11 @@ class RemoteHost(
                 }
                 val now = System.currentTimeMillis()
                 clients.forEach { c ->
-                    if (!c.admitted) return@forEach
+                    if (!c.admitted) {
+                        // Never said the key: let go.
+                        if (!c.refusing && now - c.since > HELLO_WITHIN_MS) drop(c)
+                        return@forEach
+                    }
                     // Gone without a word - out of the Wi-Fi, asleep, a connection the network
                     // lost: let go, rather than counted as a remote for the quarter of an hour
                     // it takes the network to say so. Closing it also frees a send stuck on it.
@@ -382,10 +456,13 @@ class RemoteHost(
         true
     }.getOrDefault(false)
 
-    private fun serve(c: Client) {
+    /** A connection from a remote, however it came - the TCP port, or Bluetooth. */
+    fun take(pipe: RemotePipe) {
+        if (!running) { pipe.close(); return }
+        val c = Client(pipe)
         clients += c
         Thread({
-            val out = runCatching { OutputStreamWriter(c.socket.getOutputStream(), Charsets.UTF_8) }.getOrNull()
+            val out = runCatching { OutputStreamWriter(c.pipe.output, Charsets.UTF_8) }.getOrNull()
             var why = if (out == null) "could not send to it" else "closed"
             while (c.open && running && out != null) {
                 val line = runCatching { c.queue.poll(2, TimeUnit.SECONDS) }.getOrNull() ?: continue
@@ -398,9 +475,7 @@ class RemoteHost(
         }, "remote-send").apply { isDaemon = true; start() }
         Thread({
             val heard = runCatching {
-                // A remote that says nothing (not even the key) in a while is let go.
-                c.socket.soTimeout = HELLO_WITHIN_MS
-                val reader = BufferedReader(InputStreamReader(c.socket.getInputStream(), Charsets.UTF_8))
+                val reader = BufferedReader(InputStreamReader(c.pipe.input, Charsets.UTF_8))
                 while (c.open) {
                     val line = reader.readLine() ?: break
                     c.heard = System.currentTimeMillis()
@@ -412,7 +487,6 @@ class RemoteHost(
                                 c.queue.offer(RemoteLink.REFUSED)
                                 return@runCatching
                             }
-                            c.socket.soTimeout = 0
                             if (got.hello.name.isNotBlank()) c.name = got.hello.name
                             c.id = got.hello.id
                             c.pings = got.hello.v >= 2
@@ -447,7 +521,7 @@ class RemoteHost(
     private fun drop(c: Client, quietly: Boolean = false) {
         if (!clients.remove(c)) return
         c.open = false
-        runCatching { c.socket.close() }
+        c.pipe.close()
         if (c.admitted) {
             if (!quietly) onLog?.invoke("Remote ${c.name} disconnected")
             onRemotes?.invoke(remotes)
@@ -478,7 +552,7 @@ class RemoteHost(
     fun stop() {
         running = false
         runCatching { server?.close() }
-        clients.forEach { it.open = false; runCatching { it.socket.close() } }
+        clients.forEach { it.open = false; it.pipe.close() }
         clients.clear()
     }
 
@@ -492,10 +566,12 @@ class RemoteHost(
 
 /**
  * The remote's side: connect to [RemoteLink.Target], and keep connected - a dropped link is tried
- * again at once, then every couple of seconds, on each of the device's addresses, until [stop].
+ * again at once, then every couple of seconds, on each of the device's addresses and over
+ * Bluetooth, until [stop].
  *
  * Connected means the device has been heard from, not only that a connection opened: a network
- * that lets a connection open but carries nothing back shows as not connected, and is given up on.
+ * that lets a connection open but carries nothing back shows as not connected, and that address
+ * is tried last from then on.
  */
 class RemoteClient(
     private val myName: String,
@@ -509,8 +585,11 @@ class RemoteClient(
 ) {
     constructor(myName: String, onLine: (RemoteLink.Line) -> Unit) : this(myName, java.util.UUID.randomUUID().toString(), onLine = onLine)
 
+    /** Bluetooth, where this device has it: a way round a Wi-Fi that will not carry the link. */
+    var bluetooth: RemoteBluetooth? = null
+
     @Volatile private var wanted: RemoteLink.Target? = null
-    @Volatile private var socket: Socket? = null
+    @Volatile private var pipe: RemotePipe? = null
     @Volatile private var out: OutputStreamWriter? = null
     private var seq = 0
     /** The address that answered last, tried first next time. */
@@ -522,47 +601,65 @@ class RemoteClient(
     /** What happened, for the log; off the UI thread. */
     var onLog: ((String) -> Unit)? = null
 
+    /** A connection to this address opened, then carried nothing: the network is in the way. Off the UI thread. */
+    var onBlocked: ((address: String) -> Unit)? = null
+
+    /** How the device is reached now: an IP address, or `bt:...`. */
+    @Volatile var via: String? = null
+        private set
+
+    /** Addresses that let a connection open and then carried nothing. */
+    private val silent: MutableSet<String> = java.util.Collections.newSetFromMap(ConcurrentHashMap())
+
     fun start(target: RemoteLink.Target) {
         stop()
         wanted = target
         Thread({
             var failures = 0
             while (wanted === target) {
-                val s = open(target)
-                if (s == null) {
-                    if (failures++ % 15 == 0) onLog?.invoke("Could not reach ${target.name} on ${target.hosts.joinToString()} port ${target.port}")
+                val p = open(target)
+                if (p == null) {
+                    if (failures++ % 15 == 0) onLog?.invoke(
+                        "Could not reach ${target.name} on ${target.hosts.joinToString()} port ${target.port}" +
+                            (target.bt?.let { if (bluetooth != null) " or Bluetooth $it" else " (Bluetooth not available here)" } ?: "")
+                    )
                     sleepWhileWanted(target, 2_000)
                     continue
                 }
                 failures = 0
-                if (wanted !== target) { runCatching { s.close() }; break }
-                val at = s.inetAddress?.hostAddress
-                socket = s
+                if (wanted !== target) { p.close(); break }
+                val at = p.address
+                pipe = p
                 val o = runCatching {
-                    OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8).apply {
+                    OutputStreamWriter(p.output, Charsets.UTF_8).apply {
                         write(RemoteLink.encode(RemoteLink.Hello(name = myName, key = target.key, id = myId, v = 2)) + "\n"); flush()
                     }
                 }.getOrNull()
                 out = o
-                // Pings, so the device can tell this remote from one that has gone.
-                val pinger = Thread({
-                    while (socket === s && o != null) {
+                val lastRead = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+                // Pings, so the device can tell this remote from one that has gone; and silence
+                // from the device ends the connection - Bluetooth has no read timeout of its own.
+                val keeper = Thread({
+                    while (pipe === p && o != null) {
                         try { Thread.sleep(pingEveryMs) } catch (_: InterruptedException) { break }
-                        if (socket !== s) break
+                        if (pipe !== p) break
+                        if (System.currentTimeMillis() - lastRead.get() > silentMs) { p.close(); break }
                         if (runCatching { synchronized(o) { o.write(RemoteLink.PING + "\n"); o.flush() } }.isFailure) break
                     }
                 }, "remote-client-ping").apply { isDaemon = true; start() }
                 var refused = false
                 var heard = false
                 val ended = runCatching {
-                    s.soTimeout = silentMs
-                    val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
+                    val reader = BufferedReader(InputStreamReader(p.input, Charsets.UTF_8))
                     while (wanted === target) {
                         val line = reader.readLine() ?: break
+                        lastRead.set(System.currentTimeMillis())
                         if (!heard) {
                             heard = true
                             lastGood = at
-                            onLog?.invoke("Connected to ${target.name} at $at")
+                            via = at
+                            silent -= at
+                            onLog?.invoke("Connected to ${target.name} " + if (at.startsWith("bt:")) "over Bluetooth" else "at $at")
                             onConnected?.invoke(true)
                         }
                         val got = RemoteLink.read(line) ?: continue
@@ -570,9 +667,9 @@ class RemoteClient(
                         if (got !is RemoteLink.Line.Ping) onLine(got)
                     }
                 }.exceptionOrNull()
-                if (socket === s) { socket = null; out = null }
-                runCatching { s.close() }
-                pinger.interrupt()
+                if (pipe === p) { pipe = null; out = null; via = null }
+                p.close()
+                keeper.interrupt()
                 if (wanted === target) onLog?.invoke(
                     when {
                         refused -> "${target.name} turned this remote away"
@@ -584,8 +681,14 @@ class RemoteClient(
                 if (heard) onConnected?.invoke(false)
                 // Told the key is wrong: trying again would be told the same.
                 if (refused) { if (wanted === target) wanted = null; break }
-                // Heard nothing at all: another of its addresses may carry more than this one.
-                if (!heard) lastGood = target.hosts.firstOrNull { it != at && it !in ownOrNone() }
+                // Heard nothing at all: a network that lets a connection open and then carries
+                // nothing (seen on eduroam: the key arrived, not one byte after it, either way).
+                // Every other way - Bluetooth, a tailnet - is tried before this one from now on.
+                if (!heard && wanted === target) {
+                    silent += at
+                    if (lastGood == at) lastGood = null
+                    onBlocked?.invoke(at)
+                }
                 sleepWhileWanted(target, 300)
             }
         }, "remote-client").apply { isDaemon = true; start() }
@@ -595,18 +698,40 @@ class RemoteClient(
 
     /**
      * A connection to the device: every address it gave tried at once, the first to answer kept -
-     * an address that goes nowhere costs nothing then. Never this device's own address: a device
-     * letting remotes in itself would answer there, and turn this remote away.
+     * an address that goes nowhere costs nothing then - and Bluetooth when none will do. Never
+     * this device's own address: a device letting remotes in itself would answer there.
      */
-    private fun open(target: RemoteLink.Target): Socket? {
+    private fun open(target: RemoteLink.Target): RemotePipe? {
         val mine = ownOrNone().toSet()
-        val hosts = target.hosts.filter { it !in mine }.ifEmpty { target.hosts }
-        lastGood?.takeIf { it in hosts }?.let { first -> connectTo(first, target.port)?.let { return it } }
+        val all = target.hosts.filter { it !in mine }.ifEmpty { target.hosts }
+        val bt = target.bt?.takeIf { bluetooth != null }?.let { "bt:$it" }
+        lastGood?.let { first ->
+            if (first == bt) bluetoothTo(target)?.let { return it }
+            else if (first in all) connectTo(first, target.port)?.let { return SocketPipe(it) }
+        }
+        // An address that went silent is tried only when no other way answers.
+        val (quiet, rest) = all.partition { it in silent }
+        if (rest.isNotEmpty()) race(rest, target.port)?.let { return SocketPipe(it) }
+        if (bt != null && bt !in silent) bluetoothTo(target)?.let { return it }
+        if (quiet.isNotEmpty()) race(quiet, target.port)?.let { return SocketPipe(it) }
+        if (bt != null && bt in silent) bluetoothTo(target)?.let { return it }
+        return null
+    }
+
+    private fun bluetoothTo(target: RemoteLink.Target): RemotePipe? {
+        val b = bluetooth ?: return null
+        val address = target.bt ?: return null
+        return runCatching { b.connect(address, target.channel) }
+            .onFailure { onLog?.invoke("Bluetooth to ${target.name} failed: ${it.message}") }
+            .getOrNull()
+    }
+
+    private fun race(hosts: List<String>, port: Int): Socket? {
         val won = java.util.concurrent.LinkedBlockingQueue<Socket>()
         val left = java.util.concurrent.CountDownLatch(hosts.size)
         hosts.forEach { host ->
             Thread({
-                connectTo(host, target.port)?.let(won::offer)
+                connectTo(host, port)?.let(won::offer)
                 left.countDown()
             }, "remote-connect").apply { isDaemon = true; start() }
         }
@@ -646,16 +771,17 @@ class RemoteClient(
 
     /** Drop this connection and make a new one - it has stopped carrying anything back. */
     fun reconnect() {
-        val s = socket ?: return
-        Thread({ runCatching { s.close() } }, "remote-reconnect").apply { isDaemon = true; start() }
+        val p = pipe ?: return
+        Thread({ p.close() }, "remote-reconnect").apply { isDaemon = true; start() }
     }
 
     fun stop() {
         wanted = null
-        val s = socket
-        socket = null
+        val p = pipe
+        pipe = null
         out = null
-        runCatching { s?.close() }
+        via = null
+        p?.let { Thread({ it.close() }, "remote-stop").apply { isDaemon = true; start() } }
     }
 
     companion object {

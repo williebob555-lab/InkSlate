@@ -221,6 +221,15 @@ class SheetsState(val platform: SheetsPlatform) {
     var audioOpen by mutableStateOf(false)
     var metronomeOpen by mutableStateOf(false)
 
+    /** The window [action]'s button opens is open now: its button is lit, and closes it. */
+    fun windowOpen(action: com.inkslate.core.PerformAction): Boolean = when (action) {
+        com.inkslate.core.PerformAction.TUNER -> tunerOpen
+        com.inkslate.core.PerformAction.RECORDINGS -> audioOpen
+        com.inkslate.core.PerformAction.PLAY_TOGETHER -> companionOpen
+        com.inkslate.core.PerformAction.SWITCH_PART -> partPicker
+        else -> false
+    }
+
     /** Open tabs being kept as a new setlist: asking its name and colour. */
     var savingTabs by mutableStateOf<List<File>?>(null)
 
@@ -325,11 +334,12 @@ class SheetsState(val platform: SheetsPlatform) {
                 com.inkslate.core.PerformAction.NEXT_SONG -> step(1)
                 com.inkslate.core.PerformAction.PREVIOUS_SONG -> step(-1)
                 com.inkslate.core.PerformAction.METRONOME -> { toggleMetronome(); true }
-                com.inkslate.core.PerformAction.TUNER -> { tunerOpen = true; true }
+                // A button for a window opens it, and closes it again.
+                com.inkslate.core.PerformAction.TUNER -> { tunerOpen = !tunerOpen; true }
                 com.inkslate.core.PerformAction.PLAY_AUDIO -> { Recording.toggle(this); true }
-                com.inkslate.core.PerformAction.RECORDINGS -> { if (current != null) audioOpen = true; current != null }
-                com.inkslate.core.PerformAction.PLAY_TOGETHER -> { companionOpen = true; true }
-                com.inkslate.core.PerformAction.SWITCH_PART -> { if (current != null) partPicker = true; current != null }
+                com.inkslate.core.PerformAction.RECORDINGS -> { if (current != null) audioOpen = !audioOpen; current != null }
+                com.inkslate.core.PerformAction.PLAY_TOGETHER -> { companionOpen = !companionOpen; true }
+                com.inkslate.core.PerformAction.SWITCH_PART -> { if (current != null) partPicker = !partPicker; current != null }
                 com.inkslate.core.PerformAction.BOOKMARK -> toggleBookmark()
                 else -> false
             }
@@ -424,6 +434,25 @@ class SheetsState(val platform: SheetsPlatform) {
         return lib.setlist(setlistId)?.entries.orEmpty().map { e ->
             e.id to lib.song(e.songId)?.let { s -> partFor(s)?.let { partFile(s, it) } }
         }
+    }
+
+    /** The files of the open tabs, as last told. */
+    var openFiles: List<File> = emptyList()
+        private set
+
+    /** Whether one of [songId]'s parts is open in a tab. */
+    fun hasTab(songId: String): Boolean = openFiles.any { songAt(it.absolutePath)?.id == songId }
+
+    /**
+     * A tab opened or closed. A recording plays on whatever is in front - Home, another song -
+     * until the tab of the song it belongs to is closed: then it stops.
+     */
+    fun openTabs(files: List<File>) {
+        openFiles = files
+        val id = Recording.songId ?: return
+        if (!Recording.playing) return
+        if (hasTab(id)) Recording.hadTab = true
+        else if (Recording.hadTab) Recording.pause(this)
     }
 
     /**

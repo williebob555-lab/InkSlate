@@ -63,7 +63,9 @@ data class AudioTrack(
     val clickBpm: Double? = null,
     val beatsPerBar: Int? = null,
     /** Where its first beat is, in ms; null when not known (taken as the start). */
-    val firstBeatMs: Long? = null
+    val firstBeatMs: Long? = null,
+    /** How loud it plays, 0 to 1 of as recorded - one recording is louder than another. */
+    val volume: Double = 1.0
 )
 
 /** A place to jump to by name: "Letter C", "Coda". */

@@ -95,6 +95,11 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     var immersive by immersiveState
 
     val tabs = remember { mutableStateListOf<DocTab>() }
+    // Told whenever a tab opens or closes: InkSheets stops a closed song's recording.
+    androidx.compose.runtime.LaunchedEffect(tabs) {
+        androidx.compose.runtime.snapshotFlow { tabs.filter { !it.closeRequested.value }.map { it.file } }
+            .collect { files -> AppFlavor.onOpenTabs?.invoke(files) }
+    }
     var homeShown by remember { mutableStateOf(true) }
     var primary by remember { mutableStateOf<PaneRef?>(null) }
     var secondary by remember { mutableStateOf<PaneRef?>(null) }

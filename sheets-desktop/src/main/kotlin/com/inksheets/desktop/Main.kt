@@ -26,6 +26,7 @@ fun main() = runAs("InkSheets") {
     AppFlavor.onHome = { state.backToSetlist() }
     AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(state) }
     AppFlavor.onTabsMoved = { state.tabsMoved(it) }
+    AppFlavor.onOpenTabs = { state.openTabs(it) }
     AppFlavor.onHomeShown = { home -> state.homeInFront = home }
     AppFlavor.onSaveTabs = { files -> state.savingTabs = files }
     AppFlavor.onFilesDropped = { files -> state.offer(files) }

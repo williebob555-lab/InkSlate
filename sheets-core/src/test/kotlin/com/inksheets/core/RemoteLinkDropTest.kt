@@ -154,6 +154,70 @@ class RemoteLinkDropTest {
         }
     }
 
+    /** Bluetooth as a pair of in-memory pipes straight into [host]. */
+    private inner class FakeBluetooth(private val host: RemoteHost) : RemoteBluetooth {
+        var connects = 0
+        override fun listen(take: (RemotePipe) -> Unit) = RemoteBluetooth.Listening("AA:BB:CC:DD:EE:FF", null)
+        override fun stopListening() {}
+        override fun paired() = listOf("Stand" to "AA:BB:CC:DD:EE:FF")
+        override fun ready() = true
+        override fun connect(address: String, channel: Int?): RemotePipe {
+            connects++
+            val toHost = java.io.PipedOutputStream(); val hostIn = java.io.PipedInputStream(toHost, 1 shl 16)
+            val toRemote = java.io.PipedOutputStream(); val remoteIn = java.io.PipedInputStream(toRemote, 1 shl 16)
+            fun pipe(i: java.io.InputStream, o: java.io.OutputStream) = object : RemotePipe {
+                override val input = i
+                override val output = o
+                override val address = "bt:$address"
+                override fun close() { runCatching { toHost.close() }; runCatching { toRemote.close() }; runCatching { hostIn.close() }; runCatching { remoteIn.close() } }
+            }
+            host.take(pipe(hostIn, toRemote))
+            note("remote", "Bluetooth to $address")
+            return pipe(remoteIn, toHost)
+        }
+    }
+
+    @Test
+    fun `a Wi-Fi that carries nothing is gone round over Bluetooth`() {
+        val port = freePort()
+        val host = host(port)
+        val commands = LinkedBlockingQueue<RemoteLink.Command>()
+        host.onCommand = { commands += it }
+        assertTrue(host.start())
+        host.show(RemoteLink.State(title = "Take On Me", page = 1, pages = 4))
+        val middle = Middle(port).apply { back = false }
+        val lines = LinkedBlockingQueue<RemoteLink.Line>()
+        val connected = Collections.synchronizedList(ArrayList<Boolean>())
+        val remote = remote(lines, connected)
+        val bt = FakeBluetooth(host)
+        remote.bluetooth = bt
+        try {
+            remote.start(RemoteLink.Target("Stand", listOf("127.0.0.1"), middle.port, "K7Q2PX", bt = "AA:BB:CC:DD:EE:FF"))
+            waitFor(8_000) { connected.lastOrNull() == true }
+            assertEquals("bt:AA:BB:CC:DD:EE:FF", remote.via)
+            assertEquals(1, host.remotes)
+            var seq = 0
+            waitFor { remote.send(RemoteLink.Command(action = "NEXT_PAGE")).also { seq = it } != 0 }
+            assertEquals("NEXT_PAGE", commands.poll(3, TimeUnit.SECONDS)!!.action)
+            assertTrue(generateSequence { lines.poll(3, TimeUnit.SECONDS) }.any { it is RemoteLink.Line.Got && it.seq == seq })
+            // Stays on Bluetooth: pings keep it, and it is not given up for the Wi-Fi.
+            Thread.sleep(2_500)
+            assertEquals(1, bt.connects)
+            assertEquals(1, host.remotes)
+        } finally {
+            remote.stop(); middle.close(); host.stop()
+        }
+    }
+
+    @Test
+    fun `pairing codes carry the Bluetooth address`() {
+        val t = RemoteLink.parsePair(RemoteLink.pairLink("Laptop", listOf("10.0.0.2"), "K7Q2PX", bt = "aa:bb:cc:dd:ee:ff", channel = 23))!!
+        assertEquals("AA:BB:CC:DD:EE:FF", t.bt)
+        assertEquals(23, t.channel)
+        val btOnly = RemoteLink.parsePair(RemoteLink.pairLink("Tab", emptyList(), "K7Q2PX", bt = "AA:BB:CC:DD:EE:FF"))!!
+        assertEquals(emptyList<String>(), btOnly.hosts)
+    }
+
     @Test
     fun `an address that goes nowhere does not hold up the one that answers`() {
         val port = freePort()

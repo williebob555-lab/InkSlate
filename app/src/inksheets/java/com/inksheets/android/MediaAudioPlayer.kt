@@ -34,11 +34,18 @@ class MediaAudioPlayer : AudioPlayer {
     override var pitch: Int = 0
         set(v) { field = v; applyParams() }
 
+    override var volume: Double = 1.0
+        set(v) {
+            field = v.coerceIn(0.0, 1.0)
+            runCatching { player?.setVolume(field.toFloat(), field.toFloat()) }
+        }
+
     override fun load(file: File): Boolean = runCatching {
         release()
         val loaded = MediaPlayer().apply {
             setDataSource(file.path)
             prepare()
+            setVolume(volume.toFloat(), volume.toFloat())
         }
         player = loaded
         true

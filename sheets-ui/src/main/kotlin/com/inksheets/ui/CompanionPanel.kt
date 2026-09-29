@@ -641,6 +641,26 @@ internal fun QrImage(text: String, size: Dp, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * A code to scan, small beside its words so it covers nothing; a tap shows it big, over everything,
+ * for the other device's camera - and another tap puts it back.
+ */
+@Composable
+internal fun ScanCode(text: String, size: Dp = 128.dp, modifier: Modifier = Modifier) {
+    var big by remember { mutableStateOf(false) }
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        QrImage(text, size, Modifier.clickable { big = true })
+        Text("Tap to enlarge", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (big) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { big = false }) {
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.clickable { big = false }) {
+                QrImage(text, minOf(maxWidth, maxHeight, 420.dp))
+            }
+        }
+    }
+}
+
 /** A code's picture as a PNG file, for copying or sharing; null where one cannot be written. */
 internal fun qrPicture(state: SheetsState, text: String): File? {
     val (w, h, px) = QrCodes.pixels(text, scale = 10)
@@ -791,18 +811,11 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
                 }
             }
         }
-        if (narrow) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                if (link != null) QrImage(link, codeSize)
-                Spacer(Modifier.size(12.dp))
-                details()
-            }
-        } else {
-            Row(verticalAlignment = Alignment.Top) {
-                if (link != null) QrImage(link, 200.dp)
-                Spacer(Modifier.width(16.dp))
-                Box(Modifier.weight(1f)) { details() }
-            }
+        // Beside the words, small: the code never pushes them away. Tapped, it shows big to scan.
+        Row(verticalAlignment = Alignment.Top) {
+            if (link != null) ScanCode(link, if (narrow) 104.dp else 136.dp)
+            Spacer(Modifier.width(12.dp))
+            Box(Modifier.weight(1f)) { details() }
         }
     }
     if (link != null) {

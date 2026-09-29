@@ -125,6 +125,8 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override val audioOut: AudioOut = JavaSoundOut()
     override val microphone: Microphone = JavaSoundMic()
 
+    override val remoteBluetooth: com.inksheets.core.RemoteBluetooth? by lazy { DesktopRemoteBluetooth.forThisSystem() }
+
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = JavaSoundPlayer()
 
     override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)

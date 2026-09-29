@@ -187,6 +187,10 @@ class AndroidSheetsPlatform(
     }
 
     private val mesh by lazy { BleMeshRadio { context } }
+    override val remoteBluetooth: com.inksheets.core.RemoteBluetooth? by lazy {
+        if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH)) AndroidRemoteBluetooth { context } else null
+    }
+
     override fun meshRadio(): com.inksheets.ui.MeshRadio? =
         if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH_LE)) mesh else null
 
