@@ -66,6 +66,9 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
         SharedMetronome.bpm = s.bpm
     }
 
+    // The tempo set from elsewhere - the band followed by ear, a remote - shows here too.
+    androidx.compose.runtime.LaunchedEffect(SharedMetronome.bpm) { if (settings.bpm != SharedMetronome.bpm) settings = engine.settings }
+
     fun start() { if (Click.purpose == null) Click.toggle(state) }
     fun stop() = Click.stop(state)
 
@@ -129,6 +132,14 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
             }
             OutlinedButton(onClick = { Click.countOff(state) }, enabled = out != null) {
                 Text(if (Click.counting > 0) "Counting in... ${Click.counting}" else "Count in now (${Click.countInBars(state).coerceAtLeast(1)} bar${if (Click.countInBars(state) > 1) "s" else ""}, then quiet)")
+            }
+            // Experimental (Settings): the tempo taken from the band, by ear.
+            if (state.listenTurns) {
+                SwitchRow("Follow the band's tempo (listens; the click goes quiet so it only hears the band)", TempoFollow.on) { TempoFollow.set(state, it) }
+                TempoFollow.heard?.takeIf { TempoFollow.on }?.let {
+                    Text("Hearing about ${it.roundToInt()} bpm", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                TempoFollow.problem?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
             }
             SwitchRow("Click while recording yourself", Click.withRecording(state)) { Click.setWithRecording(state, it) }
             SwitchRow("Click with recordings, in time with them", Click.withPlayback(state)) { Click.setWithPlayback(state, it) }

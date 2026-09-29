@@ -354,6 +354,7 @@ class SheetsState(val platform: SheetsPlatform) {
         // Markings brought across from MobileSheets, handed to a part when it is opened.
         com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
+            Listener.pageChanged(this, path, page)
             currentPath = path
             if (pagesWanted == path) { pagesWanted = null; com.inkslate.core.Perform.openPages?.invoke() }
             songAt(path)?.let { song ->
@@ -437,6 +438,17 @@ class SheetsState(val platform: SheetsPlatform) {
             e.id to lib.song(e.songId)?.let { s -> partFor(s)?.let { partFile(s, it) } }
         }
     }
+
+    private var listenTurnsState by mutableStateOf(platform.pref(K_LISTEN) == "true")
+
+    /** Experimental: the Listen button, which follows a recording by ear and turns the pages. */
+    var listenTurns: Boolean
+        get() = listenTurnsState
+        set(on) {
+            listenTurnsState = on
+            platform.setPref(K_LISTEN, on.toString())
+            if (!on) { Listener.stop(this); TempoFollow.stop(this) }
+        }
 
     /** The files of the open tabs, as last told. */
     var openFiles: List<File> = emptyList()
@@ -1263,5 +1275,6 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_SETLIST_SORT = "sheets_setlist_sort"
         const val ONE_OFF = "one-off"
         private const val K_ENTRY_SORT = "sheets_entry_sort"
+        private const val K_LISTEN = "sheets_listen_turns"
     }
 }

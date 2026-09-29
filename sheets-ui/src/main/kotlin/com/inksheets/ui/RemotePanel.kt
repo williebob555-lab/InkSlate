@@ -100,6 +100,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.material.icons.filled.PanTool
+import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.draw.alpha
@@ -345,6 +346,7 @@ class RemoteControl(private val state: SheetsState) {
                 }
             }
             RemoteButton.FIT -> Perform.recentre?.invoke()
+            RemoteButton.LISTEN -> if (state.listenTurns) Listener.toggle(state)
             RemoteButton.VIEW -> Perform.viewBy?.invoke(c.dx.toFloat(), c.dy.toFloat(), c.zoom.toFloat(), c.fx.toFloat(), c.fy.toFloat())
             RemoteButton.HOME -> Perform.showHome?.invoke()
             RemoteButton.LEADER -> state.companion.goToLeader()
@@ -1105,6 +1107,7 @@ private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLi
         RemoteButton.TOOLS -> if (shown?.toolsShown == true) "Put tools away" else "All tools"
         RemoteButton.FIT -> "Fit the page"
         RemoteButton.TOUCHPAD -> "Pan and zoom"
+        RemoteButton.LISTEN -> "Listen"
         RemoteButton.HOME -> "Home"
         RemoteButton.LEADER -> "Back to the leader"
         RemoteButton.LEAD -> if (shown?.leading == true) "Stop leading" else "Lead"
@@ -1137,6 +1140,7 @@ private fun iconFor(b: RemoteButton, shown: RemoteLink.State?): ImageVector = wh
     RemoteButton.TOOLS -> Icons.Default.Construction
     RemoteButton.FIT -> Icons.Default.CenterFocusStrong
     RemoteButton.TOUCHPAD -> Icons.Default.PanTool
+    RemoteButton.LISTEN -> Icons.Default.Hearing
     RemoteButton.HOME -> Icons.Default.Home
     RemoteButton.LEADER, RemoteButton.LEAD -> Icons.Default.Groups
     RemoteButton.MACRO -> Icons.Default.AutoAwesome
@@ -1499,6 +1503,7 @@ private fun offers(shown: RemoteLink.State?): List<Offer> {
         k(rec, "Slower or faster by...", RemoteButton.AUDIO_SPEED, -5.0),
         k(rec, "Louder or quieter by...", RemoteButton.AUDIO_VOLUME, 10.0),
         a(rec, PerformAction.RECORDINGS, "Open the recordings there"),
+        k(rec, "Listen and turn pages (experimental; on in its Settings)", RemoteButton.LISTEN),
         a(marks, PerformAction.BOOKMARK), a(marks, PerformAction.PEN), a(marks, PerformAction.HIGHLIGHTER),
         a(marks, PerformAction.ERASER), a(marks, PerformAction.UNDO), a(marks, PerformAction.REDO),
         k(view, "The toolbar (show/hide)", RemoteButton.STRIP),

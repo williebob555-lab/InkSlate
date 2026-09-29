@@ -129,6 +129,34 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
 
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = JavaSoundPlayer()
 
+    override fun decodeAudio(file: File, onChunk: (FloatArray, Int) -> Unit): Boolean = runCatching {
+        javax.sound.sampled.AudioSystem.getAudioInputStream(file).use { raw ->
+            val src = raw.format
+            val rate = src.sampleRate.takeIf { it > 0 } ?: 44_100f
+            val ch = src.channels.coerceAtLeast(1)
+            val pcm = javax.sound.sampled.AudioFormat(javax.sound.sampled.AudioFormat.Encoding.PCM_SIGNED, rate, 16, ch, ch * 2, rate, false)
+            javax.sound.sampled.AudioSystem.getAudioInputStream(pcm, raw).use { d ->
+                val bytes = ByteArray(ch * 2 * 8192)
+                while (true) {
+                    var got = 0
+                    while (got < bytes.size) { val r = d.read(bytes, got, bytes.size - got); if (r <= 0) break; got += r }
+                    val frames = got / (2 * ch)
+                    if (frames == 0) break
+                    onChunk(FloatArray(frames) { f ->
+                        var s = 0f
+                        for (c in 0 until ch) {
+                            val at = (f * ch + c) * 2
+                            s += ((bytes[at].toInt() and 0xFF) or (bytes[at + 1].toInt() shl 8)).toShort() / 32768f
+                        }
+                        s / ch
+                    }, rate.toInt())
+                    if (got < bytes.size) break
+                }
+            }
+        }
+        true
+    }.onFailure { EventLog.warn("sheets", "Could not read ${file.name} to follow it: ${it.message}") }.getOrDefault(false)
+
     override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)
 
     override fun setEdgeTaps(on: Boolean) {

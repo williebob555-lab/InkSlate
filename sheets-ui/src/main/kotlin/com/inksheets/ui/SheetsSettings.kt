@@ -208,5 +208,21 @@ private fun LibraryHealth(state: SheetsState) {
         if (state.platform.meshRadio() == null) {
             Text("Not available on this device.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Row(
+            Modifier.fillMaxWidth().clickable { state.listenTurns = !state.listenTurns }.padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Listen and turn pages (experimental)")
+                Text(
+                    "A Listen button on the toolbar for songs with a recording: pressed, it listens through the microphone, " +
+                        "follows along the recording, and turns the page as it comes - until the music stops. " +
+                        "Turns are guessed at first; play the recording and turn the pages yourself once to teach it where they fall.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            androidx.compose.material3.Switch(checked = state.listenTurns, onCheckedChange = { state.listenTurns = it })
+        }
     }
 }

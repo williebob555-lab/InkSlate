@@ -103,6 +103,8 @@ data class RemoteButton(
         const val MACRO = "macro"
         /** A square to pan and zoom the page on with two fingers; it sends [VIEW] commands. */
         const val TOUCHPAD = "touchpad"
+        /** Listen and turn the pages (experimental): on or off for this run of the song. */
+        const val LISTEN = "listen"
         const val VIEW = "view"
 
         fun action(name: String) = RemoteButton(ACTION, name)

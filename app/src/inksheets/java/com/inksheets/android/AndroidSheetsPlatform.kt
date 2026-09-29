@@ -161,6 +161,8 @@ class AndroidSheetsPlatform(
 
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = MediaAudioPlayer()
 
+    override fun decodeAudio(file: File, onChunk: (FloatArray, Int) -> Unit): Boolean = AudioDecode.decode(file, onChunk)
+
     /** The share sheet: email, a messaging app, Drive, Nearby Share - whatever the tablet has. */
     override fun share(file: File) {
         runCatching {

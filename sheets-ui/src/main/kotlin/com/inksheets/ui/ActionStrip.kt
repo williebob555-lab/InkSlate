@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PlayCircle
@@ -207,6 +208,14 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                                 .clickable { state.metronomeOpen = !state.metronomeOpen }
                                 .padding(horizontal = 6.dp, vertical = 6.dp)
                         )
+                    }
+                }
+                // Experimental, only when turned on in Settings: turn the pages by ear for one run.
+                if (state.listenTurns && (state.current?.audio?.isNotEmpty() == true || Listener.active)) {
+                    StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
+                    Listener.status?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 3,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.width(64.dp))
                     }
                 }
                 Box {

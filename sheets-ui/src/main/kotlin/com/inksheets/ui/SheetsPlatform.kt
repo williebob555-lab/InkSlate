@@ -101,6 +101,13 @@ interface SheetsPlatform {
     /** A player for a song's recordings; null where there is none. */
     fun audioPlayer(): AudioPlayer? = null
 
+    /**
+     * [file]'s sound, mono, handed to [onChunk] a block at a time with its sample rate - for
+     * following a recording by ear without holding all of it. Slow: off the UI thread. False
+     * where it cannot be read.
+     */
+    fun decodeAudio(file: File, onChunk: (samples: FloatArray, rate: Int) -> Unit): Boolean = false
+
     /** This device's own folder, never synced: what it remembers of the music folder lives here. */
     val localFolder: File get() = File(System.getProperty("user.home"), ".inksheets-local")
 

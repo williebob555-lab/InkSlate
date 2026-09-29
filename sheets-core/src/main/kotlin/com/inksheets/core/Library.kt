@@ -65,7 +65,12 @@ data class AudioTrack(
     /** Where its first beat is, in ms; null when not known (taken as the start). */
     val firstBeatMs: Long? = null,
     /** How loud it plays, 0 to 1 of as recorded - one recording is louder than another. */
-    val volume: Double = 1.0
+    val volume: Double = 1.0,
+    /**
+     * Where in it each page is turned from, in ms: [turnsMs] (i) is the turn from page i to page
+     * i + 1. Learned by playing it and turning the pages; followed by ear by the Listen button.
+     */
+    val turnsMs: List<Long> = emptyList()
 )
 
 /** A place to jump to by name: "Letter C", "Coda". */
