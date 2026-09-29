@@ -59,6 +59,7 @@ private fun LibraryHealth(state: SheetsState) {
     var trash by remember { mutableStateOf<List<com.inksheets.core.LibraryTrash.Entry>>(emptyList()) }
     var confirmMissing by remember { mutableStateOf(false) }
     var allHistory by remember { mutableStateOf(false) }
+    var trashOpen by remember { mutableStateOf(false) }
 
     suspend fun look() {
         missing = withContext(Dispatchers.IO) { state.missingParts() }
@@ -145,13 +146,20 @@ private fun LibraryHealth(state: SheetsState) {
         }
 
         if (trash.isNotEmpty()) {
-            Text("Trash", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
-            Text(
+            // Folded to one line until opened: a long list of removed songs is not worth the room.
+            Row(
+                Modifier.fillMaxWidth().clickable { trashOpen = !trashOpen }.padding(top = 8.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text((if (trashOpen) "▾ " else "▸ ") + "Trash (${trash.size})", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                Text(if (trashOpen) "Hide" else "Show", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            if (trashOpen) Text(
                 "Removed songs stay here for ${com.inksheets.core.LibraryTrash.KEEP_DAYS} days, on every device.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            trash.forEach { e ->
+            if (trashOpen) trash.forEach { e ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(e.title, maxLines = 1, overflow = TextOverflow.Ellipsis)

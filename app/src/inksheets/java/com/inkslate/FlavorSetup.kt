@@ -49,6 +49,12 @@ object FlavorSetup {
     private var pendingLink: String? = null
 
     private fun follow(state: SheetsState, link: String) {
+        // A device's remote code, scanned with the camera app: this one becomes its remote.
+        com.inksheets.core.RemoteLink.parsePair(link)?.let { target ->
+            state.remote.connect(target)
+            state.remote.remoteOpen = true
+            return
+        }
         com.inksheets.core.CompanionLink.parseJoin(link)?.let { leader -> state.companion.followLeader(leader) { } }
     }
 

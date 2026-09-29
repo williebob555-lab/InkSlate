@@ -1949,8 +1949,15 @@ class DrawingView @JvmOverloads constructor(
                 parent?.requestDisallowInterceptTouchEvent(false)
                 val (vx, _) = releaseVelocity()
                 if (!f.moved) {
-                    if (edgeTapTurns && width > 0 && System.currentTimeMillis() - f.at < TAP_TURN_MS) {
-                        turnBy(if (e.x >= width / 2f) 1 else -1)
+                    if (width > 0 && System.currentTimeMillis() - f.at < TAP_TURN_MS) {
+                        // The left third back, the right third on, the middle the buttons.
+                        val at = e.x / width
+                        val side = com.inkslate.core.Perform.TAP_SIDE_SHARE
+                        when {
+                            at < side -> if (edgeTapTurns) turnBy(-1)
+                            at >= 1f - side -> if (edgeTapTurns) turnBy(1)
+                            else -> centreTapped(e.y)
+                        }
                     }
                     return true
                 }
@@ -1968,6 +1975,10 @@ class DrawingView @JvmOverloads constructor(
         }
         return true
     }
+
+    /** A tap on the middle of the page, passed to the app; false when nothing took it. */
+    private fun centreTapped(y: Float): Boolean =
+        com.inkslate.core.Perform.centreTap?.invoke(height > 0 && y > height * (1f - com.inkslate.core.Perform.CENTRE_TAP_BOTTOM)) == true
 
     /** Turn a page (or on to the next song) from a tap or a swipe, carrying on from a drag. */
     private fun turnBy(dir: Int) {
@@ -3210,16 +3221,22 @@ class DrawingView @JvmOverloads constructor(
                 }
                 // Not while the finger has been given a pen or eraser from the strip: then a tap is
                 // a mark, a quick fix, and turning the page under it would lose the place.
-                if (edgeTapTurns && tapped != null && !tapped.isStylus && width > 0 && configFor(InputMode.TOUCH).tool == Tool.PAN) {
+                if (tapped != null && !tapped.isStylus && width > 0 && configFor(InputMode.TOUCH).tool == Tool.PAN) {
                     val at = event.x / width
-                    // On a fitted page of music any tap turns: the left half back, the right on.
-                    val share = if (turnsWithFinger() && !zoomedIn()) 0.5f else EDGE_TAP_SHARE
-                    if (at < share || at >= 1f - share) {
+                    // On a fitted page of music the left third turns back, the right third on,
+                    // and the middle brings up or puts away the buttons; zoomed in, only the edges turn.
+                    val fitted = fitWholePage && layout == PageLayout.SINGLE && !zoomedIn()
+                    val share = if (fitted) com.inkslate.core.Perform.TAP_SIDE_SHARE else EDGE_TAP_SHARE
+                    if (edgeTapTurns && (at < share || at >= 1f - share)) {
                         discardPending()
                         com.inkslate.core.Perform.run(
                             if (at > 0.5f) com.inkslate.core.PerformAction.NEXT_PAGE
                             else com.inkslate.core.PerformAction.PREVIOUS_PAGE
                         )
+                        return true
+                    }
+                    if (fitWholePage && at >= share && at < 1f - share && centreTapped(event.y)) {
+                        discardPending()
                         return true
                     }
                 }

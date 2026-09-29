@@ -2,6 +2,17 @@ package com.inksheets.ui
 
 import java.io.File
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -129,12 +140,19 @@ internal object SelfRecorder {
     }
 }
 
-/** A song's recordings: play, loop a passage, slow it down, shift its pitch; and pair new ones. */
+/**
+ * A song's recordings, laid out like its parts: Record yourself and Pair a recording always at
+ * the top - with no recording yet, too - then the recordings in order. The first is the one the
+ * Play button plays; a recording's menu puts another first, or moves it up or down. Under the
+ * list, the one picked: play, loop a passage, slow it down, shift its pitch.
+ */
 @Composable
 internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = false, onClose: () -> Unit) {
-    var tracks by remember { mutableStateOf(song.audio) }
-    var picking by remember { mutableStateOf(tracks.isEmpty()) }
+    var tracks by remember { mutableStateOf(state.library?.song(song.id)?.audio ?: song.audio) }
+    var picking by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(0) }
+    var renaming by remember { mutableStateOf<Int?>(null) }
+    var couldNotRecord by remember { mutableStateOf(false) }
 
     fun save(updated: List<AudioTrack>) {
         tracks = updated
@@ -150,12 +168,150 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                 selected = tracks.lastIndex
                 picking = false
             },
-            onDismiss = { if (tracks.isEmpty()) onClose() else picking = false }
+            onDismiss = { picking = false }
         )
         return
     }
 
-    val track = tracks.getOrNull(selected) ?: return
+    SheetDialog(
+        title = "Recordings - ${song.title}",
+        onDismiss = onClose,
+        wide = true,
+        movable = movable,
+        buttons = if (movable) null else ({ TextButton(onClick = onClose) { Text("Close") } })
+    ) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (SelfRecorder.recording) {
+                    Button(
+                        onClick = {
+                            SelfRecorder.stop(state)
+                            tracks = state.library?.song(song.id)?.audio ?: tracks
+                            selected = tracks.lastIndex.coerceAtLeast(0)
+                        },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.Stop, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Stop recording (${clock(SelfRecorder.seconds * 1000L)})")
+                    }
+                } else {
+                    Button(
+                        onClick = { couldNotRecord = !SelfRecorder.start(state, song) },
+                        enabled = state.platform.microphone != null
+                    ) {
+                        Icon(Icons.Default.Mic, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Record yourself")
+                    }
+                }
+                OutlinedButton(onClick = { picking = true }) {
+                    Icon(Icons.Default.AudioFile, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Pair a recording")
+                }
+            }
+            when {
+                state.platform.microphone == null -> Hint("This device has no microphone to record with.")
+                couldNotRecord -> Hint("The microphone could not be opened. Is it allowed for InkSheets?", error = true)
+            }
+
+            Spacer(Modifier.size(12.dp))
+            Text("Recordings", style = MaterialTheme.typography.titleMedium)
+            if (tracks.isEmpty()) {
+                Hint("None yet. Record yourself playing it, or pair a recording from your music folder. The first one here is the one the Play button plays.")
+            } else {
+                if (tracks.size > 1) Hint("The first one plays from the Play button. Use a recording's menu to put another first.")
+                tracks.forEachIndexed { i, t ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (i == selected) MaterialTheme.colorScheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                            .clickable { selected = i }
+                            .padding(start = 10.dp, top = 4.dp, bottom = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("${i + 1}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(24.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(t.label ?: "Recording ${i + 1}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                (if (i == 0) "Plays first  ·  " else "") + t.file.substringAfterLast('/'),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        var menu by remember { mutableStateOf(false) }
+                        androidx.compose.foundation.layout.Box {
+                            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Recording options") }
+                            androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                fun move(to: Int) {
+                                    val list = tracks.toMutableList()
+                                    list.add(to, list.removeAt(i))
+                                    save(list)
+                                    selected = to
+                                }
+                                if (i > 0) {
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("Play this one first") }, onClick = { menu = false; move(0) })
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("Move up") }, onClick = { menu = false; move(i - 1) })
+                                }
+                                if (i < tracks.lastIndex) {
+                                    androidx.compose.material3.DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; move(i + 1) })
+                                }
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Rename...") }, onClick = { menu = false; renaming = i })
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text("Unpair", color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        menu = false
+                                        if (Recording.loadedFile == t.file) {
+                                            Recording.player?.pause(); Recording.playing = false; Recording.loadedFile = null
+                                        }
+                                        save(tracks.filterIndexed { j, _ -> j != i })
+                                        selected = selected.coerceAtMost(tracks.lastIndex).coerceAtLeast(0)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                tracks.getOrNull(selected)?.let { track ->
+                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                    TrackControls(state, track) { change ->
+                        val at = tracks.indexOfFirst { it.file == track.file }.takeIf { it >= 0 } ?: return@TrackControls
+                        val t = change(track)
+                        save(tracks.toMutableList().also { it[at] = t })
+                        Recording.player?.let { p -> p.speed = t.speed; p.pitch = t.pitch; p.setLoop(t.loopStartMs, t.loopEndMs) }
+                    }
+                }
+            }
+        }
+    }
+
+    renaming?.let { i ->
+        val t = tracks.getOrNull(i)
+        if (t == null) renaming = null else AskName(
+            title = "Name this recording", initial = t.label.orEmpty(), confirm = "Rename",
+            onDone = { name -> save(tracks.toMutableList().also { it[i] = t.copy(label = name.trim().ifEmpty { null }) }); renaming = null },
+            onDismiss = { renaming = null }
+        )
+    }
+}
+
+@Composable
+private fun Hint(text: String, error: Boolean = false) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(vertical = 4.dp)
+    )
+}
+
+/** The picked recording: play, loop a passage, slow it down, shift its pitch. */
+@Composable
+private fun TrackControls(state: SheetsState, track: AudioTrack, update: ((AudioTrack) -> AudioTrack) -> Unit) {
     val player = remember { Recording.playerFor(state) }
     var loaded by remember(track.file) { mutableStateOf(Recording.loadedFile == track.file) }
     var failed by remember(track.file) { mutableStateOf(false) }
@@ -178,98 +334,56 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
         }
     }
 
-    fun update(change: (AudioTrack) -> AudioTrack) {
-        val t = change(track)
-        save(tracks.toMutableList().also { it[selected] = t })
-        player?.speed = t.speed
-        player?.pitch = t.pitch
-        player?.setLoop(t.loopStartMs, t.loopEndMs)
-    }
-
-    SheetDialog(
-        title = "Recordings - ${song.title}",
-        onDismiss = onClose,
-        wide = true,
-        movable = movable,
-        buttons = {
-            if (SelfRecorder.recording) {
-                TextButton(onClick = {
-                    SelfRecorder.stop(state)
-                    tracks = state.library?.song(song.id)?.audio ?: tracks
-                    selected = tracks.lastIndex
-                }) { Text("Stop recording (${SelfRecorder.seconds}s)") }
-            } else {
-                TextButton(onClick = { SelfRecorder.start(state, song) }) { Text("Record yourself") }
-            }
-            TextButton(onClick = { picking = true }) { Text("Pair another") }
-            if (!movable) TextButton(onClick = onClose) { Text("Close") }
+    Column {
+        if (player == null) {
+            Text("This device cannot play recordings.", color = MaterialTheme.colorScheme.error)
+            return@Column
         }
-    ) {
-        Column {
-            if (tracks.size > 1) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    tracks.forEachIndexed { i, t ->
-                        FilterChip(selected = i == selected, onClick = { selected = i }, label = { Text(t.label ?: "Track ${i + 1}") })
-                    }
-                }
-            }
-            if (player == null) {
-                Text("This device cannot play recordings.", color = MaterialTheme.colorScheme.error)
-                return@Column
-            }
-            if (failed) {
-                Text("${track.file} could not be played here.", color = MaterialTheme.colorScheme.error)
-                return@Column
-            }
+        if (failed) {
+            Text("${track.file} could not be played here.", color = MaterialTheme.colorScheme.error)
+            return@Column
+        }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                FilledIconButton(onClick = {
-                    if (player.playing) player.pause() else player.play()
-                    Recording.playing = player.playing
-                }, enabled = loaded) {
-                    Icon(if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause")
-                }
-                Spacer(Modifier.width(12.dp))
-                Text("${clock(position)} / ${clock(duration)}")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            FilledIconButton(onClick = {
+                if (player.playing) player.pause() else player.play()
+                Recording.playing = player.playing
+            }, enabled = loaded) {
+                Icon(if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause")
             }
-            Slider(
-                value = if (duration > 0) position.toFloat() / duration else 0f,
-                onValueChange = { player.seek((it * duration).toLong()); position = (it * duration).toLong() },
-                enabled = loaded
-            )
+            Spacer(Modifier.width(12.dp))
+            Text("${clock(position)} / ${clock(duration)}")
+        }
+        Slider(
+            value = if (duration > 0) position.toFloat() / duration else 0f,
+            onValueChange = { player.seek((it * duration).toLong()); position = (it * duration).toLong() },
+            enabled = loaded
+        )
 
-            Text("Loop a passage", style = MaterialTheme.typography.labelMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { update { it.copy(loopStartMs = position) } }) {
-                    Text("A " + (track.loopStartMs?.let(::clock) ?: "–"))
-                }
-                OutlinedButton(onClick = { update { it.copy(loopEndMs = position) } }) {
-                    Text("B " + (track.loopEndMs?.let(::clock) ?: "–"))
-                }
-                TextButton(onClick = { update { it.copy(loopStartMs = null, loopEndMs = null) } }) { Text("No loop") }
+        Text("Loop a passage", style = MaterialTheme.typography.labelMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(onClick = { update { it.copy(loopStartMs = position) } }) {
+                Text("A " + (track.loopStartMs?.let(::clock) ?: "–"))
             }
+            OutlinedButton(onClick = { update { it.copy(loopEndMs = position) } }) {
+                Text("B " + (track.loopEndMs?.let(::clock) ?: "–"))
+            }
+            TextButton(onClick = { update { it.copy(loopStartMs = null, loopEndMs = null) } }) { Text("No loop") }
+        }
 
-            Spacer(Modifier.padding(4.dp))
-            Text("Speed ${(track.speed * 100).roundToInt()}%  (the pitch stays)", style = MaterialTheme.typography.labelMedium)
-            Slider(
-                value = track.speed.toFloat(),
-                onValueChange = { v -> update { it.copy(speed = (v * 20).roundToInt() / 20.0) } },
-                valueRange = 0.5f..1.25f,
-                steps = 14
-            )
-            Text("Pitch ${if (track.pitch > 0) "+" else ""}${track.pitch} semitones", style = MaterialTheme.typography.labelMedium)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { update { it.copy(pitch = (it.pitch - 1).coerceAtLeast(-12)) } }) { Text("−1") }
-                TextButton(onClick = { update { it.copy(pitch = 0) } }) { Text("Original") }
-                TextButton(onClick = { update { it.copy(pitch = (it.pitch + 1).coerceAtMost(12)) } }) { Text("+1") }
-            }
-            TextButton(onClick = {
-                player.pause()
-                Recording.loadedFile = null
-                save(tracks.filterIndexed { i, _ -> i != selected })
-                selected = 0
-                if (tracks.isEmpty()) onClose()
-            }) { Text("Unpair this recording") }
+        Spacer(Modifier.padding(4.dp))
+        Text("Speed ${(track.speed * 100).roundToInt()}%  (the pitch stays)", style = MaterialTheme.typography.labelMedium)
+        Slider(
+            value = track.speed.toFloat(),
+            onValueChange = { v -> update { it.copy(speed = (v * 20).roundToInt() / 20.0) } },
+            valueRange = 0.5f..1.25f,
+            steps = 14
+        )
+        Text("Pitch ${if (track.pitch > 0) "+" else ""}${track.pitch} semitones", style = MaterialTheme.typography.labelMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { update { it.copy(pitch = (it.pitch - 1).coerceAtLeast(-12)) } }) { Text("−1") }
+            TextButton(onClick = { update { it.copy(pitch = 0) } }) { Text("Original") }
+            TextButton(onClick = { update { it.copy(pitch = (it.pitch + 1).coerceAtMost(12)) } }) { Text("+1") }
         }
     }
 }

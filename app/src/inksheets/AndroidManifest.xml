@@ -15,13 +15,14 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
     <application>
-        <!-- Scanning a leader's join code with the tablet's own camera app opens InkSheets and follows. -->
+        <!-- Scanning a leader's join code with the tablet's own camera app opens InkSheets and follows; a device's remote code makes this one its remote. -->
         <activity android:name="com.inkslate.MainActivity" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="inksheets" android:host="join" />
+                <data android:scheme="inksheets" android:host="remote" />
             </intent-filter>
             <!-- Music shared from another app, one file or many, and downloads of whole folders. -->
             <intent-filter>

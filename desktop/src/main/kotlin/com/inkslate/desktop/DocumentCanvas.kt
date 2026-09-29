@@ -581,11 +581,17 @@ fun DocumentCanvas(
                             val tapped = System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < TAP_SLOP_PX && abs(dy) < TAP_SLOP_PX
                             if (turn != null && fingers == 1 && swiped) {
                                 turn(if (dx < 0) 1 else -1)
-                            } else if (turn != null && AppFlavor.edgeTaps && fingers == 1 && tapped) {
-                                // A tap turns the page like a pedal would: at the sides, or on a
-                                // fitted page anywhere - the left half back, the right half on.
-                                val share = if (fitted) 0.5f else EDGE_SHARE
-                                if (end.x < w * share) turn(-1) else if (end.x >= w * (1 - share)) turn(1)
+                            } else if (turn != null && fingers == 1 && tapped) {
+                                // A tap turns the page like a pedal would: at the sides - on a
+                                // fitted page the left third back, the right third on - and the
+                                // middle brings up or puts away the buttons over the page.
+                                val share = if (fitted) com.inkslate.core.Perform.TAP_SIDE_SHARE else EDGE_SHARE
+                                val h = viewport.viewSize.height
+                                when {
+                                    end.x < w * share -> if (AppFlavor.edgeTaps) turn(-1)
+                                    end.x >= w * (1 - share) -> if (AppFlavor.edgeTaps) turn(1)
+                                    else -> com.inkslate.core.Perform.centreTap?.invoke(h > 0 && end.y > h * (1 - com.inkslate.core.Perform.CENTRE_TAP_BOTTOM))
+                                }
                             }
                             start = null
                         }

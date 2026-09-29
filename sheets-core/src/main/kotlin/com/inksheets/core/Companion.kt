@@ -174,6 +174,8 @@ object CompanionLink {
     fun parseJoin(text: String): Leader? {
         val t = text.trim()
         if (t.startsWith("$SCHEME://", ignoreCase = true)) {
+            // A remote's pairing code is not a leader to follow.
+            if (t.substringAfter("://").startsWith("remote", ignoreCase = true)) return null
             val query = t.substringAfter('?', "")
             val params = query.split('&').mapNotNull { kv ->
                 val k = kv.substringBefore('=', "").takeIf { it.isNotEmpty() } ?: return@mapNotNull null

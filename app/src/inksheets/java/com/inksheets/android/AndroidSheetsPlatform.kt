@@ -80,6 +80,14 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.edgeTapTurns = on
     }
 
+    override fun keepAwake(on: Boolean) {
+        val activity = context as? android.app.Activity ?: return
+        activity.runOnUiThread {
+            val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            if (on) activity.window.addFlags(flag) else activity.window.clearFlags(flag)
+        }
+    }
+
     override fun setStripLane(open: Boolean) {
         com.inkslate.ink.DrawingView.stripLaneDp = if (open) 64f else 0f
     }

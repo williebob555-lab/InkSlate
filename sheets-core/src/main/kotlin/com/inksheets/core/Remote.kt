@@ -1,0 +1,475 @@
+package com.inksheets.core
+
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.LinkedBlockingDeque
+import java.util.concurrent.TimeUnit
+
+/**
+ * A message a leader sends with one tap - "STOP", "Look up", "From the top" - from the strip
+ * over the page or from a remote.
+ */
+@Serializable
+data class MessagePreset(
+    val text: String,
+    /** Covers the music, big, until each player taps it away. */
+    val urgent: Boolean = false,
+    /** The colour it covers the music in (ARGB); null for the warning colour. */
+    val color: Int? = null,
+    /** Instrument ids it goes to; empty for everyone. */
+    val instruments: List<String> = emptyList(),
+    /** A button of its own on the strip while leading. */
+    val onStrip: Boolean = true
+) {
+    companion object {
+        val DEFAULTS = listOf(
+            MessagePreset("STOP", urgent = true),
+            MessagePreset("Look up"),
+            MessagePreset("From the top", onStrip = false)
+        )
+    }
+}
+
+/**
+ * One button on a remote: an action ([ACTION], [id] a PerformAction name), a chosen song or
+ * setlist to go straight to, or a list to pick from - any song ([SONGS]) or the set's ([SET]).
+ */
+@Serializable
+data class RemoteButton(val kind: String, val id: String? = null, val title: String? = null) {
+    companion object {
+        const val ACTION = "action"
+        const val SONG = "song"
+        const val SETLIST = "setlist"
+        const val SONGS = "songs"
+        const val SET = "set"
+
+        fun action(name: String) = RemoteButton(ACTION, name)
+
+        val DEFAULT_DECK = listOf(
+            action("PREVIOUS_PAGE"), action("NEXT_PAGE"),
+            action("PREVIOUS_SONG"), action("NEXT_SONG"),
+            RemoteButton(SET), RemoteButton(SONGS),
+            action("BOOKMARK"), action("METRONOME"),
+            action("PLAY_AUDIO"), action("FULLSCREEN")
+        )
+    }
+}
+
+/**
+ * A remote: a second device running InkSheets that turns this one's pages, changes its song and
+ * sends its leader's messages, with buttons of its own choosing - a stream deck for the stand.
+ *
+ * Each player's device lets its own remotes in, whether it plays alone, leads or follows; a
+ * remote is paired once by scanning the device's code (which carries a key), and reconnects on
+ * its own after that. Like [CompanionLink]: plain TCP, one JSON line per message.
+ */
+object RemoteLink {
+    const val PORT = 47_822
+    const val ANNOUNCE_PORT = 47_823
+    private const val TAG = "INKSHEETS-REMOTE"
+
+    /** A song or setlist, as a remote lists it. */
+    @Serializable
+    data class Item(val id: String, val title: String, val color: Int? = null)
+
+    /** Where the controlled device is and what it can do: sent whenever any of it changes. */
+    @Serializable
+    data class State(
+        val kind: String = "state",
+        val device: String = "",
+        val songId: String? = null,
+        val title: String? = null,
+        /** 0-based page, and how many. */
+        val page: Int = 0,
+        val pages: Int = 0,
+        /** The part showing: "Trumpet 2". */
+        val part: String? = null,
+        val setlistId: String? = null,
+        val setlist: String? = null,
+        /** The songs of the set being played, in order, and which of them is in front. */
+        val set: List<Item> = emptyList(),
+        val setIndex: Int = -1,
+        val leading: Boolean = false,
+        val followers: Int = 0,
+        val following: String? = null,
+        val presets: List<MessagePreset> = emptyList(),
+        val metronome: Boolean = false,
+        val bpm: Int = 0,
+        val hasRecording: Boolean = false,
+        val recordingPlaying: Boolean = false,
+        val bookmarked: Boolean = false,
+        val toolsShown: Boolean = false,
+        val home: Boolean = false
+    )
+
+    /** The library to pick a song or setlist from; sent on joining and when it changes. */
+    @Serializable
+    data class Library(
+        val kind: String = "library",
+        val songs: List<Item> = emptyList(),
+        val setlists: List<Item> = emptyList()
+    )
+
+    /**
+     * Something to do. [action] is a [com.inkslate.core.PerformAction] name, or one of
+     * [SONG], [SETLIST], [SET_ENTRY], [PRESET], [NOTE], [HOME].
+     */
+    @Serializable
+    data class Command(
+        val kind: String = "do",
+        val action: String,
+        val id: String? = null,
+        val index: Int? = null,
+        val text: String? = null
+    )
+
+    @Serializable
+    data class Hello(val kind: String = "hello", val name: String = "", val key: String = "")
+
+    const val SONG = "song"
+    const val SETLIST = "setlist"
+    const val SET_ENTRY = "set-entry"
+    const val PRESET = "preset"
+    const val NOTE = "note"
+    const val HOME = "home"
+
+    sealed interface Line {
+        data class Shows(val state: State) : Line
+        data class Songs(val library: Library) : Line
+        data class Do(val command: Command) : Line
+        data class Joined(val hello: Hello) : Line
+        data object Ping : Line
+        /** The key was wrong: this device was paired again, or the code was mistyped. */
+        data object Refused : Line
+    }
+
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    fun encode(s: State): String = json.encodeToString(State.serializer(), s)
+    fun encode(s: Library): String = json.encodeToString(Library.serializer(), s)
+    fun encode(c: Command): String = json.encodeToString(Command.serializer(), c)
+    fun encode(h: Hello): String = json.encodeToString(Hello.serializer(), h)
+    const val PING = """{"kind":"ping"}"""
+    const val REFUSED = """{"kind":"refused"}"""
+
+    fun read(line: String): Line? = runCatching {
+        val obj = json.decodeFromString(JsonObject.serializer(), line)
+        when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
+            "state" -> Line.Shows(json.decodeFromJsonElement(State.serializer(), obj))
+            "library" -> Line.Songs(json.decodeFromJsonElement(Library.serializer(), obj))
+            "do" -> Line.Do(json.decodeFromJsonElement(Command.serializer(), obj))
+            "hello" -> Line.Joined(json.decodeFromJsonElement(Hello.serializer(), obj))
+            "ping" -> Line.Ping
+            "refused" -> Line.Refused
+            else -> null
+        }
+    }.getOrNull()
+
+    /** A device to control: its name, every address it has, its port and its key. */
+    data class Target(val name: String, val hosts: List<String>, val port: Int = PORT, val key: String)
+
+    /** The text of a device's remote code: `inksheets://remote?name=Stand&hosts=192.168.1.4&port=47822&key=K7Q2PX`. */
+    fun pairLink(name: String, hosts: List<String>, key: String, port: Int = PORT): String =
+        "${CompanionLink.SCHEME}://remote?name=" + URLEncoder.encode(name, "UTF-8").replace("+", "%20") +
+            "&hosts=" + hosts.joinToString(",") + "&port=$port&key=$key"
+
+    fun parsePair(text: String): Target? {
+        val t = text.trim()
+        if (!t.startsWith("${CompanionLink.SCHEME}://remote", ignoreCase = true)) return null
+        val params = t.substringAfter('?', "").split('&').mapNotNull { kv ->
+            val k = kv.substringBefore('=', "").takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            k to runCatching { URLDecoder.decode(kv.substringAfter('='), "UTF-8") }.getOrDefault("")
+        }.toMap()
+        val hosts = params["hosts"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val key = params["key"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: return null
+        if (hosts.isEmpty()) return null
+        return Target(params["name"]?.takeIf { it.isNotBlank() } ?: hosts.first(), hosts, params["port"]?.toIntOrNull() ?: PORT, key)
+    }
+
+    /** A pairing key: six letters and digits that read aloud without mix-ups (no O/0, I/1). */
+    fun newKey(random: java.util.Random = java.security.SecureRandom()): String {
+        val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        return (1..6).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
+    }
+
+    /** A key typed by a person: spaces and dashes dropped, case ignored, O read as 0 read as O. */
+    fun sameKey(typed: String, key: String): Boolean {
+        fun clean(s: String) = s.uppercase().filter { it.isLetterOrDigit() }.replace('0', 'O').replace('1', 'I')
+        return clean(typed) == clean(key)
+    }
+
+    fun announcement(name: String, port: Int) = "$TAG|${name.replace('|', ' ')}|$port"
+    fun readAnnouncement(text: String, from: String): Pair<String, Pair<String, Int>>? {
+        val parts = text.split('|')
+        if (parts.size != 3 || parts[0] != TAG) return null
+        return parts[1] to (from to (parts[2].toIntOrNull() ?: return null))
+    }
+}
+
+/**
+ * The controlled device's side: remotes connect, say the key, and are then sent where this device
+ * is and may send it commands. Any number of remotes; one that gives the wrong key is told so and
+ * let go. Nothing about remotes comes to the screen - it goes to [onLog].
+ */
+class RemoteHost(private val name: String, @Volatile var key: String, private val port: Int = RemoteLink.PORT) {
+
+    private class Client(val socket: Socket) {
+        val queue = LinkedBlockingDeque<String>()
+        @Volatile var open = true
+        @Volatile var admitted = false
+        /** Told its key is wrong: let go once that has been sent, not before. */
+        @Volatile var refusing = false
+        @Volatile var name = socket.inetAddress?.hostAddress ?: "?"
+    }
+
+    private val clients = ConcurrentHashMap.newKeySet<Client>()
+    @Volatile private var server: ServerSocket? = null
+    @Volatile private var running = false
+    @Volatile private var lastState: String? = null
+    @Volatile private var lastLibrary: String? = null
+
+    /** A command from a remote, off the UI thread. */
+    var onCommand: ((RemoteLink.Command) -> Unit)? = null
+
+    /** Remotes connecting and leaving; off the UI thread. */
+    var onLog: ((String) -> Unit)? = null
+
+    /** The number of remotes connected changed; off the UI thread. */
+    var onRemotes: ((Int) -> Unit)? = null
+
+    val remotes: Int get() = clients.count { it.admitted }
+
+    fun start(): Boolean = runCatching {
+        val socket = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(port)) }
+        server = socket
+        running = true
+        Thread({
+            while (running) {
+                val s = runCatching { socket.accept() }.getOrNull() ?: continue
+                runCatching { s.tcpNoDelay = true }
+                serve(Client(s))
+            }
+        }, "remote-accept").apply { isDaemon = true; start() }
+        Thread({
+            val announce = runCatching { DatagramSocket().apply { broadcast = true } }.getOrNull()
+            val bytes = RemoteLink.announcement(name, port).toByteArray()
+            var tick = 0
+            while (running) {
+                // Heard by a remote looking for devices nearby, every few seconds.
+                if (tick++ % 2 == 0) runCatching {
+                    announce?.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), RemoteLink.ANNOUNCE_PORT))
+                }
+                clients.forEach { c ->
+                    if (c.admitted) { c.queue.removeIf { it == RemoteLink.PING }; c.queue.offer(RemoteLink.PING) }
+                }
+                Thread.sleep(PING_EVERY_MS)
+            }
+            announce?.close()
+        }, "remote-ping").apply { isDaemon = true; start() }
+        true
+    }.getOrDefault(false)
+
+    private fun serve(c: Client) {
+        clients += c
+        Thread({
+            val out = runCatching { OutputStreamWriter(c.socket.getOutputStream(), Charsets.UTF_8) }.getOrNull()
+            while (c.open && running && out != null) {
+                val line = runCatching { c.queue.poll(2, TimeUnit.SECONDS) }.getOrNull() ?: continue
+                if (runCatching { out.write(line + "\n"); out.flush() }.isFailure) break
+                if (line == RemoteLink.REFUSED) break
+            }
+            drop(c)
+        }, "remote-send").apply { isDaemon = true; start() }
+        Thread({
+            runCatching {
+                // A remote that says nothing (not even the key) in a while is let go.
+                c.socket.soTimeout = HELLO_WITHIN_MS
+                val reader = BufferedReader(InputStreamReader(c.socket.getInputStream(), Charsets.UTF_8))
+                while (c.open) {
+                    val line = reader.readLine() ?: break
+                    when (val got = RemoteLink.read(line)) {
+                        is RemoteLink.Line.Joined -> {
+                            if (!RemoteLink.sameKey(got.hello.key, key)) {
+                                onLog?.invoke("A remote (${got.hello.name.ifBlank { c.name }}) gave the wrong key - turned away")
+                                c.refusing = true
+                                c.queue.offer(RemoteLink.REFUSED)
+                                return@runCatching
+                            }
+                            c.socket.soTimeout = 0
+                            if (got.hello.name.isNotBlank()) c.name = got.hello.name
+                            c.admitted = true
+                            lastLibrary?.let(c.queue::offer)
+                            lastState?.let(c.queue::offer)
+                            onLog?.invoke("Remote ${c.name} connected")
+                            onRemotes?.invoke(remotes)
+                        }
+                        is RemoteLink.Line.Do -> if (c.admitted) onCommand?.invoke(got.command)
+                        else -> Unit
+                    }
+                }
+            }
+            // A remote being turned away is let go by the sender, once it has been told.
+            if (!c.refusing) drop(c)
+        }, "remote-hear").apply { isDaemon = true; start() }
+    }
+
+    private fun drop(c: Client) {
+        if (!clients.remove(c)) return
+        c.open = false
+        runCatching { c.socket.close() }
+        if (c.admitted) {
+            onLog?.invoke("Remote ${c.name} disconnected")
+            onRemotes?.invoke(remotes)
+        }
+    }
+
+    /** Where this device is now; sent to every remote if it changed. */
+    fun show(state: RemoteLink.State) {
+        val line = RemoteLink.encode(state.copy(device = name))
+        if (line == lastState) return
+        lastState = line
+        clients.forEach { c -> if (c.admitted) { c.queue.removeIf { it.startsWith("{\"kind\":\"state\"") }; c.queue.offer(line) } }
+    }
+
+    fun library(library: RemoteLink.Library) {
+        val line = RemoteLink.encode(library)
+        if (line == lastLibrary) return
+        lastLibrary = line
+        clients.forEach { c -> if (c.admitted) { c.queue.removeIf { it.startsWith("{\"kind\":\"library\"") }; c.queue.offer(line) } }
+    }
+
+    /** A new key: every remote paired so far is let go and has to scan again. */
+    fun rekey(newKey: String) {
+        key = newKey
+        clients.forEach { c -> c.refusing = true; c.queue.offer(RemoteLink.REFUSED) }
+    }
+
+    fun stop() {
+        running = false
+        runCatching { server?.close() }
+        clients.forEach { it.open = false; runCatching { it.socket.close() } }
+        clients.clear()
+    }
+
+    companion object {
+        const val PING_EVERY_MS = 2_000L
+        const val HELLO_WITHIN_MS = 10_000
+    }
+}
+
+/**
+ * The remote's side: connect to [RemoteLink.Target], and keep connected - a dropped link is tried
+ * again at once, then every couple of seconds, on each of the device's addresses, until [stop].
+ */
+class RemoteClient(private val myName: String, private val onLine: (RemoteLink.Line) -> Unit) {
+    @Volatile private var wanted: RemoteLink.Target? = null
+    @Volatile private var socket: Socket? = null
+    @Volatile private var out: OutputStreamWriter? = null
+
+    /** Told true on connecting and false on losing the connection. Off the UI thread. */
+    var onConnected: ((Boolean) -> Unit)? = null
+
+    fun start(target: RemoteLink.Target) {
+        stop()
+        wanted = target
+        Thread({
+            while (wanted === target) {
+                val s = target.hosts.firstNotNullOfOrNull { host ->
+                    runCatching { Socket().apply { connect(InetSocketAddress(host, target.port), 3000); tcpNoDelay = true } }.getOrNull()
+                }
+                if (s == null) { sleepWhileWanted(target, 2_000); continue }
+                if (wanted !== target) { runCatching { s.close() }; break }
+                socket = s
+                out = runCatching {
+                    OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8).apply {
+                        write(RemoteLink.encode(RemoteLink.Hello(name = myName, key = target.key)) + "\n"); flush()
+                    }
+                }.getOrNull()
+                onConnected?.invoke(true)
+                var refused = false
+                runCatching {
+                    s.soTimeout = SILENT_FOR_MS
+                    val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
+                    while (wanted === target) {
+                        val line = reader.readLine() ?: break
+                        val got = RemoteLink.read(line) ?: continue
+                        if (got is RemoteLink.Line.Refused) { refused = true; onLine(got); break }
+                        if (got !is RemoteLink.Line.Ping) onLine(got)
+                    }
+                }
+                runCatching { s.close() }
+                if (socket === s) { socket = null; out = null }
+                onConnected?.invoke(false)
+                // Told the key is wrong: trying again would be told the same.
+                if (refused) { if (wanted === target) wanted = null; break }
+                sleepWhileWanted(target, 300)
+            }
+        }, "remote-client").apply { isDaemon = true; start() }
+    }
+
+    /** Send [command]; false when not connected. Off the UI thread is not needed - it is one short line. */
+    fun send(command: RemoteLink.Command): Boolean {
+        val o = out ?: return false
+        val line = RemoteLink.encode(command) + "\n"
+        return runCatching { synchronized(o) { o.write(line); o.flush() } }.isSuccess
+    }
+
+    private fun sleepWhileWanted(target: RemoteLink.Target, ms: Long) {
+        var left = ms
+        while (left > 0 && wanted === target) { Thread.sleep(100); left -= 100 }
+    }
+
+    fun stop() {
+        wanted = null
+        val s = socket
+        socket = null
+        out = null
+        runCatching { s?.close() }
+    }
+
+    companion object {
+        /** Three missed heartbeats. */
+        const val SILENT_FOR_MS = 7_000
+    }
+}
+
+/** Listening for devices that let remotes in, on the local network. */
+class RemoteScanner(private val onFound: (name: String, host: String, port: Int) -> Unit) {
+    @Volatile private var socket: DatagramSocket? = null
+
+    fun start(): Boolean = runCatching {
+        val s = DatagramSocket(null).apply { reuseAddress = true; broadcast = true; bind(InetSocketAddress(RemoteLink.ANNOUNCE_PORT)) }
+        socket = s
+        Thread({
+            val buffer = ByteArray(512)
+            while (socket === s) {
+                val packet = DatagramPacket(buffer, buffer.size)
+                runCatching { s.receive(packet) }.onFailure { return@Thread }
+                val text = String(packet.data, 0, packet.length, Charsets.UTF_8)
+                RemoteLink.readAnnouncement(text, packet.address.hostAddress)?.let { (name, at) -> onFound(name, at.first, at.second) }
+            }
+        }, "remote-scan").apply { isDaemon = true; start() }
+        true
+    }.getOrDefault(false)
+
+    fun stop() {
+        val s = socket
+        socket = null
+        runCatching { s?.close() }
+    }
+}

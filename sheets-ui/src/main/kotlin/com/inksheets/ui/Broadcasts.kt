@@ -6,6 +6,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraintsScope
@@ -53,6 +56,8 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
     val only = remember { mutableStateListOf<String>() }
     var urgent by remember { mutableStateOf(false) }
+    var editingPresets by remember { mutableStateOf(false) }
+    if (editingPresets) PresetsDialog(state, onClose = { editingPresets = false })
     // Remembered, so a band learns what a colour means.
     var colour by remember { mutableStateOf(state.platform.pref(K_URGENT_COLOUR)?.toIntOrNull()) }
     // The instruments with parts in the library, to pick from - not every instrument there is.
@@ -73,13 +78,17 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
                 val next = state.library?.setlist(id)?.entries?.getOrNull(index + 1)?.let { e -> state.library?.song(e.songId)?.title }
                 if (next != null) AssistChip(onClick = { send("Next up: $next") }, label = { Text("Next up: $next") })
             }
-            // Right now, over everything: the band stops.
-            AssistChip(
-                onClick = { send("STOP", cover = true) },
-                label = { Text("Stop", color = MaterialTheme.colorScheme.error) }
-            )
-            AssistChip(onClick = { send("Look up") }, label = { Text("Look up") })
-            AssistChip(onClick = { send("From the top") }, label = { Text("From the top") })
+            // The messages kept for one tap: Stop, over everything, and whatever else was saved.
+            for (preset in state.presets) {
+                AssistChip(
+                    onClick = {
+                        state.sendPreset(preset)
+                        onSent(if (preset.instruments.isEmpty()) "Sent \u201C${preset.text}\u201D to everyone." else "Sent \u201C${preset.text}\u201D to " + preset.instruments.mapNotNull { Instruments.byId[it]?.name }.joinToString(", ") + ".")
+                    },
+                    label = { Text(preset.text, color = if (preset.urgent) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) }
+                )
+            }
+            TextButton(onClick = { editingPresets = true }) { Text("Edit...") }
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             OutlinedTextField(
@@ -89,6 +98,13 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
                 modifier = Modifier.weight(1f)
             )
             TextButton(onClick = { send(text) }, enabled = text.isNotBlank()) { Text("Send") }
+        }
+        // Kept for next time, with who it is for and whether it covers the music.
+        if (text.isNotBlank() && state.presets.none { it.text == text.trim() }) {
+            TextButton(onClick = {
+                state.savePresets(state.presets + com.inksheets.core.MessagePreset(text.trim(), urgent, if (urgent) colour else null, only.toList()))
+                onSent("Kept \u201C${text.trim()}\u201D - one tap from the strip and from a remote.")
+            }) { Text("Keep as a one-tap message") }
         }
         Row(
             Modifier.fillMaxWidth().clickable { urgent = !urgent },
@@ -181,15 +197,15 @@ internal fun SendNoteDialog(state: SheetsState, onClose: () -> Unit) {
 internal fun BoxWithConstraintsScope.NotePopup(state: SheetsState) {
     val companion = state.companion
     val note = companion.notice
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(companion.noticeCount) {
-        if (companion.notice == null) return@LaunchedEffect
-        shown = true
+    // Shown once: the state is the app's, not this page's, so a new song never brings it back.
+    val shown = companion.noticeShowing
+    LaunchedEffect(companion.noticeCount, shown) {
+        if (companion.notice == null || !shown) return@LaunchedEffect
         delay(if (companion.notice?.urgent == true) 15_000 else 6_000)
-        shown = false
+        companion.noticeShowing = false
     }
     if (note?.urgent == true) {
-        UrgentNote(note, shown) { shown = false }
+        UrgentNote(note, shown) { companion.noticeShowing = false }
         return
     }
     val landscape = maxWidth > maxHeight
@@ -210,7 +226,7 @@ internal fun BoxWithConstraintsScope.NotePopup(state: SheetsState) {
             shadowElevation = 6.dp,
             modifier = Modifier
                 .widthIn(max = if (landscape) (maxWidth * 0.2f).coerceIn(160.dp, 280.dp) else 420.dp)
-                .clickable { shown = false }
+                .clickable { companion.noticeShowing = false }
         ) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 note?.let { n ->
@@ -258,3 +274,56 @@ private fun BoxWithConstraintsScope.UrgentNote(note: com.inksheets.core.Companio
         }
     }
 }
+
+/**
+ * The leader's one-tap messages: each shown on the strip while leading or not, put in order, or
+ * taken away. Kept on this device; a remote is sent them.
+ */
+@Composable
+internal fun PresetsDialog(state: SheetsState, onClose: () -> Unit) {
+    val list = remember { state.presets.toMutableList().let { androidx.compose.runtime.mutableStateListOf(*it.toTypedArray()) } }
+    fun save() = state.savePresets(list.toList())
+    SheetDialog(title = "One-tap messages", onDismiss = onClose, buttons = {
+        TextButton(onClick = { list.clear(); list.addAll(com.inksheets.core.MessagePreset.DEFAULTS); save() }) { Text("Start again") }
+        TextButton(onClick = onClose) { Text("Done") }
+    }) {
+        Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+            Text(
+                "Sent in one tap from Message the band, from the strip while leading, and from a remote. " +
+                    "To add one, write it in Message the band and choose Keep.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (list.isEmpty()) Text("None kept.", modifier = Modifier.padding(vertical = 8.dp))
+            list.forEachIndexed { i, p ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text(p.text, style = MaterialTheme.typography.titleSmall, color = if (p.urgent) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            listOfNotNull(
+                                if (p.urgent) "covers the music" else null,
+                                if (p.instruments.isEmpty()) "everyone" else p.instruments.mapNotNull { Instruments.byId[it]?.name }.joinToString(", ")
+                            ).joinToString("  \u00B7  "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            Modifier.clickable { list[i] = p.copy(onStrip = !p.onStrip); save() },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            androidx.compose.material3.Checkbox(checked = p.onStrip, onCheckedChange = { list[i] = p.copy(onStrip = it); save() })
+                            Text("On the strip", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    androidx.compose.material3.IconButton(onClick = { if (i > 0) { list.add(i - 1, list.removeAt(i)); save() } }, enabled = i > 0) {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.ArrowUpward, "Move up")
+                    }
+                    androidx.compose.material3.IconButton(onClick = { list.removeAt(i); save() }) {
+                        androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Close, "Remove")
+                    }
+                }
+            }
+        }
+    }
+}
+

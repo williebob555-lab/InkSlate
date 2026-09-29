@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Fullscreen
@@ -143,6 +144,11 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                             leadingIcon = { Icon(Icons.Default.Devices, null) },
                             onClick = { more = false; state.companionOpen = true }
                         )
+                        DropdownMenuItem(
+                            text = { Text("Remote...") },
+                            leadingIcon = { Icon(Icons.Default.Gamepad, null) },
+                            onClick = { more = false; state.remote.remoteOpen = true }
+                        )
                         if (state.library != null) {
                             DropdownMenuItem(
                                 text = { Text("Open a shared setlist...") },
@@ -252,6 +258,8 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
+    if (state.homeInFront) state.notesFor?.let { song -> NotesDialog(state, song, onClose = { state.notesFor = null }) }
+    if (state.remote.remoteOpen) RemoteScreen(state, onClose = { state.remote.remoteOpen = false })
     if (chooseFolder) {
         FolderPickerDialog(
             title = "Choose your library folder",
@@ -459,6 +467,7 @@ private fun SongsPane(state: SheetsState) {
                             onEdit = { editing = song },
                             onAddToSetlist = { addingToSetlist = song },
                             onRecordings = { recordingsFor = song },
+                            onNotes = { state.notesFor = song },
                             onColour = { colouring = song },
                             // Filling in instruments: the part that has none.
                             onLook = {
@@ -539,6 +548,8 @@ internal fun SongRow(
     onEdit: (() -> Unit)? = null,
     onAddToSetlist: (() -> Unit)? = null,
     onRecordings: (() -> Unit)? = null,
+    /** Write the song's notes; its notes, shown beside its name, open them too. */
+    onNotes: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
     onColour: (() -> Unit)? = null,
     onMerge: (() -> Unit)? = null,
@@ -627,6 +638,21 @@ internal fun SongRow(
                 )
             }
         }
+        song.notes?.let { notes ->
+            Text(
+                notes,
+                style = MaterialTheme.typography.bodySmall,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                modifier = Modifier
+                    .weight(0.8f)
+                    .padding(start = 8.dp)
+                    .then(if (onNotes != null) Modifier.clickable(onClick = onNotes) else Modifier)
+            )
+        }
         trailing?.invoke()
         if (onEdit != null || onAddToSetlist != null || onDelete != null || onColour != null || onMerge != null) {
             var menu by remember { mutableStateOf(false) }
@@ -638,10 +664,11 @@ internal fun SongRow(
                     onAddToSetlist?.let { DropdownMenuItem(text = { Text("Add to setlist...") }, onClick = { menu = false; it() }) }
                     onRecordings?.let {
                         DropdownMenuItem(
-                            text = { Text(if (song.audio.isEmpty()) "Pair a recording..." else "Recordings (${song.audio.size})") },
+                            text = { Text(if (song.audio.isEmpty()) "Recordings..." else "Recordings (${song.audio.size})") },
                             onClick = { menu = false; it() }
                         )
                     }
+                    onNotes?.let { DropdownMenuItem(text = { Text(if (song.notes == null) "Add notes..." else "Notes...") }, onClick = { menu = false; it() }) }
                     onColour?.let { DropdownMenuItem(text = { Text(colourLabel) }, onClick = { menu = false; it() }) }
                     onColourEverywhere?.let { DropdownMenuItem(text = { Text("Colour everywhere...") }, onClick = { menu = false; it() }) }
                     onMerge?.let { DropdownMenuItem(text = { Text("Put into another song...") }, onClick = { menu = false; it() }) }
@@ -737,68 +764,4 @@ internal enum class SongSort(val label: String) {
     AZ("A to Z"), OPENED("Recently opened"), ADDED("Recently added"), COMPOSER("Composer")
 }
 
-/**
- * Every bookmarked page, as a song each: a tap opens the whole song at that page. Its bookmark,
- * lit, beside its menu takes the bookmark off - fading out over a few seconds, while a second tap
- * puts it back - and once it has gone, the rest move up into its place.
- */
-@Composable
-private fun BookmarksPane(state: SheetsState, marked: List<Song>) {
-    var editing by remember { mutableStateOf<Song?>(null) }
-    var addingToSetlist by remember { mutableStateOf<Song?>(null) }
-    // Bookmarks on their way out: pressed off, not yet gone.
-    val leaving = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateMapOf<String, Boolean>() }
-    val rows = marked.flatMap { song -> song.bookmarks.map { song to it } }
-    androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize()) {
-        items(rows, key = { (song, mark) -> song.id + "|" + mark.part + "|" + mark.page + "|" + mark.label }) { (song, mark) ->
-            val key = song.id + "|" + mark.part + "|" + mark.page + "|" + mark.label
-            val going = leaving[key] == true
-            val alpha by androidx.compose.animation.core.animateFloatAsState(
-                if (going) 0f else 1f,
-                androidx.compose.animation.core.tween(if (going) FADE_MS else 200), label = "bookmark"
-            )
-            androidx.compose.runtime.LaunchedEffect(going) {
-                if (going) {
-                    kotlinx.coroutines.delay(FADE_MS.toLong())
-                    if (leaving[key] == true) {
-                        leaving.remove(key)
-                        state.library?.song(song.id)?.let { now -> state.removeBookmark(now, mark) }
-                    }
-                }
-            }
-            val part = song.parts.firstOrNull { it.id == mark.part }
-            Column(Modifier.animateItem().graphicsLayer { this.alpha = 0.15f + 0.85f * alpha }) {
-                SongRow(
-                    song = song,
-                    unsure = false,
-                    note = mark.label + (part?.let { "  \u00B7  " + Instruments.partName(it) } ?: ""),
-                    onOpen = { if (!going) state.openBookmark(song, mark) },
-                    onEdit = { editing = song },
-                    onAddToSetlist = { addingToSetlist = song },
-                    onLook = { part?.let { state.peeking = song to it } },
-                    trailing = {
-                        IconButton(onClick = { if (going) leaving.remove(key) else leaving[key] = true }) {
-                            Icon(
-                                if (going) Icons.Default.BookmarkBorder else Icons.Default.Bookmark,
-                                if (going) "Keep the bookmark" else "Take the bookmark off",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                )
-                HorizontalDivider()
-            }
-        }
-    }
-    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
-    addingToSetlist?.let { song ->
-        SetlistChooserDialog(
-            state,
-            onChosen = { setlist -> state.change { addToSetlist(setlist.id, song.id) }; addingToSetlist = null },
-            onDismiss = { addingToSetlist = null }
-        )
-    }
-}
 
-/** How long a bookmark taken off takes to fade and go - time enough to change your mind. */
-private const val FADE_MS = 3000

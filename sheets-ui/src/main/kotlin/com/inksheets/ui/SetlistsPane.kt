@@ -546,6 +546,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             onEdit = { editing = song },
                             onAddToSetlist = { addingElsewhere = song },
                             onRecordings = { recordingsFor = song },
+                            onNotes = { state.notesFor = song },
                             onMerge = { merging = song },
                             onDelete = { state.removeSong(song) },
                             colourLabel = "Colour in this setlist...",

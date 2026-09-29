@@ -199,6 +199,9 @@ object ImportPlan {
             .groupBy { "${it.second.instrument}#${it.second.chair ?: 0}" }
         val repeated = seats.values.count { it.size > 1 }
         if (repeated > maxOf(1, seats.size / 4)) return null
+        // One instrument's parts of different pieces ("Band/Take On Me - Alto Sax", "Band/Tom
+        // Sawyer - Alto Sax"): a folder of one player's music, not one song.
+        if (seats.values.any { seat -> seat.map { Library.matchKey(fileTitle(it.first)) }.filter { it.isNotEmpty() }.distinct().size > 1 }) return null
         val titles = files.map { f -> fileTitle(f) }.filter { it.isNotBlank() && !onlyPartName(it) }
         val groups = titles.groupBy { Library.matchKey(it) }
         if (groups.count { it.value.size >= 2 } > 3) return null

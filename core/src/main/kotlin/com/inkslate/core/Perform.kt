@@ -126,6 +126,20 @@ object Perform {
     @Volatile
     var recentre: (() -> Unit)? = null
 
+    /**
+     * A finger tap on the middle third of a page whose sides turn it (InkSheets): brings the
+     * buttons over the page up, or puts them away. [bottom] when the tap was near the bottom -
+     * the tools as well. False when nothing took it, so the tap does what it did before.
+     */
+    @Volatile
+    var centreTap: ((bottom: Boolean) -> Boolean)? = null
+
+    /** How much of the height, from the bottom, counts as a tap "near the bottom". */
+    const val CENTRE_TAP_BOTTOM = 0.25f
+
+    /** Each side's share of the width, on a fitted page: the left third back, the right third on. */
+    const val TAP_SIDE_SHARE = 1f / 3f
+
     // ---- handwriting shared with other tablets --------------------------------------
 
     /**

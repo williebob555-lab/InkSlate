@@ -110,6 +110,9 @@ interface SheetsPlatform {
      */
     fun holdNetwork(on: Boolean) {}
 
+    /** Keep the screen on - a device being used as a remote must not go dark in the middle of a song. */
+    fun keepAwake(on: Boolean) {}
+
     /** Where downloads land: where a download of band music is looked for first. */
     val downloadsFolder: File get() = startFolder
 

@@ -18,6 +18,7 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
@@ -95,7 +96,8 @@ import com.inkslate.core.PerformAction
  */
 @Composable
 fun BoxScope.ActionStrip(state: SheetsState) {
-    var collapsed by remember { mutableStateOf(state.platform.pref(K_COLLAPSED) == "true") }
+    // The app's, not this page's: a tap on the middle of the page opens and closes it too.
+    val collapsed = state.stripCollapsed
     var menu by remember { mutableStateOf(false) }
     val shown = state.strip
     var customising by remember { mutableStateOf(false) }
@@ -119,7 +121,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         val room = if (side) maxHeight else maxWidth
         val named = state.stripLabels
         val labelRoom = if (named && side) 12.dp else 0.dp
-        val extras = 120.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp)
+        val onStripPresets = if (state.companion.leading) state.presets.filter { it.onStrip } else emptyList()
+        val extras = 120.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp) +
+            34.dp * onStripPresets.size
         val btn = ((room - extras) / (visible + 3).coerceAtLeast(1) - labelRoom).coerceIn(32.dp, 44.dp)
         val items: @Composable () -> Unit = {
             if (!collapsed) {
@@ -146,6 +150,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 // Leading: a message to the band, one tap away.
                 if (state.companion.leading) {
                     StripButton(Icons.Default.Campaign, "Message", "Message the band", btn, named) { sendingNote = true }
+                    // And the messages kept for one tap: Stop, Look up, and whatever was added.
+                    for (preset in onStripPresets) PresetButton(preset) { state.sendPreset(preset) }
                 }
                 // Where in a setlist this song is, when one is being played.
                 state.playing?.let { (setlistId, index) ->
@@ -204,9 +210,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
             }
             IconButton(onClick = {
-                collapsed = !collapsed
-                state.platform.setPref(K_COLLAPSED, collapsed.toString())
-                state.platform.setStripLane(!collapsed)
+                state.stripCollapsed = !collapsed
                 Perform.recentre?.invoke()
             }, modifier = Modifier.size(36.dp)) {
                 Icon(if (collapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess, if (collapsed) "Show buttons" else "Hide buttons")
@@ -262,6 +266,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     }
     if (state.pickingOneOff) OneOffInstrumentDialog(state)
     ReminderDialogs(state)
+    if (!state.homeInFront) state.notesFor?.let { song -> NotesDialog(state, song, onClose = { state.notesFor = null }) }
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -376,6 +381,12 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
             onClick = { onDismiss(); state.companionOpen = true }
         )
         state.current?.let { song ->
+            val notes = state.library?.song(song.id)?.notes
+            DropdownMenuItem(
+                text = { Text(if (notes == null) "Notes..." else "Notes: " + notes.lineSequence().first().take(28)) },
+                leadingIcon = { Icon(Icons.Default.Edit, null) },
+                onClick = { onDismiss(); state.notesFor = state.library?.song(song.id) ?: song }
+            )
             DropdownMenuItem(
                 text = { Text(if (song.reminder == null) "Reminder..." else "Change the reminder...") },
                 leadingIcon = { Icon(Icons.Default.NotificationsActive, null) },
@@ -553,7 +564,7 @@ private fun StripButton(
 }
 
 /** A button's name under it: a word or two. */
-private fun shortName(action: PerformAction, fullscreen: Boolean): String = when (action) {
+internal fun shortName(action: PerformAction, fullscreen: Boolean): String = when (action) {
     PerformAction.NEXT_PAGE -> "Next"
     PerformAction.PREVIOUS_PAGE -> "Back"
     PerformAction.HALF_PAGE_FORWARD -> "Half on"
@@ -587,7 +598,7 @@ private fun groupOf(action: PerformAction): Int = when (action) {
     else -> 0
 }
 
-private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = when (action) {
+internal fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = when (action) {
     PerformAction.NEXT_PAGE -> Icons.AutoMirrored.Filled.NavigateNext
     PerformAction.PREVIOUS_PAGE -> Icons.AutoMirrored.Filled.NavigateBefore
     PerformAction.HALF_PAGE_FORWARD -> Icons.Default.ExpandMore
@@ -611,7 +622,41 @@ private fun iconOf(action: PerformAction, fullscreen: Boolean): ImageVector = wh
     PerformAction.FULLSCREEN -> if (fullscreen) Icons.Default.Construction else Icons.Default.Close
 }
 
-private const val K_COLLAPSED = "sheets_strip_collapsed"
+/**
+ * A leader's message kept for one tap: its words on the button, in its colour. Lit for a moment
+ * once sent, so the leader knows it went.
+ */
+@Composable
+private fun PresetButton(preset: com.inksheets.core.MessagePreset, onSend: () -> Unit) {
+    var sent by remember { mutableStateOf(0) }
+    androidx.compose.runtime.LaunchedEffect(sent) {
+        if (sent > 0) { kotlinx.coroutines.delay(1500); sent = 0 }
+    }
+    val fill = when {
+        sent > 0 -> MaterialTheme.colorScheme.primary
+        preset.color != null -> androidx.compose.ui.graphics.Color(preset.color!!)
+        preset.urgent -> MaterialTheme.colorScheme.errorContainer
+        else -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    val ink = if (sent > 0) MaterialTheme.colorScheme.onPrimary
+        else if (preset.color != null) (if (androidx.compose.ui.graphics.Color(preset.color!!).luminance() > 0.45f) androidx.compose.ui.graphics.Color.Black else androidx.compose.ui.graphics.Color.White)
+        else if (preset.urgent) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = fill,
+        modifier = Modifier.padding(vertical = 2.dp).width(56.dp).clip(RoundedCornerShape(10.dp)).clickable { onSend(); sent++ }
+    ) {
+        Text(
+            if (sent > 0) "Sent" else preset.text,
+            color = ink,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 6.dp)
+        )
+    }
+}
 
 /**
  * A reminder left on a song: written from More, and shown the next time the song is opened - on

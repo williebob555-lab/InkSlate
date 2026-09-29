@@ -63,7 +63,20 @@ data class AudioTrack(
 
 /** A place to jump to by name: "Letter C", "Coda". */
 @Serializable
-data class Bookmark(val label: String, val part: String? = null, val page: Int)
+data class Bookmark(
+    val label: String,
+    val part: String? = null,
+    val page: Int,
+    /** A colour to pick it out by in the Bookmarks list (ARGB), or null for the song's own. */
+    val color: Int? = null,
+    /** Its place in the Bookmarks list when put in order by hand; null for after the rest. */
+    val rank: Double? = null,
+    /** When it was made, 0 for bookmarks from before this was kept. */
+    val at: Long = 0
+) {
+    /** The same place, whatever its colour or order: which part, which page, which name. */
+    fun samePlace(other: Bookmark) = part == other.part && page == other.page && label == other.label
+}
 
 data class Song(
     val id: String,
@@ -414,6 +427,11 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
             if (into.key == null && from.key != null) key = from.key
             if (into.timeSignature == null && from.timeSignature != null) timeSignature = from.timeSignature
             if (into.color == null && from.color != null) color = from.color
+            // Bookmarks and notes go with it: they point at parts that are moving too.
+            val marks = into.bookmarks + from.bookmarks.filter { b -> into.bookmarks.none { it.samePlace(b) } }
+            if (marks != into.bookmarks) bookmarks = marks
+            if (from.notes != null) notes = listOfNotNull(into.notes, from.notes).distinct().joinToString("\n")
+            if (into.reminder == null && from.reminder != null) reminder = from.reminder
         }
         for (list in setlists) {
             if (list.entries.none { it.songId == fromId }) continue

@@ -69,7 +69,7 @@ class SheetsState(val platform: SheetsPlatform) {
         val page = pageShown.first + 1
         val here = song.bookmarks.firstOrNull { it.part == part.id && it.page == page }
         val next = if (here != null) song.bookmarks - here
-            else song.bookmarks + com.inksheets.core.Bookmark(label = "Page $page", part = part.id, page = page)
+            else song.bookmarks + com.inksheets.core.Bookmark(label = "Page $page", part = part.id, page = page, at = System.currentTimeMillis())
         change { editSong(song.id) { bookmarks = next.sortedBy { it.page } } }
         return true
     }
@@ -88,7 +88,96 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /** Take [mark] off [song]. */
     fun removeBookmark(song: com.inksheets.core.Song, mark: com.inksheets.core.Bookmark) =
-        change { editSong(song.id) { bookmarks = song.bookmarks - mark } }
+        change { editSong(song.id) { bookmarks = song.bookmarks.filterNot { it.samePlace(mark) } } }
+
+    /** Colour [mark] in the Bookmarks list; null for the song's own colour. */
+    fun setBookmarkColour(songId: String, mark: com.inksheets.core.Bookmark, color: Int?) = change {
+        val song = song(songId) ?: return@change
+        editSong(songId) { bookmarks = song.bookmarks.map { if (it.samePlace(mark)) it.copy(color = color) else it } }
+    }
+
+    /** The Bookmarks list put in this order by hand: each bookmark given its place, on every device. */
+    fun orderBookmarks(order: List<Pair<String, com.inksheets.core.Bookmark>>) = change {
+        val rank = HashMap<String, MutableList<Pair<com.inksheets.core.Bookmark, Double>>>()
+        order.forEachIndexed { i, (songId, mark) -> rank.getOrPut(songId) { ArrayList() } += mark to i.toDouble() }
+        for ((songId, marks) in rank) {
+            val song = song(songId) ?: continue
+            val next = song.bookmarks.map { b -> marks.firstOrNull { it.first.samePlace(b) }?.let { b.copy(rank = it.second) } ?: b }
+            if (next != song.bookmarks) editSong(songId) { bookmarks = next }
+        }
+    }
+
+    /** How the Bookmarks tab is put in order. Remembered on this device. */
+    var bookmarkSort: BookmarkSort
+        get() = bookmarkSortState
+        set(v) { bookmarkSortState = v; platform.setPref(K_BOOKMARK_SORT, v.name) }
+    private var bookmarkSortState by mutableStateOf(BookmarkSort.entries.firstOrNull { it.name == platform.pref(K_BOOKMARK_SORT) } ?: BookmarkSort.MANUAL)
+
+    /** A song's notes: what you want to remember about it, shown beside its name in lists. Synced, private. */
+    fun setNotes(songId: String, text: String) = change { editSong(songId) { notes = text.trim().ifEmpty { null } } }
+
+    /** The song whose notes are being written, from a list or from the strip. */
+    var notesFor by mutableStateOf<com.inksheets.core.Song?>(null)
+
+    // ---- the leader's one-tap messages ---------------------------------------------
+
+    /** Messages a leader sends in one tap, from the strip and from a remote. Kept on this device. */
+    var presets by mutableStateOf(loadPresets())
+        private set
+
+    private fun loadPresets(): List<com.inksheets.core.MessagePreset> =
+        platform.pref(K_PRESETS)?.let { saved ->
+            runCatching { PRESET_JSON.decodeFromString(PRESET_LIST, saved) }.getOrNull()
+        } ?: com.inksheets.core.MessagePreset.DEFAULTS
+
+    fun savePresets(list: List<com.inksheets.core.MessagePreset>) {
+        presets = list
+        platform.setPref(K_PRESETS, PRESET_JSON.encodeToString(PRESET_LIST, list))
+    }
+
+    /** Send [preset] to the band; false when not leading. */
+    fun sendPreset(preset: com.inksheets.core.MessagePreset): Boolean {
+        if (!companion.leading) return false
+        companion.sendNote(preset.text, preset.instruments, preset.urgent, preset.color)
+        return true
+    }
+
+    // ---- the strip, and a tap on the middle of the page -------------------------------
+
+    /** The strip folded down to its one button in the corner. Remembered. */
+    var stripCollapsed: Boolean
+        get() = stripCollapsedState
+        set(v) {
+            stripCollapsedState = v
+            platform.setPref(K_COLLAPSED, v.toString())
+            platform.setStripLane(!v)
+        }
+    private var stripCollapsedState by mutableStateOf(platform.pref(K_COLLAPSED) == "true")
+
+    /**
+     * A tap on the middle third of the page. With everything put away it brings up the strip -
+     * and near the bottom, the tools as well - leaving the page where it is. With anything up,
+     * it puts it all away and fits the page back to the screen; except that a tap near the bottom
+     * with only the strip up brings the tools up too.
+     */
+    fun centreTap(bottom: Boolean): Boolean {
+        if (homeInFront) return false
+        val fullscreen = com.inkslate.core.PerformAction.FULLSCREEN
+        val toolsShown = !com.inkslate.core.Perform.on(fullscreen)
+        when {
+            bottom && !toolsShown -> {
+                if (stripCollapsed) stripCollapsed = false
+                com.inkslate.core.Perform.run(fullscreen)
+            }
+            toolsShown || !stripCollapsed -> {
+                stripCollapsed = true
+                if (toolsShown) com.inkslate.core.Perform.run(fullscreen)
+                com.inkslate.core.Perform.recentre?.invoke()
+            }
+            else -> stripCollapsed = false
+        }
+        return true
+    }
 
     /** Writing a reminder for the song in front; and the song whose reminder is up. */
     var writingReminder by mutableStateOf(false)
@@ -123,6 +212,9 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /** Leading or following other tablets. */
     val companion = Companion(this)
+
+    /** Remotes: this device controlled by others, and this device as a remote for another. */
+    val remote = RemoteControl(this)
     var companionOpen by mutableStateOf(false)
 
     /** The recordings panel, for the song opened last. */
@@ -242,6 +334,7 @@ class SheetsState(val platform: SheetsPlatform) {
                 else -> false
             }
         }
+        com.inkslate.core.Perform.centreTap = { bottom -> centreTap(bottom) }
         // Whichever song is in front is "the song": the one the play button plays and the one a
         // leading tablet tells its followers about.
         com.inkslate.core.Perform.onPosition = { page, count ->
@@ -1115,6 +1208,11 @@ class SheetsState(val platform: SheetsPlatform) {
         private const val K_STRIP_LABELS = "sheets_strip_labels"
         private const val K_STRIP_LEFT = "sheets_strip_left"
         private const val K_STRIP = "sheets_strip_2"
+        private const val K_COLLAPSED = "sheets_strip_collapsed"
+        private const val K_BOOKMARK_SORT = "sheets_bookmark_sort"
+        private const val K_PRESETS = "sheets_message_presets"
+        private val PRESET_JSON = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        private val PRESET_LIST = kotlinx.serialization.builtins.ListSerializer(com.inksheets.core.MessagePreset.serializer())
 
         /**
          * Page turns, then the pen tools - a rehearsal note goes on in one tap and the pen is

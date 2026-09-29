@@ -294,6 +294,12 @@ class Companion(private val state: SheetsState) {
     }
     var noticeCount by mutableStateOf(0)
 
+    /**
+     * The leader's message is on screen now. Once it has been up - timed out or tapped away - it
+     * never comes back: the popup belongs to each page, and a song change makes a new one.
+     */
+    var noticeShowing by mutableStateOf(false)
+
     /** The instruments this player reads: the part in front, and those chosen to play. */
     private fun myInstruments(): Set<String> {
         val ids = HashSet<String>()
@@ -490,6 +496,7 @@ class Companion(private val state: SheetsState) {
                 if (CompanionLink.noteIsFor(line.note, myInstruments())) {
                     notice = line.note
                     noticeCount++
+                    noticeShowing = true
                 }
             }
             else -> Unit
@@ -732,6 +739,9 @@ internal fun CompanionDialog(state: SheetsState, onClose: () -> Unit) {
             }
             said?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp)) }
             problem?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp)) }
+            // A remote of this player's own, alongside playing together or without it.
+            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            HostSection(state)
         }
     }
 }
