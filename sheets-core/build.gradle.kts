@@ -22,3 +22,14 @@ dependencies {
     api(libs.kotlinx.serialization.json)
     testImplementation("junit:junit:4.13.2")
 }
+
+tasks.test {
+    // Pictures from the music-reading tests, and pages to read from outside, when asked for.
+    for (name in listOf("inksheets.shots", "inksheets.omr")) {
+        System.getProperty(name)?.let {
+            systemProperty(name, it)
+            outputs.upToDateWhen { false }
+        }
+    }
+    maxHeapSize = "2g"
+}
