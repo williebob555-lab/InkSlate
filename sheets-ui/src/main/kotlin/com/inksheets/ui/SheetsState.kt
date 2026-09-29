@@ -381,7 +381,9 @@ class SheetsState(val platform: SheetsPlatform) {
             val file = partFile(s, part) ?: return@forEachIndexed
             if (i == index) focus = tabs.size
             if (tabs.none { it.first == file }) {
-                part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
+                // Every song of a set opens at its start - not wherever it was last read, which put
+                // a song turn on page 3 of a part last left there.
+                com.inkslate.core.Perform.requestPage(file.absolutePath, (part.firstPage ?: 1) - 1)
                 tabs += file to s.title
             } else if (i == index) {
                 focus = tabs.indexOfFirst { it.first == file }
@@ -540,7 +542,10 @@ class SheetsState(val platform: SheetsPlatform) {
         val lib = library ?: return false
         val entry = lib.setlist(setlistId)?.entries?.getOrNull(next)
         val song = entry?.let { lib.song(it.songId) }
-        val file = song?.let { s -> partFor(s)?.let { partFile(s, it) } }
+        val part = song?.let { partFor(it) }
+        val file = song?.let { s -> part?.let { partFile(s, it) } }
+        // A song turned to starts at its start, whatever page its tab was left on.
+        if (file != null) com.inkslate.core.Perform.requestPage(file.absolutePath, (part?.firstPage ?: 1) - 1)
         if (entry != null && song != null && file != null && platform.focusSetTab(file)) {
             playing = setlistId to next
             frontEntry = entry.id
@@ -759,7 +764,7 @@ class SheetsState(val platform: SheetsPlatform) {
         val (setlistId, index) = playing ?: run {
             val part = partFor(song) ?: return
             val file = partFile(song, part) ?: return
-            part.firstPage?.let { com.inkslate.core.Perform.requestPage(file.absolutePath, it - 1) }
+            com.inkslate.core.Perform.requestPage(file.absolutePath, (part.firstPage ?: 1) - 1)
             val old = currentPath?.let(::File)
             if (old != null && old.absolutePath != file.absolutePath) platform.swapPart(old, file) else platform.openPart(song, part, file)
             companion.pageTurned((part.firstPage ?: 1) - 1)

@@ -65,7 +65,10 @@ data class RemoteButton(
     /** For [MACRO]: the buttons pressed in turn. */
     val steps: List<RemoteButton> = emptyList(),
     /** For a message: it covers the music until tapped away. */
-    val urgent: Boolean = false
+    val urgent: Boolean = false,
+    /** Its cell on the remote's grid, column and row from 0; null until placed. */
+    val x: Int? = null,
+    val y: Int? = null
 ) {
     companion object {
         const val ACTION = "action"
@@ -109,6 +112,86 @@ data class RemoteButton(
             RemoteButton(COUNT_IN), action("PLAY_AUDIO"),
             RemoteButton(STRIP), RemoteButton(TOOLS)
         )
+    }
+}
+
+/**
+ * The remote's buttons on a grid of [columns] by [rows] cells, one button a cell, with cells left
+ * empty where the player wants a gap. Buttons are dragged in from a library, between cells and
+ * back out; nothing here is lost silently - a move that has nowhere to go is refused.
+ */
+data class DeckGrid(val columns: Int = 3, val rows: Int = 4) {
+    init { require(columns in COLUMNS && rows in ROWS) }
+
+    val cells get() = columns * rows
+
+    private fun inside(b: RemoteButton) = b.x != null && b.y != null && b.x in 0 until columns && b.y in 0 until rows
+
+    /**
+     * Every button in a cell: its own where that is inside the grid and not taken, the first free
+     * cells (row by row) for the rest - or null when they do not all fit.
+     */
+    fun place(buttons: List<RemoteButton>): List<RemoteButton>? {
+        if (buttons.size > cells) return null
+        val taken = HashSet<Pair<Int, Int>>()
+        val out = buttons.map { b -> if (inside(b) && taken.add(b.x!! to b.y!!)) b else b.copy(x = null, y = null) }
+        val free = (0 until rows).flatMap { y -> (0 until columns).map { x -> x to y } }.filter { it !in taken }.iterator()
+        return out.map { b -> if (b.x != null) b else free.next().let { (x, y) -> b.copy(x = x, y = y) } }
+    }
+
+    /** The button in cell ([x], [y]), by its place in [buttons]; -1 for an empty cell. */
+    fun at(buttons: List<RemoteButton>, x: Int, y: Int): Int = buttons.indexOfFirst { it.x == x && it.y == y }
+
+    /** Button [from] moved to cell ([x], [y]); one already there takes its old cell. */
+    fun move(buttons: List<RemoteButton>, from: Int, x: Int, y: Int): List<RemoteButton> {
+        val moving = buttons.getOrNull(from) ?: return buttons
+        val there = at(buttons, x, y)
+        return buttons.mapIndexed { i, b ->
+            when (i) {
+                from -> b.copy(x = x, y = y)
+                there -> b.copy(x = moving.x, y = moving.y)
+                else -> b
+            }
+        }
+    }
+
+    /**
+     * [button] put in cell ([x], [y]); one already there moves to the nearest free cell. Null when
+     * the grid is full - make it bigger, or take one off first.
+     */
+    fun add(buttons: List<RemoteButton>, button: RemoteButton, x: Int, y: Int): List<RemoteButton>? {
+        val placed = place(buttons) ?: return null
+        if (placed.size >= cells) return null
+        val there = at(placed, x, y)
+        val moved = if (there < 0) placed else {
+            val taken = placed.map { it.x to it.y }.toSet()
+            val free = (0 until rows).flatMap { yy -> (0 until columns).map { xx -> xx to yy } }
+                .filter { it !in taken }
+                .minByOrNull { (xx, yy) -> kotlin.math.abs(xx - x) + kotlin.math.abs(yy - y) } ?: return null
+            placed.mapIndexed { i, b -> if (i == there) b.copy(x = free.first, y = free.second) else b }
+        }
+        return moved + button.copy(x = x, y = y)
+    }
+
+    /** The first empty cell, row by row; null when full. */
+    fun firstFree(buttons: List<RemoteButton>): Pair<Int, Int>? {
+        val taken = buttons.map { it.x to it.y }.toSet()
+        return (0 until rows).flatMap { y -> (0 until columns).map { x -> x to y } }.firstOrNull { it !in taken }
+    }
+
+    /**
+     * The same buttons on a grid of another size: each keeps its cell where the new grid has it,
+     * the rest go to free cells. Null when they would not all fit.
+     */
+    fun resized(buttons: List<RemoteButton>, to: DeckGrid): List<RemoteButton>? = to.place(buttons)
+
+    override fun toString() = "${columns}x$rows"
+
+    companion object {
+        val COLUMNS = 1..6
+        val ROWS = 1..10
+        fun parse(text: String?): DeckGrid? = text?.split('x')?.mapNotNull { it.trim().toIntOrNull() }
+            ?.takeIf { it.size == 2 && it[0] in COLUMNS && it[1] in ROWS }?.let { DeckGrid(it[0], it[1]) }
     }
 }
 

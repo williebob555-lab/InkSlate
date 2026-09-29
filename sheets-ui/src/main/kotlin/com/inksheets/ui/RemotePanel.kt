@@ -24,6 +24,10 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.ViewSidebar
+import androidx.compose.material.icons.filled.ViewColumn
+import androidx.compose.material.icons.filled.TableRows
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.DragIndicator
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -91,6 +95,16 @@ import com.inksheets.core.RemoteHost
 import com.inksheets.core.RemoteLink
 import com.inksheets.core.RemoteScanner
 import com.inksheets.core.RemoteBluetooth
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import com.inksheets.core.DeckGrid
+import kotlin.math.roundToInt
 import com.inkslate.core.NetAddresses
 
 /**
@@ -448,20 +462,39 @@ class RemoteControl(private val state: SheetsState) {
     /** This remote's own id, kept: the device counts it once however often it connects. */
     private val myId: String = state.platform.pref(K_ID) ?: java.util.UUID.randomUUID().toString().also { state.platform.setPref(K_ID, it) }
 
-    /** The buttons on this remote, in order. Kept on this device. */
-    var deck by mutableStateOf(loadDeck())
+    /** The shape of this remote's grid. Kept on this device. */
+    var grid by mutableStateOf(DeckGrid())
         private set
 
-    private fun loadDeck(): List<RemoteButton> = state.platform.pref(K_DECK)?.let { saved ->
-        runCatching { DECK_JSON.decodeFromString(DECK_LIST, saved) }.getOrNull()
-    } ?: RemoteButton.DEFAULT_DECK
+    /** The buttons on this remote, each in its cell of [grid]. Kept on this device. */
+    var deck by mutableStateOf(emptyList<RemoteButton>())
+        private set
+
+    private fun loadDeck() {
+        val saved = state.platform.pref(K_DECK)?.let { runCatching { DECK_JSON.decodeFromString(DECK_LIST, it) }.getOrNull() }
+            ?: RemoteButton.DEFAULT_DECK
+        // A deck from before the grid: three across, as many rows as it needs.
+        var g = DeckGrid.parse(state.platform.pref(K_GRID)) ?: DeckGrid(3, ((saved.size + 2) / 3).coerceIn(4, DeckGrid.ROWS.last))
+        var placed = g.place(saved)
+        while (placed == null && g.rows < DeckGrid.ROWS.last) { g = DeckGrid(g.columns, g.rows + 1); placed = g.place(saved) }
+        grid = g
+        deck = placed ?: g.place(saved.take(g.cells))!!
+    }
 
     fun saveDeck(buttons: List<RemoteButton>) {
-        deck = buttons
-        state.platform.setPref(K_DECK, DECK_JSON.encodeToString(DECK_LIST, buttons))
+        deck = grid.place(buttons) ?: return
+        state.platform.setPref(K_DECK, DECK_JSON.encodeToString(DECK_LIST, deck))
+    }
+
+    /** A new shape, with [buttons] already placed on it. */
+    fun saveGrid(to: DeckGrid, buttons: List<RemoteButton>) {
+        grid = to
+        state.platform.setPref(K_GRID, to.toString())
+        saveDeck(buttons)
     }
 
     init {
+        loadDeck()
         if (state.platform.pref(K_HOSTING) == "true") startHosting()
     }
 
@@ -470,6 +503,7 @@ class RemoteControl(private val state: SheetsState) {
         private const val K_HOSTING = "sheets_remote_hosting"
         private const val K_LAST = "sheets_remote_last"
         private const val K_DECK = "sheets_remote_deck"
+        private const val K_GRID = "sheets_remote_grid"
         private const val K_ID = "sheets_remote_id"
 
         /** The port remotes connect to; another in tests, beside a real app already using this one. */
@@ -675,7 +709,6 @@ private fun RemoteDeck(state: SheetsState) {
     val remote = state.remote
     val shown = remote.shown
     var editing by remember { mutableStateOf(false) }
-    var adding by remember { mutableStateOf(false) }
     var changing by remember { mutableStateOf<Int?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
     var typing by remember { mutableStateOf(false) }
@@ -710,129 +743,249 @@ private fun RemoteDeck(state: SheetsState) {
         }
     }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp)) {
-        // What the other device is on: big enough to read on a music stand.
-        Surface(shape = RoundedCornerShape(16.dp), tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(14.dp)) {
-                val blockedAt = remote.blocked
-                if (!remote.connected && blockedAt != null) {
-                    Text("This Wi-Fi is stopping the connection", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
-                    Text(
-                        "It lets the two devices start talking at $blockedAt, then drops everything after - " +
-                            "school and work networks such as eduroam do this. Put both devices on a phone's hotspot or " +
-                            "a home Wi-Fi, or run Tailscale on both: this remote tries every other way it knows first.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else if (shown == null) {
-                    Text(if (remote.connected) "Waiting for it to say where it is..." else "Not connected yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            shown.title ?: if (shown.home) "On Home" else "No song open",
-                            style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (shown.counting > 0) Text("${shown.counting}", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-                    }
-                    val line = listOfNotNull(
-                        shown.part,
-                        if (shown.pages > 0) "page ${shown.page + 1} of ${shown.pages}" else null,
-                        shown.setlist?.let { "song ${shown.setIndex + 1} of ${shown.set.size} in $it" }
-                    ).joinToString("  ·  ")
-                    if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val extra = listOfNotNull(
-                        when {
-                            shown.leading -> "Leading" + if (shown.followers > 0) " · ${shown.followers} following" else ""
-                            shown.following != null -> "Following ${shown.following}"
-                            else -> null
-                        },
-                        if (shown.metronome) "♩ ${shown.bpm}" else null,
-                        if (shown.recording) "● Recording ${shown.recordingSeconds / 60}:${"%02d".format(shown.recordingSeconds % 60)}" else null
-                    ).joinToString("  ·  ")
-                    if (extra.isNotEmpty()) Text(extra, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                }
-            }
-        }
-        // Each press says whether it reached the other device - never a button that silently does nothing.
-        remote.lastPress?.let { p ->
-            Text(
-                when (p.got) {
-                    true -> "${p.name} ✓"
-                    null -> if (p.unanswered) "${p.name} - sent (update the other device to see it arrive)" else "${p.name}..."
-                    false -> if (!remote.connected) "${p.name} - not sent: not connected" else "${p.name} - not received. Reconnecting..."
-                },
-                style = MaterialTheme.typography.labelMedium,
-                color = if (p.got == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp, start = 4.dp)
-            )
-        }
-        Spacer(Modifier.height(10.dp))
-        if (editing) {
-            Text("Tap a button to change what it does, its name or its colour.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 6.dp))
-        }
+    val grid = remote.grid
+    val deck = remote.deck
+    // A button being dragged - from the grid (its place in the deck) or the library (-1) - and
+    // where the finger is, in the screen's own coordinates.
+    var drag by remember { mutableStateOf<Pair<RemoteButton, Int>?>(null) }
+    var finger by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    val cells = remember { HashMap<Pair<Int, Int>, androidx.compose.ui.geometry.Rect>() }
+    var tray by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+    var screenAt by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    var cellSize by remember { mutableStateOf(androidx.compose.ui.unit.DpSize(96.dp, 96.dp)) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    // A button dropped that needs more first - a song, a number, words - and the cell it goes in.
+    var configuring by remember { mutableStateOf<Pair<RemoteButton, Pair<Int, Int>>?>(null) }
 
-        // The buttons: as many across as fit, each big enough to hit without looking.
-        BoxWithConstraints(Modifier.fillMaxWidth()) {
-            val across = (maxWidth / 150.dp).toInt().coerceIn(2, 6)
-            val deck = remote.deck
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                deck.chunked(across).forEachIndexed { rowIndex, row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEachIndexed { i, b ->
-                            val at = rowIndex * across + i
-                            DeckButton(b, shown, remote.hostLibrary, editing, Modifier.weight(1f),
-                                onPress = { if (editing) changing = at else press(b) },
-                                onMove = { by ->
-                                    val list = deck.toMutableList()
-                                    val to = (at + by).coerceIn(0, list.lastIndex)
-                                    list.add(to, list.removeAt(at))
-                                    remote.saveDeck(list)
-                                }
-                            )
-                        }
-                        repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
-                    }
-                }
-            }
-        }
+    fun addAt(b: RemoteButton, cell: Pair<Int, Int>) {
+        val next = grid.add(deck, b, cell.first, cell.second)
+        if (next == null) notice = "The grid is full - make it bigger above, or drag a button back to the library."
+        else { remote.saveDeck(next); notice = null }
+    }
 
-        // Leading: the leader's one-tap messages, whatever the deck holds.
-        if (shown?.leading == true && shown.presets.isNotEmpty()) {
-            Text("Message the band", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val across = (maxWidth / 150.dp).toInt().coerceIn(2, 6)
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    shown.presets.withIndex().chunked(across).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { (i, p) -> PresetTile(p, Modifier.weight(1f)) { remote.send(RemoteLink.Command(action = RemoteLink.PRESET, index = i)) } }
-                            repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
-                        }
-                    }
-                }
-            }
-        }
+    fun dropped(b: RemoteButton, cell: Pair<Int, Int>) {
+        if (b.kind == RemoteButton.SONG || b.kind == RemoteButton.SETLIST || needsMore(b)) configuring = b to cell
+        else addAt(b, cell)
+    }
 
-        Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (editing) {
-                Button(onClick = { adding = true }) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Add a button") }
-                TextButton(onClick = { remote.saveDeck(RemoteButton.DEFAULT_DECK) }) { Text("Start again") }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { editing = false }) { Text("Done") }
-            } else {
-                OutlinedButton(onClick = { editing = true }) { Icon(Icons.Default.Edit, null); Spacer(Modifier.width(6.dp)); Text("Change buttons") }
-                Spacer(Modifier.weight(1f))
-                TextButton(onClick = { remote.disconnect() }) { Text("Disconnect") }
-            }
+    fun drop() {
+        val (b, from) = drag ?: return
+        drag = null
+        val cell = cells.entries.firstOrNull { it.value.contains(finger) }?.key
+        when {
+            from >= 0 && tray?.contains(finger) == true -> remote.saveDeck(deck.filterIndexed { i, _ -> i != from })
+            from >= 0 && cell != null -> remote.saveDeck(grid.move(deck, from, cell.first, cell.second))
+            from < 0 && cell != null -> dropped(b, cell)
         }
     }
 
-    if (adding) AddDeckButtonDialog(state, forStep = false, onAdd = { remote.saveDeck(remote.deck + it); adding = false }, onDismiss = { adding = false })
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().onGloballyPositioned { screenAt = it.positionInRoot() }
+    ) {
+        val tall = maxHeight
+        Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp)) {
+            if (!editing) {
+                // What the other device is on: short, so the buttons get the screen.
+                Surface(shape = RoundedCornerShape(14.dp), tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        val blockedAt = remote.blocked
+                        if (!remote.connected && blockedAt != null) {
+                            Text("This Wi-Fi is stopping the connection", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
+                            Text(
+                                "It lets the two devices start talking at $blockedAt, then drops everything after - school and work " +
+                                    "networks such as eduroam do. Pair the two over Bluetooth, use a phone's hotspot, or run Tailscale on both.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (shown == null) {
+                            Text(if (remote.connected) "Waiting for it to say where it is..." else "Not connected yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    shown.title ?: if (shown.home) "On Home" else "No song open",
+                                    style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (shown.counting > 0) Text("${shown.counting}", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+                            }
+                            val line = listOfNotNull(
+                                shown.part,
+                                if (shown.pages > 0) "p. ${shown.page + 1}/${shown.pages}" else null,
+                                shown.setlist?.let { "song ${shown.setIndex + 1}/${shown.set.size}" },
+                                when {
+                                    shown.leading -> "Leading" + if (shown.followers > 0) " (${shown.followers})" else ""
+                                    shown.following != null -> "Following ${shown.following}"
+                                    else -> null
+                                },
+                                if (shown.metronome) "♩ ${shown.bpm}" else null,
+                                if (shown.recording) "● ${shown.recordingSeconds / 60}:${"%02d".format(shown.recordingSeconds % 60)}" else null
+                            ).joinToString("  ·  ")
+                            if (line.isNotEmpty()) Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                        }
+                    }
+                }
+                // Each press says whether it reached the other device - never a button that silently does nothing.
+                remote.lastPress?.let { p ->
+                    Text(
+                        when (p.got) {
+                            true -> "${p.name} ✓"
+                            null -> if (p.unanswered) "${p.name} - sent (update the other device to see it arrive)" else "${p.name}..."
+                            false -> if (!remote.connected) "${p.name} - not sent: not connected" else "${p.name} - not received. Reconnecting..."
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (p.got == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 4.dp, start = 4.dp)
+                    )
+                }
+            } else {
+                // The grid's shape, and done.
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    fun resize(to: DeckGrid) {
+                        val placed = grid.resized(deck, to)
+                        if (placed == null) notice = "Those buttons would not fit - drag some back to the library first."
+                        else { remote.saveGrid(to, placed); notice = null }
+                    }
+                    GridStepper("Across", grid.columns, DeckGrid.COLUMNS) { resize(DeckGrid(it, grid.rows)) }
+                    Spacer(Modifier.width(8.dp))
+                    GridStepper("Down", grid.rows, DeckGrid.ROWS) { resize(DeckGrid(grid.columns, it)) }
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = { editing = false; notice = null }) { Text("Done") }
+                }
+            }
+            notice?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp)) }
+            Spacer(Modifier.height(8.dp))
+
+            // The grid: the rest of the screen, every cell the same size.
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val gap = 8.dp
+                val w = (maxWidth - gap * (grid.columns - 1)) / grid.columns
+                val fit = (maxHeight - gap * (grid.rows - 1)) / grid.rows
+                val h = if (fit < 56.dp) 56.dp else fit
+                cellSize = androidx.compose.ui.unit.DpSize(w, if (h > w * 1.4f) w * 1.4f else h)
+                val scroll = rememberScrollState()
+                Column(
+                    Modifier.fillMaxSize().then(if (fit < 56.dp) Modifier.verticalScroll(scroll) else Modifier),
+                    verticalArrangement = Arrangement.spacedBy(gap, if (fit < 56.dp) Alignment.Top else Alignment.CenterVertically)
+                ) {
+                    for (y in 0 until grid.rows) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                            for (x in 0 until grid.columns) {
+                                val at = grid.at(deck, x, y)
+                                val b = deck.getOrNull(at)
+                                val over = drag != null && cells[x to y]?.contains(finger) == true
+                                Box(
+                                    Modifier.size(cellSize)
+                                        .onGloballyPositioned { cells[x to y] = it.boundsInRoot() }
+                                ) {
+                                    when {
+                                        // The one being dragged stays, faded: taking it away would end the drag.
+                                        b != null -> DeckButton(
+                                            b, shown, remote.hostLibrary, editing,
+                                            Modifier.fillMaxSize().alpha(if (drag?.second == at) 0.3f else 1f).then(
+                                                if (!editing) Modifier else Modifier.pointerInput(at, deck) {
+                                                    detectDragGestures(
+                                                        onDragStart = { o -> drag = b to at; finger = cells[x to y]!!.topLeft + o },
+                                                        onDrag = { change, amount -> change.consume(); finger += amount },
+                                                        onDragEnd = { drop() },
+                                                        onDragCancel = { drag = null }
+                                                    )
+                                                }
+                                            ).then(if (over) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(18.dp)) else Modifier),
+                                            onPress = { if (editing) changing = at else press(b) }
+                                        )
+                                        editing -> Box(
+                                            Modifier.fillMaxSize()
+                                                .border(
+                                                    if (over) 3.dp else 1.dp,
+                                                    if (over) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                                                    RoundedCornerShape(18.dp)
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) { Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.outlineVariant) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!editing) {
+                // Leading: the leader's one-tap messages, in a row that scrolls.
+                if (shown?.leading == true && shown.presets.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        shown.presets.forEachIndexed { i, p ->
+                            PresetTile(p, Modifier.width(120.dp)) { remote.send(RemoteLink.Command(action = RemoteLink.PRESET, index = i)) }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { editing = true }) { Icon(Icons.Default.Edit, null); Spacer(Modifier.width(6.dp)); Text("Change buttons") }
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { remote.disconnect() }) { Text("Disconnect") }
+                }
+            } else {
+                // The library: every button there is. Held and dragged onto the grid, or tapped
+                // for the first gap; a button dragged back here comes off.
+                val removing = drag?.second?.let { it >= 0 } == true
+                val overTray = removing && tray?.contains(finger) == true
+                Surface(
+                    shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
+                    tonalElevation = 4.dp,
+                    color = if (overTray) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.fillMaxWidth().height(tall * 0.42f).padding(top = 8.dp)
+                        .onGloballyPositioned { tray = it.boundsInRoot() }
+                ) {
+                    if (removing) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(if (overTray) "Let go to take it off" else "Drag here to take it off", style = MaterialTheme.typography.titleMedium)
+                        }
+                    } else {
+                        DeckLibrary(
+                            state,
+                            onTap = { b -> grid.firstFree(deck)?.let { dropped(b, it) } ?: run { notice = "The grid is full - make it bigger above, or drag a button back to the library." } },
+                            onDragStart = { b, at -> drag = b to -1; finger = at },
+                            onDrag = { by -> finger += by },
+                            onDragEnd = { drop() },
+                            // Only its own: the library's tiles go away when a grid button is picked up,
+                            // and a tile going away reports its gesture cancelled.
+                            onDragCancel = { if (drag?.second == -1) drag = null },
+                            onReset = { remote.saveGrid(DeckGrid(), DeckGrid().place(RemoteButton.DEFAULT_DECK)!!) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // The button under the finger while it is dragged.
+        drag?.let { (b, _) ->
+            val d = androidx.compose.ui.platform.LocalDensity.current
+            val half = with(d) { androidx.compose.ui.geometry.Offset(cellSize.width.toPx() / 2, cellSize.height.toPx() / 2) }
+            val at = finger - screenAt - half
+            DeckButton(
+                b, shown, remote.hostLibrary, true,
+                Modifier.offset { androidx.compose.ui.unit.IntOffset(at.x.roundToInt(), at.y.roundToInt()) }
+                    .size(cellSize).alpha(0.85f),
+                onPress = {}
+            )
+        }
+    }
+
+    configuring?.let { (b, cell) ->
+        when (b.kind) {
+            RemoteButton.SONG -> PickRemoteItem("A button for which song?", remote.hostLibrary?.songs.orEmpty(),
+                onChosen = { addAt(RemoteButton(RemoteButton.SONG, it.id, it.title), cell); configuring = null }, onDismiss = { configuring = null })
+            RemoteButton.SETLIST -> PickRemoteItem("A button for which setlist?", remote.hostLibrary?.setlists.orEmpty(),
+                onChosen = { addAt(RemoteButton(RemoteButton.SETLIST, it.id, it.title), cell); configuring = null }, onDismiss = { configuring = null })
+            else -> ButtonEditor(state, b, isNew = true, onSave = { addAt(it, cell); configuring = null }, onRemove = null, onDismiss = { configuring = null })
+        }
+    }
     changing?.let { at ->
         val b = remote.deck.getOrNull(at)
         if (b == null) changing = null else ButtonEditor(
             state, b, isNew = false,
-            onSave = { changed -> remote.saveDeck(remote.deck.toMutableList().also { it[at] = changed }); changing = null },
+            onSave = { changed -> remote.saveDeck(remote.deck.toMutableList().also { it[at] = changed.copy(x = b.x, y = b.y) }); changing = null },
             onRemove = { remote.saveDeck(remote.deck.filterIndexed { j, _ -> j != at }); changing = null },
             onDismiss = { changing = null }
         )
@@ -895,6 +1048,10 @@ private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLi
                 PerformAction.FULLSCREEN -> if (tools) "Hide tools" else "Show tools"
                 PerformAction.NEXT_PAGE -> "Next page"
                 PerformAction.PREVIOUS_PAGE -> "Previous page"
+                PerformAction.FIRST_PAGE -> "First page"
+                PerformAction.LAST_PAGE -> "Last page"
+                PerformAction.HALF_PAGE_FORWARD -> "Half a page on"
+                PerformAction.HALF_PAGE_BACK -> "Half a page back"
                 PerformAction.NEXT_SONG -> "Next song"
                 PerformAction.PREVIOUS_SONG -> "Previous song"
                 PerformAction.METRONOME -> if (shown?.metronome == true) "Stop metronome" else "Metronome"
@@ -970,8 +1127,7 @@ private fun DeckButton(
     lib: RemoteLink.Library?,
     editing: Boolean,
     modifier: Modifier,
-    onPress: () -> Unit,
-    onMove: (Int) -> Unit
+    onPress: () -> Unit
 ) {
     val action = if (b.kind == RemoteButton.ACTION) PerformAction.entries.firstOrNull { it.name == b.id } else null
     val lit = when {
@@ -1009,20 +1165,126 @@ private fun DeckButton(
         shape = RoundedCornerShape(18.dp),
         color = fill,
         contentColor = ink,
-        modifier = modifier.height(104.dp)
+        modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onPress)
     ) {
-        Box(Modifier.fillMaxSize()) {
-            Column(Modifier.align(Alignment.Center).padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(iconFor(b, shown), null, modifier = Modifier.size(30.dp))
-                Text(b.label ?: defaultName(b, shown, lib), style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                detail?.let { Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        // Small cells (a phone, a big grid) drop the detail and shrink the icon, never the words.
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val small = maxHeight < 80.dp || maxWidth < 80.dp
+            Column(Modifier.align(Alignment.Center).padding(if (small) 4.dp else 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(iconFor(b, shown), null, modifier = Modifier.size(if (small) 22.dp else 30.dp))
+                Text(
+                    b.label ?: defaultName(b, shown, lib),
+                    style = if (small) MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleSmall,
+                    textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+                if (!small) detail?.let { Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
             }
-            if (editing) {
-                IconButton(onClick = { onMove(-1) }, modifier = Modifier.align(Alignment.BottomStart)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Move earlier") }
-                IconButton(onClick = { onMove(1) }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "Move later") }
+            if (editing) Icon(
+                Icons.Default.DragIndicator, null,
+                tint = ink.copy(alpha = 0.5f),
+                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp)
+            )
+        }
+    }
+}
+
+/** A number of cells across or down, one more or one fewer. */
+@Composable
+private fun GridStepper(name: String, value: Int, range: IntRange, onChange: (Int) -> Unit) {
+    val icon = if (name == "Across") Icons.Default.ViewColumn else Icons.Default.TableRows
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, name, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        IconButton(onClick = { onChange(value - 1) }, enabled = value > range.first, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.Remove, "Fewer ${if (name == "Across") "columns" else "rows"}")
+        }
+        Text("$value", style = MaterialTheme.typography.titleMedium)
+        IconButton(onClick = { onChange(value + 1) }, enabled = value < range.last, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.Add, "More ${if (name == "Across") "columns" else "rows"}")
+        }
+    }
+}
+
+/**
+ * Every button there is, a section at a time: held and dragged onto the grid, or tapped to go in
+ * the first gap. Short names, big enough to take hold of on a phone.
+ */
+@Composable
+private fun DeckLibrary(
+    state: SheetsState,
+    onTap: (RemoteButton) -> Unit,
+    onDragStart: (RemoteButton, androidx.compose.ui.geometry.Offset) -> Unit,
+    onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+    onReset: () -> Unit
+) {
+    val remote = state.remote
+    val all = offers(remote.shown)
+    val sections = all.map { it.section }.distinct()
+    var section by remember { mutableStateOf(sections.first()) }
+    Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Library", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = onReset) { Text("Start again") }
+        }
+        Text(
+            "Hold one and drag it onto the grid, or tap it for the first gap. Drag a button from the grid back here to take it off.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (s in sections) androidx.compose.material3.FilterChip(selected = s == section, onClick = { section = s }, label = { Text(s) })
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
+            val across = (maxWidth / 100.dp).toInt().coerceIn(3, 6)
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                all.filter { it.section == section }.chunked(across).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        row.forEach { o -> LibraryTile(o, remote.shown, Modifier.weight(1f), onTap, onDragStart, onDrag, onDragEnd, onDragCancel) }
+                        repeat(across - row.size) { Spacer(Modifier.weight(1f)) }
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun LibraryTile(
+    o: Offer,
+    shown: RemoteLink.State?,
+    modifier: Modifier,
+    onTap: (RemoteButton) -> Unit,
+    onDragStart: (RemoteButton, androidx.compose.ui.geometry.Offset) -> Unit,
+    onDrag: (androidx.compose.ui.geometry.Offset) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit
+) {
+    var at by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier.height(76.dp)
+            .onGloballyPositioned { at = it }
+            .pointerInput(o.name) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { p -> at?.let { onDragStart(o.button, it.localToRoot(p)) } },
+                    onDrag = { change, amount -> change.consume(); onDrag(amount) },
+                    onDragEnd = onDragEnd,
+                    onDragCancel = onDragCancel
+                )
+            }
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onTap(o.button) }
+    ) {
+        Column(Modifier.padding(4.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Icon(iconFor(o.button, shown), null, modifier = Modifier.size(22.dp))
+            Text(
+                o.name.removeSuffix("...").substringBefore(" (").substringBefore("... ("),
+                style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }

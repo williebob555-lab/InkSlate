@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inkslate.core.Perform
 import com.inkslate.core.PerformAction
@@ -208,6 +209,74 @@ class RemoteScreensTest {
     }
 
     @Test
+    fun `on a phone, buttons are dragged in from the library, between cells, and back out, on a grid of any shape`() {
+        val stand = library(tmp.newFolder("Music"))
+        val phone = SheetsState(FakePlatform(tmp.newFolder("PhoneMusic"), deviceName = "Phone"))
+        assertTrue(stand.remote.startHosting())
+        try {
+            val link = stand.remote.pairLink!!.replace(Regex("hosts=[^&]*"), "hosts=127.0.0.1")
+            phone.remote.remoteOpen = true
+            runDesktopComposeUiTest(width = 390, height = 844) {
+                setContent { MaterialTheme { Surface { SheetsHome(phone, onOpenSettings = {}) } } }
+                phone.remote.connect(com.inksheets.core.RemoteLink.parsePair(link)!!)
+                waitUntil(timeoutMillis = 5000) { phone.remote.shown != null }
+                waitForIdle()
+                shoot("remote-phone", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                onNodeWithText("Change buttons").performClick()
+                waitForIdle()
+                shoot("remote-phone-edit", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                fun centre(n: androidx.compose.ui.test.SemanticsNodeInteraction) = n.fetchSemanticsNode().boundsInRoot.center
+                fun cellOf(id: String) = phone.remote.deck.first { it.id == id }.let { it.x to it.y }
+
+                // A grid button dragged onto the library comes off.
+                val next = onAllNodesWithText("Next page").onFirst()
+                val nextAt = centre(next)
+                val trayAt = centre(onNodeWithText("Library"))
+                val nextCell = cellOf("NEXT_PAGE")
+                next.performTouchInput { down(center); moveBy(androidx.compose.ui.geometry.Offset(0f, 20f)); moveBy(trayAt - nextAt); up() }
+                waitForIdle()
+                assertTrue(phone.remote.deck.none { it.id == "NEXT_PAGE" })
+
+                // A library button held and dragged into the gap it left.
+                val first = onAllNodesWithText("First page").onFirst()
+                val firstAt = centre(first)
+                first.performTouchInput { down(center); advanceEventTime(1_000); moveBy(androidx.compose.ui.geometry.Offset(0f, -10f)); moveBy(nextAt - firstAt); up() }
+                waitForIdle()
+                assertEquals(nextCell, cellOf("FIRST_PAGE"))
+
+                // Dragged onto another: they swap.
+                val prevCell = cellOf("PREVIOUS_PAGE")
+                // The grid's, not the library's tile of the same name: the higher one.
+                fun inGrid(text: String) = onAllNodesWithText(text).let { all ->
+                    all[all.fetchSemanticsNodes().withIndex().minBy { it.value.boundsInRoot.center.y }.index]
+                }
+                val firstInGrid = inGrid("First page")
+                val prevAt = centre(inGrid("Previous page"))
+                firstInGrid.performTouchInput { down(center); moveBy(androidx.compose.ui.geometry.Offset(-20f, 0f)); moveBy(prevAt - centre(firstInGrid) + androidx.compose.ui.geometry.Offset(20f, 0f)); up() }
+                waitForIdle()
+                assertEquals(prevCell, cellOf("FIRST_PAGE"))
+                assertEquals(nextCell, cellOf("PREVIOUS_PAGE"))
+
+                // Tapped in the library: into the first gap.
+                val before = phone.remote.deck.size
+                onNode(androidx.compose.ui.test.hasContentDescription("More rows")).performClick()
+                waitForIdle()
+                assertEquals(com.inksheets.core.DeckGrid(3, 5), phone.remote.grid)
+                onAllNodesWithText("Last page").onFirst().performClick()
+                waitForIdle()
+                assertEquals(before + 1, phone.remote.deck.size)
+                shoot("remote-phone-edited", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                onNodeWithText("Done").performClick()
+                waitForIdle()
+                shoot("remote-phone-grid", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                phone.remote.disconnect()
+            }
+        } finally {
+            stand.remote.stopHosting()
+        }
+    }
+
+    @Test
     fun `a remote pairs with a device, shows where it is and turns its pages`() {
         val stand = library(tmp.newFolder("Music"))
         val phoneRoot = tmp.newFolder("PhoneMusic")
@@ -276,7 +345,6 @@ class RemoteScreensTest {
                 waitUntil(timeoutMillis = 5000) { phone.remote.shown?.title == "Fight Song" && phone.remote.shown?.bpm == 132 }
                 assertTrue(opened.any { it.contains("Fight Song") })
                 onNodeWithText("Change buttons").performClick()
-                onNodeWithText("Add a button").performClick()
                 waitForIdle()
                 shoot("remote-add", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
                 phone.remote.disconnect()
