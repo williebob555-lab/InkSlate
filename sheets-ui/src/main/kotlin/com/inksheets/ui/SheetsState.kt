@@ -445,14 +445,14 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /**
      * A tab opened or closed. A recording plays on whatever is in front - Home, another song -
-     * until the tab of the song it belongs to is closed: then it stops.
+     * until the tab of the song it belongs to is closed: then it stops, and playback mode ends.
      */
     fun openTabs(files: List<File>) {
         openFiles = files
         val id = Recording.songId ?: return
-        if (!Recording.playing) return
+        if (!Recording.session) return
         if (hasTab(id)) Recording.hadTab = true
-        else if (Recording.hadTab) Recording.pause(this)
+        else if (Recording.hadTab) Recording.end(this)
     }
 
     /**

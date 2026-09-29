@@ -95,19 +95,34 @@ internal object Recording {
     /** The metronome as it was before a recording set it to its own tempo, to put back after. */
     private var before: com.inksheets.core.Metronome.Settings? = null
 
-    /**
-     * Play [track] (loaded) from where it is: counted in first when a count-in is set, and with the
-     * click under it, in time with it, when that is turned on. The click's tempo is the one the
-     * recording was made at, else the song's, else the metronome's - all scaled by the speed.
-     */
     /** The song whose recording is playing; its tab closing stops it (and nothing else does). */
     var songId: String? = null
     /** That song had a tab open while it played - one played from Home without a tab is left alone. */
     var hadTab = false
 
+    /**
+     * Playback mode: a recording has been played and not put away - playing or paused. The
+     * playback column stands beside the strip for as long as it lasts.
+     */
+    var session by mutableStateOf(false)
+        private set
+    /** What playback mode plays: the recording played last, and its song. */
+    var track: AudioTrack? = null
+        private set
+    var song: Song? = null
+        private set
+
+    /**
+     * Play [track] (loaded) from where it is: counted in first when a count-in is set, and with the
+     * click under it, in time with it, when that is turned on. The click's tempo is the one the
+     * recording was made at, else the song's, else the metronome's - all scaled by the speed.
+     */
     fun play(state: SheetsState, track: AudioTrack, song: Song?) {
         val p = playerFor(state) ?: return
         watch(state)
+        this.track = track
+        this.song = song
+        session = true
         songId = song?.id
         hadTab = song != null && state.hasTab(song.id)
         val click = Click.withPlayback(state)
@@ -156,6 +171,33 @@ internal object Recording {
         if (Click.purpose == Click.Purpose.PLAYBACK) Click.stop(state)
         before?.let { b -> Click.engine(state)?.settings = b; SharedMetronome.bpm = b.bpm }
         before = null
+    }
+
+    /** Out of playback mode: stopped, and the column put away. */
+    fun end(state: SheetsState) {
+        pause(state)
+        session = false
+    }
+
+    /** Back or on by [seconds] (a minus goes back), within the recording. */
+    fun skip(seconds: Double) {
+        val p = player ?: return
+        p.seek((p.positionMs + (seconds * 1000).toLong()).coerceIn(0L, p.durationMs.coerceAtLeast(0L)))
+    }
+
+    /** From the start again - the loop's start where there is a loop - and playing. */
+    fun replay(state: SheetsState) {
+        val p = player ?: return
+        val t = track ?: return
+        if (p.playing || Click.purpose == Click.Purpose.PLAYBACK) pause(state)
+        p.seek(t.loopStartMs ?: 0L)
+        play(state, t, song)
+    }
+
+    /** Play or pause what playback mode holds. */
+    fun playPause(state: SheetsState) {
+        val t = track ?: return
+        if (playing) pause(state) else play(state, t, song)
     }
 
     /**
@@ -410,7 +452,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                                     onClick = {
                                         menu = false
                                         if (Recording.loadedFile == t.file) {
-                                            Recording.pause(state); Recording.loadedFile = null
+                                            Recording.end(state); Recording.loadedFile = null
                                         }
                                         save(tracks.filterIndexed { j, _ -> j != i })
                                         selected = selected.coerceAtMost(tracks.lastIndex).coerceAtLeast(0)

@@ -25,6 +25,7 @@ import com.inksheets.ui.SheetsPlatform
 import com.inksheets.ui.SheetsState
 import androidx.compose.ui.test.performTouchInput
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -169,6 +170,67 @@ class SheetsScreensTest {
             shoot("action-strip", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
         com.inkslate.core.Perform.document = null
+    }
+
+    /** A player that only keeps its place. */
+    private class FakePlayer : com.inksheets.ui.AudioPlayer {
+        override fun load(file: File) = true
+        override fun play() { playing = true }
+        override fun pause() { playing = false }
+        override var playing = false
+        override fun seek(ms: Long) { positionMs = ms }
+        override var positionMs = 0L
+        override val durationMs = 180_000L
+        override var speed = 1.0
+        override var pitch = 0
+        override fun setLoop(startMs: Long?, endMs: Long?) {}
+        override fun release() {}
+    }
+
+    @Test
+    fun `playback mode has its own column beside the strip, playing or paused, until put away`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        val player = FakePlayer()
+        com.inksheets.ui.Recording.player = player
+        try {
+            runDesktopComposeUiTest(width = 900, height = 700) {
+                setContent {
+                    MaterialTheme {
+                        androidx.compose.foundation.layout.Box(
+                            androidx.compose.ui.Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFFF4F1EA))
+                        ) { ActionStrip(state) }
+                    }
+                }
+                waitForIdle()
+                // Not in playback mode: no column.
+                assertEquals(0, onAllNodes(androidx.compose.ui.test.hasContentDescription("From the start again")).fetchSemanticsNodes().size)
+                runOnIdle { player.seek(60_000); com.inksheets.ui.Recording.play(state, com.inksheets.core.AudioTrack("band.mp3"), null) }
+                waitForIdle()
+                assertTrue(player.playing)
+                shoot("playback-column", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+                onNode(androidx.compose.ui.test.hasContentDescription("Back 5 seconds")).performClick()
+                assertEquals(55_000L, player.positionMs)
+                onNode(androidx.compose.ui.test.hasContentDescription("On 5 seconds")).performClick()
+                onNode(androidx.compose.ui.test.hasContentDescription("On 5 seconds")).performClick()
+                assertEquals(65_000L, player.positionMs)
+                // Paused: still in playback mode, the column stays.
+                onNode(androidx.compose.ui.test.hasContentDescription("Pause or play on")).performClick()
+                waitForIdle()
+                assertFalse(player.playing)
+                onNode(androidx.compose.ui.test.hasContentDescription("From the start again")).assertExists()
+                onNode(androidx.compose.ui.test.hasContentDescription("From the start again")).performClick()
+                assertEquals(0L, player.positionMs)
+                assertTrue(player.playing)
+                onNode(androidx.compose.ui.test.hasContentDescription("Stop, and put these away")).performClick()
+                waitForIdle()
+                assertFalse(player.playing)
+                assertEquals(0, onAllNodes(androidx.compose.ui.test.hasContentDescription("From the start again")).fetchSemanticsNodes().size)
+            }
+        } finally {
+            com.inksheets.ui.Recording.end(state)
+            com.inksheets.ui.Recording.player = null
+        }
     }
 
     @Test

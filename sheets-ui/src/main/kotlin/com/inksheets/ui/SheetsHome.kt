@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Gamepad
@@ -126,12 +127,15 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
             title = { if (!narrow) Text("InkSheets", maxLines = 1) },
             actions = {
                 InstrumentChooser(state)
-                // A recording still playing from a song left behind: stopped from here.
-                if (Recording.playing) {
+                // Playback mode, from a song left behind: paused or played on from here.
+                if (Recording.session) {
                     IconButton(
-                        onClick = { Recording.pause(state) },
-                        modifier = Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape)
-                    ) { Icon(Icons.Default.Pause, "Stop the recording") }
+                        onClick = { Recording.playPause(state) },
+                        modifier = if (Recording.playing) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
+                    ) {
+                        if (Recording.playing) Icon(Icons.Default.Pause, "Pause the recording")
+                        else Icon(Icons.Default.PlayArrow, "Play the recording")
+                    }
                 }
                 // Each opens its window and closes it again; lit while it is open.
                 val tunerShown = showTuner || state.tunerOpen

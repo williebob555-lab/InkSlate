@@ -52,6 +52,10 @@ import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
@@ -219,27 +223,35 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 Icon(if (collapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess, if (collapsed) "Show buttons" else "Hide buttons")
             }
         }
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            tonalElevation = 3.dp,
-            shadowElevation = 2.dp,
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-            // In the bottom corner, the fold button last - folded away, it is all there is, out of
-            // the music's way.
+        // In the bottom corner, the fold button last - folded away, it is all there is, out of
+        // the music's way. In playback mode, the recording's own column stands beside it, on the
+        // music's side.
+        Row(
+            verticalAlignment = Alignment.Bottom,
             modifier = Modifier.align(if (state.stripOnLeft) Alignment.BottomStart else Alignment.BottomEnd).padding(6.dp)
         ) {
-            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-            if (side) {
-                androidx.compose.foundation.layout.FlowColumn(
-                    itemHorizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) { items() }
-            } else {
-                androidx.compose.foundation.layout.FlowRow(
-                    itemVerticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                ) { items() }
+            val playback = Recording.session && !collapsed
+            if (playback && !state.stripOnLeft) PlaybackColumn(state, btn, named, Modifier.padding(end = 6.dp))
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                tonalElevation = 3.dp,
+                shadowElevation = 2.dp,
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+            ) {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                if (side) {
+                    androidx.compose.foundation.layout.FlowColumn(
+                        itemHorizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    ) { items() }
+                } else {
+                    androidx.compose.foundation.layout.FlowRow(
+                        itemVerticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) { items() }
+                }
             }
+            if (playback && state.stripOnLeft) PlaybackColumn(state, btn, named, Modifier.padding(start = 6.dp))
         }
         // Following, and wandered off: the way back to the leader, top centre.
         BackToLeader(state, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
@@ -577,6 +589,44 @@ private fun StripButton(
         }
     }
 }
+
+/**
+ * Playback mode's quick actions, in a column beside the strip while a recording is playing or
+ * paused: where it is, play or pause, back and on, from the start again - and put away.
+ */
+@Composable
+private fun PlaybackColumn(state: SheetsState, btn: androidx.compose.ui.unit.Dp, named: Boolean, modifier: Modifier) {
+    var position by remember { mutableStateOf(0L) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        while (true) {
+            position = Recording.player?.positionMs ?: 0L
+            kotlinx.coroutines.delay(250)
+        }
+    }
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 3.dp,
+        shadowElevation = 2.dp,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+        modifier = modifier
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 4.dp)) {
+            val s = position / 1000
+            Text("%d:%02d".format(s / 60, s % 60), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(4.dp))
+            StripButton(Icons.Default.Replay, "Replay", "From the start again", btn, named) { Recording.replay(state) }
+            StripButton(Icons.Default.FastRewind, "Back ${SKIP_S}s", "Back $SKIP_S seconds", btn, named) { Recording.skip(-SKIP_S.toDouble()) }
+            StripButton(
+                if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayArrow,
+                if (Recording.playing) "Pause" else "Play", "Pause or play on", btn, named, lit = Recording.playing
+            ) { Recording.playPause(state) }
+            StripButton(Icons.Default.FastForward, "On ${SKIP_S}s", "On $SKIP_S seconds", btn, named) { Recording.skip(SKIP_S.toDouble()) }
+            StripButton(Icons.Default.Close, "Done", "Stop, and put these away", btn, named) { Recording.end(state) }
+        }
+    }
+}
+
+/** How far back and on the playback column's buttons skip. */
+private const val SKIP_S = 5
 
 /** A button's name under it: a word or two. */
 internal fun shortName(action: PerformAction, fullscreen: Boolean): String = when (action) {
