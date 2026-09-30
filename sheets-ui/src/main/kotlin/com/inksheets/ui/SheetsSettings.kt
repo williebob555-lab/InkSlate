@@ -224,5 +224,21 @@ private fun LibraryHealth(state: SheetsState) {
             }
             androidx.compose.material3.Switch(checked = state.listenTurns, onCheckedChange = { state.listenTurns = it })
         }
+        Row(
+            Modifier.fillMaxWidth().clickable { state.readMusic = !state.readMusic }.padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Read the music off the page (experimental)")
+                Text(
+                    "\"Read the music\" in a part's More menu: its notes read off the pages, the bars that may be read wrong " +
+                        "shown beside a clean redrawing, and the whole played or saved as a MIDI file. With Listen on too, " +
+                        "the page turns come from the music itself - no need to teach them.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            androidx.compose.material3.Switch(checked = state.readMusic, onCheckedChange = { state.readMusic = it })
+        }
     }
 }

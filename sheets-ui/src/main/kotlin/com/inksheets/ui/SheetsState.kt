@@ -450,6 +450,24 @@ class SheetsState(val platform: SheetsPlatform) {
             if (!on) { Listener.stop(this); TempoFollow.stop(this) }
         }
 
+    private var readMusicState by mutableStateOf(platform.pref(K_READ_MUSIC) == "true")
+
+    /** Experimental: reading a part's notes off its pages - checked, redrawn, exported as MIDI, and turning pages by them. */
+    var readMusic: Boolean
+        get() = readMusicState
+        set(on) { readMusicState = on; platform.setPref(K_READ_MUSIC, on.toString()) }
+
+    /** The music-reading panel is up. */
+    var readMusicOpen by mutableStateOf(false)
+
+    /** Show [file]'s notes as read - reading them first if this device has not yet. */
+    fun openReadMusic(file: File) {
+        val known = Transcriber.cached(this, file)
+        if (known != null) Transcriber.shown = file to known
+        else Transcriber.read(this, file) { }
+        readMusicOpen = true
+    }
+
     /** The files of the open tabs, as last told. */
     var openFiles: List<File> = emptyList()
         private set
@@ -1276,5 +1294,6 @@ class SheetsState(val platform: SheetsPlatform) {
         const val ONE_OFF = "one-off"
         private const val K_ENTRY_SORT = "sheets_entry_sort"
         private const val K_LISTEN = "sheets_listen_turns"
+        private const val K_READ_MUSIC = "sheets_read_music"
     }
 }

@@ -62,8 +62,15 @@ class OmrRealPagesTest {
             g.color = if (m.sure) Color(0, 150, 0) else Color(220, 110, 0)
             g.drawString("${m.number}", m.box.left + 3, m.box.top - 4)
             var row = 0
+            val staff = reading.staves[m.staff]
             for (e in m.events) {
                 g.drawString(describe(e), e.x.toInt(), m.box.bottom + (m.space * 2.5f).toInt() + 12 * (row++ % 2))
+                // Each head where it was read: a circle round it.
+                if (e is Note) for (st in e.steps) {
+                    val y = staff.y(st, e.x.toInt()).toInt()
+                    g.drawOval(e.x.toInt() - 2, y - (m.space * 0.6f).toInt(), (m.space * 1.5f).toInt(), (m.space * 1.2f).toInt())
+                }
+                if (e is Rest) g.drawRect(e.x.toInt(), staff.y(2, e.x.toInt()).toInt(), (m.space).toInt(), (m.space * 2).toInt())
             }
         }
         g.dispose()

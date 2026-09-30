@@ -157,7 +157,13 @@ object Chroma {
  * (online dynamic time warping, Viterbi style: every place in the recording is a candidate each
  * step, and the best path to each is kept).
  */
-class ScoreFollower(private val reference: List<Chroma.Frame>, startMs: Long = 0) {
+class ScoreFollower(
+    private val reference: List<Chroma.Frame>,
+    startMs: Long = 0,
+    /** Costs of holding still, and of going at double speed, over going with the reference. */
+    private val stayCost: Float = STAY,
+    private val skipCost: Float = SKIP
+) {
     private val n = reference.size
     private val start = (startMs / Chroma.FRAME_MS).toInt()
     private var cost = FloatArray(n) { j -> START_SPREAD * kotlin.math.abs(j - start) }
@@ -181,9 +187,9 @@ class ScoreFollower(private val reference: List<Chroma.Frame>, startMs: Long = 0
             var dot = 0f
             for (k in 0 until 12) dot += live[k] * ref[k]
             val d = 1f - dot
-            val stay = cost[j] + STAY
+            val stay = cost[j] + stayCost
             val one = if (j >= 1) cost[j - 1] else Float.MAX_VALUE
-            val two = if (j >= 2) cost[j - 2] + SKIP else Float.MAX_VALUE
+            val two = if (j >= 2) cost[j - 2] + skipCost else Float.MAX_VALUE
             val c = d + minOf(stay, one, two)
             next[j] = c
             if (c < best) { best = c; bestAt = j }

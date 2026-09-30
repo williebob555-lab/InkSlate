@@ -42,37 +42,56 @@ internal object Listener {
     fun start(state: SheetsState) {
         if (active) return
         val song = state.current ?: return
-        val track = song.audio.firstOrNull() ?: run { say(state, "Listen needs a recording of this song"); return }
-        val file = state.fileOf(track.file) ?: run { say(state, "Its recording is not on this device"); return }
+        // The music read off this part (experimental), when it has been: turns without teaching.
+        val partFile = state.currentPath?.let { java.io.File(it) }
+        val score = if (state.readMusic && partFile != null) Transcriber.cached(state, partFile) else null
+        val track = song.audio.firstOrNull()
+        if (track == null && score == null) { say(state, "Listen needs a recording of this song, or its music read"); return }
+        val file = track?.let { state.fileOf(it.file) }
+        if (track != null && file == null && score == null) { say(state, "Its recording is not on this device"); return }
         val microphone = state.platform.microphone ?: run { say(state, "No microphone here"); return }
         val me = Any()
         val rate = microphone.sampleRate
         run = me
         active = true
         status = "Getting ready..."
+        val instrument = state.partShown()?.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }?.let { com.inksheets.core.Instruments.byId[it] }
+        val bpm = song.tempo?.toDouble()?.takeIf { it > 0 } ?: SharedMetronome.bpm
         Thread({
-            val reference = synchronized(cache) { cache[file.path] } ?: run {
+            val recording = file?.let { f -> synchronized(cache) { cache[f.path] } ?: run {
                 val stream = ArrayList<Chroma.Frame>()
                 var chroma: Chroma.Stream? = null
-                val ok = state.platform.decodeAudio(file) { samples, rate ->
+                val ok = state.platform.decodeAudio(f) { samples, rate ->
                     val s = chroma ?: Chroma.Stream(rate).also { chroma = it }
                     stream += s.feed(samples)
                 }
-                if (ok && stream.isNotEmpty()) stream.also { synchronized(cache) { cache[file.path] = it } } else null
-            }
+                if (ok && stream.isNotEmpty()) stream.also { synchronized(cache) { cache[f.path] = it } } else null
+            } }
             if (run !== me) return@Thread
-            if (reference == null) { state.platform.onMain { stop(state, "Couldn't read the recording") }; return@Thread }
+            // What to follow: the recording where there is one, else the music as read.
+            val reference = recording ?: score?.let { com.inksheets.core.omr.ScoreAudio.frames(it, bpm, instrument?.transpose ?: 0) }
+            if (reference == null || reference.isEmpty()) { state.platform.onMain { stop(state, "Couldn't read the recording") }; return@Thread }
             val (page0, pages) = state.pageShown
-            val plan = TurnPlan(track.turnsMs, pages, reference.size * Chroma.FRAME_MS)
+            // Where the turns come from: learned by playing along; else from the music read (lined
+            // up with the recording, or the music itself); else guessed.
+            val learned = track?.turnsMs.orEmpty().takeIf { pages > 1 && it.size >= pages - 1 }
+            val fromMusic = if (learned == null && score != null) runCatching {
+                if (recording != null) com.inksheets.core.omr.ScoreAudio.turnsIn(score, recording, bpm, instrument?.transpose ?: 0)
+                else com.inksheets.core.omr.ScoreAudio.pageStarts(score, bpm)
+            }.getOrNull()?.takeIf { it.size >= pages - 1 } else null
+            val plan = TurnPlan(learned ?: fromMusic ?: emptyList(), pages, reference.size * Chroma.FRAME_MS)
+            val source = when { learned != null -> "learned"; fromMusic != null -> "from the music"; else -> "guessed" }
             val startMs = if (page0 <= 0) 0L else plan.turnAt(page0 - 1) ?: 0L
             val follower = ScoreFollower(reference, startMs)
             val presence = MusicPresence()
             val stream = Chroma.Stream(rate)
-            // Learned turns were made when the player turned, already a little early.
-            val lead = if (plan.learned) 300L else 1_000L
+            // Learned turns were made when the player turned, already a little early; following
+            // the music itself (no recording) runs later, so it turns earlier.
+            val lead = when { learned != null -> 300L; fromMusic != null && recording != null -> 500L; fromMusic != null -> 1_500L; else -> 1_000L }
             var turnedFrom = -1
-            state.platform.log("Listen: following ${song.title} from ${startMs / 1000}s, turns " + if (plan.learned) "learned" else "guessed")
-            state.platform.onMain { if (run === me) status = if (plan.learned) "Listening" else "Listening - turns guessed" }
+            state.platform.log("Listen: following ${song.title} (${if (recording != null) "its recording" else "its music as read"}) from ${startMs / 1000}s, turns $source" +
+                (fromMusic?.let { t -> " at " + t.joinToString { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) } + "s" } ?: ""))
+            state.platform.onMain { if (run === me) status = if (source == "guessed") "Listening - turns guessed" else "Listening - turns $source" }
             val opened = Ears.listen(state, WHO) { chunk ->
                 if (run !== me) return@listen
                 for (f in stream.feed(chunk)) {

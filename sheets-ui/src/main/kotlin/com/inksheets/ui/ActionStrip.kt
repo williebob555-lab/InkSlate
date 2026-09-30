@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Hearing
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.PlayCircle
@@ -211,7 +212,11 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     }
                 }
                 // Experimental, only when turned on in Settings: turn the pages by ear for one run.
-                if (state.listenTurns && (state.current?.audio?.isNotEmpty() == true || Listener.active)) {
+                // A song with a recording, or whose music has been read (a part with no recording).
+                val readHere = remember(state.readMusic, state.currentPath, Transcriber.shown) {
+                    state.readMusic && state.currentPath?.let { Transcriber.cached(state, java.io.File(it)) } != null
+                }
+                if (state.listenTurns && (state.current?.audio?.isNotEmpty() == true || readHere || Listener.active)) {
                     StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
                     Listener.status?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 3,
@@ -303,6 +308,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.pickingOneOff) OneOffInstrumentDialog(state)
     ReminderDialogs(state)
     if (!state.homeInFront) state.notesFor?.let { song -> NotesDialog(state, song, onClose = { state.notesFor = null }) }
+    if (state.readMusicOpen) ReadMusicPanel(state, onClose = { state.readMusicOpen = false })
     if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
     if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
@@ -427,6 +433,14 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
                 text = { Text(if (song.reminder == null) "Reminder..." else "Change the reminder...") },
                 leadingIcon = { Icon(Icons.Default.NotificationsActive, null) },
                 onClick = { onDismiss(); state.writingReminder = true }
+            )
+        }
+        // Experimental (Settings): the notes read off the page - checked, redrawn, played as MIDI.
+        if (state.readMusic) state.currentPath?.let { path ->
+            DropdownMenuItem(
+                text = { Text("Read the music (experimental)...") },
+                leadingIcon = { Icon(Icons.Default.MusicNote, null) },
+                onClick = { onDismiss(); state.openReadMusic(java.io.File(path)) }
             )
         }
         state.currentPath?.let {

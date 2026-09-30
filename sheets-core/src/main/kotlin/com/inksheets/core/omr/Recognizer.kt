@@ -355,7 +355,8 @@ class Recognizer(private val debug: Boolean = false) {
                 if (!mid && !sides) continue
                 if (mid) {
                     val sc = score(clean, "noteheadBlack", sp, x, y)
-                    if (sc > 0.72f) found += Head(x, step, y, "noteheadBlack", sc)
+                    // Ties, slurs and accents touch heads and cost them a little.
+                    if (sc > 0.68f) found += Head(x, step, y, "noteheadBlack", sc)
                 }
                 if (sides) {
                     for (kind in listOf("noteheadHalf", "noteheadWhole")) {
@@ -399,6 +400,39 @@ class Recognizer(private val debug: Boolean = false) {
             if (kept.none { k -> abs(k.x - h.x) < w * 0.7f && abs(k.step - h.step) < 2 }) kept += h
         }
         return kept.sortedBy { it.x }
+    }
+
+    private fun blockRests(clean: Ink, s: Staff, from: Int, to: Int, taken: List<Pair<Int, Int>>): List<Pair<Rest, Float>> {
+        val sp = s.space
+        val out = ArrayList<Pair<Rest, Float>>()
+        var x = from
+        while (x < to) {
+            val mid = s.y(4, x).roundToInt()
+            val second = s.y(2, x).roundToInt()
+            // Sitting on the middle line: ink just above it; hanging from the second: just below.
+            val kind = when {
+                clean[x, mid - (sp * 0.25f).toInt()] -> 2
+                clean[x, second + (sp * 0.25f).toInt()] -> 1
+                else -> 0
+            }
+            if (kind == 0 || taken.any { (a, b) -> x in a..b }) { x++; continue }
+            val y0 = if (kind == 2) mid - (sp * 0.55f).toInt() else second + 1
+            val y1 = if (kind == 2) mid - 1 else second + (sp * 0.55f).toInt()
+            val yc = (y0 + y1) / 2
+            var x2 = x
+            while (x2 < to && clean[x2 + 1, yc]) x2++
+            val w = x2 - x + 1
+            // Solid, a space or so wide, and nothing above or below the block (not part of a note).
+            var filled = 0; var n = 0
+            for (yy in y0..y1) for (xx in x..x2) { n++; if (clean[xx, yy]) filled++ }
+            val clearAbove = (x..x2).count { clean[it, y0 - (sp * 0.35f).toInt()] } <= w / 5
+            val clearBelow = (x..x2).count { clean[it, y1 + (sp * 0.35f).toInt()] } <= w / 5
+            if (w >= sp * 0.8f && w <= sp * 1.7f && n > 0 && filled >= n * 0.8f && (if (kind == 2) clearAbove else clearBelow)) {
+                out += Rest(Duration(kind), x.toFloat()) to 0.8f
+            }
+            x = x2 + 1
+        }
+        return out
     }
 
     /** A stroke rising from the left edge, or falling from the right, of a head-sized ring at ([x], [y]). */
@@ -521,6 +555,26 @@ class Recognizer(private val debug: Boolean = false) {
         val measures = ArrayList<Measure>()
         val bars = ArrayList<List<Int>>()
         var number = firstNumber
+        // Every staff's heads first: a note high over one staff is also low under the one above,
+        // and belongs to whichever it is nearer the middle of.
+        val headsOf = staves.map { s -> heads(clean, s, s.left, s.right, ink) }
+        // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
+        for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") stem(clean, staves[si], h, t)
+        val unflagged = headsOf.map { hs ->
+            hs.filter { h ->
+                h.kind == "noteheadBlack" || hs.none { o -> o !== h && o.stemX >= 0 &&
+                    abs(o.stemX - (h.x + space * 0.6f)) < space * 1.3f && abs(o.stemEnd - h.y) < space * 1.3f }
+            }
+        }
+        val kept = unflagged.mapIndexed { si, hs ->
+            hs.filter { h ->
+                val mine = abs(h.step - 4)
+                listOf(si - 1, si + 1).none { oi ->
+                    val other = unflagged.getOrNull(oi) ?: return@none false
+                    other.any { o -> abs(o.x - h.x) <= 3 && abs(o.y - h.y) <= 3 && abs(o.step - 4) < mine }
+                }
+            }
+        }
         for ((si, s) in staves.withIndex()) {
             // The start of the staff: clef, key, time.
             var x = s.left + (s.space * 0.3f).toInt()
@@ -535,8 +589,7 @@ class Recognizer(private val debug: Boolean = false) {
             if (time != null) { carry.time = time.first; x = time.second; showsTime = true }
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
-            val allHeads = heads(clean, s, x, s.right, ink)
-            for (h in allHeads) if (h.kind != "noteheadWhole") stem(clean, s, h, t)
+            val allHeads = kept[si].filter { it.x >= x }
             // Nothing fits between a staff's start and a line under three spaces on: that is a time
             // signature in another font, not a barline.
             val b = barlines(ink, clean, s, t, allHeads.filter { it.stemX >= 0 }.map { it.stemX }, allHeads).filter { it > x + s.space * 3f }
@@ -549,7 +602,9 @@ class Recognizer(private val debug: Boolean = false) {
                 val to = span.second - (s.space * 0.2f).toInt()
                 val box = Box(span.first, s.top, span.second, s.bottom)
                 // A multi-bar rest: its bar and number, and nothing else to read.
-                val rest = multiRest(clean, s, from, to)
+                // A bar with notes in it is no multi-bar rest, whatever runs along its middle line (a beam).
+                val headsHere = allHeads.any { it.x >= from - 2 && it.x < to }
+                val rest = if (headsHere) null else multiRest(clean, s, from, to)
                 if (rest != null) {
                     val (restBars, x) = rest
                     measures += Measure(number, page, si, box, s.space, carry.clef, carry.key, carry.time,
@@ -599,6 +654,12 @@ class Recognizer(private val debug: Boolean = false) {
         }
         val (start, len) = best ?: return null
         if (len < sp * 2.5f) return null
+        // Its ends are short upright strokes, a space or so each way from the middle line.
+        fun serif(x0: Int): Boolean = (x0 - 3..x0 + 3).any { xx ->
+            val up = s.y(2, xx).roundToInt(); val down = s.y(6, xx).roundToInt()
+            (up..down).count { clean[xx, it] } >= (down - up) * 0.8f
+        }
+        if (!serif(start) || !serif(start + len - 1)) return null
         // The number above: engravers' digits, as in a time signature, a space and a half over the top line.
         val digits = ArrayList<Pair<Int, Int>>()
         var dx = start - (sp * 0.5f).toInt()
@@ -729,6 +790,9 @@ class Recognizer(private val debug: Boolean = false) {
                 }
             }
         }
+        // Half and whole rests in any font: a solid block a space or so wide, sitting on the middle
+        // line (half) or hanging from the line above it (whole).
+        rests += blockRests(clean, s, from, to, taken)
         rests.sortByDescending { it.second }
         val keptRests = ArrayList<Rest>()
         for ((r, _) in rests) if (keptRests.none { abs(it.x - r.x) < sp * 1.2f }) keptRests += r

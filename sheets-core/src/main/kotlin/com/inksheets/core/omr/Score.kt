@@ -1,10 +1,14 @@
 package com.inksheets.core.omr
 
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
 /**
  * Music read off the page: its measures, and in each the notes and rests in order, with the clef,
  * key and time they are read in - and how sure the reading is, so a measure read badly can be
  * shown for checking rather than trusted.
  */
+@Serializable
 enum class Clef(
     /** The pitch on the top line, as a diatonic number (C4 = 28). */
     val topLine: Int
@@ -19,6 +23,7 @@ enum class Clef(
 }
 
 /** A written pitch: [step] 0-6 is C to B, [octave] as in C4 = middle C, [alter] -1 flat, +1 sharp. */
+@Serializable
 data class Pitch(val step: Int, val octave: Int, val alter: Int = 0) {
     val midi: Int get() = 12 * (octave + 1) + SEMITONES[step] + alter
     val diatonic: Int get() = octave * 7 + step
@@ -32,6 +37,7 @@ data class Pitch(val step: Int, val octave: Int, val alter: Int = 0) {
 }
 
 /** A note value: [base] 1 whole, 2 half, 4 quarter, 8, 16, 32; with dots. */
+@Serializable
 data class Duration(val base: Int, val dots: Int = 0) {
     /** Length in quarter notes. */
     val quarters: Double get() {
@@ -44,6 +50,7 @@ data class Duration(val base: Int, val dots: Int = 0) {
 }
 
 /** Sharps (positive) or flats (negative) in the key signature. */
+@Serializable
 data class Key(val fifths: Int) {
     /** How [step] is altered by the key. */
     fun alterOf(step: Int): Int {
@@ -57,10 +64,12 @@ data class Key(val fifths: Int) {
     }
 }
 
+@Serializable
 data class TimeSig(val beats: Int, val beatType: Int) {
     val quarters: Double get() = beats * 4.0 / beatType
 }
 
+@Serializable
 sealed class Event {
     abstract val duration: Duration
     /** Where it is across the page, in pixels, or in staff spaces in a drawn score. */
@@ -71,6 +80,8 @@ sealed class Event {
  * A note or chord. [steps] are where the heads sit (half-spaces below the top line), [pitches]
  * what they mean with the clef, key and accidentals; [accidentals] as written, by step.
  */
+@Serializable
+@SerialName("note")
 data class Note(
     val steps: List<Int>,
     val pitches: List<Pitch>,
@@ -82,14 +93,18 @@ data class Note(
     val confidence: Float = 1f
 ) : Event()
 
+@Serializable
+@SerialName("rest")
 data class Rest(override val duration: Duration, override val x: Float) : Event()
 
 /** A box on a page, in pixels. */
+@Serializable
 data class Box(val left: Int, val top: Int, val right: Int, val bottom: Int) {
     val width get() = right - left
     val height get() = bottom - top
 }
 
+@Serializable
 data class Measure(
     /** Counting from 1 through the part. */
     val number: Int,
@@ -120,7 +135,13 @@ data class Measure(
 }
 
 /** A part read off its pages. */
-data class Score(val measures: List<Measure>, val pages: Int) {
+@Serializable
+data class Score(
+    val measures: List<Measure>,
+    val pages: Int,
+    /** How wide each page was drawn to be read, in pixels: the scale of every [Measure.box] on it. */
+    val pageWidths: List<Int> = emptyList()
+) {
     /** Which measures are on [page]. */
     fun onPage(page: Int) = measures.filter { it.page == page }
 
@@ -134,4 +155,11 @@ data class Score(val measures: List<Measure>, val pages: Int) {
             m to start.toLong()
         }
     }
+}
+
+/** A read part kept as text: read once per device, not every time it is wanted. */
+object Scores {
+    private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; classDiscriminator = "kind" }
+    fun encode(s: Score): String = json.encodeToString(Score.serializer(), s)
+    fun decode(text: String): Score? = runCatching { json.decodeFromString(Score.serializer(), text) }.getOrNull()
 }
