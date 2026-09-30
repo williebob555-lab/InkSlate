@@ -130,14 +130,9 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     }
     testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null || System.getProperty("inksheets.msdb") != null
-    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs", "inksheets.omr.why", "inksheets.digits", "inksheets.omr.scan", "inksheets.omr.only", "inksheets.bench", "inksheets.bench.n", "inksheets.bench.scan", "inksheets.bench.pages", "inksheets.bench.save", "inksheets.bench.shots", "inksheets.bench.why", "inksheets.bench.printed", "inksheets.bench.only", "inksheets.bench.calibrate")) {
-        System.getProperty(name)?.let {
-            systemProperty(name, it)
-            outputs.upToDateWhen { false }
-        }
-    }
-    System.getProperty("inksheets.shots")?.let {
-        systemProperty("inksheets.shots", it)
+    // Every -Dinksheets.* given to Gradle passed on to the tests (and the tests then always run).
+    for (name in System.getProperties().stringPropertyNames().filter { it.startsWith("inksheets.") }) {
+        systemProperty(name, System.getProperty(name))
         outputs.upToDateWhen { false }
     }
 }

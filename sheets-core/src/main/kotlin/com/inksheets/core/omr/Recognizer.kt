@@ -392,7 +392,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * How much ([x], [y]) looks like a hollow head shaped like [shape]: ink round the ring, paper in
      * the core - whatever the size and slant of the engraver's hole. 0 to 1.
      */
-    private fun hollow(ink: Ink, space: Float, x: Int, y: Int, shape: String, font: Boolean = false): Float {
+    private fun hollow(ink: Ink, space: Float, x: Int, y: Int, shape: String, font: Boolean = false, lines: Ink? = null): Float {
         val tp = if (font) MusicGlyphs.template(shape, space) else tpl(shape, space)
         val m = rings.getOrPut((if (font) "font " else "") + shape to (space * 10).toInt()) {
             val w = tp.ink.width; val h = tp.ink.height
@@ -425,13 +425,37 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val w = tp.ink.width
         for (j in 0 until tp.ink.height) for (i in 0 until w) {
             val p = j * w + i
-            if (m.ring[p]) { if (ink[x - tp.ox + i, y - tp.oy + j]) ringInk++ }
+            if (m.ring[p]) { if (ink[x - tp.ox + i, y - tp.oy + j] || lines != null && onLine(lines, x - tp.ox + i, y - tp.oy + j, space)) ringInk++ }
             else if (m.core[p]) { if (!ink[x - tp.ox + i, y - tp.oy + j]) coreClear++ }
         }
         val r = ringInk.toFloat() / m.ringCount
         val c = coreClear.toFloat() / m.coreCount
         // The ring need not be whole (a thin hollow head's sides), the middle must be clear.
         return if (c < 0.55f) 0f else (r * 0.6f + c * 0.4f)
+    }
+
+    /** The page's staff line thickness, as [read] found it. */
+    private var lineThickness = 0
+
+    /**
+     * Whether ([x], [y]) is ink [withoutLines] took for a staff or ledger line that something
+     * thin touches: a head in a space has its thin top and bottom on the lines, and the line
+     * taken away takes them too - but there the ink is thicker than the bare line either side
+     * of it (a scan's lines are not the same thickness all along).
+     */
+    private fun onLine(lines: Ink, x: Int, y: Int, space: Float): Boolean {
+        if (lineThickness <= 0 || !lines[x, y]) return false
+        fun runAt(xx: Int, yy: Int): Pair<Int, Int> {
+            var a = yy; while (lines[xx, a - 1] && yy - a < lineThickness * 3) a--
+            var b = yy; while (lines[xx, b + 1] && b - yy < lineThickness * 3) b++
+            return a to b
+        }
+        val (a, b) = runAt(x, y)
+        // The bare line a head's width off each way: the thinnest run through where this one is.
+        val off = (space * 1.3f).toInt()
+        val bare = listOf(x - off, x + off).mapNotNull { xx -> (a..b).firstOrNull { lines[xx, it] }?.let { yy -> runAt(xx, yy).let { (p, q) -> q - p + 1 } } }
+            .filter { it <= lineThickness + 1 }.minOrNull() ?: lineThickness
+        return b - a + 1 in bare + 2..bare + 5
     }
 
     private fun holeOf(t: Ink): BooleanArray {
@@ -533,13 +557,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * Every test a hollow head is put to, at the best place within a few pixels of ([x], [y]) on
      * [s]: for finding out why a head was not read. [clean] as [withoutLines] gives it, after [read].
      */
-    fun explainHollow(clean: Ink, s: Staff, x: Int, y: Int): String {
+    fun explainHollow(clean: Ink, s: Staff, x: Int, y: Int, lines: Ink? = null): String {
         val sp = s.space
         val headW = tpl("noteheadBlack", sp).ink.width - 2
         var best = ""; var bestRing = -1f
         for (dx in -4..4) for (dy in -2..2) {
             val xx = x + dx; val yy = y + dy
-            val ring = hollow(clean, sp, xx, yy, "noteheadBlack")
+            val ring = hollow(clean, sp, xx, yy, "noteheadBlack", lines = lines)
             if (ring <= bestRing) continue
             bestRing = ring
             val half = score(clean, "noteheadHalf", sp, xx, yy)
@@ -547,7 +571,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             best = "ring ${"%.2f".format(ring)} (font ${"%.2f".format(hollow(clean, sp, xx, yy, "noteheadBlack", font = true))}), " +
                 "half ${"%.2f".format(half)} hole ${"%.2f".format(holeClear(clean, "noteheadHalf", sp, xx, yy))}, " +
                 "whole ${"%.2f".format(whole)} hole ${"%.2f".format(holeClear(clean, "noteheadWhole", sp, xx, yy))}, " +
-                "wide ${"%.2f".format(hollow(clean, sp, xx, yy, "noteheadWhole"))}, " +
+                "wide ${"%.2f".format(hollow(clean, sp, xx, yy, "noteheadWhole", lines = lines))}, solid ${solid?.let { solidCore(it, sp, xx, yy, 0.85f) }}, " +
                 "accidental-like ${accidentalLike(clean, sp, xx, yy, headW)}, alone ${standsAlone(clean, sp, xx, yy, headW)}, " +
                 "sides ${(xx..xx + max(2, headW / 4)).any { clean[it, yy] } && (xx + headW - max(2, headW / 4)..xx + headW).any { clean[it, yy] }} at ${dx},${dy}"
         }
@@ -605,6 +629,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         var crowded = false
         /** Only just like a head (touched by an accent, a tie, a smudge): kept only if it has a stem. */
         var weak = false
+        /** A hollow head whole only with the staff lines' ink its top and bottom were on (see onLine). */
+        var lined = false
     }
 
     /** Noteheads on [s] between [from] and [to]; [lines] is the page with its staff and ledger lines, to check notes off the staff by. */
@@ -660,10 +686,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     // the right, as no note's stem does.
                     if (!accidentalLike(clean, sp, x, y, headW)) {
                         // The page's own head's shape, or the font's - a whole note is rounder than either.
-                        val ring = max(hollow(clean, sp, x, y, "noteheadBlack"), if (fitted != null) hollow(clean, sp, x, y, "noteheadBlack", font = true) else 0f)
-                        if (ring > 0.72f) found += Head(x, step, y, "noteheadHalf", ring).also { it.crowded = !standsAlone(clean, sp, x, y, headW) }
-                        val wide = hollow(clean, sp, x, y, "noteheadWhole")
-                        if (wide > 0.66f) found += Head(x, step, y, "noteheadWhole", wide).also { it.crowded = !standsAlone(clean, sp, x, y, tpl("noteheadWhole", sp).ink.width - 2) }
+                        fun ringAt(l: Ink?) = max(hollow(clean, sp, x, y, "noteheadBlack", lines = l), if (fitted != null) hollow(clean, sp, x, y, "noteheadBlack", font = true, lines = l) else 0f)
+                        val ring = ringAt(lines)
+                        if (ring > 0.72f) found += Head(x, step, y, "noteheadHalf", ring).also { it.crowded = !standsAlone(clean, sp, x, y, headW); it.lined = ringAt(null) <= 0.72f }
+                        val wide = hollow(clean, sp, x, y, "noteheadWhole", lines = lines)
+                        if (wide > 0.66f) found += Head(x, step, y, "noteheadWhole", wide).also { it.crowded = !standsAlone(clean, sp, x, y, tpl("noteheadWhole", sp).ink.width - 2); it.lined = hollow(clean, sp, x, y, "noteheadWhole") <= 0.66f }
                     }
                 }
             }
@@ -709,6 +736,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // another hollow head sits right above or below it: a chord's heads touch each other.
         found.removeAll { h -> h.crowded && found.none { o -> o !== h && o.kind != "noteheadBlack" && abs(o.x - h.x) <= headW / 3 && abs(o.step - h.step) in 2..3 &&
             standsAlone(clean, sp, h.x, h.y, tpl(h.kind, sp).ink.width - 2, besides = o) } }
+        // A head made whole by the lines beside a head found without them is that head's ring and a
+        // tie's curve touching it - a note's second head is found on its own. Off the staff, where
+        // only one line runs by, a tie's curve over a note makes one too.
+        found.removeAll { h -> h.lined && found.any { o -> o !== h && abs(o.x - h.x) < headW * 1.3f && (!o.lined && abs(o.step - h.step) in 1..2 || h.step !in 1..7 && o.step in 1..7) } }
         // A weak head beside a sure one is that head's smudge, or a beam's end, not another note.
         found.removeAll { h -> h.weak && found.any { o -> !o.weak && abs(o.x - h.x) < headW * 1.3f && abs(o.step - h.step) <= 3 } }
         // The best of each cluster: heads cannot overlap, except a second's two in a chord.
@@ -877,7 +908,34 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     /** [stem], for looking at from tests. */
     fun debugStem(clean: Ink, s: Staff, h: Head, t: Int) = stem(clean, s, h, t)
 
-    private fun stem(clean: Ink, s: Staff, h: Head, t: Int) {
+    /**
+     * The shortest run taken for a stem, in spaces: most engravers' stems are three and a half
+     * spaces, some editions' barely two - so set from this page's own filled heads (see [read]).
+     */
+    var stemMin = 2.2f
+        private set
+
+    /** [stem]'s run from [h] (the longer of up and down), without taking it for a stem. */
+    private fun stemLength(clean: Ink, s: Staff, h: Head, t: Int): Int {
+        val keep = stemMin
+        stemMin = Float.MAX_VALUE
+        try { return stem(clean, s, h, t) } finally { stemMin = keep }
+    }
+
+    /** The stems of [heads]' filled heads measured: [stemMin] at seven tenths of their usual length, within 1.5 to 2.2 spaces. */
+    private fun fitStemMin(clean: Ink, staves: List<Staff>, heads: List<List<Head>>, t: Int) {
+        stemMin = 2.2f
+        val lens = ArrayList<Float>()
+        for ((si, hs) in heads.withIndex()) for (h in hs) if (h.kind == "noteheadBlack" && !h.weak) {
+            val len = stemLength(clean, staves[si], h, t) / staves[si].space
+            if (len >= 1.2f) lens += len
+        }
+        if (lens.size < 8) return
+        lens.sort()
+        stemMin = (lens[lens.size / 2] * 0.55f).coerceIn(1.5f, 2.2f)
+    }
+
+    private fun stem(clean: Ink, s: Staff, h: Head, t: Int): Int {
         val sp = s.space
         val w = tpl(h.kind, sp).ink.width - 2
         // The stem's run from the head outwards: started from wherever in that half of the head
@@ -918,7 +976,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val len = max(up, down)
         if (debug || explaining) println("    stem? head ${h.x},${h.y} w=$w up $up at $upX, down $down at $downX; " +
             "down runs ${(h.x - (w * 0.25f).toInt() - 1..h.x + (w * 0.4f).toInt()).map { it to run(it, h.y + (sp * 0.3f).toInt(), 1) }}")
-        if (len < sp * 2.2f) return
+        if (len < sp * stemMin) return len
         h.up = up >= down
         h.stemX = if (h.up) upX else downX
         h.stemEnd = if (h.up) h.y - (sp * 0.3f).toInt() - up else h.y + (sp * 0.3f).toInt() + down
@@ -964,6 +1022,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             most = max(most, count)
         }
         h.flags = most.coerceAtMost(3)
+        return len
     }
 
     private fun dots(clean: Ink, s: Staff, h: Head) {
@@ -1036,6 +1095,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         this.staves = staves
         symbolOf.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
         val clean = withoutLines(ink, staves, t)
+        lineThickness = t
         solid = if (adapt && staves.isNotEmpty()) clean.opened(max(1, (staves.first().space * 0.11f).roundToInt())) else null
         if (adapt) fitHeads(clean, staves, ink) else fitted = null
         val measures = ArrayList<Measure>()
@@ -1045,6 +1105,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // and belongs to whichever it is nearer the middle of.
         val headsOf = if (this.printed != null) printedHeads(staves) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
+        if (this.printed == null) fitStemMin(clean, staves, headsOf, t)
         for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") { if (this.printed != null) printedStem(staves[si], h) else stem(clean, staves[si], h, t) }
         // Which staff each head was found on: those let go are still the bar's maybes.
         val staffOf = HashMap<Head, Int>()

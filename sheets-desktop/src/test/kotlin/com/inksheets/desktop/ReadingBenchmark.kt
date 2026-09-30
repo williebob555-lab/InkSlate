@@ -243,13 +243,22 @@ class ReadingBenchmark {
 
         if (System.getProperty("inksheets.bench.why") != null) synchronized(this) {
             val only = System.getProperty("inksheets.bench.only")
-            for ((mi, m) in reading.measures.withIndex()) if (m.bars <= 1 && !m.sure && (only == null || f.name.contains(only, true)) && whyShown++ < 100000)
+            for ((mi, m) in reading.measures.withIndex()) if (m.bars <= 1 && (!m.sure || mi !in unverifiable && causes[mi] != null) && (only == null || f.name.contains(only, true)) && whyShown++ < 100000)
             {
                 val other = key.filter { it.kind == Kind.OTHER && it.x >= m.box.left && it.x < m.box.right && it.y > m.box.top - sp * 4 && it.y < m.box.bottom + sp * 4 }
                     .joinToString(" ") { "'${it.text}'U+%04X@%.1f".format(it.text.codePointAt(0), (it.y - m.box.top) / sp) }
-                if (shots && barShots.size < 40 && barsFrom.merge(f.name, 1, Int::plus)!! <= (if (only != null) 20 else 3)) barShots += barCrop(ink, m.box, sp, "${f.nameWithoutExtension.take(16)} m${m.number} ${m.doubts.firstOrNull()?.take(22)}")
-                println("  FLAGGED ${f.nameWithoutExtension.take(22)} p$page m${m.number} ${if (mi in unverifiable) "unverifiable" else causes[mi]?.joinToString("+") ?: "right"} st${m.staff} x${m.box.left}..${m.box.right} ${m.time.beats}/${m.time.beatType}${if (m.showsTime) "*" else ""}: ${m.doubts} | " +
-                    m.events.joinToString(" ") { e -> when (e) { is Note -> "n" + e.duration.base + ".".repeat(e.duration.dots) + (if (e.steps.size > 1) "c" else ""); is Rest -> "r" + e.duration.base + ".".repeat(e.duration.dots) } } + " | other: " + other)
+                if (shots && m.sure && barShots.size < 60) barShots += barCrop(ink, m.box, sp, "SURE-WRONG ${f.nameWithoutExtension.take(16)} m${m.number} ${causes[mi]?.joinToString("+")}")
+                else if (shots && barShots.size < 40 && barsFrom.merge(f.name, 1, Int::plus)!! <= (if (only != null) 20 else 3)) barShots += barCrop(ink, m.box, sp, "${f.nameWithoutExtension.take(16)} m${m.number} ${m.doubts.firstOrNull()?.take(22)}")
+                if (m.sure && only != null) {
+                    // Every head candidate in the bar: which the reading was made from.
+                    val r = Recognizer(); r.read(ink)
+                    val (t0, _) = r.metrics(ink)!!
+                    val clean = r.withoutLines(ink, reading.staves, t0)
+                    for (h in r.heads(clean, reading.staves[m.staff], m.box.left, m.box.right, ink))
+                        println("    head x=${h.x} step=${h.step} ${h.kind} ${"%.2f".format(h.score)} lined=${h.lined} crowded=${h.crowded} weak=${h.weak}")
+                }
+                println("  ${if (m.sure) "SURE-WRONG" else "FLAGGED"} ${f.nameWithoutExtension.take(22)} p$page m${m.number} ${if (mi in unverifiable) "unverifiable" else causes[mi]?.joinToString("+") ?: "right"} st${m.staff} x${m.box.left}..${m.box.right} ${m.time.beats}/${m.time.beatType}${if (m.showsTime) "*" else ""}: ${m.doubts} | " +
+                    m.events.joinToString(" ") { e -> when (e) { is Note -> "n" + e.duration.base + ".".repeat(e.duration.dots) + (if (e.steps.size > 1) "c" + e.steps else ""); is Rest -> "r" + e.duration.base + ".".repeat(e.duration.dots) } } + " | other: " + other)
             }
         }
         val bars = reading.measures.withIndex().filter { it.value.bars <= 1 }.map { (mi, m) -> Bar(m.sure, mi !in unverifiable, causes[mi] ?: emptySet(), m.doubts) }
@@ -337,7 +346,8 @@ class ReadingBenchmark {
         val pages = (System.getProperty("inksheets.bench.pages") ?: "6").toInt()
         val shotsDir = System.getProperty("inksheets.bench.shots")
         val started = System.currentTimeMillis()
-        val parts = corpus().filter { isDev(it) == (set == "dev") }.take(n)
+        val only = System.getProperty("inksheets.bench.only")
+        val parts = corpus().filter { isDev(it) == (set == "dev") }.take(n).filter { only == null || it.name.contains(only, true) }
         val pool = Executors.newFixedThreadPool(4)
         val futures = parts.map { f ->
             pool.submit<Pair<PartResult, List<BufferedImage>>> {
