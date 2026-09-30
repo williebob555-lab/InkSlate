@@ -104,7 +104,8 @@ class OmrAnswerKeyTest {
             val c = "${h.kind}->${read[i].kind}"; t.confusion[c] = (t.confusion[c] ?: 0) + 1
         }
         t.readRight = taken.count { it }
-        read.indices.filter { !taken[it] }.forEach { i -> invented?.let { if (it.size < 40) it += crop(ink, read[i].x, read[i].y, sp, "$label invented ${read[i].kind}") } }
+        read.indices.filter { !taken[it] }.forEach { i -> t.confusion.merge("invented ${read[i].kind}", 1, Int::plus) }
+        read.indices.filter { !taken[it] && read[it].kind != Kind.HEAD_BLACK }.forEach { i -> invented?.let { if (it.size < 40) it += crop(ink, read[i].x, read[i].y, sp, "$label invented ${read[i].kind}") } }
         // Rests: the same, a little looser (a rest's origin is not its middle).
         val keyRests = key.filter { it.kind in rests && reading.staves.any { s -> it.y > s.top - sp * 2 && it.y < s.bottom + sp * 2 && it.x >= s.left } }
         val readRests = reading.measures.flatMap { m -> m.events.filterIsInstance<Rest>().filter { m.bars <= 1 }.map { r -> Triple(r, m.staff, m) } }
@@ -123,6 +124,26 @@ class OmrAnswerKeyTest {
         t.readRestsRight = restTaken.count { it }
 
         return t
+    }
+
+    /** [ink] as a photocopy scanned: turned [degrees], its ink spread, blurred, lit unevenly, with noise. */
+    private fun scanned(ink: Ink, degrees: Double, seed: Long): Ink {
+        val r = java.util.Random(seed)
+        val a = Math.toRadians(degrees)
+        val cos = Math.cos(a); val sin = Math.sin(a)
+        val cx = ink.width / 2.0; val cy = ink.height / 2.0
+        val grey = IntArray(ink.width * ink.height)
+        for (y in 0 until ink.height) for (x in 0 until ink.width) {
+            var dark = 0.0
+            for (dy in -1..1) for (dx in -1..1) {
+                val sx = cos * (x + dx * 0.7 - cx) + sin * (y + dy * 0.7 - cy) + cx
+                val sy = -sin * (x + dx * 0.7 - cx) + cos * (y + dy * 0.7 - cy) + cy
+                if (ink[sx.toInt(), sy.toInt()]) dark += 1.0 / 7
+            }
+            val paper = 220 + (x * 25 / ink.width) - (y * 10 / ink.height)
+            grey[y * ink.width + x] = (paper - dark.coerceAtMost(1.0) * 210 + r.nextGaussian() * 14).toInt().coerceIn(0, 255)
+        }
+        return Ink.fromGrey(ink.width, ink.height, grey)
     }
 
     private fun crop(ink: Ink, x: Float, y: Float, sp: Float, caption: String): BufferedImage {
@@ -168,8 +189,16 @@ class OmrAnswerKeyTest {
         val restShots = ArrayList<BufferedImage>()
         val inventedRestShots = ArrayList<BufferedImage>()
         for (f in keyed(want)) {
-            val (ink, dpi) = OmrRealPagesTest().renderAt(f, 0) ?: continue
-            val raw = AnswerKey.read(f, 0, dpi) ?: continue
+            val (printed, dpi) = OmrRealPagesTest().renderAt(f, 0) ?: continue
+            val keyRaw = AnswerKey.read(f, 0, dpi) ?: continue
+            // As a scan, if asked: the page turned a little, its ink spread and blurred, the light uneven,
+            // noise over it - and the key turned with it.
+            val turn = if (System.getProperty("inksheets.omr.scan") != null) 0.6 else 0.0
+            val ink = if (turn == 0.0) printed else scanned(printed, turn, f.name.hashCode().toLong())
+            val raw = if (turn == 0.0) keyRaw else keyRaw.map { s ->
+                val a = Math.toRadians(-turn); val cx = printed.width / 2.0; val cy = printed.height / 2.0
+                s.copy(x = (Math.cos(a) * (s.x - cx) + Math.sin(a) * (s.y - cy) + cx).toFloat(), y = (-Math.sin(a) * (s.x - cx) + Math.cos(a) * (s.y - cy) + cy).toFloat())
+            }
             val recognizer = Recognizer()
             val reading = recognizer.read(ink)
             if (reading.staves.isEmpty()) continue

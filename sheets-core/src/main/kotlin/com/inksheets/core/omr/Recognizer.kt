@@ -489,6 +489,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return runs <= 2
     }
 
+    /** How far ink runs left and right through ([x], [y]), up to [limit] each way; 0 on paper. */
+    private fun run(ink: Ink, x: Int, y: Int, limit: Int): Int {
+        if (!ink[x, y]) return 0
+        var l = x; while (ink[l - 1, y] && x - l < limit) l--
+        var r = x; while (ink[r + 1, y] && r - x < limit) r++
+        return r - l + 1
+    }
+
     /** Whether the middle of a filled head at ([x], [y]) - its shape worn in a fifth of a space all round - is all ink. */
     private fun solidCore(ink: Ink, sp: Float, x: Int, y: Int): Boolean {
         val tp = tpl("noteheadBlack", sp)
@@ -594,8 +602,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     // beam, or a multi-bar rest's bar.
                     val reach = (sp * 0.6f).toInt()
                     val barred = (-1..1).all { dy -> (1..reach).all { k -> body[x - k, y + dy] && body[x + headW + k, y + dy] } }
-                    if (sc > 0.68f && !barred) found += Head(x, step, y, "noteheadBlack", sc)
-                    else if (adapt && sc > 0.5f && !filledOnly && solidCore(body, sp, x, y) && !accidentalLike(clean, sp, x, y, headW) &&
+                    // A head is a head's width along its middle: a rest's round hook, however thick a scan makes it, is half that.
+                    val across = run(body, x + headW / 2, y, (sp * 2).toInt())
+                    val wide = across >= sp * 0.85f
+                    if (sc > 0.68f && !barred && wide) found += Head(x, step, y, "noteheadBlack", sc)
+                    else if (adapt && wide && sc > 0.5f && !filledOnly && solidCore(body, sp, x, y) && !accidentalLike(clean, sp, x, y, headW) &&
                         // Not a piece of a beam: ink that runs on past both sides of the head.
                         !(-1..1).all { dy -> clean[x - (sp * 0.35f).toInt(), y + dy] && clean[x + headW + (sp * 0.35f).toInt(), y + dy] })
                         found += Head(x, step, y, "noteheadBlack", sc).also { it.weak = true }
@@ -772,13 +783,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun hooks(s: Staff, x: Int, w: Int): Int {
         val ink = solid ?: return 0
         val sp = s.space
-        val x0 = x - (sp * 0.2f).toInt(); val x1 = x + w + (sp * 0.2f).toInt()
+        // Only the rest's left part: its hooks hang there, off the slanting stem.
+        val x0 = x - (sp * 0.2f).toInt(); val x1 = x + (w * 0.75f).toInt()
         val y0 = s.y(-1, x).roundToInt(); val y1 = s.y(9, x).roundToInt()
         val seen = HashSet<Int>()
-        var n = 0
+        val blobs = ArrayList<Pair<Int, Int>>()   // middle x, middle y
         for (yy in y0..y1) for (xx in x0..x1) {
             if (!ink[xx, yy] || (yy * ink.width + xx) in seen) continue
-            // The blob here: how far it spreads.
             val stack = ArrayDeque<Int>(); stack += yy * ink.width + xx
             var l = xx; var r = xx; var t = yy; var b = yy; var size = 0
             while (stack.isNotEmpty() && size < 2_000) {
@@ -791,11 +802,21 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 stack += q - ink.width; stack += q + ink.width
             }
             val bw = r - l + 1; val bh = b - t + 1
-            if (bw in (sp * 0.25f).toInt()..(sp * 0.75f).toInt() && bh in (sp * 0.25f).toInt()..(sp * 0.75f).toInt() && size >= bw * bh * 0.5f) n++
+            // Round and solid, a hook's size: not a speck, not the stem.
+            if (bw in (sp * 0.28f).toInt()..(sp * 0.75f).toInt() && bh in (sp * 0.28f).toInt()..(sp * 0.75f).toInt() &&
+                bw.toFloat() / bh in 0.6f..1.6f && size >= bw * bh * 0.6f) blobs += (l + r) / 2 to (t + b) / 2
+        }
+        if (blobs.isEmpty()) return 0
+        // Hooks go down a space at a time, each a little left of the one above.
+        blobs.sortBy { it.second }
+        var n = 1
+        var last = blobs[0]
+        for (bl in blobs.drop(1)) {
+            val dy = bl.second - last.second
+            if (dy >= sp * 0.6f && dy <= sp * 1.4f && abs(bl.first - last.first) <= sp * 0.8f) { n++; last = bl }
         }
         return n
     }
-
     /** A stroke rising from the left edge, or falling from the right, of a head-sized ring at ([x], [y]). */
     private fun accidentalLike(clean: Ink, sp: Float, x: Int, y: Int, w: Int): Boolean {
         fun stroke(from: Int, to: Int, dir: Int): Boolean = (from..to).any { xx ->
@@ -1035,6 +1056,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // Too long a bar: triplets read as plain notes, most often.
                 var guessedTuplets = false
                 if (events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) tuplets(clean, s, events, carry.time.quarters)?.let { (e, printed) -> events = e; guessedTuplets = !printed }
+                // Still too long, and a stemless "whole note" (a loop - a flag's curl, a digit's, a letter's) or a
+                // doubtful hollow head among other notes is what makes it so: without it the bar comes out exactly.
+                if (events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) events = withoutLoops(events, carry.time.quarters)
                 val m = Measure(
                     number++, page, si, box, s.space,
                     carry.clef, carry.key, carry.time, events,
@@ -1195,6 +1219,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         return out to (bestMarks == chosen.size)
+    }
+
+    /**
+     * [events] without the fewest stemless whole notes and doubtful hollow heads - up to two -
+     * whose going makes the bar come to [expected] exactly; as it was when none do. A whole note
+     * shares its bar with nothing but its own chord, so one among other notes is suspect.
+     */
+    private fun withoutLoops(events: List<Event>, expected: Double): List<Event> {
+        val suspects = events.indices.filter { i ->
+            val e = events[i]
+            e is Note && (e.duration.base == 1 || (e.duration.base == 2 && e.confidence < 0.8f)) && events.size > 1
+        }
+        val total = events.sumOf { it.duration.quarters }
+        for (i in suspects) if (abs(total - events[i].duration.quarters - expected) < 1e-6) return events.filterIndexed { k, _ -> k != i }
+        for (a in suspects) for (b in suspects) if (a < b && abs(total - events[a].duration.quarters - events[b].duration.quarters - expected) < 1e-6)
+            return events.filterIndexed { k, _ -> k != a && k != b }
+        return events
     }
 
     /** Whether a small "3" - a tuplet's number, italic or upright - is printed above or below [x0]..[x1] on [s]. */
