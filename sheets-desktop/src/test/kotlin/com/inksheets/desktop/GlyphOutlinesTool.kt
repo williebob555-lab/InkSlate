@@ -26,7 +26,8 @@ class GlyphOutlinesTool {
         "flag8thUp" to 0xE240, "flag8thDown" to 0xE241, "flag16thUp" to 0xE242, "flag16thDown" to 0xE243,
         "augmentationDot" to 0xE1E7,
         "timeSigCommon" to 0xE08A, "timeSigCutCommon" to 0xE08B,
-        "segno" to 0xE047, "coda" to 0xE048
+        "segno" to 0xE047, "coda" to 0xE048,
+        "noteheadXBlack" to 0xE0A9, "noteheadSlashHorizontalEnds" to 0xE101
     ) + (0..9).map { "timeSig$it" to 0xE080 + it }
 
     @Test

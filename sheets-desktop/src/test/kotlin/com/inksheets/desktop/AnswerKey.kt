@@ -12,7 +12,7 @@ import java.io.File
  * for the music reader, from the library itself.
  */
 object AnswerKey {
-    enum class Kind { HEAD_BLACK, HEAD_HALF, HEAD_WHOLE, REST_1, REST_2, REST_4, REST_8, REST_16, CLEF_G, CLEF_F, CLEF_C, FLAT, SHARP, NATURAL, DOT }
+    enum class Kind { HEAD_BLACK, HEAD_HALF, HEAD_WHOLE, REST_1, REST_2, REST_4, REST_8, REST_16, CLEF_G, CLEF_F, CLEF_C, FLAT, SHARP, NATURAL, DOT, FLAG_8, FLAG_16, FLAG_32 }
 
     /** One symbol: [x] its left edge, [y] its origin (a notehead's middle), in pixels at the page's drawing size. */
     data class Symbol(val kind: Kind, val x: Float, val y: Float, val width: Float)
@@ -23,6 +23,8 @@ object AnswerKey {
         '∑'.code to Kind.REST_1, 'Ó'.code to Kind.REST_2, 'Œ'.code to Kind.REST_4, '‰'.code to Kind.REST_8, '≈'.code to Kind.REST_16,
         '&'.code to Kind.CLEF_G, '?'.code to Kind.CLEF_F, 'B'.code to Kind.CLEF_C,
         'b'.code to Kind.FLAT, '#'.code to Kind.SHARP, 'n'.code to Kind.NATURAL, '.'.code to Kind.DOT,
+        'j'.code to Kind.FLAG_8, 'J'.code to Kind.FLAG_8, 'k'.code to Kind.FLAG_16, 'K'.code to Kind.FLAG_16,
+        0xE240 to Kind.FLAG_8, 0xE241 to Kind.FLAG_8, 0xE242 to Kind.FLAG_16, 0xE243 to Kind.FLAG_16, 0xE244 to Kind.FLAG_32, 0xE245 to Kind.FLAG_32,
         0xE0A4 to Kind.HEAD_BLACK, 0xE0A3 to Kind.HEAD_HALF, 0xE0A2 to Kind.HEAD_WHOLE,
         0xE4E3 to Kind.REST_1, 0xE4E4 to Kind.REST_2, 0xE4E5 to Kind.REST_4, 0xE4E6 to Kind.REST_8, 0xE4E7 to Kind.REST_16,
         0xE050 to Kind.CLEF_G, 0xE062 to Kind.CLEF_F, 0xE05C to Kind.CLEF_C,

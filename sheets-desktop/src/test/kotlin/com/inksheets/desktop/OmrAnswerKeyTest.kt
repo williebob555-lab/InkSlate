@@ -31,20 +31,28 @@ class OmrAnswerKeyTest {
     class Tally {
         var keyHeads = 0; var found = 0; var kindRight = 0; var readHeads = 0; var readRight = 0
         val confusion = HashMap<String, Int>()
+        var valued = 0; var valueRight = 0
+        var bars = 0; var sureBars = 0
         var keyRests = 0; var restsFound = 0; var restKindRight = 0; var readRests = 0; var readRestsRight = 0
         fun add(o: Tally) {
             o.confusion.forEach { (k, v) -> confusion[k] = (confusion[k] ?: 0) + v }
+            valued += o.valued; valueRight += o.valueRight
+            bars += o.bars; sureBars += o.sureBars
             keyHeads += o.keyHeads; found += o.found; kindRight += o.kindRight; readHeads += o.readHeads; readRight += o.readRight
             keyRests += o.keyRests; restsFound += o.restsFound; restKindRight += o.restKindRight; readRests += o.readRests; readRestsRight += o.readRestsRight
         }
         private fun pct(a: Int, b: Int) = if (b == 0) "-" else "%.1f%%".format(100.0 * a / b)
         override fun toString() = "heads found ${pct(found, keyHeads)} ($found/$keyHeads), kind right ${pct(kindRight, found)}, " +
             "real ${pct(readRight, readHeads)} ($readRight/$readHeads); rests found ${pct(restsFound, keyRests)} ($restsFound/$keyRests), " +
-            "kind right ${pct(restKindRight, restsFound)}, real ${pct(readRestsRight, readRests)} ($readRestsRight/$readRests)"
+            "kind right ${pct(restKindRight, restsFound)}, real ${pct(readRestsRight, readRests)} ($readRestsRight/$readRests); " +
+            "note values right ${pct(valueRight, valued)} ($valueRight/$valued); bars adding up ${pct(sureBars, bars)} ($sureBars/$bars)"
     }
 
     private val heads = setOf(Kind.HEAD_BLACK, Kind.HEAD_HALF, Kind.HEAD_WHOLE)
     private val rests = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16)
+
+    /** Notes whose value was read wrong, drawn. */
+    private val valueList = ArrayList<BufferedImage>()
 
     fun keyed(want: Int): List<File> {
         val all = music.walkTopDown().filter { it.isFile && it.extension.equals("pdf", true) && !it.name.contains("score", true) }.toList()
@@ -54,7 +62,8 @@ class OmrAnswerKeyTest {
 
     /** One page marked; misses and inventions drawn into [missed] and [invented]. */
     fun mark(ink: Ink, key: List<AnswerKey.Symbol>, reading: Recognizer.PageReading, label: String,
-             missed: MutableList<BufferedImage>? = null, invented: MutableList<BufferedImage>? = null, missedRests: MutableList<BufferedImage>? = null, inventedRests: MutableList<BufferedImage>? = null): Tally {
+             missed: MutableList<BufferedImage>? = null, invented: MutableList<BufferedImage>? = null, missedRests: MutableList<BufferedImage>? = null, inventedRests: MutableList<BufferedImage>? = null,
+             vectors: VectorKey.Page? = null, valueShots: MutableList<BufferedImage>? = valueList): Tally {
         val t = Tally()
         val sp = reading.space
         // Printed heads of full size only: cue and grace notes are smaller, and left to another day.
@@ -62,15 +71,19 @@ class OmrAnswerKeyTest {
         val normal = keyHeads.map { it.width }.sorted().let { it[it.size / 2] }
         val printed = keyHeads.filter { it.width > normal * 0.8f && reading.staves.any { s -> it.x >= s.left - sp && it.x <= s.right && it.y > s.top - sp * 6 && it.y < s.bottom + sp * 6 } }
         val read = ArrayList<Read>()
+        val readValues = ArrayList<Int?>()
         for (m in reading.measures) {
             val s = reading.staves[m.staff]
             for (e in m.events) if (e is Note) for (st in e.steps) {
                 val kind = when (e.duration.base) { 1 -> Kind.HEAD_WHOLE; 2 -> Kind.HEAD_HALF; else -> Kind.HEAD_BLACK }
                 read += Read(e.x, s.y(st, e.x.toInt()), kind, m.staff)
+                readValues += e.duration.base.takeIf { !e.duration.tuplet }
             }
         }
         val taken = BooleanArray(read.size)
         t.keyHeads = printed.size; t.readHeads = read.size
+        t.bars = reading.measures.size; t.sureBars = reading.measures.count { it.sure }
+        reading.measures.filter { !it.sure }.forEach { m -> m.doubts.forEach { d -> t.confusion.merge("doubt: " + d.replace(Regex("[0-9.]+"), "#"), 1, Int::plus) } }
         for (h in printed) {
             // The nearest head read at the same pitch - a quarter of a space either way - and about the same place.
             val i = read.indices.filter { !taken[it] && abs(read[it].y - h.y) <= sp * 0.26f && abs(read[it].x - h.x) <= sp * 1.3f }
@@ -79,6 +92,15 @@ class OmrAnswerKeyTest {
             taken[i] = true
             t.found++
             if (read[i].kind == h.kind) t.kindRight++
+            // Its value, where the printed stems and beams say: against the value read.
+            if (vectors != null && h.kind == Kind.HEAD_BLACK) {
+                val printedValue = VectorKey.valueOf(vectors, h.x, h.y, h.width, sp, key.filter { it.kind == Kind.FLAG_8 || it.kind == Kind.FLAG_16 || it.kind == Kind.FLAG_32 })
+                val readValue = readValues[i]
+                if (printedValue != null && readValue != null) {
+                    t.valued++; if (printedValue == readValue) t.valueRight++
+                    else { t.confusion.merge("value $printedValue->$readValue", 1, Int::plus); valueShots?.let { if (it.size < 40) it += crop(ink, h.x, h.y, sp, "$label value $printedValue read $readValue") } }
+                }
+            }
             val c = "${h.kind}->${read[i].kind}"; t.confusion[c] = (t.confusion[c] ?: 0) + 1
         }
         t.readRight = taken.count { it }
@@ -214,15 +236,17 @@ class OmrAnswerKeyTest {
                 val step = ((h.y - s0.lineY(0, h.x.toInt())) / (s0.space / 2)).let { Math.round(it) }
                 offsets += h.y - s0.y(step, h.x.toInt())
             }
-            val t = mark(ink, key, reading, f.nameWithoutExtension.take(24), if (shots != null) missed else null, if (shots != null) invented else null, if (shots != null) restShots else null, if (shots != null) inventedRestShots else null)
+            val t = mark(ink, key, reading, f.nameWithoutExtension.take(24), if (shots != null) missed else null, if (shots != null) invented else null, if (shots != null) restShots else null, if (shots != null) inventedRestShots else null,
+                VectorKey.read(f, 0, dpi))
             all.add(t)
-            println("${f.relativeTo(music).path}: $t")
+            val mism = reading.measures.flatMap { it.doubts }.filter { it.contains("beats found") }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(3)
+            println("${f.relativeTo(music).path}: $t | ${reading.measures.size} bars, time ${reading.measures.firstOrNull()?.time} | " + mism.joinToString { "${it.key} x${it.value}" })
         }
         println("OFFSETS: median ${offsets.sorted().getOrNull(offsets.size / 2)}")
         println("WHY MISSED: $why")
         println("NEVER FOUND: $never")
         println("ALL: $all")
         println("CONFUSION: " + all.confusion.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
-        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")); sheet(restShots, File(shots, "key-rests.png")); sheet(inventedRestShots, File(shots, "key-rests-invented.png")) }
+        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")); sheet(restShots, File(shots, "key-rests.png")); sheet(inventedRestShots, File(shots, "key-rests-invented.png")); sheet(valueList, File(shots, "key-values.png")) }
     }
 }

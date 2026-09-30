@@ -599,6 +599,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         // Not a piece of a beam: ink that runs on past both sides of the head.
                         !(-1..1).all { dy -> clean[x - (sp * 0.35f).toInt(), y + dy] && clean[x + headW + (sp * 0.35f).toInt(), y + dy] })
                         found += Head(x, step, y, "noteheadBlack", sc).also { it.weak = true }
+                    // Rhythm-only notes: an x (spoken, clapped, a percussion part) or a slash (play time here).
+                    // Thin strokes, so matched on the page as drawn; kept only with a stem of their own, as a
+                    // sharp's crossing strokes are no note.
+                    if (!filledOnly && sc <= 0.68f) for (kind in listOf("noteheadXBlack", "noteheadSlashHorizontalEnds")) {
+                        val xs = score(clean, kind, sp, x, y)
+                        if (xs > 0.62f && !accidentalLike(clean, sp, x, y, headW)) found += Head(x, step, y, kind, xs).also { it.weak = true }
+                    }
                 }
                 if (sides && !filledOnly) {
                     for (kind in listOf("noteheadHalf", "noteheadWhole")) {
@@ -689,6 +696,24 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         val best = fits.values.maxByOrNull { it.sc } ?: return null
+        // A "1" is a thin upright, and fits the upright of a printed 4 or 3 as well as a 1: where
+        // another digit accounts for clearly more of the figure's ink, it is that digit.
+        if (best.d == 1) {
+            fun covers(f: Fit): Float {
+                val tp = MusicGlyphs.template("timeSig${f.d}", f.sp)
+                val left = f.x - tp.ox; val top = f.y - tp.oy
+                val padX = tp.ink.width / 2; val padY = tp.ink.height / 8
+                var ink = 0; var mine = 0
+                for (yy in top - padY until top + tp.ink.height + padY) for (xx in left - padX until left + tp.ink.width + padX) {
+                    if (!clean[xx, yy]) continue
+                    ink++
+                    if (tp.ink[xx - left, yy - top]) mine++
+                }
+                return if (ink == 0) 0f else mine.toFloat() / ink
+            }
+            val mine = covers(best)
+            fits.values.filter { it.d != 1 }.maxByOrNull { covers(it) }?.let { alt -> if (covers(alt) > mine + 0.25f) return alt.d to alt.x }
+        }
         return best.d to best.x
     }
 
@@ -929,6 +954,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") stem(clean, staves[si], h, t)
         // A weak head needs a stem of its own: one it shares with a sure head is that head's flag or beam.
         val dropped = ArrayList<Pair<Head, String>>()
+        // An x or slash head with a stem of its own is a note, and a clear one: its thin strokes match less well than a head's fill.
+        for (hs in headsOf) for (h in hs) if (h.kind != "noteheadBlack" && h.kind.startsWith("notehead") && h.weak && h.stemX >= 0 && (h.kind.contains("X") || h.kind.contains("Slash"))) h.score = max(h.score, 0.8f)
         for (hs in headsOf) hs.removeAll { h -> (h.weak && (h.stemX < 0 || hs.any { o -> !o.weak && o.stemX >= 0 && abs(o.stemX - h.stemX) <= t + 2 }))
             .also { if (it) dropped += h to (if (h.stemX < 0) "weak, no stem" else "weak, stem shared") } }
         val unflagged = headsOf.map { hs ->
@@ -1036,6 +1063,28 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 for (k in measures.indices) {
                     val m = measures[k]
                     if (m.staff == si && m.page == page && (m.box.left + m.box.right) / 2 in x0..x1) measures[k] = m.copy(ending = n)
+                }
+            }
+        }
+        // The bars tell their own metre: where a time signature was read here but most of this
+        // page's bars agree on another length, the signature was misread (a 4 taken for a 1) and
+        // the bars are right.
+        val readTimes = measures.filter { it.showsTime }.map { it.time }.distinct()
+        for (signed in readTimes) {
+            val totals = measures.filter { it.time == signed && it.bars == 1 && it.events.any { e -> e is Note } }.map { it.quarters }
+            val common = totals.groupingBy { Math.round(it * 4) / 4.0 }.eachCount().maxByOrNull { it.value }
+            if (common != null && totals.size >= 6 && common.value >= totals.size * 0.6 && abs(common.key - signed.quarters) > 1e-6 && common.key in 1.0..12.0) {
+                val beats = Math.round(common.key * signed.beatType / 4.0).toInt()
+                val time = TimeSig(beats, signed.beatType)
+                if (abs(time.quarters - common.key) < 1e-6) {
+                    carry.time = time
+                    for (k in measures.indices) {
+                        val m = measures[k]
+                        if (m.time != signed) continue
+                        val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
+                        if (m.bars == 1 && m.events.isNotEmpty() && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
+                        measures[k] = m.copy(time = time, doubts = doubts)
+                    }
                 }
             }
         }
