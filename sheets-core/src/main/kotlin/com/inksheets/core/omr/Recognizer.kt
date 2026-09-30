@@ -1463,6 +1463,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val events = ArrayList<Event>()
         val written = HashMap<Int, Int>()   // diatonic -> alter, for the rest of the measure
         val taken = chords.map { c -> c.minOf { it.x } to c.maxOf { it.x + (sp * 1.3f).toInt() } }
+        // A chord is filled heads or hollow, never both: a hollow one among filled ones is a stray loop.
+        for (c in chords) if (c.any { it.kind == "noteheadBlack" } && c.any { it.kind == "noteheadHalf" || it.kind == "noteheadWhole" }) c.removeAll { it.kind == "noteheadHalf" || it.kind == "noteheadWhole" }
         for (c in chords) {
             val h = c.first()
             val base = when (h.kind) {
