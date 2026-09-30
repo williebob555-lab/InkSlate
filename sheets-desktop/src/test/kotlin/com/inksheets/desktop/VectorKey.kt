@@ -54,13 +54,17 @@ object VectorKey {
                     for (seg in path) for (i in 1 until seg.size) {
                         val a = seg[i - 1]; val b = seg[i]
                         if (abs(a.x - b.x) < 1.5f && abs(a.y - b.y) > 8f) stems += Stem((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y))
+                        // A thick line across, flat or sloping gently: a beam drawn as a stroke.
+                        else if (abs(b.x - a.x) > 8f && abs(b.y - a.y) < abs(b.x - a.x) && abs(w) in 2f..30f) {
+                            val (l, r) = if (a.x < b.x) a to b else b to a
+                            beams += Beam(l.x, l.y, r.x, r.y, abs(w))
+                        }
                     }
-                    if (w < 0f) Unit
                     path.clear()
                 }
                 override fun fillPath(windingRule: Int) {
                     for (seg in path) {
-                        if (seg.size !in 4..5) continue
+                        if (seg.size !in 4..10) continue
                         val xs = seg.map { it.x }; val ys = seg.map { it.y }
                         val wx = xs.max() - xs.min(); val hy = ys.max() - ys.min()
                         when {
@@ -98,7 +102,7 @@ object VectorKey {
         // Its far end, away from the head; beams crossing the stem near there.
         val up = abs(stem.y1 - y) < abs(stem.y0 - y)
         val end = if (up) stem.y0 else stem.y1
-        val n = p.beams.count { b -> stem.x in b.x0 - 1f..b.x1 + 1f && abs(b.yAt(stem.x) - end) < sp * 2.2f && (if (up) b.yAt(stem.x) <= end + sp * 2.2f else b.yAt(stem.x) >= end - sp * 2.2f) }
+        val n = p.beams.count { b -> b.thick >= sp * 0.3f && stem.x in b.x0 - sp * 0.15f..b.x1 + sp * 0.15f && abs(b.yAt(stem.x) - end) < sp * 2.2f && (if (up) b.yAt(stem.x) <= end + sp * 2.2f else b.yAt(stem.x) >= end - sp * 2.2f) }
         if (n == 0) {
             // No beam: a flag at the stem's end, if any.
             flags.firstOrNull { f -> abs(f.x - stem.x) < sp * 0.8f && abs(f.y - end) < sp * 3.5f }?.let { f ->

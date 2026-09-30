@@ -32,6 +32,7 @@ class OmrAnswerKeyTest {
         var keyHeads = 0; var found = 0; var kindRight = 0; var readHeads = 0; var readRight = 0
         val confusion = HashMap<String, Int>()
         var valued = 0; var valueRight = 0
+        val valueMisses = ArrayList<Triple<Pair<Float, Float>, Int, Int>>()
         var bars = 0; var sureBars = 0
         var keyRests = 0; var restsFound = 0; var restKindRight = 0; var readRests = 0; var readRestsRight = 0
         fun add(o: Tally) {
@@ -53,9 +54,13 @@ class OmrAnswerKeyTest {
 
     /** Notes whose value was read wrong, drawn. */
     private val valueList = ArrayList<BufferedImage>()
+    private val valuesFrom = HashMap<String, Int>()
+    private val cleanValueShots = ArrayList<BufferedImage>()
 
     fun keyed(want: Int): List<File> {
-        val all = music.walkTopDown().filter { it.isFile && it.extension.equals("pdf", true) && !it.name.contains("score", true) }.toList()
+        // -Dinksheets.omr.only=text: just the parts whose names have it in them.
+        val only = System.getProperty("inksheets.omr.only")
+        val all = music.walkTopDown().filter { it.isFile && it.extension.equals("pdf", true) && !it.name.contains("score", true) && (only == null || it.name.contains(only, true)) }.toList()
         return all.sortedBy { java.util.zip.CRC32().apply { update(it.relativeTo(music).path.lowercase().replace('\\', '/').toByteArray()) }.value }
             .asSequence().filter { f -> runCatching { AnswerKey.read(f, 0, 72f) != null }.getOrDefault(false) }.take(want).toList()
     }
@@ -96,9 +101,12 @@ class OmrAnswerKeyTest {
             if (vectors != null && h.kind == Kind.HEAD_BLACK) {
                 val printedValue = VectorKey.valueOf(vectors, h.x, h.y, h.width, sp, key.filter { it.kind == Kind.FLAG_8 || it.kind == Kind.FLAG_16 || it.kind == Kind.FLAG_32 })
                 val readValue = readValues[i]
-                if (printedValue != null && readValue != null) {
+                // A page whose flags of the kind read the key cannot see (drawn as shapes, or in a font
+                // it does not know) says every such note is a quarter: those quarters are not counted.
+                val flagsSeen = readValue == null || key.any { it.kind == when (readValue) { 8 -> Kind.FLAG_8; 16 -> Kind.FLAG_16; 32 -> Kind.FLAG_32; else -> it.kind } }
+                if (printedValue != null && readValue != null && (printedValue != 4 || flagsSeen)) {
                     t.valued++; if (printedValue == readValue) t.valueRight++
-                    else { t.confusion.merge("value $printedValue->$readValue", 1, Int::plus); valueShots?.let { if (it.size < 40) it += crop(ink, h.x, h.y, sp, "$label value $printedValue read $readValue") } }
+                    else { t.confusion.merge("value $printedValue->$readValue", 1, Int::plus); t.valueMisses += Triple(read[i].x to read[i].y, printedValue, readValue); valueShots?.let { if (it.size < 40 && valuesFrom.merge(label, 1, Int::plus)!! <= 3) it += crop(ink, h.x, h.y, sp, "${label.take(10)} $printedValue as $readValue", tall = true) } }
                 }
             }
             val c = "${h.kind}->${read[i].kind}"; t.confusion[c] = (t.confusion[c] ?: 0) + 1
@@ -146,9 +154,9 @@ class OmrAnswerKeyTest {
         return Ink.fromGrey(ink.width, ink.height, grey)
     }
 
-    private fun crop(ink: Ink, x: Float, y: Float, sp: Float, caption: String): BufferedImage {
-        val w = (sp * 8).toInt(); val h = (sp * 7).toInt()
-        val x0 = (x - sp * 3).toInt(); val y0 = (y - sp * 3.5f).toInt()
+    private fun crop(ink: Ink, x: Float, y: Float, sp: Float, caption: String, tall: Boolean = false): BufferedImage {
+        val w = (sp * (if (tall) 10 else 8)).toInt(); val h = (sp * (if (tall) 13 else 7)).toInt()
+        val x0 = (x - sp * (if (tall) 4 else 3)).toInt(); val y0 = (y - sp * (if (tall) 6.5f else 3.5f)).toInt()
         val img = BufferedImage(w, h + 16, BufferedImage.TYPE_INT_RGB)
         for (yy in 0 until h) for (xx in 0 until w) img.setRGB(xx, yy, if (ink[x0 + xx, y0 + yy]) 0 else 0xFFFFFF)
         val g = img.createGraphics()
@@ -195,9 +203,15 @@ class OmrAnswerKeyTest {
             // noise over it - and the key turned with it.
             val turn = if (System.getProperty("inksheets.omr.scan") != null) 0.6 else 0.0
             val ink = if (turn == 0.0) printed else scanned(printed, turn, f.name.hashCode().toLong())
-            val raw = if (turn == 0.0) keyRaw else keyRaw.map { s ->
-                val a = Math.toRadians(-turn); val cx = printed.width / 2.0; val cy = printed.height / 2.0
-                s.copy(x = (Math.cos(a) * (s.x - cx) + Math.sin(a) * (s.y - cy) + cx).toFloat(), y = (-Math.sin(a) * (s.x - cx) + Math.cos(a) * (s.y - cy) + cy).toFloat())
+            val a = Math.toRadians(-turn); val cx = printed.width / 2.0; val cy = printed.height / 2.0
+            fun tx(x: Float, y: Float) = (Math.cos(a) * (x - cx) + Math.sin(a) * (y - cy) + cx).toFloat()
+            fun ty(x: Float, y: Float) = (-Math.sin(a) * (x - cx) + Math.cos(a) * (y - cy) + cy).toFloat()
+            val raw = if (turn == 0.0) keyRaw else keyRaw.map { s -> s.copy(x = tx(s.x, s.y), y = ty(s.x, s.y)) }
+            // The printed stems and beams turned the same way.
+            val vectors = VectorKey.read(f, 0, dpi)?.let { v ->
+                if (turn == 0.0) v else VectorKey.Page(
+                    v.stems.map { st -> VectorKey.Stem((tx(st.x, st.y0) + tx(st.x, st.y1)) / 2, ty(st.x, st.y0), ty(st.x, st.y1)) },
+                    v.beams.map { b -> VectorKey.Beam(tx(b.x0, b.y0), ty(b.x0, b.y0), tx(b.x1, b.y1), ty(b.x1, b.y1), b.thick) })
             }
             val recognizer = Recognizer()
             val reading = recognizer.read(ink)
@@ -225,7 +239,7 @@ class OmrAnswerKeyTest {
             if (System.getProperty("inksheets.omr.why") != null) {
                 val (t0, _) = recognizer.metrics(ink)!!
                 val clean = recognizer.withoutLines(ink, reading.staves, t0)
-                val t = mark(ink, key, reading, "")
+                val t = mark(ink, key, reading, "", valueShots = null)
                 val sp = reading.space
                 val readHeads = reading.measures.flatMap { m -> m.events.filterIsInstance<Note>().flatMap { e -> e.steps.map { st -> e.x to reading.staves[m.staff].y(st, e.x.toInt()) } } }
                 for (h in key.filter { it.kind in heads }) {
@@ -266,8 +280,19 @@ class OmrAnswerKeyTest {
                 offsets += h.y - s0.y(step, h.x.toInt())
             }
             val t = mark(ink, key, reading, f.nameWithoutExtension.take(24), if (shots != null) missed else null, if (shots != null) invented else null, if (shots != null) restShots else null, if (shots != null) inventedRestShots else null,
-                VectorKey.read(f, 0, dpi))
+                vectors)
             all.add(t)
+            if (System.getProperty("inksheets.omr.why") != null) {
+                val (t0, _) = recognizer.metrics(ink)!!
+                val clean = recognizer.withoutLines(ink, reading.staves, t0)
+                for ((h, printedValue, readValue) in t.valueMisses.take(6)) {
+                    val (hx, hy) = h
+                    val s = reading.staves.minBy { abs((it.top + it.bottom) / 2f - hy) }
+                    val why = recognizer.explainValue(clean, s, hx.roundToInt(), hy.roundToInt())
+                    println("  value ${f.nameWithoutExtension.take(20)} x=${hx.toInt()} y=${hy.toInt()} $printedValue as $readValue: $why")
+                    if (cleanValueShots.size < 30) cleanValueShots += crop(clean, hx, hy, reading.space, "${f.nameWithoutExtension.take(8)} $printedValue as $readValue ${why.take(12)}", tall = true)
+                }
+            }
             val mism = reading.measures.flatMap { it.doubts }.filter { it.contains("beats found") }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(3)
             println("${f.relativeTo(music).path}: $t | ${reading.measures.size} bars, time ${reading.measures.firstOrNull()?.time} | " + mism.joinToString { "${it.key} x${it.value}" })
         }
@@ -276,6 +301,6 @@ class OmrAnswerKeyTest {
         println("NEVER FOUND: $never")
         println("ALL: $all")
         println("CONFUSION: " + all.confusion.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
-        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")); sheet(restShots, File(shots, "key-rests.png")); sheet(inventedRestShots, File(shots, "key-rests-invented.png")); sheet(valueList, File(shots, "key-values.png")) }
+        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")); sheet(restShots, File(shots, "key-rests.png")); sheet(inventedRestShots, File(shots, "key-rests-invented.png")); sheet(valueList, File(shots, "key-values.png")); sheet(cleanValueShots, File(shots, "key-values-clean.png")) }
     }
 }

@@ -554,6 +554,36 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return best
     }
 
+    /**
+     * What the stem search makes of a black head with its left edge at [x] and middle at [y] on [s]:
+     * the stem's runs up and down, its end, and the strokes met beside it - for finding out why a
+     * note's value was read wrong.
+     */
+    private var explaining = false
+
+    fun explainValue(clean: Ink, s: Staff, x: Int, y: Int): String {
+        val sp = s.space
+        val step = ((y - s.lineY(0, x)) / (sp / 2)).roundToInt()
+        val h = Head(x, step, y, "noteheadBlack", 1f)
+        explaining = true
+        try { stem(clean, s, h, 0) } finally { explaining = false }
+        if (h.stemX < 0) return "no stem"
+        val len = abs(h.stemEnd - h.y)
+        val cols = listOf(-(sp * 0.55f).toInt(), (sp * 0.55f).toInt()).joinToString(" | ") { dx ->
+            val cx = h.stemX + dx
+            val span = (sp * 3.5f).toInt()
+            // The column beside the stem from past its end back toward the head: runs of ink (length@offset).
+            val runs = ArrayList<String>(); var run = 0
+            for (k in -(sp * 0.8f).toInt()..span) {
+                val yy = if (h.up) h.stemEnd + k else h.stemEnd - k
+                if (clean[cx, yy]) run++ else { if (run > 0) runs += "$run@${k - run}"; run = 0 }
+            }
+            if (run > 0) runs += "$run@${span - run}"
+            "dx $dx: ${runs.joinToString(",")}"
+        }
+        return "stem ${if (h.up) "up" else "down"} at ${h.stemX}, ${"%.1f".format(len / sp)} sp, flags ${h.flags}; sp ${"%.1f".format(sp)}; $cols"
+    }
+
     /** The best eighth-rest match within a space of ([x], [y]) on [s], and where: for finding out why a rest was not read. */
     fun explainRest(clean: Ink, s: Staff, x: Int, y: Int): String {
         var best = -1f; var at = ""
@@ -859,11 +889,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // pixels is crossed where the stem carries on straight beyond it.
             var cx = x
             val gap = max(2, (sp * 0.2f).toInt())
+            val wideGap = (sp * 0.4f).toInt(); val steady = (sp * 0.4f).toInt()
             while (true) {
                 if (clean[cx, yy]) { yy += dir; continue }
                 val side = listOf(cx - 1, cx + 1).firstOrNull { abs(it - x) <= 2 && clean[it, yy] }
                 if (side != null) { cx = side; continue }
                 val resumes = (1..gap).firstOrNull { k -> (cx - 1..cx + 1).any { abs(it - x) <= 2 && clean[it, yy + dir * k] && clean[it, yy + dir * (k + 1)] } }
+                    // A wider gap - a scan's stem faded, or a staff line taken out of it - where the stem
+                    // carries on straight a good way beyond it.
+                    ?: (gap + 1..wideGap).firstOrNull { k -> (cx - 1..cx + 1).any { c -> abs(c - x) <= 2 && (0..steady).all { j -> clean[c, yy + dir * (k + j)] } } }
                     ?: break
                 yy += dir * resumes
             }
@@ -878,7 +912,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val up = run(upX, h.y - (sp * 0.3f).toInt(), -1)
         val down = run(downX, h.y + (sp * 0.3f).toInt(), 1)
         val len = max(up, down)
-        if (debug) println("    stem? head ${h.x},${h.y} w=$w up $up at $upX, down $down at $downX; " +
+        if (debug || explaining) println("    stem? head ${h.x},${h.y} w=$w up $up at $upX, down $down at $downX; " +
             "down runs ${(h.x - (w * 0.25f).toInt() - 1..h.x + (w * 0.4f).toInt()).map { it to run(it, h.y + (sp * 0.3f).toInt(), 1) }}")
         if (len < sp * 2.2f) return
         h.up = up >= down
@@ -887,10 +921,26 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Beams or flags: separate strokes crossing a column just beside the stem, near its end.
         // A run of ink as tall as two beams and the gap between them, running on level (a beam, not a
         // flag's steep curve), is two beams a scan has run together.
+        // A stroke that reaches this stem: followed from the column beside it back to the stem, a
+        // pixel or two up or down at each step. A neighbour's short beam stops before it.
+        fun reaches(cx: Int, y: Int): Boolean {
+            var yy = y
+            val step = if (h.stemX > cx) 1 else -1
+            var x = cx
+            var blank = 0
+            while (abs(x - h.stemX) > 1) {
+                x += step
+                val next = listOf(0, -1, 1, -2, 2).map { yy + it }.firstOrNull { clean[x, it] }
+                // A fleck of white in a scan's beam is stepped over; a real end is not.
+                if (next == null) { if (++blank > 2) return false } else { yy = next; blank = 0 }
+            }
+            return true
+        }
         fun strokes(cx: Int, after: Int, inRun: Int): Int {
             if (inRun < sp * 0.25f || inRun > sp * 2.2f) return 0
-            if (inRun < sp * 1.0f) return 1
             val mid = if (h.up) after - inRun / 2 else after + inRun / 2
+            if (!reaches(cx, mid)) return 0
+            if (inRun < sp * 1.0f) return 1
             val level = (-(sp * 0.4f).toInt()..(sp * 0.4f).toInt()).all { d -> clean[cx + d, mid] }
             return if (level && inRun <= sp * 1.7f) 2 else 1
         }
