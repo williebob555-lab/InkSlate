@@ -205,7 +205,7 @@ class SheetsState(val platform: SheetsPlatform) {
 
     /** The file of the part in front, as the editor last reported it. */
     var currentPath by mutableStateOf<String?>(null)
-        private set
+        internal set
 
     /** Whether Home is what is on screen, rather than a song. Set by the workspace. */
     var homeInFront by mutableStateOf(true)
