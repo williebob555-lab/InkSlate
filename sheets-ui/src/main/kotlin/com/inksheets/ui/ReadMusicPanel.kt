@@ -64,13 +64,14 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
             val (file, score) = shown
             val sure = score.measures.count { it.sure }
             Text(
-                "${score.measures.sumOf { it.bars }} bars on ${score.pages} page${if (score.pages == 1) "" else "s"}; " +
+                "${score.measures.sumOf { it.bars }} bars on " + (score.readPages?.let { r -> "page${if (r.size == 1) "" else "s"} ${r.joinToString(", ") { "${it + 1}" }} (of ${score.pages})" }
+                    ?: "${score.pages} page${if (score.pages == 1) "" else "s"}") + "; " +
                     "$sure of ${score.measures.size} add up. Tap a bar to go to it.",
                 style = MaterialTheme.typography.bodyMedium
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                 OutlinedButton(onClick = { said = exportMidi(state, file, score) }) { Text("Save as MIDI") }
-                TextButton(onClick = { Transcriber.read(state, file) { } }, enabled = Transcriber.busy == null) { Text("Read again") }
+                TextButton(onClick = { Transcriber.read(state, file, pages = score.readPages?.toSet()) { } }, enabled = Transcriber.busy == null) { Text("Read again") }
             }
             said?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

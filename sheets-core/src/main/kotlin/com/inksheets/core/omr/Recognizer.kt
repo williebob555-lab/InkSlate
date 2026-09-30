@@ -1131,13 +1131,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }.also { if (!it) dropped += h to "the other staff's" }
             }
         }
+        // A page on its own: every line's printed number and how far it is from the count, taken
+        // only where two lines agree (a single figure misread would number the page wrongly).
+        val alone = carry.alone
+        val offsets = ArrayList<Int>()
         for ((si, s) in staves.withIndex()) {
             // The bar number printed over the line's start, where it reads clearly, is believed over
             // the count - a pickup bar numbered 0, a bar missed or found twice before - if it is later
             // than the last and near the count (a digit missed would put it far off).
             if (adapt) Digits.number(ink, s.left - (s.space * 3).toInt(), s.left + (s.space * 4).toInt(), s.y(-8, s.left).roundToInt(), s.y(-1, s.left).roundToInt(),
                 (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt())?.first?.let { p ->
-                if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
+                if (alone) offsets += p - number
+                else if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
             }
             // The start of the staff: clef, key, time.
             var x = s.left + (s.space * 0.3f).toInt()
@@ -1266,6 +1271,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         measures[k] = m.copy(time = time, doubts = doubts)
                     }
                 }
+            }
+        }
+        if (alone) {
+            carry.alone = false
+            // Agreeing within a couple of bars: the count across a scanned page can be a bar or two out.
+            offsets.map { o -> o to offsets.count { abs(it - o) <= 2 } }.filter { it.second >= 2 }.maxByOrNull { it.second }?.first
+                ?.takeIf { measures.isNotEmpty() && measures.first().number + it >= 1 }?.let { o ->
+                measures.replaceAll { it.copy(number = it.number + o) }
+                carry.printed = measures.last().number
             }
         }
         return PageReading(staves, bars, measures, t, space, dropped)
@@ -1522,6 +1536,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     class Carry(var clef: Clef = Clef.TREBLE, var key: Key = Key(0), var time: TimeSig = TimeSig(4, 4)) {
         /** The last bar number printed at a line's start and taken: numbers only go up. */
         var printed = 0
+        /**
+         * A page read on its own, out of the middle of a part: the bar numbers before it are not
+         * known, so the first one printed at a line's start is taken, whatever it is.
+         */
+        var alone = false
     }
 
     private fun clefAt(clean: Ink, s: Staff, x0: Int, t: Int = 2): Pair<Clef, Int>? {

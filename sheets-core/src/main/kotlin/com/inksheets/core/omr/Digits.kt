@@ -65,6 +65,25 @@ object Digits {
      * The number printed in the band [x0]..[x1], [y0]..[y1]: its figures - shapes [minH] to [maxH]
      * pixels tall - read left to right. (value, middle x), or null when none are figures.
      */
+    /**
+     * Whether the shape in ([l], [t])..([r], [b]) is a box drawn round something - each of its four
+     * sides a line of ink - and if so, the page with only what is inside it, the sides cleared.
+     */
+    private fun framed(ink: Ink, l: Int, t: Int, r: Int, b: Int): Ink? {
+        val w = r - l + 1; val h = b - t + 1
+        fun row(y: Int) = (l..r).count { ink[it, y] } >= w * 0.75f
+        fun col(x: Int) = (t..b).count { ink[x, it] } >= h * 0.75f
+        val reach = max(2, min(w, h) / 6)
+        val top = (t until t + reach).lastOrNull { row(it) } ?: return null
+        val bottom = (b downTo b - reach + 1).lastOrNull { row(it) } ?: return null
+        val left = (l until l + reach).lastOrNull { col(it) } ?: return null
+        val right = (r downTo r - reach + 1).lastOrNull { col(it) } ?: return null
+        if (bottom - top < h / 2 || right - left < w / 2) return null
+        val out = Ink(ink.width, ink.height)
+        for (y in top + 1 until bottom) for (x in left + 1 until right) if (ink[x, y]) out[x, y] = true
+        return out
+    }
+
     fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0): Pair<Int, Int>? {
         val seen = HashSet<Long>()
         val figures = ArrayList<Triple<Int, Int, Int>>()   // digit, middle x, bottom
@@ -88,6 +107,11 @@ object Digits {
                 }
             }
             val h = b - t + 1; val w = r - l + 1
+            // A number in a box (a rehearsal number), its figures touching the box on a scan: the
+            // box's sides taken away and what is inside read.
+            if (h in minH..maxH * 2 && w in minH..maxH * 5 && (l + r) / 2 in x0..x1) framed(ink, l, t, r, b)?.let { inside ->
+                number(inside, l, r, t, b, minH * 2 / 3, maxH)?.let { return it }
+            }
             // A figure: a digit's height, over the place asked about, ending near enough the line asked.
             if (h < minH || h > maxH || w > h * 1.3f || (l + r) / 2 !in x0..x1 || b < bottomFrom) continue
             val m = mask(ink, l, t, r, b) ?: continue

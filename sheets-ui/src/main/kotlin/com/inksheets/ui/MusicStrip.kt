@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Hearing
@@ -92,15 +93,25 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 modifier = Modifier.padding(vertical = 6.dp)
             ) {
-                if (score == null) {
-                    // Nothing to work from yet: reading the part is the one thing to do.
-                    val busy = Transcriber.busy
-                    StripButton(Icons.Default.MusicNote, "Read", "Read this part's music", btn, named, lit = busy != null) {
-                        if (file != null && busy == null) Transcriber.read(state, file) { Perform.marksChanged() }
+                // The page in front, and whether it has been read: a long book can be read a page at a
+                // time, just the passage being worked on.
+                val here = state.pageShown.first
+                val busy = Transcriber.busy
+                if (score == null || !score.hasRead(here)) {
+                    if (score == null) {
+                        // Nothing to work from yet: reading the part (or this page of it) is the one thing to do.
+                        StripButton(Icons.Default.MusicNote, "Read", "Read this part's music, every page", btn, named, lit = busy != null) {
+                            if (file != null && busy == null) Transcriber.read(state, file) { Perform.marksChanged() }
+                        }
                     }
-                    Text(busy ?: "Reads the notes off this part, once", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp,
+                    StripButton(Icons.Default.Description, "Page ${here + 1}", "Read just this page's music", btn, named) {
+                        if (file != null && busy == null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
+                    }
+                    Text(busy ?: if (score == null) "Whole part, or this page" else "Not read yet",
+                        style = MaterialTheme.typography.labelSmall, fontSize = 9.sp,
                         lineHeight = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 4.dp))
-                } else {
+                }
+                if (score != null) {
                     StripButton(Icons.Default.Visibility, "Clean", "Show the clean reading over the print", btn, named, lit = ScoreTools.underlay) {
                         ScoreTools.showUnderlay(!ScoreTools.underlay)
                     }
@@ -191,6 +202,14 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                             DropdownMenuItem(text = { Text("The notes read, and bars that may be wrong...") }, onClick = {
                                 more = false
                                 state.readMusicOpen = true
+                            })
+                            if (score.readPages != null) DropdownMenuItem(text = { Text("Read the whole part (${score.readPages?.size} of ${score.pages} pages read)") }, onClick = {
+                                more = false
+                                if (file != null) Transcriber.read(state, file) { Perform.marksChanged() }
+                            })
+                            if (score.hasRead(here)) DropdownMenuItem(text = { Text("Read page ${here + 1} again") }, onClick = {
+                                more = false
+                                if (file != null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
                             })
                             DropdownMenuItem(text = { Text("Read this part again") }, onClick = {
                                 more = false

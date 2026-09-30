@@ -214,8 +214,16 @@ data class Score(
     val measures: List<Measure>,
     val pages: Int,
     /** How wide each page was drawn to be read, in pixels: the scale of every [Measure.box] on it. */
-    val pageWidths: List<Int> = emptyList()
+    val pageWidths: List<Int> = emptyList(),
+    /**
+     * The pages read (0-based), where only some were - a page or two of a long book read for the
+     * passage being worked on; null when the whole part was.
+     */
+    val readPages: List<Int>? = null
 ) {
+    /** Whether [page] has been read. */
+    fun hasRead(page: Int) = readPages?.contains(page) ?: (page in 0 until pages)
+
     /** Which measures are on [page]. */
     fun onPage(page: Int) = measures.filter { it.page == page }
 
