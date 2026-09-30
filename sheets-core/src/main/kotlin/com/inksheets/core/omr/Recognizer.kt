@@ -726,13 +726,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * digits differ in size and shape more than their noteheads, so each is tried a little smaller
      * and larger, and taken loosely.
      */
-    private fun digit(clean: Ink, s: Staff, x0: Int, x1: Int, steps: List<Int>): Pair<Int, Int>? {
+    private fun digit(clean: Ink, s: Staff, x0: Int, x1: Int, steps: List<Int>, allowed: Set<Int> = (0..9).toSet()): Pair<Int, Int>? {
         // Each digit's best fit, at whatever size and place.
         class Fit(val d: Int, val x: Int, val y: Int, val sp: Float, val sc: Float)
         val fits = HashMap<Int, Fit>()
         for (size in listOf(1f, 0.85f, 1.15f, 0.7f)) {
             val sp = s.space * size
-            for (d in 0..9) for (xx in x0..x1) for (step in steps) {
+            for (d in allowed) for (xx in x0..x1) for (step in steps) {
                 val y = s.y(step, xx).roundToInt()
                 val sc = score(clean, "timeSig$d", sp, xx, y)
                 if (sc > 0.5f && sc > (fits[d]?.sc ?: 0f)) fits[d] = Fit(d, xx, y, sp, sc)
@@ -800,7 +800,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             for (yy in y0..y1) for (xx in x..x2) { n++; if (clean[xx, yy]) filled++ }
             val clearAbove = (x..x2).count { clean[it, y0 - (sp * 0.35f).toInt()] } <= w / 5
             val clearBelow = (x..x2).count { clean[it, y1 + (sp * 0.35f).toInt()] } <= w / 5
-            if (w >= sp * 0.8f && w <= sp * 1.7f && n > 0 && filled >= n * 0.8f && (if (kind == 2) clearAbove else clearBelow)) {
+            // And clear on the line's other side: an eighth rest's solid head sits on the middle line
+            // too, but its stroke runs on down; a whole rest hangs from its line with nothing over it.
+            val across = if (kind == 2) mid + (sp * 0.35f).toInt() else second - (sp * 0.35f).toInt()
+            val clearAcross = (x..x2).count { clean[it, across] } <= w / 5
+            if (w >= sp * 0.8f && w <= sp * 1.7f && n > 0 && filled >= n * 0.8f && (if (kind == 2) clearAbove else clearBelow) && clearAcross) {
                 out += Rest(Duration(kind), x.toFloat(), if (kind == 2) 4 else 2) to 0.8f
             }
             x = x2 + 1
@@ -966,9 +970,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         if (printed != null) { printedDots(s, h); return }
         val sp = s.space
         val w = tpl(h.kind, sp).ink.width
-        // Close beside the head, in the space it is in or the one above - a staccato dot over the
-        // next note is further off.
-        val x0 = h.x + w - 1; val x1 = h.x + w + (sp * 0.85f).toInt()
+        // Beside the head, in the space it is in or the one above - some engravers leave most of a
+        // space between; a staccato dot over the next note is further off.
+        val x0 = h.x + w - 1; val x1 = h.x + w + (sp * 1.2f).toInt()
         // In a space: the head's own, or the one above a head on a line.
         val spaceStep = if (h.step % 2 != 0) h.step else h.step - 1
         val yc = s.y(spaceStep, h.x + w).roundToInt()
@@ -1082,7 +1086,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val key = if (this.printed != null) printedKey(s, x) else keyAt(clean, s, x, carry.clef)
             var showsKey = false
             if (key != null) { carry.key = key.first; x = key.second; showsKey = true }
-            val time = if (this.printed != null) printedTime(s, x) else timeAt(clean, s, x)
+            val time = if (this.printed != null) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0)
             var showsTime = false
             if (time != null) { carry.time = time.first; x = time.second; showsTime = true }
             // A part's first staff has a time signature: one in a font not read here is stepped
@@ -1534,9 +1538,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return null
     }
 
-    private fun timeAt(clean: Ink, s: Staff, x0: Int): Pair<TimeSig, Int>? {
+    private fun timeAt(clean: Ink, s: Staff, x0: Int, opening: Boolean = false): Pair<TimeSig, Int>? {
         val sp = s.space
-        fun digitAt(x: Int, step: Int): Pair<Int, Int>? = digit(clean, s, x, x + (sp * 2.2f).toInt(), listOf(step))
+        fun digitAt(x: Int, step: Int, allowed: Set<Int> = (0..9).toSet()): Pair<Int, Int>? = digit(clean, s, x, x + (sp * 2.2f).toInt(), listOf(step), allowed)
         // A digit's right edge, from where it was found.
         // Another engraver's digits may be a little wider than these.
         fun end(d: Int, x: Int) = x + ((MusicGlyphs["timeSig$d"].bounds[2]) * sp * 1.2f).toInt() + (sp * 0.3f).toInt()
@@ -1558,8 +1562,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             best?.let { return it.first to it.second + (sp * 2.4f).toInt() }
             return null
         }
-        val bottom = number(6) ?: return null
-        if (top.first !in 1..32 || bottom.first !in listOf(1, 2, 4, 8, 16, 32)) return null
+        // The bottom number is a note's value - 2, 4, 8, 16 - never 1, and may sit centred under a
+        // top of two figures: read as one of those, from the top's left to its end.
+        val bottom = number(6)?.takeIf { it.first in listOf(2, 4, 8, 16) }
+            // (Only at the piece's start, where a signature surely is: elsewhere that finds one in anything.)
+            ?: (if (opening) digit(clean, s, x0, top.second, listOf(6), setOf(2, 4, 8))?.let { (d, x) -> d to end(d, x) } else null)
+            ?: return null
+        if (top.first !in 1..16) return null
         return TimeSig(top.first, bottom.first) to max(top.second, bottom.second) + (sp * 0.4f).toInt()
     }
 

@@ -91,7 +91,9 @@ internal object ScoreTools {
     /** Where a part's notes come from; a test gives its own. */
     internal var scoreSource: ((String) -> Score?)? = null
 
-    private fun scoreOf(path: String): Score? = scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) }
+    /** A part's notes as read - with the bars put right by hand in place of their readings. */
+    private fun scoreOf(path: String): Score? =
+        (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { com.inksheets.core.omr.Scores.withFixes(it, fixesOf(path)) }
 
     fun scoreHere(s: SheetsState): Score? = s.currentPath?.let { scoreOf(it) }
 
@@ -121,6 +123,99 @@ internal object ScoreTools {
         tool = Tool.NONE
         Perform.musicTool = false
         underlay = false
+        selection = null
+        changed()
+    }
+
+    // ---- bars put right by hand: offered readings of the doubtful ones, one picked -----------
+
+    /** Bars put right, by part: bar number to what it is. Kept with the part's settings (on this device). */
+    private val fixes = HashMap<String, MutableMap<Int, List<com.inksheets.core.omr.Event>>>()
+    private fun fixKey(path: String) = "sheets_fixed:" + (state?.relative(File(path)) ?: path)
+    private fun fixesOf(path: String): MutableMap<Int, List<com.inksheets.core.omr.Event>> = fixes.getOrPut(path) {
+        state?.platform?.pref(fixKey(path))?.let { com.inksheets.core.omr.Scores.decodeFixes(it).toMutableMap() } ?: HashMap()
+    }
+
+    /** Bar [number] of [path] is [events]: kept, and no longer in doubt. */
+    fun fix(path: String, number: Int, events: List<com.inksheets.core.omr.Event>) {
+        val f = fixesOf(path)
+        f[number] = events
+        state?.platform?.setPref(fixKey(path), com.inksheets.core.omr.Scores.encodeFixes(f))
+        changed()
+    }
+
+    /**
+     * Going through the bars in doubt: [checkBars] their numbers, [checkAt] which one is up,
+     * [offered] the readings offered for it (best first), [rejected] those turned down.
+     */
+    var checking by mutableStateOf(false)
+        private set
+    var checkBars by mutableStateOf<List<Int>>(emptyList())
+        private set
+    var checkAt by mutableIntStateOf(0)
+        private set
+    var offered by mutableStateOf<List<com.inksheets.core.omr.BarChoices.Choice>>(emptyList())
+        private set
+    private var rejected = ArrayList<List<com.inksheets.core.omr.Event>>()
+    /** Looked deeper for this bar already (the first readings turned down). */
+    var askedAgain by mutableStateOf(false)
+        private set
+
+    /** The bar up now. */
+    fun barUp(s: SheetsState): com.inksheets.core.omr.Measure? {
+        val n = checkBars.getOrNull(checkAt) ?: return null
+        return scoreHere(s)?.measures?.firstOrNull { it.number == n }
+    }
+
+    /** The bars in doubt in the part in front, to go through; false when there are none. */
+    fun startCheck(s: SheetsState): Boolean {
+        val score = scoreHere(s) ?: return false
+        checkBars = score.measures.filter { !it.sure && it.bars == 1 }.map { it.number }
+        if (checkBars.isEmpty()) { said = "No bars in doubt"; return false }
+        checking = true
+        checkAt = 0
+        showBar(s)
+        return true
+    }
+
+    private fun showBar(s: SheetsState) {
+        rejected = ArrayList(); askedAgain = false
+        val m = barUp(s) ?: run { endCheck(); return }
+        offered = com.inksheets.core.omr.BarChoices.of(m, 3)
+        goTo(s, m.number)
+        selection = m.number..m.number
+        changed()
+    }
+
+    /** [choice] is what bar up is: kept, and on to the next. */
+    fun pick(s: SheetsState, choice: com.inksheets.core.omr.BarChoices.Choice) {
+        val path = s.currentPath ?: return
+        val m = barUp(s) ?: return
+        fix(path, m.number, choice.events)
+        next(s)
+    }
+
+    /** None of those: others, looked for further; when there are none left, on to the next bar. */
+    fun noneOfThese(s: SheetsState) {
+        val m = barUp(s) ?: return
+        rejected += offered.map { it.events }
+        val more = com.inksheets.core.omr.BarChoices.of(m, 3, rejected = rejected, deeper = true)
+        askedAgain = true
+        if (more.isEmpty()) { said = "No other reading of bar ${m.number} - left in doubt"; next(s); return }
+        offered = more
+        changed()
+    }
+
+    /** Leave bar up as it is, and on to the next. */
+    fun next(s: SheetsState) {
+        if (checkAt + 1 >= checkBars.size) { endCheck(); said = "All the bars in doubt gone through"; return }
+        checkAt++
+        showBar(s)
+    }
+
+    fun endCheck() {
+        checking = false
+        offered = emptyList()
         selection = null
         changed()
     }

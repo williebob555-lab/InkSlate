@@ -236,6 +236,17 @@ object Scores {
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; classDiscriminator = "kind" }
     fun encode(s: Score): String = json.encodeToString(Score.serializer(), s)
     fun decode(text: String): Score? = runCatching { json.decodeFromString(Score.serializer(), text) }.getOrNull()
+
+    private val fixesSerializer = kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.serializer<Int>(),
+        kotlinx.serialization.builtins.ListSerializer(Event.serializer()))
+
+    /** Bars put right by hand - bar number to what it is - as text to keep. */
+    fun encodeFixes(fixes: Map<Int, List<Event>>): String = json.encodeToString(fixesSerializer, fixes)
+    fun decodeFixes(text: String): Map<Int, List<Event>> = runCatching { json.decodeFromString(fixesSerializer, text) }.getOrDefault(emptyMap())
+
+    /** [s] with the bars in [fixes] as they were put right: what was picked, and no longer in doubt. */
+    fun withFixes(s: Score, fixes: Map<Int, List<Event>>): Score =
+        if (fixes.isEmpty()) s else s.copy(measures = s.measures.map { m -> fixes[m.number]?.let { m.copy(events = it, doubts = emptyList()) } ?: m })
 }
 
 /**

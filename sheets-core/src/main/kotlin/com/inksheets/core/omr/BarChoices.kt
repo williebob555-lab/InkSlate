@@ -50,6 +50,15 @@ object BarChoices {
         is Rest -> e.copy(duration = e.duration.copy(dots = dots))
     }
 
+    /** Which one it is in the bar, for saying so: "2nd note", "1st rest". */
+    private fun ordinal(n: Int) = "$n" + when { n % 100 in 11..13 -> "th"; n % 10 == 1 -> "st"; n % 10 == 2 -> "nd"; n % 10 == 3 -> "rd"; else -> "th" }
+
+    private fun named(events: List<Event>, i: Int): String {
+        val e = events[i]
+        val nth = events.take(i + 1).count { it::class == e::class }
+        return ordinal(nth) + " " + name(e)
+    }
+
     private fun name(e: Event) = when (e) {
         is Note -> (if (e.steps.size > 1) "chord" else "note") + " " + e.duration.base.let { if (it == 1) "whole" else if (it == 2) "half" else "1/$it" }
         is Rest -> "rest " + e.duration.base.let { if (it == 1) "whole" else if (it == 2) "half" else "1/$it" }
@@ -68,20 +77,20 @@ object BarChoices {
             val base = e.duration.base
             val kind = if (e is Rest) "rest" else "value"
             // One beam (or flag) fewer or more; a hollow head is a half or a whole, nothing between.
-            if (base in 8..32) out += Edit(i, kind, cost(kind, sure), "${name(e)} as 1/${base / 2}", { withBase(it, base / 2) })
-            if (base in 4..16) out += Edit(i, kind, cost(kind, sure), "${name(e)} as 1/${base * 2}", { withBase(it, base * 2) })
-            if (base == 1 || base == 2) out += Edit(i, "hollow", cost("hollow", sure), "${name(e)} as ${if (base == 1) "half" else "whole"}", { withBase(it, if (base == 1) 2 else 1) })
+            if (base in 8..32) out += Edit(i, kind, cost(kind, sure), "${named(events, i)} as 1/${base / 2}", { withBase(it, base / 2) })
+            if (base in 4..16) out += Edit(i, kind, cost(kind, sure), "${named(events, i)} as 1/${base * 2}", { withBase(it, base * 2) })
+            if (base == 1 || base == 2) out += Edit(i, "hollow", cost("hollow", sure), "${named(events, i)} as ${if (base == 1) "half" else "whole"}", { withBase(it, if (base == 1) 2 else 1) })
             // A dot there or not.
-            out += if (e.duration.dots > 0) Edit(i, "dot", cost("dot", sure * 0.6f), "${name(e)} without its dot", { withDots(it, 0) })
-            else Edit(i, "dot", cost("dot", sure * 0.6f), "${name(e)} dotted", { withDots(it, 1) })
+            out += if (e.duration.dots > 0) Edit(i, "dot", cost("dot", sure * 0.6f), "${named(events, i)} without its dot", { withDots(it, 0) })
+            else Edit(i, "dot", cost("dot", sure * 0.6f), "${named(events, i)} dotted", { withDots(it, 1) })
             if (e is Note) {
                 // Not a note at all (a smudge, a loop taken for a head) - or one head of a chord not.
-                out += Edit(i, "remove", cost("remove", sure), "${name(e)} not a note", { null })
-                if (e.steps.size > 1) for (st in e.steps) out += Edit(i, "chord-head", cost("chord-head", sure), "not a head at step $st", { n ->
+                out += Edit(i, "remove", cost("remove", sure), "${named(events, i)} not a note", { null })
+                if (e.steps.size > 1) for (st in e.steps) out += Edit(i, "chord-head", cost("chord-head", sure), "${named(events, i)}: one head less", { n ->
                     (n as Note).let { c -> val keep = c.steps.indices.filter { c.steps[it] != st }; c.copy(steps = keep.map { c.steps[it] }, pitches = keep.map { c.pitches[it] }) }
                 })
                 // A step higher or lower: a head on a line taken for one in a space.
-                if (e.steps.size == 1) for (d in listOf(-1, 1)) out += Edit(i, "pitch", cost("pitch", sure), "${name(e)} a step ${if (d < 0) "higher" else "lower"}", { n ->
+                if (e.steps.size == 1) for (d in listOf(-1, 1)) out += Edit(i, "pitch", cost("pitch", sure), "${named(events, i)} a step ${if (d < 0) "higher" else "lower"}", { n ->
                     (n as Note).let { c -> val st = c.steps[0] + d; c.copy(steps = listOf(st), pitches = listOf(pitchOf(st)), accidentals = emptyMap()) }
                 })
             }
@@ -91,7 +100,7 @@ object BarChoices {
         // Three equal notes or rests together, taken as a triplet.
         for (i in 0..events.size - 3) {
             val d = events[i].duration
-            if (!d.tuplet && d.dots == 0 && (1..2).all { events[i + it].duration == d }) out += Edit(i, "triplet", cost("triplet", 0f), "a triplet from ${name(events[i])}")
+            if (!d.tuplet && d.dots == 0 && (1..2).all { events[i + it].duration == d }) out += Edit(i, "triplet", cost("triplet", 0f), "a triplet from the ${named(events, i)}")
         }
         return out.sortedBy { it.cost }
     }

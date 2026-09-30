@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Groups
@@ -77,6 +78,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     var printingFor by remember { mutableStateOf(false) }
     val named = true
     BoxWithConstraints(Modifier.matchParentSize()) {
+        BarCheck(state)
         val btn = ((maxHeight - 150.dp) / 14 - 12.dp).coerceIn(26.dp, 40.dp)
         Surface(
             shape = RoundedCornerShape(20.dp),
@@ -107,6 +109,13 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     }
                     if (ScoreTools.canUndo(state)) {
                         StripButton(Icons.Default.Undo, "Undo", "Undo the last clean-up", btn, named) { ScoreTools.undoClean(state) }
+                    }
+                    // The bars in doubt, one by one: three readings of each to pick from.
+                    val doubtful = score.measures.count { !it.sure && it.bars == 1 }
+                    if (doubtful > 0 || ScoreTools.checking) {
+                        StripButton(Icons.Default.Build, if (ScoreTools.checking) "Fixing" else "Fix $doubtful", "Go through the bars in doubt and pick what each is", btn, named, lit = ScoreTools.checking) {
+                            if (ScoreTools.checking) ScoreTools.endCheck() else ScoreTools.startCheck(state)
+                        }
                     }
                     HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
                     StripButton(Icons.Default.SelectAll, "Select", "Select bars: press and drag across them", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.SELECT) {
