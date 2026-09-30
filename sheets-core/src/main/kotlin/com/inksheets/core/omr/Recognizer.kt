@@ -16,7 +16,8 @@ import kotlin.math.roundToInt
  * clef, key and time. Pitches follow from the clef, key and accidentals; a measure whose notes do
  * not add up to its time is marked as doubtful.
  */
-class Recognizer(private val debug: Boolean = false) {
+/** [adapt]: fit the notehead's size to each page, and take borderline heads that carry a stem (off only to measure against). */
+class Recognizer(private val debug: Boolean = false, private val adapt: Boolean = true) {
 
     /** One staff: its five lines' heights at every x from [left] to [right]. */
     class Staff(val left: Int, val right: Int, val lines: Array<FloatArray>, val space: Float) {
@@ -205,7 +206,7 @@ class Recognizer(private val debug: Boolean = false) {
                 }
             }
             val isStem = stems.any { abs(it - centre) <= t + 2 }
-            val throughHead = heads.any { h -> centre in h.x + 2..h.x + MusicGlyphs.template(h.kind, s.space).ink.width - 4 }
+            val throughHead = heads.any { h -> centre in h.x + 2..h.x + tpl(h.kind, s.space).ink.width - 4 }
             val headNear = isStem || throughHead || (stems.isEmpty() && listOf(runTop, runBottom).any { yEnd -> touching(-1, yEnd) || touching(1, yEnd) })
             val staysOnStaff = above < s.space * 0.6f && below < s.space * 0.6f
             val reachesAnotherStaff = above > s.space * 3 || below > s.space * 3
@@ -231,8 +232,39 @@ class Recognizer(private val debug: Boolean = false) {
      * How well [name] sits with its origin at ([x], [y]): the share of its ink found, less the
      * share of ink where it has none - 1 perfect, 0 or below nothing like it.
      */
-    fun score(ink: Ink, name: String, space: Float, x: Int, y: Int): Float {
-        val tp = MusicGlyphs.template(name, space)
+    /** The filled notehead fitted to this page (see fitHeads); null for the font's own. */
+    private var fitted: MusicGlyphs.Template? = null
+
+    /** The template for [name]: the page's size of filled head once fitted, else the music font's. */
+    private fun tpl(name: String, space: Float): MusicGlyphs.Template =
+        if (name == "noteheadBlack") fitted ?: MusicGlyphs.template(name, space) else MusicGlyphs.template(name, space)
+
+    /**
+     * Fit the filled notehead to this page: engravers and scans print heads a little larger and
+     * bolder than the music font's, so the font's head is tried larger too, and the size that
+     * finds the most heads surely on the first staves is used for the whole page.
+     */
+    private fun fitHeads(clean: Ink, staves: List<Staff>, lines: Ink) {
+        fitted = null
+        if (staves.isEmpty()) return
+        val sp = staves.first().space
+        rings.remove("noteheadBlack" to (sp * 10).toInt())
+        val sample = staves.take(4)
+        var best: MusicGlyphs.Template? = null; var most = 0
+        for (scale in listOf(1f, 1.12f, 1.25f)) {
+            fitted = MusicGlyphs.template("noteheadBlack", sp * scale)
+            val found = sample.sumOf { s -> heads(clean, s, s.left, s.right, lines, filledOnly = true).count { it.score > 0.8f && it.step in 0..8 } }
+            if (found > most) { most = found; best = fitted }
+        }
+        fitted = if (best === MusicGlyphs.template("noteheadBlack", sp)) null else best
+        if (debug) println("head size: ${fitted?.ink?.width ?: "font's"} ($most sure heads)")
+    }
+    fun score(ink: Ink, name: String, space: Float, x: Int, y: Int): Float = match(ink, tpl(name, space), x, y)
+
+    /** [score] against the music font's own [name], whatever size of head the page was fitted to. */
+    private fun fontScore(ink: Ink, name: String, space: Float, x: Int, y: Int): Float = match(ink, MusicGlyphs.template(name, space), x, y)
+
+    private fun match(ink: Ink, tp: MusicGlyphs.Template, x: Int, y: Int): Float {
         val x0 = x - tp.ox; val y0 = y - tp.oy
         var hit = 0; var stray = 0; var empty = 0
         val w = tp.ink.width; val h = tp.ink.height
@@ -275,9 +307,9 @@ class Recognizer(private val debug: Boolean = false) {
      * How much ([x], [y]) looks like a hollow head shaped like [shape]: ink round the ring, paper in
      * the core - whatever the size and slant of the engraver's hole. 0 to 1.
      */
-    private fun hollow(ink: Ink, space: Float, x: Int, y: Int, shape: String): Float {
-        val tp = MusicGlyphs.template(shape, space)
-        val m = rings.getOrPut(shape to (space * 10).toInt()) {
+    private fun hollow(ink: Ink, space: Float, x: Int, y: Int, shape: String, font: Boolean = false): Float {
+        val tp = if (font) MusicGlyphs.template(shape, space) else tpl(shape, space)
+        val m = rings.getOrPut((if (font) "font " else "") + shape to (space * 10).toInt()) {
             val w = tp.ink.width; val h = tp.ink.height
             // Distance in from the outline, by repeated erosion.
             val depth = IntArray(w * h) { if (tp.ink.bits[it]) Int.MAX_VALUE else 0 }
@@ -329,6 +361,20 @@ class Recognizer(private val debug: Boolean = false) {
         return BooleanArray(t.width * t.height) { !outside[it] && !t.bits[it] }
     }
 
+    /** Whether the middle of a filled head at ([x], [y]) - its shape worn in a fifth of a space all round - is all ink. */
+    private fun solidCore(ink: Ink, sp: Float, x: Int, y: Int): Boolean {
+        val tp = tpl("noteheadBlack", sp)
+        val w = tp.ink.width; val h = tp.ink.height
+        val r = max(1, (sp * 0.2f).roundToInt())
+        var n = 0; var got = 0
+        for (j in 0 until h) for (i in 0 until w) {
+            if ((-r..r).any { b -> (-r..r).any { a -> !tp.ink[i + a, j + b] } }) continue
+            n++
+            if (ink[x - tp.ox + i, y - tp.oy + j]) got++
+        }
+        return n > 0 && got >= n * 0.97f
+    }
+
     /** A notehead found: where, which kind, how sure. */
     class Head(val x: Int, val step: Int, val y: Int, val kind: String, val score: Float) {
         var stemX = -1
@@ -336,13 +382,15 @@ class Recognizer(private val debug: Boolean = false) {
         var up = false
         var flags = 0
         var dots = 0
+        /** Only just like a head (touched by an accent, a tie, a smudge): kept only if it has a stem. */
+        var weak = false
     }
 
     /** Noteheads on [s] between [from] and [to]; [lines] is the page with its staff and ledger lines, to check notes off the staff by. */
-    fun heads(clean: Ink, s: Staff, from: Int, to: Int, lines: Ink? = null): List<Head> {
+    fun heads(clean: Ink, s: Staff, from: Int, to: Int, lines: Ink? = null, filledOnly: Boolean = false): List<Head> {
         val found = ArrayList<Head>()
         val sp = s.space
-        val black = MusicGlyphs.template("noteheadBlack", sp)
+        val black = tpl("noteheadBlack", sp)
         val headW = black.ink.width - 2
         for (step in -8..16) {
             for (x in from until to - headW / 2) {
@@ -354,11 +402,17 @@ class Recognizer(private val debug: Boolean = false) {
                 val sides = (x..x + q).any { clean[it, y] } && (x + headW - q..x + headW).any { clean[it, y] }
                 if (!mid && !sides) continue
                 if (mid) {
-                    val sc = score(clean, "noteheadBlack", sp, x, y)
+                    // The page's size of head or the font's, whichever fits this one better.
+                    val sc = if (fitted == null) score(clean, "noteheadBlack", sp, x, y)
+                        else max(score(clean, "noteheadBlack", sp, x, y), fontScore(clean, "noteheadBlack", sp, x, y))
                     // Ties, slurs and accents touch heads and cost them a little.
                     if (sc > 0.68f) found += Head(x, step, y, "noteheadBlack", sc)
+                    else if (adapt && sc > 0.5f && !filledOnly && solidCore(clean, sp, x, y) && !accidentalLike(clean, sp, x, y, headW) &&
+                        // Not a piece of a beam: ink that runs on past both sides of the head.
+                        !(-1..1).all { dy -> clean[x - (sp * 0.35f).toInt(), y + dy] && clean[x + headW + (sp * 0.35f).toInt(), y + dy] })
+                        found += Head(x, step, y, "noteheadBlack", sc).also { it.weak = true }
                 }
-                if (sides) {
+                if (sides && !filledOnly) {
                     for (kind in listOf("noteheadHalf", "noteheadWhole")) {
                         val sc = score(clean, kind, sp, x, y)
                         if (sc > 0.66f && holeClear(clean, kind, sp, x, y) > 0.6f) found += Head(x, step, y, kind, sc)
@@ -367,7 +421,8 @@ class Recognizer(private val debug: Boolean = false) {
                     // and not a flat's or natural's bowl, whose strokes rise on the left or fall on
                     // the right, as no note's stem does.
                     if (!accidentalLike(clean, sp, x, y, headW)) {
-                        val ring = hollow(clean, sp, x, y, "noteheadBlack")
+                        // The page's own head's shape, or the font's - a whole note is rounder than either.
+                        val ring = max(hollow(clean, sp, x, y, "noteheadBlack"), if (fitted != null) hollow(clean, sp, x, y, "noteheadBlack", font = true) else 0f)
                         if (ring > 0.72f) found += Head(x, step, y, "noteheadHalf", ring)
                         val wide = hollow(clean, sp, x, y, "noteheadWhole")
                         if (wide > 0.74f) found += Head(x, step, y, "noteheadWhole", wide)
@@ -379,7 +434,7 @@ class Recognizer(private val debug: Boolean = false) {
         // dynamic's loop, an accent, a word - not a note.
         if (lines != null) found.retainAll { h ->
             if (h.step in -1..9) return@retainAll true
-            val w = MusicGlyphs.template(h.kind, sp).ink.width - 2
+            val w = tpl(h.kind, sp).ink.width - 2
             val ledger = if (h.step < 0) -2 else 10
             val ly = s.y(ledger, h.x + w / 2).roundToInt()
             // A horizontal line under (or through) the head, at least as long as it is wide.
@@ -392,14 +447,48 @@ class Recognizer(private val debug: Boolean = false) {
                 b - a + 1 >= w * 0.9f
             }
         }
+        // A weak head beside a sure one is that head's smudge, or a beam's end, not another note.
+        found.removeAll { h -> h.weak && found.any { o -> !o.weak && abs(o.x - h.x) < headW * 1.3f && abs(o.step - h.step) <= 3 } }
         // The best of each cluster: heads cannot overlap, except a second's two in a chord.
         found.sortByDescending { it.score }
         val kept = ArrayList<Head>()
         for (h in found) {
-            val w = MusicGlyphs.template(h.kind, sp).ink.width
+            val w = tpl(h.kind, sp).ink.width
             if (kept.none { k -> abs(k.x - h.x) < w * 0.7f && abs(k.step - h.step) < 2 }) kept += h
         }
         return kept.sortedBy { it.x }
+    }
+
+    /**
+     * The best digit between [x0] and [x1] centred on one of [steps]: (digit, x), or null. Engravers'
+     * digits differ in size and shape more than their noteheads, so each is tried a little smaller
+     * and larger, and taken loosely.
+     */
+    private fun digit(clean: Ink, s: Staff, x0: Int, x1: Int, steps: List<Int>): Pair<Int, Int>? {
+        var best: Triple<Int, Int, Float>? = null
+        for (size in listOf(1f, 0.85f, 1.15f)) {
+            val sp = s.space * size
+            for (d in 0..9) for (xx in x0..x1) for (step in steps) {
+                val sc = score(clean, "timeSig$d", sp, xx, s.y(step, xx).roundToInt())
+                if (sc > 0.5f && (best == null || sc > best.third)) best = Triple(d, xx, sc)
+            }
+        }
+        return best?.let { it.first to it.second }
+    }
+
+    /** The end of something shaped like a time signature just after [x0] - ink in both halves of the staff. */
+    private fun unreadTime(clean: Ink, s: Staff, x0: Int): Int? {
+        val sp = s.space
+        fun halves(x: Int): Pair<Boolean, Boolean> {
+            val upper = (s.y(1, x).roundToInt()..s.y(3, x).roundToInt()).any { clean[x, it] }
+            val lower = (s.y(5, x).roundToInt()..s.y(7, x).roundToInt()).any { clean[x, it] }
+            return upper to lower
+        }
+        val start = (x0..x0 + (sp * 2.5f).toInt()).firstOrNull { halves(it).let { (u, l) -> u && l } } ?: return null
+        var x = start
+        while (x < start + sp * 3.5f && halves(x).let { (u, l) -> u || l }) x++
+        val width = x - start
+        return if (width >= sp * 0.8f && width <= sp * 3.2f) x + (sp * 0.4f).toInt() else null
     }
 
     private fun blockRests(clean: Ink, s: Staff, from: Int, to: Int, taken: List<Pair<Int, Int>>): List<Pair<Rest, Float>> {
@@ -456,17 +545,46 @@ class Recognizer(private val debug: Boolean = false) {
     }
 
     /** The stem of [h], its length and direction, and the beams or flags at its end. */
+    /** [stem], for looking at from tests. */
+    fun debugStem(clean: Ink, s: Staff, h: Head, t: Int) = stem(clean, s, h, t)
+
     private fun stem(clean: Ink, s: Staff, h: Head, t: Int) {
         val sp = s.space
-        val w = MusicGlyphs.template(h.kind, sp).ink.width - 2
-        fun run(x: Int, y: Int, dir: Int): Int { var n = 0; var yy = y; while (clean[x, yy] || clean[x - 1, yy] && clean[x + 1, yy]) { yy += dir; n++ }; return n }
+        val w = tpl(h.kind, sp).ink.width - 2
+        // The stem's run from the head outwards: started from wherever in that half of the head
+        // the column first has ink (a tie or a match a little off can leave the middle white).
+        fun run(x: Int, y: Int, dir: Int): Int {
+            var yy = y - dir * (sp * 0.3f).toInt()
+            val limit = y + dir * (sp * 0.4f).toInt()
+            while (!clean[x, yy] && (if (dir > 0) yy < limit else yy > limit)) yy += dir
+            if (!clean[x, yy]) return 0
+            // A thin stem can step a pixel sideways on its way (anti-aliased onto the next column):
+            // followed, as long as it stays within a couple of pixels of where it started.
+            // And it may stand a hair apart from its head, or have a speck missing: a gap of a few
+            // pixels is crossed where the stem carries on straight beyond it.
+            var cx = x
+            val gap = max(2, (sp * 0.2f).toInt())
+            while (true) {
+                if (clean[cx, yy]) { yy += dir; continue }
+                val side = listOf(cx - 1, cx + 1).firstOrNull { abs(it - x) <= 2 && clean[it, yy] }
+                if (side != null) { cx = side; continue }
+                val resumes = (1..gap).firstOrNull { k -> (cx - 1..cx + 1).any { abs(it - x) <= 2 && clean[it, yy + dir * k] && clean[it, yy + dir * (k + 1)] } }
+                    ?: break
+                yy += dir * resumes
+            }
+            // How far past [y] the stem reaches, so its end is y + dir * run.
+            return ((yy - y) * dir).coerceAtLeast(0)
+        }
         // Up: at the head's right side; down: at its left - allowing for another font's heads being
         // a little narrower or wider than these.
-        val upX = (h.x + (w * 0.6f).toInt()..h.x + w + 3).maxByOrNull { run(it, h.y - (sp * 0.3f).toInt(), -1) }!!
-        val downX = (h.x - 3..h.x + (w * 0.4f).toInt()).maxByOrNull { run(it, h.y + (sp * 0.3f).toInt(), 1) }!!
+        // (A head's match can land a few pixels off its true place; the search allows a quarter of it.)
+        val upX = (h.x + (w * 0.6f).toInt()..h.x + (w * 1.25f).toInt() + 1).maxByOrNull { run(it, h.y - (sp * 0.3f).toInt(), -1) }!!
+        val downX = (h.x - (w * 0.25f).toInt() - 1..h.x + (w * 0.4f).toInt()).maxByOrNull { run(it, h.y + (sp * 0.3f).toInt(), 1) }!!
         val up = run(upX, h.y - (sp * 0.3f).toInt(), -1)
         val down = run(downX, h.y + (sp * 0.3f).toInt(), 1)
         val len = max(up, down)
+        if (debug) println("    stem? head ${h.x},${h.y} w=$w up $up at $upX, down $down at $downX; " +
+            "down runs ${(h.x - (w * 0.25f).toInt() - 1..h.x + (w * 0.4f).toInt()).map { it to run(it, h.y + (sp * 0.3f).toInt(), 1) }}")
         if (len < sp * 2.2f) return
         h.up = up >= down
         h.stemX = if (h.up) upX else downX
@@ -492,7 +610,7 @@ class Recognizer(private val debug: Boolean = false) {
 
     private fun dots(clean: Ink, s: Staff, h: Head) {
         val sp = s.space
-        val w = MusicGlyphs.template(h.kind, sp).ink.width
+        val w = tpl(h.kind, sp).ink.width
         // Close beside the head, in the space it is in or the one above - a staccato dot over the
         // next note is further off.
         val x0 = h.x + w - 1; val x1 = h.x + w + (sp * 0.85f).toInt()
@@ -552,14 +670,17 @@ class Recognizer(private val debug: Boolean = false) {
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
         val staves = staves(ink, t, space)
         val clean = withoutLines(ink, staves, t)
+        if (adapt) fitHeads(clean, staves, ink) else fitted = null
         val measures = ArrayList<Measure>()
         val bars = ArrayList<List<Int>>()
         var number = firstNumber
         // Every staff's heads first: a note high over one staff is also low under the one above,
         // and belongs to whichever it is nearer the middle of.
-        val headsOf = staves.map { s -> heads(clean, s, s.left, s.right, ink) }
+        val headsOf = staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
         for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") stem(clean, staves[si], h, t)
+        // A weak head needs a stem of its own: one it shares with a sure head is that head's flag or beam.
+        for (hs in headsOf) hs.removeAll { h -> h.weak && (h.stemX < 0 || hs.any { o -> !o.weak && o.stemX >= 0 && abs(o.stemX - h.stemX) <= t + 2 }) }
         val unflagged = headsOf.map { hs ->
             hs.filter { h ->
                 h.kind == "noteheadBlack" || hs.none { o -> o !== h && o.stemX >= 0 &&
@@ -587,6 +708,10 @@ class Recognizer(private val debug: Boolean = false) {
             val time = timeAt(clean, s, x)
             var showsTime = false
             if (time != null) { carry.time = time.first; x = time.second; showsTime = true }
+            // A part's first staff has a time signature: one in a font not read here is stepped
+            // over (taken as the time carried, and said so), not read as notes.
+            var timeUnread = false
+            if (time == null && page == 0 && si == 0) unreadTime(clean, s, x)?.let { x = it; timeUnread = true }
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
             val allHeads = kept[si].filter { it.x >= x }
@@ -622,6 +747,7 @@ class Recognizer(private val debug: Boolean = false) {
                 val q = m.quarters
                 if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty()) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
                 if (events.isEmpty()) doubts += "nothing read"
+                if (i == 0 && timeUnread) doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
                 // Another engraver's heads match these a little less well and are read right: only
                 // a weak match is a doubt.
                 events.filterIsInstance<Note>().filter { it.confidence < 0.75f }.takeIf { it.isNotEmpty() }?.let { doubts += "${it.size} unclear note${if (it.size > 1) "s" else ""}" }
@@ -664,13 +790,9 @@ class Recognizer(private val debug: Boolean = false) {
         val digits = ArrayList<Pair<Int, Int>>()
         var dx = start - (sp * 0.5f).toInt()
         while (dx < start + len) {
-            var hit: Triple<Int, Int, Float>? = null
-            for (d in 0..9) for (xx in dx..dx + (sp * 0.8f).toInt()) for (step in listOf(-3, -4, -2)) {
-                val sc = score(clean, "timeSig$d", sp, xx, s.y(step, xx).roundToInt())
-                if (sc > 0.5f && (hit == null || sc > hit.third)) hit = Triple(d, xx, sc)
-            }
+            val hit = digit(clean, s, dx, dx + (sp * 0.8f).toInt(), listOf(-3, -4, -2, -5))
             if (hit == null) { dx += (sp * 0.8f).toInt(); continue }
-            digits += hit.first to hit.second
+            digits += hit
             dx = hit.second + (sp * 1.4f).toInt()
         }
         val bars = digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }
@@ -714,17 +836,10 @@ class Recognizer(private val debug: Boolean = false) {
 
     private fun timeAt(clean: Ink, s: Staff, x0: Int): Pair<TimeSig, Int>? {
         val sp = s.space
-        fun digitAt(x: Int, step: Int): Pair<Int, Int>? {
-            var best: Triple<Int, Int, Float>? = null
-            for (d in 0..9) for (xx in x..x + (sp * 1.2f).toInt()) {
-                val sc = score(clean, "timeSig$d", sp, xx, s.y(step, xx).roundToInt())
-                // Engravers' digits differ more than their noteheads: taken more loosely.
-                if (sc > 0.5f && (best == null || sc > best.third)) best = Triple(d, xx, sc)
-            }
-            return best?.let { it.first to it.second }
-        }
+        fun digitAt(x: Int, step: Int): Pair<Int, Int>? = digit(clean, s, x, x + (sp * 2.2f).toInt(), listOf(step))
         // A digit's right edge, from where it was found.
-        fun end(d: Int, x: Int) = x + ((MusicGlyphs["timeSig$d"].bounds[2]) * sp).toInt() + 2
+        // Another engraver's digits may be a little wider than these.
+        fun end(d: Int, x: Int) = x + ((MusicGlyphs["timeSig$d"].bounds[2]) * sp * 1.2f).toInt() + (sp * 0.3f).toInt()
         fun number(step: Int): Pair<Int, Int>? {
             val first = digitAt(x0, step) ?: return null
             val next = digitAt(first.second + (sp * 1.6f).toInt(), step)
@@ -732,9 +847,15 @@ class Recognizer(private val debug: Boolean = false) {
             else first.first to end(first.first, first.second)
         }
         val top = number(2) ?: run {
-            for ((glyph, sig) in listOf("timeSigCommon" to TimeSig(4, 4), "timeSigCutCommon" to TimeSig(2, 2))) {
-                for (x in x0..x0 + (sp * 1.2f).toInt()) if (score(clean, glyph, sp, x, s.y(4, x).roundToInt()) > 0.62f) return sig to x + (sp * 2.2f).toInt()
+            // Common and cut time, in whatever size the engraver drew them.
+            var best: Triple<TimeSig, Int, Float>? = null
+            for ((glyph, sig) in listOf("timeSigCommon" to TimeSig(4, 4), "timeSigCutCommon" to TimeSig(2, 2))) for (size in listOf(1f, 0.85f, 1.15f)) {
+                for (x in x0..x0 + (sp * 2.2f).toInt()) {
+                    val sc = score(clean, glyph, sp * size, x, s.y(4, x).roundToInt())
+                    if (sc > 0.52f && (best == null || sc > best.third)) best = Triple(sig, x, sc)
+                }
             }
+            best?.let { return it.first to it.second + (sp * 2.4f).toInt() }
             return null
         }
         val bottom = number(6) ?: return null
@@ -760,7 +881,8 @@ class Recognizer(private val debug: Boolean = false) {
             val h = c.first()
             val base = when (h.kind) {
                 "noteheadWhole" -> 1
-                "noteheadHalf" -> 2
+                // A hollow head with no stem is a whole note, whatever its shape.
+                "noteheadHalf" -> if (c.all { it.stemX < 0 }) 1 else 2
                 else -> if (h.stemX < 0) 4 else when (c.maxOf { it.flags }) { 0 -> 4; 1 -> 8; 2 -> 16; else -> 32 }
             }
             val dur = Duration(base, c.maxOf { it.dots })

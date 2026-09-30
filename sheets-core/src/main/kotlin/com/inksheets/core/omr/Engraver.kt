@@ -85,6 +85,21 @@ object Engraver {
         return Drawing(marks, end, spans)
     }
 
+    /**
+     * [m] drawn where it is on its page: each note and rest at the place it was read (its x, in
+     * staff spaces from the bar's left edge), no clef or key - to lay over the page, or replace a
+     * patch of it, and line up with everything around it.
+     */
+    fun aligned(m: Measure): Drawing {
+        val marks = ArrayList<Mark>()
+        val width = m.box.width / m.space
+        for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)
+        val placed = m.events.map { it to (it.x - m.box.left) / m.space }
+        drawEvents(marks, placed, m)
+        marks += Stroke(width, 0f, width, 4f, 0.16f)
+        return Drawing(marks, width, listOf(0f to width))
+    }
+
     private fun drawEvents(marks: MutableList<Mark>, placed: List<Pair<Event, Float>>, m: Measure) {
         // Beams: runs of eighths and shorter within one beat.
         val groups = ArrayList<List<Pair<Note, Float>>>()

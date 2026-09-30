@@ -15,6 +15,7 @@ import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
+import kotlin.math.max
 
 /**
  * The music reader on real parts from the music folder: each page drawn so a staff space is about
@@ -46,7 +47,7 @@ class OmrRealPagesTest {
         is Rest -> "r/" + e.duration.base
     }
 
-    private fun overlay(ink: Ink, reading: Recognizer.PageReading, out: File) {
+    fun overlay(ink: Ink, reading: Recognizer.PageReading, out: File) {
         val img = BufferedImage(ink.width, ink.height, BufferedImage.TYPE_INT_RGB)
         img.setRGB(0, 0, ink.width, ink.height, ink.argb(), 0, ink.width)
         val g = img.createGraphics()
@@ -91,8 +92,59 @@ class OmrRealPagesTest {
             println("${file.name} p${p + 1}: ${ink.width}x${ink.height}, space ${"%.1f".format(reading.space)}, line ${reading.thickness}, " +
                 "${reading.staves.size} staves, ${reading.measures.size} measures, $sure sure, ${reading.measures.sumOf { it.events.size }} events, $ms ms")
             reading.measures.filter { !it.sure }.forEach { println("   m${it.number}: ${it.doubts} ${it.events.map(::describe)}") }
-            if (shots != null) overlay(ink, reading, File(shots, "real-${file.nameWithoutExtension}-p${p + 1}.png"))
+            if (shots != null) {
+                overlay(ink, reading, File(shots, "real-${file.nameWithoutExtension}-p${p + 1}.png"))
+                val raw = BufferedImage(ink.width, ink.height, BufferedImage.TYPE_INT_RGB)
+                raw.setRGB(0, 0, ink.width, ink.height, ink.argb(), 0, ink.width)
+                ImageIO.write(raw, "png", File(shots, "raw-${file.nameWithoutExtension}-p${p + 1}.png"))
+            }
         }
+    }
+
+    @Test
+    fun `reads one part`() {
+        assumeTrue(System.getProperty("inksheets.omr") == "one")
+        val f = File(System.getProperty("inksheets.omr.file")!!)
+        read(f.relativeTo(music).path, 1)
+        // Bars read differently with the page-adapting steps than without.
+        val ink = render(f, 0) ?: return
+        val old = Recognizer(adapt = false).read(ink).measures.associateBy { it.number }
+        for (m in Recognizer().read(ink).measures) {
+            val o = old[m.number] ?: continue
+            if (o.sure != m.sure || o.events.map(::describe) != m.events.map(::describe))
+                println("  m${m.number} was ${if (o.sure) "sure" else "unsure"} ${o.events.map(::describe)} ${o.doubts}\n" +
+                    "         now ${if (m.sure) "sure" else "unsure"} ${m.events.map(::describe)} ${m.doubts}")
+        }
+    }
+
+    /**
+     * First pages of parts spread across the whole library (full scores left out), each read with
+     * and without the page-adapting steps: bars that add up, in all and part by part, so a change
+     * is measured on many engravers and scans rather than a few. -Dinksheets.omr=library,
+     * -Dinksheets.omr.songs=how many parts (80).
+     */
+    @Test
+    fun `reads across the library`() {
+        assumeTrue(System.getProperty("inksheets.omr") == "library")
+        val want = (System.getProperty("inksheets.omr.songs") ?: "80").toInt()
+        val all = music.walkTopDown().filter { it.isFile && it.extension.equals("pdf", true) && !it.name.contains("score", true) }
+            .sortedBy { it.path.lowercase() }.toList()
+        val step = max(1, all.size / want)
+        val picked = all.filterIndexed { i, _ -> i % step == 0 }.take(want)
+        var bars = 0; var sureOld = 0; var sureNew = 0; var parts = 0; var better = 0; var worse = 0
+        for (f in picked) {
+            val ink = runCatching { render(f, 0) }.getOrNull() ?: continue
+            val old = Recognizer(adapt = false).read(ink)
+            val new = Recognizer().read(ink)
+            if (new.measures.isEmpty() && old.measures.isEmpty()) continue
+            parts++
+            bars += new.measures.size
+            val a = old.measures.count { it.sure }; val b = new.measures.count { it.sure }
+            sureOld += a; sureNew += b
+            if (b > a) better++; if (b < a) worse++
+            println("${f.relativeTo(music).path}: ${old.measures.size} -> ${new.measures.size} bars, sure $a -> $b")
+        }
+        println("ALL: $parts parts, $bars bars; sure ${sureOld * 100 / max(1, bars)}% -> ${sureNew * 100 / max(1, bars)}% ($sureOld -> $sureNew); better in $better, worse in $worse")
     }
 
     @Test
