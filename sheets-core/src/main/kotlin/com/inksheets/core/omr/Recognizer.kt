@@ -412,7 +412,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val ringDepth = max(1, (space * 0.16f).toInt())
             val coreDepth = max(ringDepth + 1, (space * 0.3f).toInt())
             val ring = BooleanArray(w * h) { depth[it] in 1..ringDepth }
-            val core = BooleanArray(w * h) { depth[it] > coreDepth && depth[it] != Int.MAX_VALUE }
+            // A shape with a hole (a whole note's) is clear in its hole - its sides, however thick
+            // this engraver's, are not asked to be; a solid one, a way in from its edge.
+            val hole = holeOf(tp.ink)
+            val core = if (hole.count { it } >= w * h / 20) BooleanArray(w * h) { hole[it] && !ring[it] }
+                else BooleanArray(w * h) { depth[it] > coreDepth && depth[it] != Int.MAX_VALUE }
             RingMask(ring, core, ring.count { it }, core.count { it })
         }
         if (m.coreCount == 0 || m.ringCount == 0) return 0f
@@ -516,6 +520,31 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         tops.sort(); bottoms.sort()
         return tops[tops.size / 2] to bottoms[bottoms.size / 2]
     }
+    /**
+     * Every test a hollow head is put to, at the best place within a few pixels of ([x], [y]) on
+     * [s]: for finding out why a head was not read. [clean] as [withoutLines] gives it, after [read].
+     */
+    fun explainHollow(clean: Ink, s: Staff, x: Int, y: Int): String {
+        val sp = s.space
+        val headW = tpl("noteheadBlack", sp).ink.width - 2
+        var best = ""; var bestRing = -1f
+        for (dx in -4..4) for (dy in -2..2) {
+            val xx = x + dx; val yy = y + dy
+            val ring = hollow(clean, sp, xx, yy, "noteheadBlack")
+            if (ring <= bestRing) continue
+            bestRing = ring
+            val half = score(clean, "noteheadHalf", sp, xx, yy)
+            val whole = score(clean, "noteheadWhole", sp, xx, yy)
+            best = "ring ${"%.2f".format(ring)} (font ${"%.2f".format(hollow(clean, sp, xx, yy, "noteheadBlack", font = true))}), " +
+                "half ${"%.2f".format(half)} hole ${"%.2f".format(holeClear(clean, "noteheadHalf", sp, xx, yy))}, " +
+                "whole ${"%.2f".format(whole)} hole ${"%.2f".format(holeClear(clean, "noteheadWhole", sp, xx, yy))}, " +
+                "wide ${"%.2f".format(hollow(clean, sp, xx, yy, "noteheadWhole"))}, " +
+                "accidental-like ${accidentalLike(clean, sp, xx, yy, headW)}, alone ${standsAlone(clean, sp, xx, yy, headW)}, " +
+                "sides ${(xx..xx + max(2, headW / 4)).any { clean[it, yy] } && (xx + headW - max(2, headW / 4)..xx + headW).any { clean[it, yy] }} at ${dx},${dy}"
+        }
+        return best
+    }
+
     /** A notehead found: where, which kind, how sure. */
     class Head(val x: Int, val step: Int, val y: Int, val kind: String, var score: Float) {
         var stemX = -1
@@ -569,7 +598,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         val ring = max(hollow(clean, sp, x, y, "noteheadBlack"), if (fitted != null) hollow(clean, sp, x, y, "noteheadBlack", font = true) else 0f)
                         if (ring > 0.72f) found += Head(x, step, y, "noteheadHalf", ring).also { it.crowded = !standsAlone(clean, sp, x, y, headW) }
                         val wide = hollow(clean, sp, x, y, "noteheadWhole")
-                        if (wide > 0.74f) found += Head(x, step, y, "noteheadWhole", wide).also { it.crowded = !standsAlone(clean, sp, x, y, tpl("noteheadWhole", sp).ink.width - 2) }
+                        if (wide > 0.66f) found += Head(x, step, y, "noteheadWhole", wide).also { it.crowded = !standsAlone(clean, sp, x, y, tpl("noteheadWhole", sp).ink.width - 2) }
                     }
                 }
             }

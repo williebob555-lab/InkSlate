@@ -137,7 +137,10 @@ class OmrAnswerKeyTest {
         val missed = ArrayList<BufferedImage>(); val invented = ArrayList<BufferedImage>()
         val offsets = ArrayList<Float>()
         val why = HashMap<String, Int>()
+        val never = HashMap<String, Int>()
+        var explained = 0
         val pitchShots = ArrayList<BufferedImage>()
+        val neverShots = ArrayList<BufferedImage>()
         for (f in keyed(want)) {
             val (ink, dpi) = OmrRealPagesTest().renderAt(f, 0) ?: continue
             val raw = AnswerKey.read(f, 0, dpi) ?: continue
@@ -173,6 +176,9 @@ class OmrAnswerKeyTest {
                     val stage = if (lost != null) "lost: $lost" else if (wrongPitch != null && abs(wrongPitch) <= 2) "read at the wrong pitch ($wrongPitch steps)" else if (near.isNotEmpty()) "found, lost later (${near.first().kind} ${"%.2f".format(near.first().score)})" else "never found (black score ${"%.2f".format(best)})"
                     val step = Math.round((h.y - s.lineY(0, h.x.toInt())) / (s.space / 2))
                     why.merge(stage.substringBefore(" ("), 1, Int::plus)
+                    if (stage.startsWith("never") && h.kind != Kind.HEAD_BLACK && explained++ < 25) println("    hollow ${h.kind}: " + recognizer.explainHollow(clean, s, h.x.roundToInt(), h.y.roundToInt()))
+                    if (stage.startsWith("never")) never.merge("${h.kind} " + when { step < -1 -> "above"; step > 9 -> "below"; else -> "on" }, 1, Int::plus)
+                    if (stage.startsWith("never") && neverShots.size < 60) neverShots += crop(ink, h.x, h.y, sp, "${f.nameWithoutExtension.take(14)} ${h.kind} $stage")
                     if (stage.startsWith("read at the wrong") && pitchShots.size < 40) {
                         val img = crop(ink, h.x, h.y, sp, "${f.nameWithoutExtension.take(16)} $stage")
                         val g = img.createGraphics()
@@ -201,8 +207,9 @@ class OmrAnswerKeyTest {
         }
         println("OFFSETS: median ${offsets.sorted().getOrNull(offsets.size / 2)}")
         println("WHY MISSED: $why")
+        println("NEVER FOUND: $never")
         println("ALL: $all")
         println("CONFUSION: " + all.confusion.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
-        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")) }
+        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")) }
     }
 }
