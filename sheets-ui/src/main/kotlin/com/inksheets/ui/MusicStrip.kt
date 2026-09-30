@@ -146,6 +146,10 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                                 more = false
                                 if (file != null) ScoreTools.said = exportMidi(state, file, score)
                             })
+                            DropdownMenuItem(text = { Text("Print it afresh (a clean PDF)") }, onClick = {
+                                more = false
+                                if (file != null) ScoreTools.said = cleanPrint(state, file, score)
+                            })
                             DropdownMenuItem(text = { Text("The notes read, and bars that may be wrong...") }, onClick = {
                                 more = false
                                 state.readMusicOpen = true
@@ -218,4 +222,18 @@ private fun GoToBar(state: SheetsState, onDone: () -> Unit) {
         confirmButton = { TextButton(onClick = { go() }) { Text("Go") } },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } }
     )
+}
+
+/** The part engraved afresh from its reading, as a PDF beside the app's shared files, handed to the system to open or send. */
+private fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core.omr.Score): String {
+    val song = state.current
+    val part = state.partShown()?.let { com.inksheets.core.Instruments.partName(it) } ?: file.nameWithoutExtension
+    val out = File(state.platform.cacheFolder, "${file.nameWithoutExtension} (clean).pdf")
+    return runCatching {
+        val bytes = com.inksheets.core.omr.CleanPrint.pdf(score, song?.title ?: file.nameWithoutExtension, part)
+        out.parentFile?.mkdirs()
+        out.writeBytes(bytes)
+        state.platform.share(out)
+        "Printed ${score.measures.size} bars afresh: ${out.name}"
+    }.getOrElse { "Couldn't print it: ${it.message}" }
 }

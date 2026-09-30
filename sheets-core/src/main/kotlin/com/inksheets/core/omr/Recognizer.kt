@@ -590,7 +590,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     val sc = if (fitted == null) score(body, "noteheadBlack", sp, x, y)
                         else max(score(body, "noteheadBlack", sp, x, y), fontScore(body, "noteheadBlack", sp, x, y))
                     // Ties, slurs and accents touch heads and cost them a little.
-                    if (sc > 0.68f) found += Head(x, step, y, "noteheadBlack", sc)
+                    // No head has solid ink running on past both its sides along its middle: that is a
+                    // beam, or a multi-bar rest's bar.
+                    val reach = (sp * 0.6f).toInt()
+                    val barred = (-1..1).all { dy -> (1..reach).all { k -> body[x - k, y + dy] && body[x + headW + k, y + dy] } }
+                    if (sc > 0.68f && !barred) found += Head(x, step, y, "noteheadBlack", sc)
                     else if (adapt && sc > 0.5f && !filledOnly && solidCore(body, sp, x, y) && !accidentalLike(clean, sp, x, y, headW) &&
                         // Not a piece of a beam: ink that runs on past both sides of the head.
                         !(-1..1).all { dy -> clean[x - (sp * 0.35f).toInt(), y + dy] && clean[x + headW + (sp * 0.35f).toInt(), y + dy] })
