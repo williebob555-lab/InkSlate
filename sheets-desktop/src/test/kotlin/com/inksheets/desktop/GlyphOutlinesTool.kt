@@ -34,6 +34,9 @@ class GlyphOutlinesTool {
         "articMarcatoAbove" to 0xE4AC, "articMarcatoBelow" to 0xE4AD, "fermataAbove" to 0xE4C0, "fermataBelow" to 0xE4C1,
         "dynamicPiano" to 0xE520, "dynamicMezzo" to 0xE521, "dynamicForte" to 0xE522, "dynamicRinforzando" to 0xE523,
         "dynamicSforzando" to 0xE524, "dynamicZ" to 0xE525,
+        // Dynamics set as one character: how Sibelius's special font prints them.
+        "dynamicPP" to 0xE52B, "dynamicPPP" to 0xE52A, "dynamicMP" to 0xE52C, "dynamicMF" to 0xE52D, "dynamicFF" to 0xE52F, "dynamicFFF" to 0xE530,
+        "dynamicFortePiano" to 0xE534, "dynamicSforzando1" to 0xE536, "dynamicSforzandoPiano" to 0xE537, "dynamicSforzato" to 0xE539, "dynamicForzando" to 0xE535,
         "accidentalDoubleSharp" to 0xE263, "accidentalDoubleFlat" to 0xE264,
         "rest32nd" to 0xE4E8, "flag32ndUp" to 0xE244, "flag32ndDown" to 0xE245
     ) + (0..9).map { "timeSig$it" to 0xE080 + it }

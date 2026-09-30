@@ -1030,7 +1030,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // still read from the picture.
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
         this.staves = staves
-        symbolOf.clear(); printedAccidental.clear(); usedStems.clear()
+        symbolOf.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
         val clean = withoutLines(ink, staves, t)
         solid = if (adapt && staves.isNotEmpty()) clean.opened(max(1, (staves.first().space * 0.11f).roundToInt())) else null
         if (adapt) fitHeads(clean, staves, ink) else fitted = null
@@ -1042,6 +1042,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val headsOf = if (this.printed != null) printedHeads(staves) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
         for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") { if (this.printed != null) printedStem(staves[si], h) else stem(clean, staves[si], h, t) }
+        // Which staff each head was found on: those let go are still the bar's maybes.
+        val staffOf = HashMap<Head, Int>()
+        headsOf.forEachIndexed { si, hs -> hs.forEach { staffOf[it] = si } }
         // A weak head needs a stem of its own: one it shares with a sure head is that head's flag or beam.
         val dropped = ArrayList<Pair<Head, String>>()
         // An x or slash head with a stem of its own is a note, and a clear one: its thin strokes match less well than a head's fill.
@@ -1135,9 +1138,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A piece may start with a short bar - a pickup - when what is in it is certain.
                 val pickup = page == 0 && measures.isEmpty() && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
                     (this.printed != null || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
+                // What was seen here and let go: another reading of the bar may want it back.
+                val maybe = dropped.filter { (h, why) -> staffOf[h] == si && h.x >= from - 2 && h.x < to && !why.startsWith("the other staff") }
+                    .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> maybeNote(clean, s, h, carry) }
                 val m = Measure(
                     number++, page, si, box, s.space,
                     carry.clef, carry.key, carry.time, events,
+                    maybe = maybe,
                     showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey, showsTime = (i == 0 && showsTime) || timeHere,
                     lines = lines, lineWidth = t.toFloat()
                 )
@@ -1153,7 +1160,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A repeat starting at a line's start sits just after the clef and key.
                 val starts = (span.first in b && dotsAfter(span.first)) || (i == 0 && dotsAt(x - (s.space * 0.5f).toInt(), x + (s.space * 2.5f).toInt()))
                 val ends = span.second in b && dotsBefore(span.second)
-                measures += m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends)
+                measures += m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = if (printed != null) printedDirections(s, span.first, span.second) else emptyList())
                 }
             }
             allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
@@ -1710,6 +1717,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return found.sorted()[found.size / 2]
     }
 
+    /** A head let go, as the note it would be: its value by its kind, stem and flags, its dot, its pitch in the key. */
+    private fun maybeNote(clean: Ink, s: Staff, h: Head, carry: Carry): Note {
+        dots(clean, s, h)
+        val base = when (h.kind) {
+            "noteheadWhole" -> 1
+            "noteheadHalf" -> if (h.stemX < 0) 1 else 2
+            else -> if (h.stemX < 0) 4 else when (h.flags) { 0 -> 4; 1 -> 8; 2 -> 16; else -> 32 }
+        }
+        val d = carry.clef.at(h.step)
+        return Note(listOf(h.step), listOf(Pitch.fromDiatonic(d, carry.key.alterOf(d.mod(7)))), Duration(base, h.dots), h.x.toFloat(), stemUp = h.up.takeIf { h.stemX >= 0 }, confidence = h.score)
+    }
+
     /**
      * The barlines the PDF draws across [s]: upright lines from its top line to its bottom one (or
      * on past both, joining staves), that no head took as its stem. A double
@@ -1751,7 +1770,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             if (run.isNotEmpty() && a.kind != run.first().kind) break
             run += a; at = a.x + a.width
         }
-        if (run.isEmpty()) return null
+        // A line of engraved music restates its key at its start: none printed there is C (a change
+        // to it, cancelled by naturals, or none all along).
+        if (run.isEmpty()) return Key(0) to x0
         // Not a key if the run is a note's own accidentals: a head just after the first one, at its height.
         val first = run.first()
         if (p.heads.any { h -> h.x - first.x in sp * 0.3f..sp * 2.5f && abs(h.y - first.y) < sp * 0.3f && run.size == 1 }) return null
@@ -1778,6 +1799,90 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val beats = number(top); val type = number(bottom)
         if (beats !in 1..32 || type !in listOf(1, 2, 4, 8, 16, 32)) return null
         return TimeSig(beats, type) to (digits.maxOf { it.x + it.width } + sp * 0.4f).roundToInt()
+    }
+
+    /**
+     * The marks the PDF prints on chord [c] of [s]: its articulations (a staccato is a dot over or
+     * under a head, not beside it), a fermata over the staff - and whether it is tied on (a curve
+     * from one of its heads to the next note at that pitch, or off the end of the line).
+     */
+    private fun printedMarks(s: Staff, c: List<Head>): Pair<List<String>, Boolean> {
+        val p = printed ?: return emptyList<String>() to false
+        val sp = s.space
+        val syms = c.mapNotNull { symbolOf[it] }
+        if (syms.isEmpty()) return emptyList<String>() to false
+        val left = syms.minOf { it.x }; val right = syms.maxOf { it.x + it.width * 0.8f }
+        val top = syms.minOf { it.y }; val bottom = syms.maxOf { it.y }
+        val out = ArrayList<String>()
+        for (m in p.symbols) {
+            val cx = m.x + m.width / 2
+            if (cx < left - sp * 0.3f || cx > right + sp * 0.3f) continue
+            when {
+                m.kind == Printed.Kind.ARTICULATION && m.name == "fermata" -> if (m.y > top - sp * 8 && m.y < bottom + sp * 8) out += "fermata"
+                m.kind == Printed.Kind.ARTICULATION -> if (m.y > top - sp * 4.5f && m.y < bottom + sp * 4.5f && m in unclaimed(m)) out += m.name.split('+')
+                // A dot over or under a head (not beside it, where it lengthens the note) is a staccato.
+                m.kind == Printed.Kind.DOT -> if ((m.y < top - sp * 0.6f && m.y > top - sp * 3f) || (m.y > bottom + sp * 0.6f && m.y < bottom + sp * 3f)) out += "staccato"
+            }
+        }
+        // A tie: a curve from beside one of its heads, level, to the next head at that height (or the line's end).
+        val tied = p.arcs.any { a ->
+            abs(a.y1 - a.y0) < sp * 0.8f && a.x1 - a.x0 > sp * 0.8f && syms.any { h -> a.x0 > h.x + h.width * 0.3f && a.x0 < h.x + h.width + sp * 1.2f && abs(a.y0 - h.y) < sp * 1.2f } &&
+                (a.x1 > s.right - sp * 1.5f || p.heads.any { o -> o.x > right && o.x - a.x1 < sp * 1.2f && a.x1 - o.x < o.width + sp * 0.4f && syms.any { h -> abs(o.y - h.y) < sp * 0.3f } })
+        }
+        return out.distinct() to tied
+    }
+
+    /** An articulation claimed by one chord only (the nearest). */
+    private val claimedMarks = HashSet<Printed.Symbol>()
+    private fun unclaimed(m: Printed.Symbol): Set<Printed.Symbol> = if (claimedMarks.add(m)) setOf(m) else emptySet()
+
+    /**
+     * What the PDF prints over or under [s] between [from] and [to] besides notes: dynamics (letters
+     * set together read as one - "m" "f" is "mf"), hairpins (two strokes meeting at a point: louder
+     * towards the open end), slurs (curves that are not ties; one running on past the bar is in
+     * each bar it crosses).
+     */
+    private fun printedDirections(s: Staff, from: Int, to: Int): List<Direction> {
+        val p = printed ?: return emptyList()
+        val sp = s.space
+        val mid = (s.top + s.bottom) / 2f
+        fun near(y: Float) = abs(y - mid) < sp * 9 && staves.none { o -> o !== s && abs((o.top + o.bottom) / 2f - y) < abs(mid - y) }
+        val out = ArrayList<Direction>()
+        // Dynamics: a run of letters close together is one marking.
+        val dyn = p.symbols.filter { it.kind == Printed.Kind.DYNAMIC && it.x >= from && it.x < to && near(it.y) }.sortedBy { it.x }
+        var i = 0
+        while (i < dyn.size) {
+            var text = dyn[i].name; var j = i
+            while (j + 1 < dyn.size && dyn[j + 1].x - (dyn[j].x + dyn[j].width) < sp * 0.4f && abs(dyn[j + 1].y - dyn[i].y) < sp * 0.5f) { j++; text += dyn[j].name }
+            out += Direction("dynamic", dyn[i].x, dyn[j].x + dyn[j].width, text, above = dyn[i].y < s.top)
+            i = j + 1
+        }
+        // Hairpins: two strokes sharing an end (the point), their other ends apart.
+        val strokes = p.lines.filter { it.x1 - it.x0 > sp * 1.5f && near((it.y0 + it.y1) / 2) && it.x1 > from && it.x0 < to && abs(it.y1 - it.y0) < (it.x1 - it.x0) * 0.4f }
+        val used = HashSet<Printed.Line>()
+        for (a in strokes) for (b in strokes) {
+            if (a === b || a in used || b in used || a.y0 + a.y1 > b.y0 + b.y1) continue
+            val cresc = abs(a.x0 - b.x0) < sp * 0.4f && abs(a.y0 - b.y0) < sp * 0.4f && abs(a.y1 - b.y1) in sp * 0.4f..sp * 3f
+            val dim = abs(a.x1 - b.x1) < sp * 0.4f && abs(a.y1 - b.y1) < sp * 0.4f && abs(a.y0 - b.y0) in sp * 0.4f..sp * 3f
+            if (!cresc && !dim) continue
+            used += a; used += b
+            out += Direction(if (cresc) "cresc" else "dim", maxOf(a.x0, from.toFloat()), minOf(a.x1, to.toFloat()), above = (a.y0 + a.y1) / 2 < s.top)
+        }
+        // Slurs: every curve that is not a note's tie, in each bar it crosses.
+        for (a in p.arcs) {
+            if (a.x1 < from || a.x0 >= to || !near((a.y0 + a.y1) / 2)) continue
+            if (abs(a.y1 - a.y0) < sp * 0.8f && a.x1 - a.x0 < sp * 6 && tieLike(a)) continue
+            fun step(y: Float, x: Float) = ((y - s.lineY(0, x.toInt().coerceIn(s.left, s.right))) / (sp / 2)).roundToInt()
+            out += Direction("slur", a.x0, a.x1, above = a.bulge < 0, step = step(a.y0, a.x0), step2 = step(a.y1, a.x1))
+        }
+        return out
+    }
+
+    /** A curve from beside a head to the next head at its height: a tie, not a slur. */
+    private fun tieLike(a: Printed.Arc): Boolean {
+        val p = printed ?: return false
+        return p.heads.any { h -> a.x0 > h.x + h.width * 0.3f && a.x0 - (h.x + h.width) < p.heads.first().width * 1.5f && abs(a.y0 - h.y) < h.width } &&
+            p.heads.any { o -> o.x >= a.x1 - o.width * 1.5f && o.x - a.x1 < o.width * 1.5f && abs(a.y1 - o.y) < o.width }
     }
 
     /** The printed rests in [from]..[to] on [s] (the staff they are nearest), with their dots. */
@@ -1827,7 +1932,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val alter = written[d] ?: carry.key.alterOf(d.mod(7))
                 Pitch.fromDiatonic(d, alter)
             }
-            events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { h.stemX >= 0 }, c.minOf { it.score })
+            val (marks, tied) = if (printed != null) printedMarks(s, c) else emptyList<String>() to false
+            events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { h.stemX >= 0 }, c.minOf { it.score }, marks, tied)
         }
         // Rests, where no note is.
         val rests = ArrayList<Pair<Rest, Float>>()

@@ -58,7 +58,15 @@ object PenInput {
 
     /** True when a reader is running, so the settings screen can say so rather than guess. */
     val active: Boolean
-        get() = WindowsPointer.active || X11Pointer.active
+        get() = WindowsPointer.active || X11Pointer.active || simulated
+
+    /**
+     * For tests: behave as though the window's messages were being read, so a test can play what
+     * Windows delivers for a finger - a mouse press stamped as touch ([touchedSomewhere]), contacts
+     * ([finger]) - without a touchscreen.
+     */
+    @Volatile
+    internal var simulated = false
 
     /** The last thing that happened, for Settings -> Diagnostics. */
     @Volatile

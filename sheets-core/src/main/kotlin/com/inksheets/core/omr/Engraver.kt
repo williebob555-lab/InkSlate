@@ -102,16 +102,19 @@ object Engraver {
             // Dynamics, hairpins and slurs where they were printed among the notes: a page x mapped
             // across by the notes either side of it.
             val anchors = placed.map { (e, lx) -> e.x to lx }.sortedBy { it.first }
-            drawDirections(marks, m, x + 0.4f) { px ->
+            val end = x + 0.4f
+            drawDirections(marks, m, end, from = start) { px ->
                 val after = anchors.indexOfFirst { it.first >= px }
                 when {
-                    anchors.isEmpty() -> start + 1f
-                    after <= 0 -> anchors.first().second - ((anchors.first().first - px) / m.space).coerceAtMost(1.5f)
+                    // No notes to go by (a bar of rests): across the bar as it was printed.
+                    anchors.isEmpty() -> start + (end - start) * ((px - m.box.left) / m.box.width.coerceAtLeast(1))
+                    after < 0 -> anchors.last().second + ((px - anchors.last().first) / m.space).coerceAtMost(2f)
+                    after == 0 -> anchors.first().second - ((anchors.first().first - px) / m.space).coerceAtMost(1.5f)
                     else -> {
                         val (a, la) = anchors[after - 1]; val (b, lb) = anchors[after]
                         la + (lb - la) * ((px - a) / (b - a).coerceAtLeast(1e-3f))
                     }
-                }.let { if (after < 0 && anchors.isNotEmpty()) anchors.last().second + ((px - anchors.last().first) / m.space).coerceAtMost(2f) else it }
+                }
             }
             x += 0.4f
             if (m.ending > 0) {
@@ -155,6 +158,24 @@ object Engraver {
         return Drawing(marks, width, listOf(0f to width))
     }
 
+    /**
+     * A multi-bar rest [m] drawn where it is: its staff, the thick bar across the middle with its
+     * end strokes, and how many bars over it.
+     */
+    fun multiRest(m: Measure): Drawing {
+        val marks = ArrayList<Mark>()
+        val width = m.box.width / m.space
+        for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)
+        val a = width * 0.18f; val b = width * 0.82f
+        marks += Slab(floatArrayOf(a, 1.6f, b, 1.6f, b, 2.4f, a, 2.4f))
+        marks += Stroke(a, 1f, a, 3f, 0.16f); marks += Stroke(b, 1f, b, 3f, 0.16f)
+        val n = m.bars.toString()
+        val digitW = 1.8f
+        n.forEachIndexed { i, c -> marks += Symbol("timeSig$c", width / 2 - n.length * digitW / 2 + i * digitW, -1.2f) }
+        marks += Stroke(width, 0f, width, 4f, 0.16f)
+        return Drawing(marks, width, listOf(0f to width))
+    }
+
     /** The dynamic letters a marking is set in ("mf": m, f), by glyph. */
     private fun dynamicGlyphs(text: String): List<String>? = text.map { c ->
         when (c) { 'p' -> "dynamicPiano"; 'm' -> "dynamicMezzo"; 'f' -> "dynamicForte"; 'r' -> "dynamicRinforzando"; 's' -> "dynamicSforzando"; 'z' -> "dynamicZ"; else -> return null }
@@ -165,13 +186,13 @@ object Engraver {
      * [width] spaces wide. Dynamics and hairpins go under the staff (or over it, where printed so);
      * a slur arcs over its notes or under them, and runs to the bar's edge where it goes on.
      */
-    private fun drawDirections(marks: MutableList<Mark>, m: Measure, width: Float, at: (Float) -> Float) {
+    private fun drawDirections(marks: MutableList<Mark>, m: Measure, width: Float, from: Float = 0f, at: (Float) -> Float) {
         // Under the staff, clear of the lowest note; over it, clear of the highest.
         val steps = m.events.filterIsInstance<Note>().flatMap { it.steps }
         val below = max(6.2f, (steps.maxOrNull() ?: 8) * 0.5f + 1.8f)
         val over = min(-2.2f, (steps.minOrNull() ?: 0) * 0.5f - 1.8f)
         for (d in m.directions) {
-            val x = at(d.x).coerceIn(0f, width); val x2 = at(d.x2).coerceIn(0f, width)
+            val x = at(d.x).coerceIn(from, width); val x2 = at(d.x2).coerceIn(from, width)
             val y = if (d.above) over else below
             when (d.kind) {
                 "dynamic" -> {

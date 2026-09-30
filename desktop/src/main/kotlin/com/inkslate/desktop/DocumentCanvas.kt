@@ -40,6 +40,7 @@ import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import com.inkslate.core.Box as InkBox
 import com.inkslate.core.PageArranger
 import com.inkslate.core.PageExtent
@@ -550,6 +552,10 @@ fun DocumentCanvas(
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     var start: Offset? = null
+                    // Which contact began it, and where the page was then: a flick that moved the page
+                    // (a zoomed page panned by the finger) is a pan, not a turn.
+                    var startId: androidx.compose.ui.input.pointer.PointerId? = null
+                    var startOffset = Offset.Zero
                     var startedAt = 0L
                     var fingers = 0
                     var fitted = false
@@ -562,22 +568,37 @@ fun DocumentCanvas(
                         // Not a hand the strip has given a pen or eraser to: that one writes.
                         val fingerTurns = tools.configFor(com.inkslate.core.InputMode.TOUCH).tool == com.inkslate.core.Tool.PAN
                         val mouseTurns = resting() && swipe != null && fingerTurns
+                        // A finger, however it arrives: Windows hands a desktop program every finger as
+                        // a mouse, and only the pointer reader knows it was one. Taken as a finger, it
+                        // turns pages whether or not the tools are out, as on the tablet.
+                        fun isFinger(c: PointerInputChange) = c.type == PointerType.Touch ||
+                            (c.type == PointerType.Mouse && event.type != PointerEventType.Scroll && InputSignal.deviceOf(c) == InputDevice.FINGER)
                         val touches = event.changes.filter { c ->
-                            // Windows hands a pen over as a mouse: asked what it really is, so the pen
-                            // never turns a page - it writes with whatever tool it last had.
-                            (c.type == PointerType.Touch && fingerTurns) || (mouseTurns && c.type == PointerType.Mouse && event.type != PointerEventType.Scroll &&
+                            // Windows hands a pen over as a mouse too: asked what it really is, so the
+                            // pen never turns a page - it writes with whatever tool it last had.
+                            (isFinger(c) && fingerTurns) || (mouseTurns && c.type == PointerType.Mouse && event.type != PointerEventType.Scroll &&
                                 InputSignal.deviceOf(c) != InputDevice.PEN)
                         }
+                        // The contact that began it gone up without being taken for a finger (the pen
+                        // come near and claimed the device meanwhile): the gesture is over, and did nothing.
+                        val tracked = startId?.let { id -> event.changes.firstOrNull { it.id == id } }
+                        if (start != null && tracked != null && !tracked.pressed && touches.none { it.id == tracked.id }) { start = null; startId = null; continue }
                         if (touches.isEmpty()) continue
-                        touches.filter { it.type == PointerType.Mouse }.forEach { it.consume() }
+                        // A real mouse turning pages is kept from moving them; a finger still moves the
+                        // page as it goes (when there is room to), like a finger on the tablet.
+                        touches.filter { it.type == PointerType.Mouse && !isFinger(it) }.forEach { it.consume() }
                         val down = touches.count { it.pressed }
                         if (start == null && down == 1 && touches.any { it.pressed && !it.previousPressed }) {
                             start = touches.first { it.pressed }.position
+                            startId = touches.first { it.pressed }.id
+                            startOffset = viewport.offset
                             startedAt = System.currentTimeMillis()
                             fingers = 1
                             fitted = resting()
                         }
-                        fingers = maxOf(fingers, down)
+                        // Windows hands only the first finger over as a mouse: the reader counts the rest.
+                        // Two on the glass are a pinch or a pan, never a turn or a tap.
+                        fingers = maxOf(fingers, down, if (PenInput.gesturing) 2 else PenInput.contacts)
                         if (down == 0 && start != null) {
                             val end = touches.first().position
                             val dx = end.x - start.x
@@ -586,9 +607,13 @@ fun DocumentCanvas(
                             val turn = swipe
                             val w = viewport.viewSize.width
                             // A quick flick, or on a fitted page any drag a good way across.
-                            val swiped = abs(dx) > 1.5f * abs(dy) &&
-                                ((quick && abs(dx) > SWIPE_MIN_PX) || (fitted && abs(dx) > w * FITTED_SWIPE_SHARE))
-                            val tapped = System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < TAP_SLOP_PX && abs(dy) < TAP_SLOP_PX
+                            // Not when the finger moved the page with it (a zoomed page, panned): that was a pan.
+                            val panned = abs(viewport.offset.x - startOffset.x) > abs(dx) * 0.3f
+                            val swiped = abs(dx) > 1.5f * abs(dy) && !panned &&
+                                ((quick && abs(dx) > SWIPE_MIN_DP.dp.toPx()) || (fitted && abs(dx) > w * FITTED_SWIPE_SHARE))
+                            // A fingertip wobbles as it taps, the more pixels the denser the screen.
+                            val slop = TAP_SLOP_DP.dp.toPx()
+                            val tapped = System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < slop && abs(dy) < slop
                             if (turn != null && fingers == 1 && swiped) {
                                 turn(if (dx < 0) 1 else -1)
                             } else if (turn != null && fingers == 1 && tapped) {
@@ -603,7 +628,7 @@ fun DocumentCanvas(
                                     else -> com.inkslate.core.Perform.centreTap?.invoke(h > 0 && end.y > h * (1 - com.inkslate.core.Perform.CENTRE_TAP_BOTTOM))
                                 }
                             }
-                            start = null
+                            start = null; startId = null
                         }
                     }
                 }
@@ -1436,13 +1461,13 @@ private const val AHEAD = 2
 /** How long a trackpad is still assumed to be the thing scrolling. */
 private const val GLASS_MEMORY_MS = 600L
 
-/** A finger swipe that turns a page: this far sideways, this quickly. */
-private const val SWIPE_MIN_PX = 90f
+/** A finger swipe that turns a page: this far sideways (in dp: the same on any screen), this quickly. */
+private const val SWIPE_MIN_DP = 50f
 private const val SWIPE_MS = 600L
 
-/** A tap that turns a page: this short, this still, and in this share of the width at a side. */
+/** A tap that turns a page: this short, this still (dp), and in this share of the width at a side. */
 private const val TAP_MS = 300L
-private const val TAP_SLOP_PX = 14f
+private const val TAP_SLOP_DP = 12f
 private const val EDGE_SHARE = 0.18f
 
 /** On a fitted page of music, a drag this share of the width across turns it, however slow. */

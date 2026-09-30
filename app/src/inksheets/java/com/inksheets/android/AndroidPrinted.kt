@@ -2,7 +2,6 @@ package com.inksheets.android
 
 import android.graphics.Path
 import android.graphics.PointF
-import android.graphics.RectF
 import com.inksheets.core.omr.Printed
 import com.tom_roush.pdfbox.contentstream.PDFGraphicsStreamEngine
 import com.tom_roush.pdfbox.cos.COSName
@@ -29,27 +28,51 @@ object AndroidPrinted {
         if (page.rotation != 0) return null
         val box = page.cropBox
         val b = Printed.Builder(box.width, box.height)
+        // A character's outline, once per font and code: in ems, y down, from its origin.
+        val outlines = HashMap<Pair<String, Int>, List<FloatArray>?>()
+        fun outline(font: com.tom_roush.pdfbox.pdmodel.font.PDFont, code: Int): List<FloatArray>? = outlines.getOrPut((font.name ?: "") to code) {
+            runCatching {
+                val path = (font as? PDVectorFont)?.getPath(code) ?: return@runCatching null
+                val em = font.fontMatrix.scaleX
+                // Points along the outline (fraction, x, y); where the fraction does not move on, a new contour begins.
+                val a = path.approximate(0.5f)
+                val out = ArrayList<FloatArray>(); var cur = ArrayList<Float>()
+                var last = -1f
+                var k = 0
+                while (k + 2 < a.size) {
+                    val f = a[k]; val x = a[k + 1] * em; val y = -a[k + 2] * em
+                    if (f == last && cur.size >= 2) { if (cur.size >= 6) out += cur.toFloatArray(); cur = ArrayList() }
+                    cur += x; cur += y; last = f
+                    k += 3
+                }
+                if (cur.size >= 6) out += cur.toFloatArray()
+                out.takeIf { it.isNotEmpty() }
+            }.getOrNull()
+        }
         object : PDFTextStripper() {
             override fun writeString(text: String?, positions: MutableList<TextPosition>?) {
                 for (p in positions.orEmpty()) {
                     val font = p.font ?: continue
                     val name = font.name ?: continue
                     val code = p.characterCodes?.firstOrNull() ?: continue
+                    val size = p.textMatrix.scalingFactorX
                     if (Printed.isSpecialFont(name)) {
-                        val path = (font as? PDVectorFont)?.let { runCatching { it.getPath(code) }.getOrNull() } ?: continue
-                        val r = RectF(); path.computeBounds(r, true)
-                        // Glyph units to ems by the font's own matrix (a thousandth, most often).
-                        val em = font.fontMatrix.scaleX
-                        val size = p.textMatrix.scalingFactorX
-                        b.specialChar(name, r.width() * em, r.height() * em,
-                            p.xDirAdj + r.centerX() * em * size, p.yDirAdj - r.centerY() * em * size, size)
-                    } else b.char(name, code, charOf(font, code) ?: p.unicode, p.xDirAdj, p.yDirAdj, p.widthDirAdj, p.textMatrix.scalingFactorX)
+                        val shape = outline(font, code) ?: continue
+                        val xs = shape.flatMap { c -> (c.indices step 2).map { c[it] } }; val ys = shape.flatMap { c -> (1 until c.size step 2).map { c[it] } }
+                        val w = xs.max() - xs.min(); val h = ys.max() - ys.min()
+                        // Small and round: a dot, at its middle. Anything else: told by its outline.
+                        if (Printed.specialKind(w, h) != null) b.specialChar(name, w, h, p.xDirAdj + (xs.max() + xs.min()) / 2 * size, p.yDirAdj + (ys.max() + ys.min()) / 2 * size, size)
+                        else b.glyph(name, shape, p.xDirAdj, p.yDirAdj, size)
+                    } else if (!b.char(name, code, charOf(font, code) ?: p.unicode, p.xDirAdj, p.yDirAdj, p.widthDirAdj, size)) {
+                        outline(font, code)?.let { b.glyph(name, it, p.xDirAdj, p.yDirAdj, size) }
+                    }
                 }
             }
         }.apply { startPage = index + 1; endPage = index + 1; sortByPosition = false }.getText(doc)
         val left = box.lowerLeftX; val top = box.upperRightY
         object : PDFGraphicsStreamEngine(page) {
             val path = ArrayList<ArrayList<PointF>>()
+            val curved = HashSet<Int>()
             var at = PointF()
             fun pt(x: Float, y: Float) = PointF(x - left, top - y)
             override fun appendRectangle(p0: PointF, p1: PointF, p2: PointF, p3: PointF) {
@@ -57,20 +80,38 @@ object AndroidPrinted {
             }
             override fun moveTo(x: Float, y: Float) { path += arrayListOf(pt(x, y)); at = PointF(x, y) }
             override fun lineTo(x: Float, y: Float) { (path.lastOrNull() ?: arrayListOf<PointF>().also { path += it }) += pt(x, y); at = PointF(x, y) }
-            override fun curveTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) { (path.lastOrNull() ?: arrayListOf<PointF>().also { path += it }) += pt(x3, y3); at = PointF(x3, y3) }
+            override fun curveTo(x1: Float, y1: Float, x2: Float, y2: Float, x3: Float, y3: Float) {
+                val seg = path.lastOrNull() ?: arrayListOf<PointF>().also { path += it }
+                // Points along the curve itself (not its control points, which stand off it): a tie's
+                // or slur's middle is where its bulge is read from.
+                val x0 = at.x; val y0 = at.y
+                for (k in 1..8) {
+                    val t = k / 8f; val u = 1 - t
+                    val bx = u * u * u * x0 + 3 * u * u * t * x1 + 3 * u * t * t * x2 + t * t * t * x3
+                    val by = u * u * u * y0 + 3 * u * u * t * y1 + 3 * u * t * t * y2 + t * t * t * y3
+                    seg += pt(bx, by)
+                }
+                at = PointF(x3, y3)
+                curved += path.size - 1
+            }
             override fun getCurrentPoint(): PointF = at
             override fun closePath() {}
-            override fun endPath() { path.clear() }
+            override fun endPath() { path.clear(); curved.clear() }
             override fun clip(fillType: Path.FillType) {}
             override fun drawImage(pdImage: PDImage) {}
             override fun shadingFill(shadingName: COSName) {}
             override fun strokePath() {
-                for (seg in path) for (i in 1 until seg.size) b.line(seg[i - 1].x, seg[i - 1].y, seg[i].x, seg[i].y)
-                path.clear()
+                // A curve drawn as a line (some engravers stroke their slurs) is a tie or slur as much as a filled one.
+                for ((si, seg) in path.withIndex()) if (si in curved) b.curve(FloatArray(seg.size) { seg[it].x }, FloatArray(seg.size) { seg[it].y })
+                    else b.polyline(FloatArray(seg.size) { seg[it].x }, FloatArray(seg.size) { seg[it].y })
+                path.clear(); curved.clear()
             }
             override fun fillPath(fillType: Path.FillType) {
-                for (seg in path) b.fill(FloatArray(seg.size) { seg[it].x }, FloatArray(seg.size) { seg[it].y })
-                path.clear()
+                for ((si, seg) in path.withIndex()) {
+                    val xs = FloatArray(seg.size) { seg[it].x }; val ys = FloatArray(seg.size) { seg[it].y }
+                    if (si in curved) b.curve(xs, ys) else b.fill(xs, ys)
+                }
+                path.clear(); curved.clear()
             }
             override fun fillAndStrokePath(fillType: Path.FillType) = fillPath(fillType)
         }.processPage(page)

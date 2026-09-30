@@ -79,6 +79,8 @@ class ReadingBenchmark {
     // ---- marking one page ---------------------------------------------------------------------
 
     private var whyShown = 0
+    /** Kinds of change the right readings needed (see -Dinksheets.bench.calibrate). */
+    private val calibration = HashMap<String, Int>()
     private val barShots = java.util.Collections.synchronizedList(ArrayList<BufferedImage>())
     private val barsFrom = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
@@ -98,7 +100,13 @@ class ReadingBenchmark {
         val correct get() = verifiable && causes.isEmpty()
     }
 
-    class PageResult(val bars: List<Bar>, val outside: Int, val shots: List<BufferedImage>)
+    /**
+     * [bars] marked; [outside] heads in no bar read; [choices]: of the bars asked about that were read
+     * wrong (and can be checked), how many; with the right reading among the three offered; among
+     * the next three (asked again); of those asked about though read right, how many; with that
+     * reading offered first.
+     */
+    class PageResult(val bars: List<Bar>, val outside: Int, val shots: List<BufferedImage>, val choices: IntArray = IntArray(5))
 
     private data class ReadHead(val x: Float, val y: Float, val kind: Kind, val bar: Int, val dots: Int, val value: Int?, val alter: Int?, val chord: Boolean = false)
 
@@ -170,6 +178,18 @@ class ReadingBenchmark {
             .filter { (dx, dy) -> allHeads.none { o -> dx in o.x..o.x + o.width && abs(dy - o.y) > sp * 0.3f && abs(dy - o.y) < sp * 3f } }
         val others = key.filter { it.kind == Kind.OTHER }
         val flagGlyphs = key.filter { it.kind in flags }
+        /** How many dots are printed beside head [h] (0, 1, 2). */
+        fun truthDots(h: AnswerKey.Symbol) = dots.filter { (dx, dy) -> dx > h.x + h.width * 0.8f && dx < h.x + h.width + sp * 2.2f && dy > h.y - sp * 0.9f && dy < h.y + sp * 0.4f }
+            .map { it.first }.sorted().fold(ArrayList<Float>()) { acc, x -> if (acc.isEmpty() || x - acc.last() > sp * 0.25f) acc += x; acc }.size.coerceAtMost(2)
+        /** A filled head's printed value (4, 8, 16, 32); null where the PDF does not show it plainly. */
+        fun truthValue(h: AnswerKey.Symbol): Int? {
+            val stem = VectorKey.stemOf(vectors, h.x, h.y, h.width, sp) ?: return null
+            val v = VectorKey.valueOf(vectors, h.x, h.y, h.width, sp, flagGlyphs) ?: return null
+            // Something the key cannot name at the stem's far end may be a flag it cannot see.
+            val end = if (abs(stem.y0 - h.y) > abs(stem.y1 - h.y)) stem.y0 else stem.y1
+            if (v == 4 && others.any { o -> abs(o.x - stem.x) < sp * 1.2f && abs(o.y - end) < sp * 2.5f }) return null
+            return v
+        }
         val taken = BooleanArray(read.size)
         val wrongAt = ArrayList<Pair<AnswerKey.Symbol, String>>()
         for (h in printedHeads) {
@@ -184,8 +204,7 @@ class ReadingBenchmark {
                         vectors.stems.filter { st -> abs(st.x - h.x) < sp * 3 && st.y1 > h.y - sp * 5 && st.y0 < h.y + sp * 5 }.joinToString { "x=${"%.1f".format(it.x - h.x)} y ${"%.1f".format((it.y0 - h.y) / sp)}..${"%.1f".format((it.y1 - h.y) / sp)} sp" })
                 }
             }
-            val dotCount = dots.filter { (dx, dy) -> dx > h.x + h.width * 0.8f && dx < h.x + h.width + sp * 2.2f && dy > h.y - sp * 0.9f && dy < h.y + sp * 0.4f }
-                .map { it.first }.sorted().fold(ArrayList<Float>()) { acc, x -> if (acc.isEmpty() || x - acc.last() > sp * 0.25f) acc += x; acc }.size.coerceAtMost(2)
+            val dotCount = truthDots(h)
             val dotted = dotCount > 0
             if (dotCount != r.dots) { val c = if (dotCount > r.dots) "dot missed" else "dot invented"; cause(r.bar, c); wrongAt += h to c }
             if (!dotted && r.dots > 0 && System.getProperty("inksheets.bench.why") != null) synchronized(this) {
@@ -196,13 +215,9 @@ class ReadingBenchmark {
             if (alter != null && alter != r.alter) { cause(r.bar, "accidental missed/wrong"); wrongAt += h to "accidental $alter read ${r.alter}" }
             if (alter == null && r.alter != null) { cause(r.bar, "accidental invented"); wrongAt += h to "accidental invented" }
             if (h.kind == Kind.HEAD_BLACK) {
-                val stem = VectorKey.stemOf(vectors, h.x, h.y, h.width, sp)
-                val printedValue = if (stem == null) null else VectorKey.valueOf(vectors, h.x, h.y, h.width, sp, flagGlyphs)
-                // Something the key cannot name at the stem's far end may be a flag it cannot see.
-                val unseen = stem != null && printedValue == 4 && others.any { o -> val end = if (abs(stem.y0 - h.y) > abs(stem.y1 - h.y)) stem.y0 else stem.y1
-                    abs(o.x - stem.x) < sp * 1.2f && abs(o.y - end) < sp * 2.5f }
+                val printedValue = truthValue(h)
                 when {
-                    printedValue == null || unseen || r.value == null -> unverifiable += r.bar
+                    printedValue == null || r.value == null -> unverifiable += r.bar
                     printedValue != r.value -> { cause(r.bar, "value"); wrongAt += h to "value $printedValue read ${r.value}" }
                 }
             }
@@ -238,17 +253,77 @@ class ReadingBenchmark {
             }
         }
         val bars = reading.measures.withIndex().filter { it.value.bars <= 1 }.map { (mi, m) -> Bar(m.sure, mi !in unverifiable, causes[mi] ?: emptySet(), m.doubts) }
+
+        /**
+         * Whether bar [mi] read as [events] is what is printed: true, false - or null where the PDF
+         * does not say plainly enough (a value it does not show, a tuplet).
+         */
+        val truthHeads = HashMap<Int, List<AnswerKey.Symbol>>(); val truthRests = HashMap<Int, List<AnswerKey.Symbol>>()
+        fun barRight(mi: Int, events: List<com.inksheets.core.omr.Event>): Boolean? {
+            val m = reading.measures[mi]; val s = reading.staves[m.staff]
+            val tHeads = truthHeads.getOrPut(mi) { printedHeads.filter { barAt(it.x, it.y) == mi } }
+            val tRests = truthRests.getOrPut(mi) { printedRests.filter { barAt(it.x, it.y) == mi } }
+            val cands = events.filterIsInstance<Note>().flatMap { e -> e.steps.map { st -> ReadHead(e.x, s.y(st, e.x.toInt()), when (e.duration.base) { 1 -> Kind.HEAD_WHOLE; 2 -> Kind.HEAD_HALF; else -> Kind.HEAD_BLACK },
+                mi, e.duration.dots, e.duration.base.takeIf { !e.duration.tuplet }, e.accidentals[st], e.steps.size > 1) } }
+            val used = BooleanArray(cands.size)
+            var plain = true
+            for (h in tHeads) {
+                val i = cands.indices.filter { !used[it] && abs(cands[it].y - h.y) <= sp * 0.26f && abs(cands[it].x - h.x) <= sp * (if (cands[it].chord) 2.3f else 1.3f) }.minByOrNull { abs(cands[it].x - h.x) } ?: return false
+                used[i] = true
+                val r = cands[i]
+                if (r.kind != h.kind || truthDots(h) != r.dots) return false
+                val alter = accidentalOf[h]
+                if (alter != r.alter) return false
+                if (h.kind == Kind.HEAD_BLACK) { val v = truthValue(h); if (v == null || r.value == null) plain = false else if (v != r.value) return false }
+            }
+            if (used.any { !it }) return false
+            val cr = events.filterIsInstance<Rest>()
+            val usedR = BooleanArray(cr.size)
+            for (r in tRests) {
+                val i = cr.indices.filter { !usedR[it] && abs(cr[it].x - r.x) <= sp * 1.5f }.minByOrNull { abs(cr[it].x - r.x) } ?: return false
+                usedR[i] = true
+                val want = when (r.kind) { Kind.REST_1 -> 1; Kind.REST_2 -> 2; Kind.REST_4 -> 4; Kind.REST_8 -> 8; else -> 16 }
+                if (cr[i].duration.base != want) return false
+            }
+            if (usedR.any { !it }) return false
+            return if (plain) true else null
+        }
+        // The bars asked about: the three readings offered, and three more when those are turned down.
+        val choices = IntArray(5)
+        val calibrate = System.getProperty("inksheets.bench.calibrate") != null
+        for ((mi, m) in reading.measures.withIndex()) {
+            if (m.sure || m.bars > 1) continue
+            val now = barRight(mi, m.events) ?: continue
+            // Which kinds of change the right reading needed (its cheapest way there), for fitting their costs.
+            if (calibrate && !now) {
+                val right = com.inksheets.core.omr.BarChoices.all(m).filter { it.changes.isNotEmpty() && barRight(mi, it.events) == true }.minByOrNull { it.kinds.size * 100 + it.cost }
+                synchronized(calibration) {
+                    calibration.merge("(bars)", 1, Int::plus)
+                    if (right == null) calibration.merge("(none within two changes)", 1, Int::plus)
+                    else right.kinds.forEach { calibration.merge(it, 1, Int::plus) }
+                }
+            }
+            val offered = com.inksheets.core.omr.BarChoices.of(m, 3)
+            if (!now) {
+                choices[0]++
+                if (offered.any { barRight(mi, it.events) == true }) choices[1]++
+                else if (com.inksheets.core.omr.BarChoices.of(m, 3, rejected = offered.map { it.events }, deeper = true).any { barRight(mi, it.events) == true }) choices[2]++
+            } else {
+                choices[3]++
+                if (offered.firstOrNull()?.changes?.isEmpty() == true) choices[4]++
+            }
+        }
         // Pictures of what the checker called wrong in bars the reader called sure: to check the checker.
         if (System.getProperty("inksheets.bench.why") != null) synchronized(this) {
             wrongAt.filter { (s, _) -> barAt(s.x, s.y).let { b -> b >= 0 && reading.measures[b].sure } }.forEach { (s, why) -> println("  SURE-WRONG ${f.relativeTo(music).path} p$page x=${s.x.toInt()} y=${s.y.toInt()}: $why") }
         }
         val pics = if (!shots) emptyList() else wrongAt.filter { (s, _) -> barAt(s.x, s.y).let { b -> b >= 0 && reading.measures[b].sure } }.take(6).map { (s, why) -> crop(ink, s.x, s.y, sp, "${f.nameWithoutExtension.take(12)} $why") }
-        return PageResult(bars, outside, pics)
+        return PageResult(bars, outside, pics, choices)
     }
 
     // ---- the run ------------------------------------------------------------------------------
 
-    class PartResult(val name: String, val bars: Int, val verifiable: Int, val correct: Int, val sure: Int, val sureVerifiable: Int, val sureCorrect: Int, val outside: Int, val causes: Map<String, Int>) {
+    class PartResult(val name: String, val bars: Int, val verifiable: Int, val correct: Int, val sure: Int, val sureVerifiable: Int, val sureCorrect: Int, val outside: Int, val causes: Map<String, Int>, val choices: IntArray = IntArray(5)) {
         fun row() = "$name\t$bars\t$verifiable\t$correct\t$sure\t$sureVerifiable\t$sureCorrect\t$outside"
     }
 
@@ -266,10 +341,10 @@ class ReadingBenchmark {
         val pool = Executors.newFixedThreadPool(4)
         val futures = parts.map { f ->
             pool.submit<Pair<PartResult, List<BufferedImage>>> {
-                val bars = ArrayList<Bar>(); var outside = 0; val pics = ArrayList<BufferedImage>()
+                val bars = ArrayList<Bar>(); var outside = 0; val pics = ArrayList<BufferedImage>(); val ch = IntArray(5)
                 for (p in 0 until pages) {
                     val r = runCatching { markPage(f, p, scan, shotsDir != null, printed) }.getOrNull() ?: continue
-                    bars += r.bars; outside += r.outside; pics += r.shots
+                    bars += r.bars; outside += r.outside; pics += r.shots; for (k in 0..4) ch[k] += r.choices[k]
                 }
                 val causes = HashMap<String, Int>()
                 // Bars asked about though read right: what the reader doubted.
@@ -277,7 +352,7 @@ class ReadingBenchmark {
                 bars.filter { !it.sure && !it.verifiable }.forEach { b -> causes.merge("FLAGGED, UNVERIFIABLE: " + b.doubts.joinToString("; ") { it.replace(Regex("[0-9.]+"), "#") }, 1, Int::plus) }
                 bars.filter { it.verifiable && !it.correct }.forEach { b -> causes.merge(if (b.causes.size == 1) b.causes.first() else "several: " + b.causes.sorted().joinToString("+"), 1, Int::plus) }
                 PartResult(f.relativeTo(music).path.replace('\\', '/'), bars.size, bars.count { it.verifiable }, bars.count { it.correct },
-                    bars.count { it.sure }, bars.count { it.sure && it.verifiable }, bars.count { it.sure && it.correct }, outside, causes) to pics
+                    bars.count { it.sure }, bars.count { it.sure && it.verifiable }, bars.count { it.sure && it.correct }, outside, causes, ch) to pics
             }
         }
         val done = futures.map { it.get() }
@@ -293,6 +368,15 @@ class ReadingBenchmark {
         val flagged = all.map { it.bars - it.sure }.sorted()
         println("GOAL: parts with 2 or fewer bars flagged ${all.count { it.bars - it.sure <= 2 }}/${all.size}; flagged per part median ${flagged.getOrNull(flagged.size / 2)}, worst ${flagged.lastOrNull()}; " +
             "parts where every sure bar checked is correct ${all.count { it.sureCorrect == it.sureVerifiable }}/${all.size}")
+        val ch = IntArray(5); all.forEach { p -> for (k in 0..4) ch[k] += p.choices[k] }
+        println("CHOICES: of ${ch[0]} bars asked about and read wrong, the right reading among the 3 offered ${pct(ch[1], ch[0])} (${ch[1]}), " +
+            "among the next 3 ${pct(ch[2], ch[0])} (${ch[2]}) - in 6: ${pct(ch[1] + ch[2], ch[0])}; of ${ch[3]} asked about though read right, offered first ${pct(ch[4], ch[3])}")
+        if (calibration.isNotEmpty()) {
+            val bars = calibration["(bars)"] ?: 0; val none = calibration["(none within two changes)"] ?: 0
+            val kinds = calibration.filterKeys { !it.startsWith("(") }
+            println("CALIBRATION: $bars bars read wrong; ${bars - none} have their right reading a change or two away; kinds needed: $kinds")
+            println("COSTS: " + com.inksheets.core.omr.BarChoices.costsFrom(kinds, bars - none).entries.sortedBy { it.value }.joinToString { "\"${it.key}\" to ${"%.2f".format(java.util.Locale.ROOT, it.value)}f" })
+        }
         println("WRONG BARS BY CAUSE: " + causes.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
         // Against the baseline, part by part.
         results.mkdirs()

@@ -120,7 +120,12 @@ object PointerDiagnostics {
      * messages are already in. Shared with the touch handling, which has to put a finger reported
      * against the screen onto the page.
      */
+    /** For tests without a window on a screen: where the window is taken to be (its content's top left). */
+    @Volatile
+    internal var windowAtForTests: Offset? = null
+
     fun canvasOriginOnScreen(): Offset? = runCatching {
+        windowAtForTests?.let { return it + canvasInWindow }
         val scale = displayScale()
         val frame = Frame.getFrames().firstOrNull { it.isShowing } ?: return null
         val origin = frame.locationOnScreen

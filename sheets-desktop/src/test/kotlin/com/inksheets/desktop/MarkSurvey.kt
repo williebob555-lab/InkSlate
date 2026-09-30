@@ -51,7 +51,7 @@ class MarkSurvey {
                             val key = if (special) "$family:${f.name}:$code" else "$family:${uni.codePointAt(0)}"
                             val s = seen.getOrPut(key) { Seen(family, if (special) "code $code (${f.name.take(20)})" else "U+%04X '%s'".format(uni.codePointAt(0), uni)) }
                             s.count++
-                            if (s.pictures.size < 4) {
+                            if (s.pictures.size < 3) {
                                 val img = picture ?: PDFRenderer(doc).renderImageWithDPI(0, dpi, ImageType.RGB).also { picture = it }
                                 if (p.pageIndex() == 0) s.pictures += crop(img, p.xDirAdj * k, p.yDirAdj * k, p.textMatrix.scalingFactorX * k)
                             }
@@ -64,15 +64,15 @@ class MarkSurvey {
         val list = seen.values.sortedByDescending { it.count }
         list.take(80).forEach { println("MARK ${it.family} ${it.text} x${it.count}") }
         System.getProperty("inksheets.shots")?.let { dir ->
-            val rows = list.filter { it.pictures.isNotEmpty() }.take(60)
-            val cell = 90
-            val img = BufferedImage(cell * 5 + 260, rows.size * cell, BufferedImage.TYPE_INT_RGB)
+            val rows = list.filter { it.pictures.isNotEmpty() && !it.text.startsWith("code") }.take(18)
+            val cell = 150
+            val img = BufferedImage(cell * 3 + 300, rows.size * cell, BufferedImage.TYPE_INT_RGB)
             val g = img.createGraphics()
             g.color = Color.WHITE; g.fillRect(0, 0, img.width, img.height)
             rows.forEachIndexed { r, s ->
-                g.color = Color.BLACK; g.font = g.font.deriveFont(11f)
-                g.drawString("${s.family} ${s.text} x${s.count}".take(40), 4, r * cell + 20)
-                s.pictures.forEachIndexed { i, p -> g.drawImage(p, 260 + i * cell, r * cell, cell - 4, cell - 4, null) }
+                g.color = Color.BLACK; g.font = g.font.deriveFont(18f)
+                g.drawString("${s.family} ${s.text.take(8)} x${s.count}", 4, r * cell + 40)
+                s.pictures.forEachIndexed { i, p -> g.drawImage(p, 300 + i * cell, r * cell, cell - 6, cell - 6, null) }
             }
             g.dispose()
             File(dir).mkdirs(); ImageIO.write(img, "png", File(dir, "marks.png"))
@@ -80,7 +80,7 @@ class MarkSurvey {
     }
 
     private fun crop(img: BufferedImage, x: Float, y: Float, size: Float): BufferedImage {
-        val half = (size * 0.9f).toInt().coerceIn(12, 80)
+        val half = (size * 1.1f).toInt().coerceIn(16, 90)
         val out = BufferedImage(half * 2, half * 2, BufferedImage.TYPE_INT_RGB)
         for (yy in 0 until half * 2) for (xx in 0 until half * 2) {
             val sx = (x - half / 2 + xx).toInt(); val sy = (y - half * 1.3f + yy).toInt()

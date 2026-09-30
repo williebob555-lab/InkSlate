@@ -265,8 +265,11 @@ internal object ScoreTools {
             when {
                 numbers.first in clean -> {
                     // Cleaned up: the print hidden, the reading in its place.
-                    out += paper(m, k, 3f, 3f, PAPER)
-                    out += engraved(m, k, INK)
+                    // The paper over the print reaches as far as what is redrawn in its place (a dynamic under it, a high note).
+                    val drawn = engraved(m, k, INK)
+                    val (above, below) = reachOf(m)
+                    out += paper(m, k, above, below, PAPER)
+                    out += drawn
                 }
                 underlay -> {
                     out += engraved(m, k, UNDER)
@@ -289,8 +292,9 @@ internal object ScoreTools {
      * staff runs aslant meets the print either side of it without a step.
      */
     internal fun engraved(m: Measure, k: Float, color: Int): List<PageMark> {
-        if (m.bars > 1) return emptyList()
-        val d = Engraver.aligned(m)
+        // A multi-bar rest redrawn as one: its staff, bar and count (the underlay leaves the print's be).
+        if (m.bars > 1 && color != INK) return emptyList()
+        val d = if (m.bars > 1) Engraver.multiRest(m) else Engraver.aligned(m)
         val out = ArrayList<PageMark>()
         // A point of the drawing (spaces from the bar's left, spaces down from its top line) on the page.
         fun px(xs: Float) = (m.box.left + xs * m.space) * k
@@ -312,6 +316,18 @@ internal object ScoreTools {
             is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) px(mark.points[i]) else py(mark.points[i - 1], mark.points[i]) }), color)
         }
         return out
+    }
+
+    /** How far above the top line and below the bottom one bar [m] redrawn reaches, in spaces: three at least. */
+    private fun reachOf(m: Measure): Pair<Float, Float> {
+        val d = if (m.bars > 1) Engraver.multiRest(m) else Engraver.aligned(m)
+        var top = 0f; var bottom = 4f
+        for (mark in d.marks) when (mark) {
+            is Engraver.Stroke -> { top = minOf(top, mark.y1, mark.y2); bottom = maxOf(bottom, mark.y1, mark.y2) }
+            is Engraver.Symbol -> { top = minOf(top, mark.y - 1.5f); bottom = maxOf(bottom, mark.y + 1.5f) }
+            is Engraver.Slab -> for (i in 1 until mark.points.size step 2) { top = minOf(top, mark.points[i]); bottom = maxOf(bottom, mark.points[i]) }
+        }
+        return maxOf(3f, -top + 0.8f) to maxOf(3f, bottom - 4f + 0.8f)
     }
 
     /**

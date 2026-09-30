@@ -38,7 +38,11 @@ object GlyphShapes {
             Candidate("fermataAbove", Printed.Kind.ARTICULATION, "fermata"), Candidate("fermataBelow", Printed.Kind.ARTICULATION, "fermata"),
             Candidate("dynamicPiano", Printed.Kind.DYNAMIC, "p"), Candidate("dynamicMezzo", Printed.Kind.DYNAMIC, "m"),
             Candidate("dynamicForte", Printed.Kind.DYNAMIC, "f"), Candidate("dynamicRinforzando", Printed.Kind.DYNAMIC, "r"),
-            Candidate("dynamicSforzando", Printed.Kind.DYNAMIC, "s"), Candidate("dynamicZ", Printed.Kind.DYNAMIC, "z")
+            Candidate("dynamicSforzando", Printed.Kind.DYNAMIC, "s"), Candidate("dynamicZ", Printed.Kind.DYNAMIC, "z"),
+            Candidate("dynamicPP", Printed.Kind.DYNAMIC, "pp"), Candidate("dynamicPPP", Printed.Kind.DYNAMIC, "ppp"), Candidate("dynamicMP", Printed.Kind.DYNAMIC, "mp"),
+            Candidate("dynamicMF", Printed.Kind.DYNAMIC, "mf"), Candidate("dynamicFF", Printed.Kind.DYNAMIC, "ff"), Candidate("dynamicFFF", Printed.Kind.DYNAMIC, "fff"),
+            Candidate("dynamicFortePiano", Printed.Kind.DYNAMIC, "fp"), Candidate("dynamicSforzando1", Printed.Kind.DYNAMIC, "sf"),
+            Candidate("dynamicSforzandoPiano", Printed.Kind.DYNAMIC, "sfp"), Candidate("dynamicSforzato", Printed.Kind.DYNAMIC, "sfz"), Candidate("dynamicForzando", Printed.Kind.DYNAMIC, "fz")
         ) + (0..9).map { Candidate("timeSig$it", Printed.Kind.TIME_DIGIT, digit = it) }
     }
 
@@ -80,6 +84,42 @@ object GlyphShapes {
             if (either > 0) best = max(best, both.toFloat() / either)
         }
         return best
+    }
+
+    /** A labelled shape a font draws that no PDF names (see omr/fontglyphs-unnamed.txt): its family, what it is, its raster. */
+    private class Labelled(val family: String, val label: String, val raster: Raster)
+
+    private val labelled: List<Labelled> by lazy {
+        val text = GlyphShapes::class.java.getResourceAsStream("/omr/fontglyphs-unnamed.txt")?.bufferedReader()?.readText() ?: return@lazy emptyList()
+        text.lines().filter { it.isNotBlank() && !it.startsWith("#") }.mapNotNull { l ->
+            val p = l.split(' ', limit = 4)
+            if (p.size < 4 || p[1] == "?") return@mapNotNull null
+            val contours = p[3].split('|').map { c -> c.split(',').map { it.toFloat() }.toFloatArray() }
+            raster(contours)?.let { Labelled(p[0], p[1], it) }
+        }
+    }
+
+    /** What a label says a shape is; null for one to leave be (a parenthesis, a line's piece). */
+    private fun meaning(label: String): Match? {
+        if (label == "IGNORE") return null
+        val (kind, name) = label.split(':').let { it[0] to it.getOrElse(1) { "" } }
+        return when (kind) {
+            "HEAD_X" -> Match(Printed.Kind.HEAD_BLACK, "x", 1f)
+            "TIME_DIGIT" -> Match(Printed.Kind.TIME_DIGIT, "", 1f, name.toIntOrNull() ?: -1)
+            else -> runCatching { Match(Printed.Kind.valueOf(kind), name, 1f) }.getOrNull()
+        }
+    }
+
+    /**
+     * A character of font [family] (see [Printed.familyOf]; "-special" for its special font) that
+     * its PDF does not name, by its outline ([contours], staff spaces, y down): the shape the font
+     * draws it with, as labelled from the library. Returns (known, meaning): known false when this
+     * font draws nothing like it (to be told another way), meaning null for a shape to leave be.
+     */
+    fun identify(family: String, contours: List<FloatArray>): Pair<Boolean, Match?> {
+        val r = raster(contours) ?: return false to null
+        val best = labelled.filter { it.family == family }.maxByOrNull { overlap(r, it.raster) } ?: return false to null
+        return if (overlap(r, best.raster) >= 0.85f) true to meaning(best.label) else false to null
     }
 
     /**

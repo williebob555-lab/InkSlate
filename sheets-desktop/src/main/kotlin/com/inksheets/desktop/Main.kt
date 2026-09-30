@@ -11,13 +11,20 @@ import java.io.File
  * InkSheets on Windows and Linux: InkSlate's desktop app, with the music library as its Home and
  * the action buttons over the song in front - one [SheetsState] behind both.
  */
-fun main() = runAs("InkSheets") {
+fun main() = runAs("InkSheets") { installInkSheets() }
+
+/**
+ * InkSlate's desktop app made InkSheets: its flavour, Home, buttons and hooks, all on one
+ * [SheetsState] - here rather than in [main] so a test runs exactly the app that ships.
+ * [prepare] sees the platform before the state is made (a test points the library somewhere).
+ */
+fun installInkSheets(prepare: (DesktopSheetsPlatform) -> Unit = {}): () -> SheetsState {
     AppFlavor.fingerPans = true
     AppFlavor.musicView = true
     // A music stand, not a window among windows: the whole screen, Home too. Quit is in the menu.
     AppFlavor.alwaysFullscreen = true
     var openFile: ((File) -> Unit)? = null
-    val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }) }
+    val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }.also(prepare)) }
     AppFlavor.home = { open, openSettings ->
         openFile = open
         SheetsHome(state, onOpenSettings = openSettings)
@@ -40,4 +47,5 @@ fun main() = runAs("InkSheets") {
         com.inksheets.ui.NativePickers.folder = { title, start -> com.inkslate.desktop.WindowsFileDialog.folder(title, start) }
     }
     AppFlavor.pagesActions = { path, pages, close -> com.inksheets.ui.MusicPageActions(state, path, pages, close) }
+    return { state }
 }

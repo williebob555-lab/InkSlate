@@ -175,7 +175,12 @@ data class Measure(
     /** How thick its staff's lines are printed, in pixels (0 when not known). */
     val lineWidth: Float = 0f,
     /** Dynamics, hairpins, slurs and words over or under it. */
-    val directions: List<Direction> = emptyList()
+    val directions: List<Direction> = emptyList(),
+    /**
+     * Notes the reader saw here and let go (too faint, a stem it thought another's): what it may
+     * have missed, for offering other readings of the bar ([BarChoices]).
+     */
+    val maybe: List<Event> = emptyList()
 ) {
     /** Line [i] (0 the top) at [x] across the bar (page pixels), as printed. */
     fun lineAt(i: Int, x: Float): Float {

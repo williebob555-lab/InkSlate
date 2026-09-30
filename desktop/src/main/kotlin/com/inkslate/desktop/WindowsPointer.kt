@@ -66,6 +66,12 @@ object WindowsPointer {
                         wParam: WPARAM,
                         lParam: LPARAM
                     ): LRESULT {
+                        // Windows asks which of its own pen and touch habits this window wants: none.
+                        // Left on, a finger held still turns into a right click (after a pause and a
+                        // ring drawn round it), a quick stroke into a "flick" that Windows turns into
+                        // back, forward or scrolling - fighting the page's own swipes and taps - and
+                        // taps get Windows' ripple drawn over the music. Answered here, not passed on.
+                        if (msg == WM_TABLET_QUERYSYSTEMGESTURESTATUS) return LRESULT(NO_SYSTEM_GESTURES)
                         // Whatever happens in here, the toolkit must still get its message: a
                         // window whose messages stop arriving is a window that stops working.
                         runCatching { read(msg, wParam, lParam) }
@@ -78,6 +84,8 @@ object WindowsPointer {
                     }
                 }
                 val previous = user32.SetWindowLongPtrW(hwnd, GWLP_WNDPROC, proc)
+                // The same asked for the other way Windows looks: a property on the window itself.
+                runCatching { user32.SetPropW(hwnd, TABLET_PROPERTY, Pointer(NO_SYSTEM_GESTURES)) }
                 if (previous != null && Pointer.nativeValue(previous) != 0L) {
                     // The callback has to be reachable from Kotlin for as long as Windows may
                     // call it. Letting it be collected is a crash inside the message loop.
@@ -98,7 +106,11 @@ object WindowsPointer {
 
     fun uninstall() {
         runCatching {
-            hooks.forEach { user32.SetWindowLongPtrW(it.hwnd, GWLP_WNDPROC, it.previous) }
+            hooks.forEach {
+                user32.SetWindowLongPtrW(it.hwnd, GWLP_WNDPROC, it.previous)
+                // Windows' own pen and touch habits back as they were, the property taken off.
+                user32.RemovePropW(it.hwnd, TABLET_PROPERTY)
+            }
         }
         hooks.clear()
         active = false
@@ -210,6 +222,18 @@ object WindowsPointer {
     // ---- the bindings --------------------------------------------------------
 
     private const val GWLP_WNDPROC = -4
+
+    /** The window property the tablet service reads for the same. */
+    private const val TABLET_PROPERTY = "MicrosoftTabletPenServiceProperty"
+
+    /** Windows asking a window which of its pen and touch habits to leave off. */
+    private const val WM_TABLET_QUERYSYSTEMGESTURESTATUS = 0x02CC
+
+    /**
+     * All of them: press-and-hold (the right click), the tap and barrel ripples, flicks and the keys
+     * they send, and the smoothing of scrolls made from a finger.
+     */
+    private const val NO_SYSTEM_GESTURES = 0x00000001L or 0x00000008L or 0x00000010L or 0x00010000L or 0x00080000L or 0x00100000L
     private const val WM_TOUCH = 0x0240
     private const val WM_POINTERUPDATE = 0x0245
     private const val WM_POINTERDOWN = 0x0246
@@ -253,6 +277,8 @@ object WindowsPointer {
             lParam: LPARAM
         ): LRESULT
 
+        fun SetPropW(hWnd: HWND, name: String, value: Pointer): Boolean
+        fun RemovePropW(hWnd: HWND, name: String): Pointer?
         fun GetMessageExtraInfo(): LPARAM
         fun GetPointerType(pointerId: Int, pointerType: IntByReference): Boolean
         fun GetPointerPenInfo(pointerId: Int, penInfo: POINTER_PEN_INFO): Boolean
