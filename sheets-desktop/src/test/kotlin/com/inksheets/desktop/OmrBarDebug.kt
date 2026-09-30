@@ -53,6 +53,8 @@ class OmrBarDebug {
             println("  trace x=$x: $offs")
         }
         println("barlines found: ${reading.barlines[m.staff]}")
+        println("-- in the reading itself:")
+        Recognizer(debug = true).read(ink)
         loud.barlines(ink, clean, s, t, all.filter { it.stemX >= 0 }.map { it.stemX }, all)
     }
 }

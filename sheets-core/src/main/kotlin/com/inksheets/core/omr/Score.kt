@@ -36,16 +36,20 @@ data class Pitch(val step: Int, val octave: Int, val alter: Int = 0) {
     }
 }
 
-/** A note value: [base] 1 whole, 2 half, 4 quarter, 8, 16, 32; with dots. */
+/**
+ * A note value: [base] 1 whole, 2 half, 4 quarter, 8, 16, 32; with dots; and in a tuplet,
+ * [actual] notes in the time of [normal] (a triplet: 3 in the time of 2).
+ */
 @Serializable
-data class Duration(val base: Int, val dots: Int = 0) {
+data class Duration(val base: Int, val dots: Int = 0, val actual: Int = 1, val normal: Int = 1) {
     /** Length in quarter notes. */
     val quarters: Double get() {
         var q = 4.0 / base
         var add = q
         repeat(dots) { add /= 2; q += add }
-        return q
+        return q * normal / actual
     }
+    val tuplet: Boolean get() = actual != normal
     val beams: Int get() = when (base) { 8 -> 1; 16 -> 2; 32 -> 3; else -> 0 }
 }
 

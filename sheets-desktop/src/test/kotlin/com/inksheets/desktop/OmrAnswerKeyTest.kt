@@ -54,7 +54,7 @@ class OmrAnswerKeyTest {
 
     /** One page marked; misses and inventions drawn into [missed] and [invented]. */
     fun mark(ink: Ink, key: List<AnswerKey.Symbol>, reading: Recognizer.PageReading, label: String,
-             missed: MutableList<BufferedImage>? = null, invented: MutableList<BufferedImage>? = null): Tally {
+             missed: MutableList<BufferedImage>? = null, invented: MutableList<BufferedImage>? = null, missedRests: MutableList<BufferedImage>? = null, inventedRests: MutableList<BufferedImage>? = null): Tally {
         val t = Tally()
         val sp = reading.space
         // Printed heads of full size only: cue and grace notes are smaller, and left to another day.
@@ -90,14 +90,16 @@ class OmrAnswerKeyTest {
         t.keyRests = keyRests.size; t.readRests = readRests.size
         for (r in keyRests) {
             val i = readRests.indices.filter { !restTaken[it] && abs(readRests[it].first.x - r.x) <= sp * 1.5f && reading.staves[readRests[it].second].let { s -> r.y > s.top - sp * 3 && r.y < s.bottom + sp * 3 } }
-                .minByOrNull { abs(readRests[it].first.x - r.x) } ?: continue
+                .minByOrNull { abs(readRests[it].first.x - r.x) } ?: run { t.confusion.merge("missed ${r.kind}", 1, Int::plus); missedRests?.let { if (it.size < 40) it += crop(ink, r.x, r.y, sp, "$label missed ${r.kind}") }; null } ?: continue
             restTaken[i] = true
             t.restsFound++
             val want = when (r.kind) { Kind.REST_1 -> 1; Kind.REST_2 -> 2; Kind.REST_4 -> 4; Kind.REST_8 -> 8; else -> 16 }
             if (readRests[i].first.duration.base == want) t.restKindRight++
+
             val c = "${r.kind}->r${readRests[i].first.duration.base}"; t.confusion[c] = (t.confusion[c] ?: 0) + 1
         }
         t.readRestsRight = restTaken.count { it }
+
         return t
     }
 
@@ -141,6 +143,8 @@ class OmrAnswerKeyTest {
         var explained = 0
         val pitchShots = ArrayList<BufferedImage>()
         val neverShots = ArrayList<BufferedImage>()
+        val restShots = ArrayList<BufferedImage>()
+        val inventedRestShots = ArrayList<BufferedImage>()
         for (f in keyed(want)) {
             val (ink, dpi) = OmrRealPagesTest().renderAt(f, 0) ?: continue
             val raw = AnswerKey.read(f, 0, dpi) ?: continue
@@ -157,7 +161,16 @@ class OmrAnswerKeyTest {
             val shift = fracs.getOrNull(fracs.size / 2)?.takeIf { abs(it) > 0.1f }?.let { it * reading.space / 2 } ?: 0f
             if (shift != 0f) println("  key moved ${"%.1f".format(shift)} px")
             val key = raw.map { it.copy(y = it.y - shift) }
-            // Each printed head missed: never found as a head at all, or found and lost after.
+            // Each printed eighth rest missed: how well the rest's shape fitted near it.
+            if (System.getProperty("inksheets.omr.why") != null) {
+                val (t0, _) = recognizer.metrics(ink)!!
+                val clean = recognizer.withoutLines(ink, reading.staves, t0)
+                val readRests = reading.measures.flatMap { m -> m.events.filterIsInstance<Rest>() }
+                key.filter { it.kind == Kind.REST_8 }.filter { r -> readRests.none { abs(it.x - r.x) <= reading.space * 1.5f && abs(reading.staves.minBy { s -> abs((s.top + s.bottom) / 2f - r.y) }.let { (it.top + it.bottom) / 2f } - r.y) < reading.space * 4 } }.take(6).forEach { r ->
+                    val s = reading.staves.minBy { abs((it.top + it.bottom) / 2f - r.y) }
+                    println("  rest missed ${f.nameWithoutExtension.take(20)} x=${r.x.toInt()}: " + recognizer.explainRest(clean, s, r.x.roundToInt(), r.y.roundToInt()))
+                }
+            }            // Each printed head missed: never found as a head at all, or found and lost after.
             if (System.getProperty("inksheets.omr.why") != null) {
                 val (t0, _) = recognizer.metrics(ink)!!
                 val clean = recognizer.withoutLines(ink, reading.staves, t0)
@@ -201,7 +214,7 @@ class OmrAnswerKeyTest {
                 val step = ((h.y - s0.lineY(0, h.x.toInt())) / (s0.space / 2)).let { Math.round(it) }
                 offsets += h.y - s0.y(step, h.x.toInt())
             }
-            val t = mark(ink, key, reading, f.nameWithoutExtension.take(24), if (shots != null) missed else null, if (shots != null) invented else null)
+            val t = mark(ink, key, reading, f.nameWithoutExtension.take(24), if (shots != null) missed else null, if (shots != null) invented else null, if (shots != null) restShots else null, if (shots != null) inventedRestShots else null)
             all.add(t)
             println("${f.relativeTo(music).path}: $t")
         }
@@ -210,6 +223,6 @@ class OmrAnswerKeyTest {
         println("NEVER FOUND: $never")
         println("ALL: $all")
         println("CONFUSION: " + all.confusion.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
-        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")) }
+        if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")); sheet(restShots, File(shots, "key-rests.png")); sheet(inventedRestShots, File(shots, "key-rests-invented.png")) }
     }
 }

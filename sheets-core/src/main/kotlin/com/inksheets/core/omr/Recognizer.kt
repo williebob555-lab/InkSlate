@@ -284,7 +284,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }
             }
             val isStem = stems.any { abs(it - centre) <= t + 2 }
-            val throughHead = heads.any { h -> centre in h.x + 2..h.x + tpl(h.kind, s.space).ink.width - 4 }
+            // Through a head's middle half: a head found a few pixels off, or a wide whole note, may reach a barline at its edge.
+            val throughHead = heads.any { h -> val w = tpl(h.kind, s.space).ink.width; centre in h.x + w / 4..h.x + 3 * w / 4 }
             val headNear = isStem || throughHead || (stems.isEmpty() && listOf(runTop, runBottom).any { yEnd -> touching(-1, yEnd) || touching(1, yEnd) })
             val staysOnStaff = above < s.space * 0.6f && below < s.space * 0.6f
             val reachesAnotherStaff = above > s.space * 3 || below > s.space * 3
@@ -545,6 +546,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return best
     }
 
+    /** The best eighth-rest match within a space of ([x], [y]) on [s], and where: for finding out why a rest was not read. */
+    fun explainRest(clean: Ink, s: Staff, x: Int, y: Int): String {
+        var best = -1f; var at = ""
+        for (dx in -(s.space.toInt())..s.space.toInt()) for (step in 1..7) {
+            val v = score(clean, "rest8th", s.space, x + dx, s.y(step, x + dx).roundToInt())
+            if (v > best) { best = v; at = "dx $dx step $step" }
+        }
+        return "rest8th ${"%.2f".format(best)} at $at"
+    }
+
     /** A notehead found: where, which kind, how sure. */
     class Head(val x: Int, val step: Int, val y: Int, val kind: String, var score: Float) {
         var stemX = -1
@@ -719,6 +730,37 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             x = x2 + 1
         }
         return out
+    }
+
+    /**
+     * The hooks of a flag-like rest from [x], [w] wide, on [s]: each a small round blob on the
+     * page with thin strokes worn away (its slanting stem gone).
+     */
+    private fun hooks(s: Staff, x: Int, w: Int): Int {
+        val ink = solid ?: return 0
+        val sp = s.space
+        val x0 = x - (sp * 0.2f).toInt(); val x1 = x + w + (sp * 0.2f).toInt()
+        val y0 = s.y(-1, x).roundToInt(); val y1 = s.y(9, x).roundToInt()
+        val seen = HashSet<Int>()
+        var n = 0
+        for (yy in y0..y1) for (xx in x0..x1) {
+            if (!ink[xx, yy] || (yy * ink.width + xx) in seen) continue
+            // The blob here: how far it spreads.
+            val stack = ArrayDeque<Int>(); stack += yy * ink.width + xx
+            var l = xx; var r = xx; var t = yy; var b = yy; var size = 0
+            while (stack.isNotEmpty() && size < 2_000) {
+                val q = stack.removeLast()
+                if (!seen.add(q)) continue
+                val px = q % ink.width; val py = q / ink.width
+                if (!ink[px, py]) continue
+                size++; l = min(l, px); r = max(r, px); t = min(t, py); b = max(b, py)
+                if (px > x0 - 5) stack += q - 1; if (px < x1 + 5) stack += q + 1
+                stack += q - ink.width; stack += q + ink.width
+            }
+            val bw = r - l + 1; val bh = b - t + 1
+            if (bw in (sp * 0.25f).toInt()..(sp * 0.75f).toInt() && bh in (sp * 0.25f).toInt()..(sp * 0.75f).toInt() && size >= bw * bh * 0.5f) n++
+        }
+        return n
     }
 
     /** A stroke rising from the left edge, or falling from the right, of a head-sized ring at ([x], [y]). */
@@ -925,7 +967,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 (if (b.isEmpty() || s.right - b.last() > s.space * 3) listOf((b.lastOrNull() ?: s.left) to s.right) else emptyList())
             val inSpan = HashSet<Head>()
             for ((i, span) in spans.withIndex()) {
-                val from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
+                var from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
+                // A change of time at a bar's start: read, and in force from here.
+                var timeHere = false
+                if (i > 0) timeAt(clean, s, from)?.let { (sig, end) -> if (end < span.second - s.space) { carry.time = sig; from = end; timeHere = true } }
                 inSpan += allHeads.filter { it.x >= from - 2 && it.x < span.second - (s.space * 0.2f).toInt() }
                 val to = span.second - (s.space * 0.2f).toInt()
                 val box = Box(span.first, s.top, span.second, s.bottom)
@@ -940,16 +985,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         showsTime = i == 0 && showsTime, doubts = if (restBars == 0) listOf("rest of how many bars?") else emptyList(), bars = max(1, restBars))
                     number += max(1, restBars)
                 } else {
-                val events = eventsIn(clean, s, from, to, t, carry, allHeads.filter { it.x >= from - 2 && it.x < to })
+                var events = eventsIn(clean, s, from, to, t, carry, allHeads.filter { it.x >= from - 2 && it.x < to })
+                // Too long a bar: triplets read as plain notes, most often.
+                var guessedTuplets = false
+                if (events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) tuplets(clean, s, events, carry.time.quarters)?.let { (e, printed) -> events = e; guessedTuplets = !printed }
                 val m = Measure(
                     number++, page, si, box, s.space,
                     carry.clef, carry.key, carry.time, events,
-                    showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey, showsTime = i == 0 && showsTime
+                    showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey, showsTime = (i == 0 && showsTime) || timeHere
                 )
                 val doubts = ArrayList<String>()
                 val q = m.quarters
                 if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty()) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
                 if (events.isEmpty()) doubts += "nothing read"
+                if (guessedTuplets) doubts += "triplets taken to make the bar add up, no 3 seen"
                 if (i == 0 && timeUnread) doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
                 // Another engraver's heads match these a little less well and are read right: only
                 // a weak match is a doubt.
@@ -1004,6 +1053,69 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         val bars = digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }
         return bars to start
+    }
+
+    /**
+     * A bar that comes to more than its time: groups of three equal notes (or rests) read as plain
+     * are, most often, triplets - three in the time of two. The fewest such groups that make the
+     * bar come out exactly, those with a "3" printed by them first: (events, every group had its
+     * 3); null when no choice of groups makes it come out.
+     */
+    private fun tuplets(clean: Ink, s: Staff, events: List<Event>, expected: Double): Pair<List<Event>, Boolean>? {
+        val sorted = events.sortedBy { it.x }
+        val excess = sorted.sumOf { it.duration.quarters } - expected
+        if (excess <= 1e-6) return null
+        val windows = (0..sorted.size - 3).filter { i ->
+            val d = sorted[i].duration
+            d.base >= 4 && d.dots == 0 && !d.tuplet && (1..2).all { sorted[i + it].duration == d }
+        }
+        if (windows.isEmpty()) return null
+        val sp = s.space
+        val marks = HashMap<Int, Boolean>()
+        fun marked(i: Int) = marks.getOrPut(i) {
+            val x0 = sorted[i].x.toInt() - (sp * 0.5f).toInt(); val x1 = sorted[i + 2].x.toInt() + (sp * 1.5f).toInt()
+            printedThree(clean, s, x0, x1)
+        }
+        var best: List<Int>? = null; var bestMarks = -1; var tie = false
+        fun search(from: Int, chosen: List<Int>, saved: Double) {
+            if (abs(saved - excess) < 1e-6) {
+                val m = chosen.count { marked(it) }
+                val b = best
+                when {
+                    b == null || chosen.size < b.size || (chosen.size == b.size && m > bestMarks) -> { best = chosen; bestMarks = m; tie = false }
+                    chosen.size == b.size && m == bestMarks -> tie = true
+                }
+                return
+            }
+            if (saved > excess + 1e-6 || chosen.size >= 4) return
+            for (i in windows) if (i >= from) search(i + 3, chosen + i, saved + sorted[i].duration.quarters)
+        }
+        search(0, emptyList(), 0.0)
+        val chosen = best ?: return null
+        // Two ways alike, neither printed: no telling which notes are the triplet.
+        if (tie && bestMarks < chosen.size) return null
+        val inTuplet = chosen.flatMap { listOf(it, it + 1, it + 2) }.toSet()
+        val out = sorted.mapIndexed { k, e ->
+            if (k !in inTuplet) e else when (e) {
+                is Note -> e.copy(duration = e.duration.copy(actual = 3, normal = 2))
+                is Rest -> e.copy(duration = e.duration.copy(actual = 3, normal = 2))
+            }
+        }
+        return out to (bestMarks == chosen.size)
+    }
+
+    /** Whether a small "3" - a tuplet's number, italic or upright - is printed above or below [x0]..[x1] on [s]. */
+    private fun printedThree(clean: Ink, s: Staff, x0: Int, x1: Int): Boolean {
+        val sp = s.space
+        val bands = listOf(s.y(-14, x0).roundToInt() to s.y(-2, x0).roundToInt(), s.y(10, x0).roundToInt() to s.y(22, x0).roundToInt())
+        for (size in listOf(0.5f, 0.6f, 0.7f)) for ((a, b) in bands) {
+            var y = a
+            while (y <= b) {
+                for (x in x0..x1 step 2) if (score(clean, "timeSig3", sp * size, x, y) > 0.55f) return true
+                y += 2
+            }
+        }
+        return false
     }
 
     private fun fmt(q: Double) = if (q == q.toLong().toDouble()) q.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, q).trimEnd('0')
@@ -1150,23 +1262,44 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         // Rests, where no note is.
         val rests = ArrayList<Pair<Rest, Float>>()
-        for ((name, base, step) in listOf(Triple("restQuarter", 4, 4), Triple("rest8th", 8, 4), Triple("rest16th", 16, 4), Triple("restHalf", 2, 4), Triple("restWhole", 1, 2))) {
+        // Strokes the staff's full height - a barline's thick stroke, a repeat's, a stem - where no
+        // rest can be: none is that tall.
+        val upright = (from until to).filter { x -> val a = s.lineY(0, x).roundToInt(); val b = s.lineY(4, x).roundToInt(); (a..b).count { clean[x, it] } >= (b - a + 1) * 0.92f }
+        // Quarter, eighth and sixteenth rests are moved a space up or down to make room for
+        // another voice's notes: looked for there too, held to a little more.
+        val shifted = listOf(4 to 0f, 2 to 0.04f, 6 to 0.04f, 3 to 0.06f, 5 to 0.06f)
+        for ((name, base, step0) in listOf(Triple("restQuarter", 4, 4), Triple("rest8th", 8, 4), Triple("rest16th", 16, 4), Triple("restHalf", 2, 4), Triple("restWhole", 1, 2))) {
             for (x in from until to) {
                 if (taken.any { (a, b) -> x in a - (sp * 0.5f).toInt()..b }) continue
-                val y = s.y(step, x).roundToInt()
-                val sc = score(clean, name, sp, x, y)
+                if (upright.any { abs(it - x) < sp * 0.6f || (it > x && it < x + sp * 1.2f) }) continue
+                var sc = -1f; var at = step0
+                for ((step, extra) in if (base >= 4) shifted else listOf(step0 to 0f)) {
+                    val v = score(clean, name, sp, x, s.y(step, x).roundToInt()) - extra
+                    if (v > sc) { sc = v; at = step }
+                }
                 // Rests differ from font to font more than heads do; the small rectangles (whole,
                 // half) are easily matched by other things, so they are held to more.
-                if (sc > (if (base <= 2) 0.72f else 0.58f)) {
+                // An eighth or sixteenth rest in another font's shape fits a little less: taken if it
+                // has the round hook no flag has.
+                val hooked = (base == 8 || base == 16) && sc in 0.48f..0.58f && hooks(s, x, (MusicGlyphs[name].advance * sp).toInt()) >= 1
+                // Nor where a beam runs through: a long bar across the rest's place.
+                val beam = base >= 4 && (s.y(0, x).roundToInt()..s.y(8, x).roundToInt()).any { yy -> (x..x + (sp * 1.6f).toInt()).all { (solid ?: clean)[it, yy] } }
+                if ((sc > (if (base <= 2) 0.72f else 0.58f) || hooked) && !beam) {
                     val right = x + (MusicGlyphs[name].advance * sp).toInt()
                     val dots = if (dotIn(clean, sp, right, s.y(2, right).roundToInt(), right + (sp * 1.0f).toInt(), s.y(4, right).roundToInt())) 1 else 0
-                    rests += Rest(Duration(base, dots), x.toFloat()) to sc
+                    // An eighth or sixteenth rest is told by its hooks - one, two - counted, not by
+                    // which font's outline fitted it best.
+                    val kind = if (base == 8 || base == 16) when (hooks(s, x, (MusicGlyphs[name].advance * sp).toInt())) { 1 -> 8; 2 -> 16; 3 -> 32; else -> base } else base
+                    rests += Rest(Duration(kind, dots), x.toFloat()) to sc
                 }
             }
         }
         // Half and whole rests in any font: a solid block a space or so wide, sitting on the middle
         // line (half) or hanging from the line above it (whole).
         rests += blockRests(clean, s, from, to, taken)
+        // A sixteenth rest is an eighth rest and a hook more: the eighth's shape fits its top as
+        // well. Where a sixteenth fits nearly as well in the same place, it is one.
+        rests.removeAll { (r, sc) -> r.duration.base == 8 && rests.any { (o, osc) -> o.duration.base == 16 && abs(o.x - r.x) < sp * 0.6f && osc >= sc - 0.08f } }
         rests.sortByDescending { it.second }
         val keptRests = ArrayList<Rest>()
         for ((r, _) in rests) if (keptRests.none { abs(it.x - r.x) < sp * 1.2f }) keptRests += r
