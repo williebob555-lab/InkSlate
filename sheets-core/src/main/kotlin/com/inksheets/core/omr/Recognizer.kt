@@ -1177,7 +1177,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Read whole, in whatever typeface it is printed; the music font's digits if that finds none.
         // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
         val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt())
-        val bars = printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }
+        val bars = (printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }).takeIf { it in 0..300 } ?: 0
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
         if (!serifs && bars < 2) return null
         return bars to start

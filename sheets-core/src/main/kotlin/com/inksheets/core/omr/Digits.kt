@@ -98,6 +98,8 @@ object Digits {
         // The figures of one number stand on one line, side by side: those nearest the line asked.
         val lowest = figures.maxOf { it.third }
         val one = figures.filter { lowest - it.third <= maxH / 4 }.sortedBy { it.second }
+        // A bar number or a rest's count is a figure or three, side by side: more is a line of text.
+        if (one.size > 3 || one.zipWithNext().any { (a, b) -> b.second - a.second > maxH * 1.2f }) return null
         val value = one.fold(0) { v, (d, _, _) -> v * 10 + d }
         return value to (one.first().second + one.last().second) / 2
     }

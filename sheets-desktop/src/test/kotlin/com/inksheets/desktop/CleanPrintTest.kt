@@ -67,10 +67,13 @@ class CleanPrintTest {
                 back += r.measures
                 r.measures.lastOrNull()?.let { n2 = it.number + it.bars }
             }
+            // Bar for bar in order when as many came back: where the source was read with a gap (its
+            // printed numbers said a bar was missed), the reprint's bars run on without one, and are
+            // counted so until its next line's number puts them right.
             val before = read.associateBy { it.number }
             var same = 0; var compared = 0
-            for (m in back) {
-                val o = before[m.number] ?: continue
+            for ((i, m) in back.withIndex()) {
+                val o = (if (back.size == read.size) read[i] else before[m.number]) ?: continue
                 compared++
                 if (o.events.map(::describe) == m.events.map(::describe) && o.bars == m.bars) same++
                 else if (compared - same <= 8) println("  m${m.number}: printed ${o.events.map(::describe)} (${o.bars}), read back ${m.events.map(::describe)} (${m.bars})")
