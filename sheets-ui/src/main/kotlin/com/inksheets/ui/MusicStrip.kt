@@ -163,6 +163,10 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         StripButton(Icons.Default.MoreVert, "More", "Save as MIDI, the notes read", btn, named) { more = true }
                         DropdownMenu(more, onDismissRequest = { more = false }) {
+                            DropdownMenuItem(text = { Text(if (ScoreTools.cues) "Hide cue notes" else "Cue notes before each entry") }, onClick = {
+                                more = false
+                                ScoreTools.showCues(state, !ScoreTools.cues)
+                            })
                             DropdownMenuItem(text = { Text("Save as a MIDI file") }, onClick = {
                                 more = false
                                 if (file != null) ScoreTools.said = exportMidi(state, file, score)

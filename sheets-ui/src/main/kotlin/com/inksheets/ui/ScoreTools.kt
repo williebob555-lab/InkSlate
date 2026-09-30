@@ -9,6 +9,8 @@ import com.inkslate.core.Perform
 import com.inksheets.core.omr.Engraver
 import com.inksheets.core.omr.Measure
 import com.inksheets.core.omr.Midi
+import com.inksheets.core.omr.Note
+import com.inksheets.core.omr.Rest
 import com.inksheets.core.omr.MusicGlyphs
 import com.inksheets.core.omr.Score
 import com.inksheets.core.omr.ScorePlayer
@@ -225,6 +227,7 @@ internal object ScoreTools {
     private const val NOW = 0x4043A047               // the bar playing
     private const val FOUND = 0x55FFB300             // the bar gone to
     private const val OFF = 0xE0D32F2F.toInt()       // a bar that sounded off
+    private const val CUE = 0xD0455A64.toInt()       // cue notes: small, slate
 
     internal fun marks(path: String, page: Int, width: Float, height: Float): List<PageMark>? {
         pageWidth[path to page] = width
@@ -233,12 +236,14 @@ internal object ScoreTools {
         val live = playing?.first
         val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
         val off = Listener.offBars.toSet()
-        if (!underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty()) return null
+        val cueHere = if (cues) cueCache[path].orEmpty() else emptyMap()
+        if (!underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
         val key = path to page
         marksCache[key]?.let { (v, m) -> if (v == version) return m }
         val k = scaleOf(score, page, width) ?: return null
         val out = ArrayList<PageMark>()
-        for (m in score.measures.filter { it.page == page }) {
+        for ((index, m) in score.measures.withIndex()) {
+            if (m.page != page) continue
             val sp = m.space * k
             val left = m.box.left * k; val right = m.box.right * k
             val top = m.box.top * k; val bottom = m.box.bottom * k
@@ -252,6 +257,7 @@ internal object ScoreTools {
             if (flash != null && flash in numbers) out += PageMark.rect(left, top - sp * 2.5f, right, bottom + sp * 2.5f, FOUND)
             // A bar that sounded off when practised: a red bar over it, above the staff - not over the notes.
             if (numbers.any { it in off }) out += PageMark.rect(left + sp * 0.3f, top - sp * 3.4f, right - sp * 0.3f, top - sp * 2.9f, OFF)
+            cueHere[index]?.let { out += cueMarks(it, left, right, top, sp) }
             when {
                 numbers.first in clean -> {
                     // Cleaned up: the print hidden, the reading in its place.
@@ -439,6 +445,72 @@ internal object ScoreTools {
     }
 
     private var ensemble: com.inksheets.core.omr.EnsemblePlayer? = null
+
+    // ---- cue notes ---------------------------------------------------------------------------
+
+    /** Cues shown: before each entry after a long rest, what another part plays, small, over the staff. */
+    var cues by mutableStateOf(false)
+        private set
+
+    /** For each part (path): the rest bar to draw a cue over (by index), and the cue's bars. */
+    private val cueCache = HashMap<String, Map<Int, List<Measure>>>()
+
+    /** Show [map]'s cues on [path] (a test). */
+    internal fun showCuesFor(path: String, map: Map<Int, List<Measure>>) { cues = true; cueCache[path] = map; changed() }
+
+    fun showCues(s: SheetsState, on: Boolean) {
+        cues = on
+        if (!on) { changed(); return }
+        val path = s.currentPath ?: return
+        readBand(s) {
+            cueCache[path] = cuesFor(s, path)
+            said = if (cueCache[path].isNullOrEmpty()) "No long rests to cue here" else null
+            changed()
+        }
+    }
+
+    /** The entries after four bars' rest or more, and the busiest other part's two bars before each. */
+    private fun cuesFor(s: SheetsState, path: String): Map<Int, List<Measure>> {
+        val mine = scoreOf(path) ?: return emptyMap()
+        return cueBars(mine, otherParts(s).mapNotNull { (_, f) -> Transcriber.cached(s, f) })
+    }
+
+    /** Cues for [mine] from [others]: by the index of the rest bar each is drawn over. */
+    internal fun cueBars(mine: Score, others: List<Score>): Map<Int, List<Measure>> {
+        if (others.isEmpty()) return emptyMap()
+        val out = HashMap<Int, List<Measure>>()
+        var resting = 0
+        for ((i, m) in mine.measures.withIndex()) {
+            val silent = m.bars > 1 || m.events.all { it is Rest }
+            if (silent) { resting += m.bars; continue }
+            if (resting >= 4 && i > 0) {
+                val want = listOf(m.number - 2, m.number - 1).filter { it >= 1 }
+                // The part with the most notes just before the entry: the one to listen for.
+                val best = others.maxByOrNull { o -> want.sumOf { n -> o.measures.firstOrNull { it.number == n && it.bars == 1 }?.events?.count { it is Note } ?: 0 } }
+                val bars = want.mapNotNull { n -> best?.measures?.firstOrNull { it.number == n && it.bars == 1 } }
+                if (bars.any { b -> b.events.any { it is Note } }) out[i - 1] = bars
+            }
+            resting = 0
+        }
+        return out
+    }
+
+    /** A cue: [bars] engraved small, over the staff above the bar [m] stands in ([x], [top], [sp] as on the page). */
+    private fun cueMarks(bars: List<Measure>, left: Float, right: Float, top: Float, sp: Float): List<PageMark> {
+        val d = Engraver.line(bars.mapIndexed { k, b -> b.copy(showsClef = k == 0, showsKey = false, showsTime = false) })
+        if (d.width <= 0f) return emptyList()
+        val cs = minOf(sp * 0.6f, (right - left - sp) / d.width)
+        val cueTop = top - sp * 1.8f - cs * 4f
+        // Just before the entry, at the rest's end - where the ear needs it, clear of what begins the line.
+        @Suppress("NAME_SHADOWING") val left = right - sp * 0.4f - d.width * cs
+        val out = ArrayList<PageMark>()
+        for (mark in d.marks) when (mark) {
+            is Engraver.Stroke -> out += PageMark.line(left + mark.x1 * cs, cueTop + mark.y1 * cs, left + mark.x2 * cs, cueTop + mark.y2 * cs, (mark.w * cs).coerceAtLeast(0.3f), CUE)
+            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(cs, left + mark.x * cs, cueTop + mark.y * cs), CUE)
+            is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(8) { i -> if (i % 2 == 0) left + mark.points[i] * cs else cueTop + mark.points[i] * cs }), CUE)
+        }
+        return out
+    }
 
     fun stop(s: SheetsState) {
         ensemble?.let { ensemble = null; Sound.stop(WHO) }

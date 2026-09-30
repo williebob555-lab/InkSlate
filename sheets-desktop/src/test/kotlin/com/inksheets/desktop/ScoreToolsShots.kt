@@ -70,4 +70,48 @@ class ScoreToolsShots {
             ScoreTools.select(null)
         }
     }
+
+    @Test
+    fun `cue notes before an entry`() {
+        val dir = File(music, "Imported/PEP BAND/Music/Sweet Caroline")
+        val file = File(dir, "SweetC - Trumpet 1.pdf")
+        assumeTrue(file.isFile)
+        fun readOf(f: File): Score? {
+            val (ink, _) = OmrRealPagesTest().renderAt(f, 0) ?: return null
+            val r = Recognizer().read(ink, 0)
+            return Score(r.measures, 1, listOf(ink.width))
+        }
+        val mine = readOf(file)!!
+        val others = dir.listFiles { f -> f.extension.equals("pdf", true) && f.name != file.name && !f.name.contains("score", true) }!!.sortedBy { it.name }.take(8).mapNotNull { readOf(it) }
+        val cues = ScoreTools.cueBars(mine, others)
+        println("cues over bars ${cues.keys.map { mine.measures[it].number }} from ${others.size} parts: " + cues.entries.joinToString { (k, v) -> "${mine.measures[k].number}<-${v.map { it.number }}" })
+        assertTrue(cues.isNotEmpty())
+        val path = file.absolutePath
+        ScoreTools.scoreSource = { if (it == path) mine else null }
+        try {
+            ScoreTools.showCuesFor(path, cues)
+            val (wPts, hPts) = Loader.loadPDF(file).use { d -> d.getPage(0).mediaBox.let { it.width to it.height } }
+            val marks = ScoreTools.marks(path, 0, wPts, hPts).orEmpty()
+            val shots = System.getProperty("inksheets.shots") ?: return
+            val k = 2f
+            val img = Loader.loadPDF(file).use { PDFRenderer(it).renderImageWithDPI(0, 72f * k, ImageType.RGB) }
+            val g = img.createGraphics()
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g.scale(k.toDouble(), k.toDouble())
+            for (m in marks) {
+                g.color = Color(m.color, true)
+                when (m.kind) {
+                    PageMark.Kind.FILL -> g.fill(Path2D.Float(Path2D.WIND_EVEN_ODD).apply {
+                        for (c in m.contours) { if (c.size < 6) continue; moveTo(c[0], c[1]); var i = 2; while (i + 1 < c.size) { lineTo(c[i], c[i + 1]); i += 2 }; closePath() }
+                    })
+                    PageMark.Kind.LINE -> { g.stroke = BasicStroke(m.width); for (c in m.contours) { var i = 2; while (i + 1 < c.size) { g.draw(java.awt.geom.Line2D.Float(c[i - 2], c[i - 1], c[i], c[i + 1])); i += 2 } } }
+                }
+            }
+            g.dispose()
+            ImageIO.write(img, "png", File(shots, "tools-cues.png"))
+        } finally {
+            ScoreTools.scoreSource = null
+            ScoreTools.showCuesFor(path, emptyMap())
+        }
+    }
 }
