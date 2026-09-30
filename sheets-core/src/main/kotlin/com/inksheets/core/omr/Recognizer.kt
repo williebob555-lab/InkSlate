@@ -498,7 +498,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /** Whether the middle of a filled head at ([x], [y]) - its shape worn in a fifth of a space all round - is all ink. */
-    private fun solidCore(ink: Ink, sp: Float, x: Int, y: Int): Boolean {
+    private fun solidCore(ink: Ink, sp: Float, x: Int, y: Int, share: Float = 0.97f): Boolean {
         val tp = tpl("noteheadBlack", sp)
         val w = tp.ink.width; val h = tp.ink.height
         val r = max(1, (sp * 0.2f).roundToInt())
@@ -508,7 +508,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             n++
             if (ink[x - tp.ox + i, y - tp.oy + j]) got++
         }
-        return n > 0 && got >= n * 0.97f
+        return n > 0 && got >= n * share
     }
 
     /**
@@ -618,7 +618,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         if (xs > 0.62f && !accidentalLike(clean, sp, x, y, headW)) found += Head(x, step, y, kind, xs).also { it.weak = true }
                     }
                 }
-                if (sides && !filledOnly) {
+                // A filled head a scan has flecked with white is not hollow: solid once the flecks are filled.
+                val solidHere = solid?.let { solidCore(it, sp, x, y, 0.85f) } == true
+                if (sides && !filledOnly && !solidHere) {
                     for (kind in listOf("noteheadHalf", "noteheadWhole")) {
                         val sc = score(clean, kind, sp, x, y)
                         if (sc > 0.66f && holeClear(clean, kind, sp, x, y) > 0.6f) found += Head(x, step, y, kind, sc).also { it.crowded = !standsAlone(clean, sp, x, y, tpl(kind, sp).ink.width - 2) }
