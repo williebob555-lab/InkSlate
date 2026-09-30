@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
@@ -137,6 +138,18 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clickable { state.metronomeOpen = true }.padding(2.dp)
                     )
+                    // Practise with the notes checked by ear: Listen following the music as read.
+                    if (state.listenTurns) {
+                        val checking = Listener.active && Listener.practising
+                        StripButton(Icons.Default.Hearing, "Check", "Play along: the page turns with you and bars that sound off are marked", btn, named, lit = checking) {
+                            if (checking) Listener.stop(state) else { Listener.offBars = emptyList(); ScoreTools.marksMoved(); Listener.start(state, practice = true) }
+                        }
+                        if (Listener.offBars.isNotEmpty()) {
+                            Text("Sounded off: " + Listener.offBars.take(6).joinToString(), style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp,
+                                textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.padding(horizontal = 3.dp).clickable { ScoreTools.goTo(state, Listener.offBars.first()) })
+                        }
+                    }
                     HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
                     StripButton(Icons.Default.Tag, "Bar", "Go to a bar by its number", btn, named) { goingTo = true }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {

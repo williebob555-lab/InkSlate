@@ -73,6 +73,9 @@ internal object ScoreTools {
         Perform.marksChanged()
     }
 
+    /** Something drawn on the page changed elsewhere (bars that sounded off). */
+    fun marksMoved() = changed()
+
     // ---- which part, and its notes ----------------------------------------------------------
 
     private var state: SheetsState? = null
@@ -221,6 +224,7 @@ internal object ScoreTools {
     private const val CHOSEN_EDGE = 0xCC1E88E5.toInt()
     private const val NOW = 0x4043A047               // the bar playing
     private const val FOUND = 0x55FFB300             // the bar gone to
+    private const val OFF = 0xE0D32F2F.toInt()       // a bar that sounded off
 
     internal fun marks(path: String, page: Int, width: Float, height: Float): List<PageMark>? {
         pageWidth[path to page] = width
@@ -228,7 +232,8 @@ internal object ScoreTools {
         val clean = cleanedIn(path)
         val live = playing?.first
         val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
-        if (!underlay && clean.isEmpty() && selection == null && live == null && flash == null) return null
+        val off = Listener.offBars.toSet()
+        if (!underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty()) return null
         val key = path to page
         marksCache[key]?.let { (v, m) -> if (v == version) return m }
         val k = scaleOf(score, page, width) ?: return null
@@ -245,6 +250,8 @@ internal object ScoreTools {
             }
             if (live != null && live in numbers) out += PageMark.rect(left, top - sp * 2f, right, bottom + sp * 2f, NOW)
             if (flash != null && flash in numbers) out += PageMark.rect(left, top - sp * 2.5f, right, bottom + sp * 2.5f, FOUND)
+            // A bar that sounded off when practised: a red bar over it, above the staff - not over the notes.
+            if (numbers.any { it in off }) out += PageMark.rect(left + sp * 0.3f, top - sp * 3.4f, right - sp * 0.3f, top - sp * 2.9f, OFF)
             when {
                 numbers.first in clean -> {
                     // Cleaned up: the print hidden, the reading in its place.

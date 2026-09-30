@@ -60,6 +60,14 @@ internal object Listener {
 
     fun toggle(state: SheetsState) = if (active) stop(state, null) else start(state)
 
+    /** Bars that sounded unlike their notes last time the music was followed by itself (practice). */
+    var offBars by mutableStateOf<List<Int>>(emptyList())
+        internal set
+
+    /** Practising: followed by the music as read, never a recording - and every bar checked by ear. */
+    var practising by mutableStateOf(false)
+        private set
+
     /**
      * What it is doing in a few words - under its button, and on a remote's Listen button: never
      * quiet about a microphone that hears nothing, and honest when the turns are only guessed.
@@ -81,13 +89,15 @@ internal object Listener {
         return words + if (f.source == "guessed") " (guessed)" else ""
     }
 
-    fun start(state: SheetsState) {
+    fun start(state: SheetsState, practice: Boolean = false) {
         if (active) return
+        practising = practice
         val song = state.current ?: return
         // The music read off this part (experimental), when it has been: turns without teaching.
         val partFile = state.currentPath?.let { java.io.File(it) }
         val score = if (state.readMusic && partFile != null) Transcriber.cached(state, partFile) else null
-        val track = song.audio.firstOrNull()
+        // Practising: the music as read is followed, even where there is a recording - the microphone hears the player alone.
+        val track = if (practice) null else song.audio.firstOrNull()
         if (track == null && score == null) { say(state, "Listen needs a recording of this song, or its music read"); return }
         val file = track?.let { state.fileOf(it.file) }
         if (track != null && file == null && score == null) { say(state, "Its recording is not on this device"); return }
@@ -138,6 +148,8 @@ internal object Listener {
             val lead = when { learned != null -> 300L; (fromMusic != null || goesBack) && recording != null -> 500L; fromMusic != null || goesBack -> 1_500L; else -> 1_000L }
             // Following the changes themselves (repeats): the next one to make.
             var next = changes?.indexOfFirst { it.first > startMs }?.takeIf { it >= 0 } ?: 0
+            // Following the music itself, the notes heard are checked against it too.
+            val check = if (recording == null && played != null) com.inksheets.core.omr.NoteCheck(played, bpm, instrument?.transpose ?: 0) else null
             var turnedFrom = -1
             var turnedAt = 0L
             var shownAt = 0L
@@ -149,6 +161,11 @@ internal object Listener {
                 for (f in stream.feed(chunk)) {
                     presence.hear(f)
                     val at = follower.hear(f, presence.quiet(f))
+                    check?.hear(at, f)
+                    if (check != null && f.loudness > 0f && System.currentTimeMillis() - shownAt >= 190) {
+                        val off = check.doubtful()
+                        state.platform.onMain { if (run === me && off != offBars) { offBars = off; ScoreTools.marksMoved() } }
+                    }
                     val page = state.pageShown.first
                     if (goesBack && changes != null && path != null) {
                         // To whichever page comes next - on, or back for a repeat.
