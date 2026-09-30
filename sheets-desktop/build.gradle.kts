@@ -100,9 +100,25 @@ dependencies {
     testImplementation(compose.desktop.uiTestJUnit4)
 }
 
+// The app with a home and a settings folder of its own (build/sandbox-run): to be tried by hand
+// or driven by a script - touch played into it, pictures taken - without touching the installed
+// app's settings, library or annotations. Put music to try in build/sandbox-run/Music/Sheet Music/InkSheets.
+tasks.register<JavaExec>("runSandbox") {
+    group = "application"
+    mainClass.set("com.inksheets.desktop.MainKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    val box = layout.buildDirectory.dir("sandbox-run").get().asFile
+    doFirst { box.mkdirs() }
+    environment("LOCALAPPDATA", box.absolutePath)
+    environment("XDG_DATA_HOME", box.absolutePath)
+    systemProperty("user.home", box.absolutePath)
+    // Its window's title says which it is, so a script can find it and be sure it is not the real one.
+    systemProperty("inksheets.sandbox", "1")
+}
+
 tasks.withType<Test>().configureEach {
     // Whole pages drawn large, read and compared, many in one run.
-    maxHeapSize = "3g"
+    maxHeapSize = "5g"
     // Never the real app's settings folder: see desktop/build.gradle.kts.
     val sandbox = layout.buildDirectory.dir("test-appdata").get().asFile
     doFirst { sandbox.deleteRecursively(); sandbox.mkdirs() }
@@ -114,7 +130,7 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     }
     testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null || System.getProperty("inksheets.msdb") != null
-    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs", "inksheets.omr.why", "inksheets.digits", "inksheets.omr.scan", "inksheets.omr.only")) {
+    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs", "inksheets.omr.why", "inksheets.digits", "inksheets.omr.scan", "inksheets.omr.only", "inksheets.bench", "inksheets.bench.n", "inksheets.bench.scan", "inksheets.bench.pages", "inksheets.bench.save", "inksheets.bench.shots", "inksheets.bench.why", "inksheets.bench.printed", "inksheets.bench.only")) {
         System.getProperty(name)?.let {
             systemProperty(name, it)
             outputs.upToDateWhen { false }

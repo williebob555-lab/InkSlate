@@ -94,12 +94,38 @@ data class Note(
     val accidentals: Map<Int, Int> = emptyMap(),
     val stemUp: Boolean? = null,
     /** How well the heads matched, 0-1. */
-    val confidence: Float = 1f
+    val confidence: Float = 1f,
+    /** Marks on it: "accent", "staccato", "staccatissimo", "tenuto", "marcato", "fermata". */
+    val articulations: List<String> = emptyList(),
+    /** Tied to the next note at its pitch (held on, not struck again). */
+    val tie: Boolean = false
 ) : Event()
+
+/**
+ * Something marked over or under a bar rather than on one note: a dynamic ("p", "mf", "sfz" in
+ * [text]), a hairpin ("cresc", "dim": from [x] to [x2]), a slur ("slur": [x] to [x2], at heights
+ * [step] and [step2] - steps down from the top line - running on past the bar's edge where it goes
+ * on into the next), or words ("text").
+ */
+@Serializable
+data class Direction(
+    val kind: String,
+    val x: Float,
+    val x2: Float = x,
+    val text: String = "",
+    val above: Boolean = false,
+    val step: Int? = null,
+    val step2: Int? = null
+)
 
 @Serializable
 @SerialName("rest")
-data class Rest(override val duration: Duration, override val x: Float) : Event()
+data class Rest(
+    override val duration: Duration,
+    override val x: Float,
+    /** Its height on the staff (steps down from the top line), where known: in two voices, which voice's it is. */
+    val step: Int? = null
+) : Event()
 
 /** A box on a page, in pixels. */
 @Serializable
@@ -138,8 +164,39 @@ data class Measure(
     val segno: Boolean = false,
     val coda: Boolean = false,
     /** How many bars it stands for: more than one for a multi-bar rest ("rest 4 bars"). */
-    val bars: Int = 1
+    val bars: Int = 1,
+    /**
+     * Where its staff's five lines are, as printed, just outside its left edge and its right (the
+     * five at the left, top first, then the five at the right): a scan's staff runs a little
+     * aslant, bowed, its lines not quite evenly apart - and a bar redrawn in place meets the print
+     * either side of it only if it follows them. Empty when not known.
+     */
+    val lines: List<Float> = emptyList(),
+    /** How thick its staff's lines are printed, in pixels (0 when not known). */
+    val lineWidth: Float = 0f,
+    /** Dynamics, hairpins, slurs and words over or under it. */
+    val directions: List<Direction> = emptyList()
 ) {
+    /** Line [i] (0 the top) at [x] across the bar (page pixels), as printed. */
+    fun lineAt(i: Int, x: Float): Float {
+        if (lines.size < 10) return box.top + (box.bottom - box.top) * i / 4f
+        val u = ((x - box.left) / box.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+        return lines[i] + (lines[5 + i] - lines[i]) * u
+    }
+
+    /** The height [ys] staff spaces below the top line at [x], between the printed lines either side of it (beyond the staff, by the nearest space). */
+    fun yAt(ys: Float, x: Float): Float {
+        val i = kotlin.math.floor(ys).toInt().coerceIn(0, 3)
+        val a = lineAt(i, x); val b = lineAt(i + 1, x)
+        return a + (b - a) * (ys - i)
+    }
+
+    /** The top line's height at [x] across the bar, as printed. */
+    fun topAt(x: Float): Float = lineAt(0, x)
+
+    /** The bottom line's height at [x] across the bar, as printed. */
+    fun bottomAt(x: Float): Float = lineAt(4, x)
+
     /** Read well enough to trust: its notes fill the bar exactly, and nothing was in doubt. */
     val sure: Boolean get() = doubts.isEmpty()
 

@@ -27,7 +27,15 @@ class GlyphOutlinesTool {
         "augmentationDot" to 0xE1E7,
         "timeSigCommon" to 0xE08A, "timeSigCutCommon" to 0xE08B,
         "segno" to 0xE047, "coda" to 0xE048,
-        "noteheadXBlack" to 0xE0A9, "noteheadSlashHorizontalEnds" to 0xE101
+        "noteheadXBlack" to 0xE0A9, "noteheadSlashHorizontalEnds" to 0xE101,
+        // What the redrawn music marks besides its notes: articulations, fermatas, dynamics.
+        "articAccentAbove" to 0xE4A0, "articAccentBelow" to 0xE4A1, "articStaccatoAbove" to 0xE4A2, "articStaccatoBelow" to 0xE4A3,
+        "articTenutoAbove" to 0xE4A4, "articTenutoBelow" to 0xE4A5, "articStaccatissimoAbove" to 0xE4A6, "articStaccatissimoBelow" to 0xE4A7,
+        "articMarcatoAbove" to 0xE4AC, "articMarcatoBelow" to 0xE4AD, "fermataAbove" to 0xE4C0, "fermataBelow" to 0xE4C1,
+        "dynamicPiano" to 0xE520, "dynamicMezzo" to 0xE521, "dynamicForte" to 0xE522, "dynamicRinforzando" to 0xE523,
+        "dynamicSforzando" to 0xE524, "dynamicZ" to 0xE525,
+        "accidentalDoubleSharp" to 0xE263, "accidentalDoubleFlat" to 0xE264,
+        "rest32nd" to 0xE4E8, "flag32ndUp" to 0xE244, "flag32ndDown" to 0xE245
     ) + (0..9).map { "timeSig$it" to 0xE080 + it }
 
     @Test

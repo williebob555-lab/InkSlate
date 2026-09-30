@@ -26,7 +26,7 @@ internal object Transcriber {
     private val cache = HashMap<String, Score>()
 
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 3
+    private const val READER = 4
 
     private fun key(file: File) = "${file.absolutePath}|${file.length()}|${file.lastModified()}|r$READER"
     private fun stored(state: SheetsState, file: File) =
@@ -80,7 +80,9 @@ internal object Transcriber {
                 val space = Recognizer().metrics(first)?.second
                 val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
                 val ink = if (width == 1600) first else inkOf(peek, p, width) ?: continue
-                val reading = Recognizer().read(ink, p, number, carry)
+                // A PDF that states its notes is read from them, exactly; a scan from its picture.
+                val printed = runCatching { peek.printed(p) }.getOrNull()
+                val reading = Recognizer().read(ink, p, number, carry, printed)
                 measures += reading.measures
                 widths += width
                 reading.measures.lastOrNull()?.let { number = it.number + it.bars }

@@ -239,6 +239,8 @@ interface Microphone {
 interface PagePeek : java.io.Closeable {
     val pageCount: Int
     fun render(index: Int, widthPx: Int): androidx.compose.ui.graphics.ImageBitmap?
+    /** What page [index]'s PDF says is printed on it, where it writes its notes as music-font characters; null otherwise. */
+    fun printed(index: Int): com.inksheets.core.omr.Printed? = null
 }
 
 /**

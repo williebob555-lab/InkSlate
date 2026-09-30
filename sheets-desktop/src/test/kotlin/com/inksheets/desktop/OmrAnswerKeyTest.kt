@@ -26,17 +26,25 @@ class OmrAnswerKeyTest {
     private val music = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets")
 
     /** A head read: where, its pitch's step and staff, what kind. */
-    private data class Read(val x: Float, val y: Float, val kind: Kind, val staff: Int)
+    private data class Read(val x: Float, val y: Float, val kind: Kind, val staff: Int, val bar: Int = -1, val dots: Int = 0, val confidence: Float = 1f)
 
     class Tally {
         var keyHeads = 0; var found = 0; var kindRight = 0; var readHeads = 0; var readRight = 0
         val confusion = HashMap<String, Int>()
         var valued = 0; var valueRight = 0
         val valueMisses = ArrayList<Triple<Pair<Float, Float>, Int, Int>>()
+        val barCauses = HashMap<String, Int>()
+        val confidence = HashMap<String, Int>()
+        var sureBarsChecked = 0; var sureWrong = 0
+        val sureWrongCauses = HashMap<String, Int>()
         var bars = 0; var sureBars = 0
         var keyRests = 0; var restsFound = 0; var restKindRight = 0; var readRests = 0; var readRestsRight = 0
         fun add(o: Tally) {
             o.confusion.forEach { (k, v) -> confusion[k] = (confusion[k] ?: 0) + v }
+            o.barCauses.forEach { (k, v) -> barCauses.merge(k, v, Int::plus) }
+            o.confidence.forEach { (k, v) -> confidence.merge(k, v, Int::plus) }
+            sureBarsChecked += o.sureBarsChecked; sureWrong += o.sureWrong
+            o.sureWrongCauses.forEach { (k, v) -> sureWrongCauses.merge(k, v, Int::plus) }
             valued += o.valued; valueRight += o.valueRight
             bars += o.bars; sureBars += o.sureBars
             keyHeads += o.keyHeads; found += o.found; kindRight += o.kindRight; readHeads += o.readHeads; readRight += o.readRight
@@ -56,6 +64,8 @@ class OmrAnswerKeyTest {
     private val valueList = ArrayList<BufferedImage>()
     private val valuesFrom = HashMap<String, Int>()
     private val cleanValueShots = ArrayList<BufferedImage>()
+    private var dotShown = 0
+    private var nothingShown = 0
 
     fun keyed(want: Int): List<File> {
         // -Dinksheets.omr.only=text: just the parts whose names have it in them.
@@ -77,15 +87,19 @@ class OmrAnswerKeyTest {
         val printed = keyHeads.filter { it.width > normal * 0.8f && reading.staves.any { s -> it.x >= s.left - sp && it.x <= s.right && it.y > s.top - sp * 6 && it.y < s.bottom + sp * 6 } }
         val read = ArrayList<Read>()
         val readValues = ArrayList<Int?>()
-        for (m in reading.measures) {
+        for ((mi, m) in reading.measures.withIndex()) {
             val s = reading.staves[m.staff]
             for (e in m.events) if (e is Note) for (st in e.steps) {
                 val kind = when (e.duration.base) { 1 -> Kind.HEAD_WHOLE; 2 -> Kind.HEAD_HALF; else -> Kind.HEAD_BLACK }
-                read += Read(e.x, s.y(st, e.x.toInt()), kind, m.staff)
+                read += Read(e.x, s.y(st, e.x.toInt()), kind, m.staff, mi, e.duration.dots, e.confidence)
                 readValues += e.duration.base.takeIf { !e.duration.tuplet }
             }
         }
         val taken = BooleanArray(read.size)
+        // What is wrong in each bar that does not add up, by its index.
+        val causes = HashMap<Int, MutableSet<String>>()
+        fun barAt(x: Float, y: Float) = reading.measures.indexOfFirst { m -> x >= m.box.left - sp * 0.5f && x <= m.box.right && y > m.box.top - sp * 6 && y < m.box.bottom + sp * 6 }
+        val keyDots = key.filter { it.kind == Kind.DOT }
         t.keyHeads = printed.size; t.readHeads = read.size
         t.bars = reading.measures.size; t.sureBars = reading.measures.count { it.sure }
         reading.measures.filter { !it.sure }.forEach { m -> m.doubts.forEach { d -> t.confusion.merge("doubt: " + d.replace(Regex("[0-9.]+"), "#"), 1, Int::plus) } }
@@ -93,8 +107,16 @@ class OmrAnswerKeyTest {
             // The nearest head read at the same pitch - a quarter of a space either way - and about the same place.
             val i = read.indices.filter { !taken[it] && abs(read[it].y - h.y) <= sp * 0.26f && abs(read[it].x - h.x) <= sp * 1.3f }
                 .minByOrNull { abs(read[it].x - h.x) }
-            if (i == null) { missed?.let { if (it.size < 40) it += crop(ink, h.x, h.y, sp, "$label missed ${h.kind}") }; continue }
+            if (i == null) { barAt(h.x, h.y).takeIf { it >= 0 }?.let { causes.getOrPut(it) { HashSet() } += "missed head" }; missed?.let { if (it.size < 40) it += crop(ink, h.x, h.y, sp, "$label missed ${h.kind}") }; continue }
             taken[i] = true
+            // A dot printed beside the head (right of it, its space or the one above), against the dots read.
+            val dotted = keyDots.any { d -> d.x > h.x + h.width * 0.8f && d.x < h.x + h.width + sp * 1.6f && d.y > h.y - sp * 0.9f && d.y < h.y + sp * 0.4f }
+            if (dotted != (read[i].dots > 0)) causes.getOrPut(read[i].bar) { HashSet() } += if (dotted) "dot missed" else "dot invented"
+            if (!dotted && read[i].dots > 0 && System.getProperty("inksheets.omr.why") != null && dotShown++ < 12) {
+                val near = keyDots.minByOrNull { d -> abs(d.x - h.x) + abs(d.y - h.y) }
+                println("  dot invented $label x=${h.x.toInt()} y=${h.y.toInt()} w=${h.width.toInt()}: nearest key dot at ${near?.let { "${"%.1f".format((it.x - h.x) / sp)},${"%.1f".format((it.y - h.y) / sp)} sp" }}")
+            }
+            if (read[i].kind != h.kind) causes.getOrPut(read[i].bar) { HashSet() } += "head kind"
             t.found++
             if (read[i].kind == h.kind) t.kindRight++
             // Its value, where the printed stems and beams say: against the value read.
@@ -106,13 +128,20 @@ class OmrAnswerKeyTest {
                 val flagsSeen = readValue == null || key.any { it.kind == when (readValue) { 8 -> Kind.FLAG_8; 16 -> Kind.FLAG_16; 32 -> Kind.FLAG_32; else -> it.kind } }
                 if (printedValue != null && readValue != null && (printedValue != 4 || flagsSeen)) {
                     t.valued++; if (printedValue == readValue) t.valueRight++
-                    else { t.confusion.merge("value $printedValue->$readValue", 1, Int::plus); t.valueMisses += Triple(read[i].x to read[i].y, printedValue, readValue); valueShots?.let { if (it.size < 40 && valuesFrom.merge(label, 1, Int::plus)!! <= 3) it += crop(ink, h.x, h.y, sp, "${label.take(10)} $printedValue as $readValue", tall = true) } }
+                    else { causes.getOrPut(read[i].bar) { HashSet() } += "value"; t.confusion.merge("value $printedValue->$readValue", 1, Int::plus); t.valueMisses += Triple(read[i].x to read[i].y, printedValue, readValue); valueShots?.let { if (it.size < 40 && valuesFrom.merge(label, 1, Int::plus)!! <= 3) it += crop(ink, h.x, h.y, sp, "${label.take(10)} $printedValue as $readValue", tall = true) } }
                 }
             }
             val c = "${h.kind}->${read[i].kind}"; t.confusion[c] = (t.confusion[c] ?: 0) + 1
         }
         t.readRight = taken.count { it }
-        read.indices.filter { !taken[it] }.forEach { i -> t.confusion.merge("invented ${read[i].kind}", 1, Int::plus) }
+        // Each head's match against whether it is real, by whether its bar adds up without doubts of length.
+        for (i in read.indices) {
+            val m = reading.measures.getOrNull(read[i].bar) ?: continue
+            val adds = m.doubts.none { it.contains("beats found") || it.contains("triplets") }
+            val band = when { read[i].confidence >= 0.75f -> "0.75+"; read[i].confidence >= 0.7f -> "0.70"; read[i].confidence >= 0.65f -> "0.65"; read[i].confidence >= 0.6f -> "0.60"; else -> "low" }
+            t.confidence.merge("${if (adds) "adds" else "long/short"} $band ${if (taken[i]) "real" else "invented"}", 1, Int::plus)
+        }
+        read.indices.filter { !taken[it] }.forEach { i -> t.confusion.merge("invented ${read[i].kind}", 1, Int::plus); causes.getOrPut(read[i].bar) { HashSet() } += "invented head" }
         read.indices.filter { !taken[it] && read[it].kind != Kind.HEAD_BLACK }.forEach { i -> invented?.let { if (it.size < 40) it += crop(ink, read[i].x, read[i].y, sp, "$label invented ${read[i].kind}") } }
         // Rests: the same, a little looser (a rest's origin is not its middle).
         val keyRests = key.filter { it.kind in rests && reading.staves.any { s -> it.y > s.top - sp * 2 && it.y < s.bottom + sp * 2 && it.x >= s.left } }
@@ -121,15 +150,32 @@ class OmrAnswerKeyTest {
         t.keyRests = keyRests.size; t.readRests = readRests.size
         for (r in keyRests) {
             val i = readRests.indices.filter { !restTaken[it] && abs(readRests[it].first.x - r.x) <= sp * 1.5f && reading.staves[readRests[it].second].let { s -> r.y > s.top - sp * 3 && r.y < s.bottom + sp * 3 } }
-                .minByOrNull { abs(readRests[it].first.x - r.x) } ?: run { t.confusion.merge("missed ${r.kind}", 1, Int::plus); missedRests?.let { if (it.size < 40) it += crop(ink, r.x, r.y, sp, "$label missed ${r.kind}") }; null } ?: continue
+                .minByOrNull { abs(readRests[it].first.x - r.x) } ?: run { barAt(r.x, r.y).takeIf { it >= 0 }?.let { causes.getOrPut(it) { HashSet() } += "missed rest" }; t.confusion.merge("missed ${r.kind}", 1, Int::plus); missedRests?.let { if (it.size < 40) it += crop(ink, r.x, r.y, sp, "$label missed ${r.kind}") }; null } ?: continue
             restTaken[i] = true
             t.restsFound++
             val want = when (r.kind) { Kind.REST_1 -> 1; Kind.REST_2 -> 2; Kind.REST_4 -> 4; Kind.REST_8 -> 8; else -> 16 }
             if (readRests[i].first.duration.base == want) t.restKindRight++
+            else causes.getOrPut(reading.measures.indexOf(readRests[i].third)) { HashSet() } += "rest kind"
 
             val c = "${r.kind}->r${readRests[i].first.duration.base}"; t.confusion[c] = (t.confusion[c] ?: 0) + 1
         }
         t.readRestsRight = restTaken.count { it }
+        readRests.indices.filter { !restTaken[it] }.forEach { i -> causes.getOrPut(reading.measures.indexOf(readRests[i].third)) { HashSet() } += "invented rest" }
+        // Bars read as sure that the key shows something wrong in: what "sure" is worth.
+        reading.measures.withIndex().filter { it.value.sure && it.value.bars <= 1 }.forEach { (mi, _) ->
+            t.sureBarsChecked++
+            causes[mi]?.let { c -> t.sureWrong++; t.sureWrongCauses.merge(c.sorted().joinToString("+"), 1, Int::plus) }
+        }
+        // Each bar that does not add up, by what went wrong in it (as far as the key shows).
+        reading.measures.withIndex().filter { !it.value.sure && it.value.bars <= 1 }.forEach { (mi, _) ->
+            val m0 = reading.measures[mi]
+            val c = causes[mi]?.sorted()?.joinToString("+") ?: ("nothing the key shows: " + m0.doubts.joinToString("; ") { it.replace(Regex("[0-9.]+"), "#") } + (if (m0.time.beats == 1 && m0.time.beatType == 1) " (time 1/1)" else ""))
+            if (c.startsWith("nothing") && System.getProperty("inksheets.omr.why") != null && nothingShown++ < 40) {
+                val m = reading.measures[mi]
+                println("  bar $label m${m.number} staff ${m.staff} x ${m.box.left}..${m.box.right} ${m.time}: ${m.doubts} | " + m.events.joinToString(" ") { e -> when (e) { is Note -> "n" + e.duration.base + ".".repeat(e.duration.dots) + (if (e.duration.tuplet) "t" else ""); is Rest -> "r" + e.duration.base + ".".repeat(e.duration.dots) } })
+            }
+            t.barCauses.merge(c, 1, Int::plus)
+        }
 
         return t
     }
@@ -300,6 +346,9 @@ class OmrAnswerKeyTest {
         println("WHY MISSED: $why")
         println("NEVER FOUND: $never")
         println("ALL: $all")
+        println("SURE BUT WRONG: ${all.sureWrong} of ${all.sureBarsChecked} sure bars: " + all.sureWrongCauses.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
+        println("HEAD CONFIDENCE: " + all.confidence.entries.sortedBy { it.key }.joinToString { "${it.key} ${it.value}" })
+        println("BAR CAUSES: " + all.barCauses.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
         println("CONFUSION: " + all.confusion.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
         if (shots != null) { sheet(missed, File(shots, "key-missed.png")); sheet(invented, File(shots, "key-invented.png")); sheet(pitchShots, File(shots, "key-pitch.png")); sheet(neverShots, File(shots, "key-never.png")); sheet(restShots, File(shots, "key-rests.png")); sheet(inventedRestShots, File(shots, "key-rests-invented.png")); sheet(valueList, File(shots, "key-values.png")); sheet(cleanValueShots, File(shots, "key-values-clean.png")) }
     }

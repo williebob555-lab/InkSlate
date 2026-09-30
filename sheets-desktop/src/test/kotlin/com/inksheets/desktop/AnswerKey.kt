@@ -12,24 +12,26 @@ import java.io.File
  * for the music reader, from the library itself.
  */
 object AnswerKey {
-    enum class Kind { HEAD_BLACK, HEAD_HALF, HEAD_WHOLE, REST_1, REST_2, REST_4, REST_8, REST_16, CLEF_G, CLEF_F, CLEF_C, FLAT, SHARP, NATURAL, DOT, FLAG_8, FLAG_16, FLAG_32 }
+    enum class Kind { OTHER, HEAD_BLACK, HEAD_HALF, HEAD_WHOLE, REST_1, REST_2, REST_4, REST_8, REST_16, CLEF_G, CLEF_F, CLEF_C, FLAT, SHARP, NATURAL, DOT, FLAG_8, FLAG_16, FLAG_32 }
 
     /** One symbol: [x] its left edge, [y] its origin (a notehead's middle), in pixels at the page's drawing size. */
-    data class Symbol(val kind: Kind, val x: Float, val y: Float, val width: Float)
+    data class Symbol(val kind: Kind, val x: Float, val y: Float, val width: Float, val text: String = "", val size: Float = 0f)
 
     /** The Sonata layout Opus and Helsinki keep, and SMuFL's code points (Leland, Bravura). */
     private val kinds: Map<Int, Kind> = mapOf(
-        'œ'.code to Kind.HEAD_BLACK, '˙'.code to Kind.HEAD_HALF, 'w'.code to Kind.HEAD_WHOLE,
+        'œ'.code to Kind.HEAD_BLACK, '˙'.code to Kind.HEAD_HALF, 'w'.code to Kind.HEAD_WHOLE, '¿'.code to Kind.HEAD_BLACK, 0xE0A9 to Kind.HEAD_BLACK,
         '∑'.code to Kind.REST_1, 'Ó'.code to Kind.REST_2, 'Œ'.code to Kind.REST_4, '‰'.code to Kind.REST_8, '≈'.code to Kind.REST_16,
         '&'.code to Kind.CLEF_G, '?'.code to Kind.CLEF_F, 'B'.code to Kind.CLEF_C,
         'b'.code to Kind.FLAT, '#'.code to Kind.SHARP, 'n'.code to Kind.NATURAL, '.'.code to Kind.DOT,
-        'j'.code to Kind.FLAG_8, 'J'.code to Kind.FLAG_8, 'k'.code to Kind.FLAG_16, 'K'.code to Kind.FLAG_16,
+        'j'.code to Kind.FLAG_8, 'J'.code to Kind.FLAG_8, 'k'.code to Kind.FLAG_16, 'K'.code to Kind.FLAG_16, 'r'.code to Kind.FLAG_16, 'R'.code to Kind.FLAG_16,
         0xE240 to Kind.FLAG_8, 0xE241 to Kind.FLAG_8, 0xE242 to Kind.FLAG_16, 0xE243 to Kind.FLAG_16, 0xE244 to Kind.FLAG_32, 0xE245 to Kind.FLAG_32,
         0xE0A4 to Kind.HEAD_BLACK, 0xE0A3 to Kind.HEAD_HALF, 0xE0A2 to Kind.HEAD_WHOLE,
         0xE4E3 to Kind.REST_1, 0xE4E4 to Kind.REST_2, 0xE4E5 to Kind.REST_4, 0xE4E6 to Kind.REST_8, 0xE4E7 to Kind.REST_16,
         0xE050 to Kind.CLEF_G, 0xE062 to Kind.CLEF_F, 0xE05C to Kind.CLEF_C,
         0xE260 to Kind.FLAT, 0xE262 to Kind.SHARP, 0xE261 to Kind.NATURAL, 0xE1E7 to Kind.DOT
     )
+
+    private fun special(name: String) = name.contains("special", true) && listOf("opus", "helsinki", "inkpen", "reprise").any { name.contains(it, true) }
 
     private fun musical(name: String) = listOf("opus", "helsinki", "leland", "bravura", "petrucci", "maestro", "sebastian", "gonville")
         .any { name.contains(it, true) } && listOf("text", "special", "metronome", "percussion", "chords", "ornaments", "figured", "function").none { name.contains(it, true) }
@@ -48,12 +50,28 @@ object AnswerKey {
                 override fun writeString(text: String?, positions: MutableList<TextPosition>?) {
                     for (p in positions.orEmpty()) {
                         val fname = p.font?.name?.substringAfter('+') ?: continue
+                        // The engraver's "special" font (Opus Special, Helsinki Special) holds dots
+                        // among other marks, under codes a subset renumbers and names it scrambles:
+                        // told by the glyph's own outline - small and round is a dot.
+                        if (special(fname)) {
+                            val code = p.characterCodes?.firstOrNull() ?: continue
+                            val b = (p.font as? org.apache.pdfbox.pdmodel.font.PDVectorFont)?.let { vf -> runCatching { vf.getNormalizedPath(code).bounds2D }.getOrNull() } ?: continue
+                            val size = p.textMatrix.scalingFactorX
+                            val w = b.width / 1000f; val h = b.height / 1000f
+                            if (w in 0.05..0.22 && h in 0.05..0.22 && w / h in 0.75..1.33) {
+                                out += Symbol(Kind.DOT, (p.xDirAdj + (b.centerX / 1000f * size).toFloat()) * k, (p.yDirAdj - (b.centerY / 1000f * size).toFloat()) * k, (w * size).toFloat() * k, "special")
+                            }
+                            continue
+                        }
                         if (!musical(fname)) continue
-                        val uni = p.unicode ?: continue
+                        // The font's own map: the stripper merges a dot over a note into its text.
+                        val uni = p.characterCodes?.firstOrNull()?.let { c -> runCatching { p.font.toUnicode(c) }.getOrNull() } ?: p.unicode ?: continue
                         p.characterCodes?.firstOrNull()?.let { codesToText.getOrPut(fname) { HashMap() }[it] = uni }
-                        val kind = kinds[uni.codePointAt(0)] ?: continue
                         if (uni.codePointCount(0, uni.length) != 1) continue
-                        out += Symbol(kind, p.xDirAdj * k, p.yDirAdj * k, p.widthDirAdj * k)
+                        // A music-font character not known here is kept as OTHER: where something
+                        // the key cannot name is printed (a flag in another code, an ornament).
+                        val kind = kinds[uni.codePointAt(0)] ?: Kind.OTHER
+                        out += Symbol(kind, p.xDirAdj * k, p.yDirAdj * k, p.widthDirAdj * k, uni, p.textMatrix.scalingFactorX * k)
                     }
                 }
             }.apply { startPage = index + 1; endPage = index + 1; sortByPosition = false }.getText(doc)

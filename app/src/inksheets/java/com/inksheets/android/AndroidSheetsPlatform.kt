@@ -206,6 +206,7 @@ class AndroidSheetsPlatform(
             override val pageCount = source.pageCount
             override fun render(index: Int, widthPx: Int) =
                 runCatching<androidx.compose.ui.graphics.ImageBitmap?> { source.renderPage(index, widthPx)?.asImageBitmap() }.getOrNull()
+            override fun printed(index: Int) = if (file.extension.equals("pdf", true)) AndroidPrinted.read(context, file, index) else null
             override fun close() = source.close()
         }
     }

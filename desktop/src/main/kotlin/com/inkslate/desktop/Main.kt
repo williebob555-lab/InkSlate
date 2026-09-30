@@ -144,7 +144,8 @@ private fun ui() = application {
     Window(
         onCloseRequest = ::exitApplication,
         state = state,
-        title = AppFlavor.name,
+        // A copy run in a sandbox says so, where a script driving it can check it has the right window.
+        title = AppFlavor.name + if (System.getProperty("inksheets.sandbox") != null) " (sandbox)" else "",
         // A music stand has no frame: no title bar and no border, ever. Quit and minimise are in
         // the app's own menu.
         undecorated = AppFlavor.alwaysFullscreen,

@@ -112,6 +112,9 @@ internal object ScoreTools {
     /** Show bars [numbers] of [path] cleaned up (a test). */
     internal fun cleanUp(path: String, numbers: Collection<Int>) { cleanedIn(path) += numbers; changed() }
 
+    /** Every bar of [path] shown as printed again (for tests: not kept). */
+    internal fun undoAllClean(path: String) { cleaned.remove(path); changed() }
+
     fun close(s: SheetsState) {
         stop(s)
         open = false
@@ -228,6 +231,7 @@ internal object ScoreTools {
     private const val FOUND = 0x55FFB300             // the bar gone to
     private const val OFF = 0xE0D32F2F.toInt()       // a bar that sounded off
     private const val CUE = 0xD0455A64.toInt()       // cue notes: small, slate
+    private const val STAFF = 0xFF404040.toInt()     // a cleaned bar's staff lines: a printed line's grey
 
     internal fun marks(path: String, page: Int, width: Float, height: Float): List<PageMark>? {
         pageWidth[path to page] = width
@@ -261,11 +265,11 @@ internal object ScoreTools {
             when {
                 numbers.first in clean -> {
                     // Cleaned up: the print hidden, the reading in its place.
-                    out += PageMark.rect(left + sp * 0.15f, top - sp * 3f, right - sp * 0.15f, bottom + sp * 3f, PAPER)
-                    out += engraved(m, left, top, sp, INK)
+                    out += paper(m, k, 3f, 3f, PAPER)
+                    out += engraved(m, k, INK)
                 }
                 underlay -> {
-                    out += engraved(m, left, top, sp, UNDER)
+                    out += engraved(m, k, UNDER)
                     if (!m.sure) {
                         // A bar that may be read wrong: a small mark above it, not over the notes.
                         val cx = (left + right) / 2
@@ -278,21 +282,48 @@ internal object ScoreTools {
         return out
     }
 
-    /** [m] drawn cleanly where it is, as shapes on the page: [x], [top] its left and top line, [sp] a staff space. */
-    private fun engraved(m: Measure, x: Float, top: Float, sp: Float, color: Int): List<PageMark> {
+    /**
+     * [m] drawn cleanly where it is, as shapes on the page at [k] (page units to the reading's
+     * pixels). Across the bar each point follows the staff as printed there - its lines' height and
+     * spacing at the bar's left and right ends ([Measure.lines]) - so a bar redrawn on a scan whose
+     * staff runs aslant meets the print either side of it without a step.
+     */
+    internal fun engraved(m: Measure, k: Float, color: Int): List<PageMark> {
         if (m.bars > 1) return emptyList()
         val d = Engraver.aligned(m)
         val out = ArrayList<PageMark>()
+        // A point of the drawing (spaces from the bar's left, spaces down from its top line) on the page.
+        fun px(xs: Float) = (m.box.left + xs * m.space) * k
+        fun py(xs: Float, ys: Float): Float = m.yAt(ys, m.box.left + xs * m.space) * k
+        // A staff space where [xs] is: the lines' spacing there.
+        fun spAt(xs: Float): Float { val x = m.box.left + xs * m.space; return (m.bottomAt(x) - m.topAt(x)) / 4f * k }
         for (mark in d.marks) when (mark) {
             is Engraver.Stroke -> {
-                // The staff lines are the print's own: only drawn where the bar is cleaned (opaque).
-                if (mark.y1 == mark.y2 && mark.x2 - mark.x1 >= d.width - 0.01f && color != INK) continue
-                out += PageMark.line(x + mark.x1 * sp, top + mark.y1 * sp, x + mark.x2 * sp, top + mark.y2 * sp, (mark.w * sp).coerceAtLeast(0.4f), color)
+                val staffLine = mark.y1 == mark.y2 && mark.x2 - mark.x1 >= d.width - 0.01f
+                // The staff lines are the print's own: only drawn where the bar is cleaned (opaque) -
+                // then each from where it is printed at the bar's left to where at its right, as
+                // thick as it is printed, so the print either side runs straight on into it.
+                if (staffLine && color != INK) continue
+                // A scan's lines print grey and a little lighter than their dark core suggests.
+                val w = if (staffLine && m.lineWidth > 0f) m.lineWidth * k * 0.85f else (mark.w * spAt(mark.x1)).coerceAtLeast(0.4f)
+                out += PageMark.line(px(mark.x1), py(mark.x1, mark.y1), px(mark.x2), py(mark.x2, mark.y2), w, if (staffLine) STAFF else color)
             }
-            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(sp, x + mark.x * sp, top + mark.y * sp), color)
-            is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(8) { i -> if (i % 2 == 0) x + mark.points[i] * sp else top + mark.points[i] * sp }), color)
+            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(spAt(mark.x), px(mark.x), py(mark.x, mark.y)), color)
+            is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) px(mark.points[i]) else py(mark.points[i - 1], mark.points[i]) }), color)
         }
         return out
+    }
+
+    /**
+     * Paper over bar [m]'s print (page units at [k]): its width less a sliver at each end, and
+     * [above] and [below] staff spaces past its lines - following the staff where it runs aslant.
+     */
+    internal fun paper(m: Measure, k: Float, above: Float, below: Float, color: Int): PageMark {
+        val sp = m.space
+        val l = m.box.left + sp * 0.15f; val r = m.box.right - sp * 0.15f
+        return PageMark(PageMark.Kind.FILL, listOf(floatArrayOf(
+            l * k, (m.topAt(l) - sp * above) * k, r * k, (m.topAt(r) - sp * above) * k,
+            r * k, (m.bottomAt(r) + sp * below) * k, l * k, (m.bottomAt(l) + sp * below) * k)), color)
     }
 
     // ---- going to a bar -------------------------------------------------------------------------
@@ -514,7 +545,7 @@ internal object ScoreTools {
         for (mark in d.marks) when (mark) {
             is Engraver.Stroke -> out += PageMark.line(left + mark.x1 * cs, cueTop + mark.y1 * cs, left + mark.x2 * cs, cueTop + mark.y2 * cs, (mark.w * cs).coerceAtLeast(0.3f), CUE)
             is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(cs, left + mark.x * cs, cueTop + mark.y * cs), CUE)
-            is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(8) { i -> if (i % 2 == 0) left + mark.points[i] * cs else cueTop + mark.points[i] * cs }), CUE)
+            is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) left + mark.points[i] * cs else cueTop + mark.points[i] * cs }), CUE)
         }
         return out
     }

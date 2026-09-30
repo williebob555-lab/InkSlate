@@ -86,7 +86,7 @@ object CleanPrint {
                 if (mark.name == "restWhole" && multi.any { (a, b) -> mark.x in a..b }) continue
                 fill(p, MusicGlyphs[mark.name].polygons(SPACE, sx(mark.x), sy(mark.y)))
             }
-            is Engraver.Slab -> fill(p, listOf(FloatArray(8) { i -> if (i % 2 == 0) sx(mark.points[i]) else sy(mark.points[i]) }))
+            is Engraver.Slab -> fill(p, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) sx(mark.points[i]) else sy(mark.points[i]) }))
         }
         // Multi-bar rests: their bar across the middle, and how many over it.
         for ((i, m) in line.withIndex()) {

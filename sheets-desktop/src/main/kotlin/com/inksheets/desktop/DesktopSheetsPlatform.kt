@@ -194,6 +194,7 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         return object : com.inksheets.ui.PagePeek {
             override val pageCount = source.pageCount
             override fun render(index: Int, widthPx: Int) = runCatching { source.render(index, widthPx) }.getOrNull()
+            override fun printed(index: Int) = if (file.extension.equals("pdf", true)) PdfPrinted.read(file, index) else null
             override fun close() = source.close()
         }
     }

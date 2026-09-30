@@ -14,8 +14,21 @@ object Engraver {
     data class Symbol(val name: String, val x: Float, val y: Float) : Mark()
     /** A straight stroke [w] thick. */
     data class Stroke(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val w: Float) : Mark()
-    /** A filled four-sided shape: a beam. */
+    /** A filled shape through [points] (x, y in turn): a beam's four corners, a tie's or slur's curve. */
     data class Slab(val points: FloatArray) : Mark()
+
+    /**
+     * A tie's or slur's curve from ([x1], [y1]) to ([x2], [y2]), bowing [h] up (or down, [up]
+     * false) at its middle, [t] thick there and coming to a point at each end.
+     */
+    fun curve(x1: Float, y1: Float, x2: Float, y2: Float, h: Float, up: Boolean, t: Float = 0.16f): Slab {
+        val n = 14
+        val sign = if (up) -1f else 1f
+        val pts = ArrayList<Float>()
+        for (i in 0..n) { val u = i.toFloat() / n; val b = 4 * u * (1 - u); pts += x1 + (x2 - x1) * u; pts += y1 + (y2 - y1) * u + sign * h * b }
+        for (i in n downTo 0) { val u = i.toFloat() / n; val b = 4 * u * (1 - u); pts += x1 + (x2 - x1) * u; pts += y1 + (y2 - y1) * u + sign * (h - t) * b }
+        return Slab(pts.toFloatArray())
+    }
 
     /** Measures laid out: the shapes, how wide, and where each measure starts and ends. */
     class Drawing(val marks: List<Mark>, val width: Float, val measures: List<Pair<Float, Float>>)
@@ -85,7 +98,21 @@ object Engraver {
                 placed += e to x
                 x += widthOf(e.duration)
             }
-            drawEvents(marks, placed, m)
+            drawEvents(marks, placed, m, x + 0.4f)
+            // Dynamics, hairpins and slurs where they were printed among the notes: a page x mapped
+            // across by the notes either side of it.
+            val anchors = placed.map { (e, lx) -> e.x to lx }.sortedBy { it.first }
+            drawDirections(marks, m, x + 0.4f) { px ->
+                val after = anchors.indexOfFirst { it.first >= px }
+                when {
+                    anchors.isEmpty() -> start + 1f
+                    after <= 0 -> anchors.first().second - ((anchors.first().first - px) / m.space).coerceAtMost(1.5f)
+                    else -> {
+                        val (a, la) = anchors[after - 1]; val (b, lb) = anchors[after]
+                        la + (lb - la) * ((px - a) / (b - a).coerceAtLeast(1e-3f))
+                    }
+                }.let { if (after < 0 && anchors.isNotEmpty()) anchors.last().second + ((px - anchors.last().first) / m.space).coerceAtMost(2f) else it }
+            }
             x += 0.4f
             if (m.ending > 0) {
                 // An ending's bracket over the bar, its number by the hook where it begins.
@@ -122,12 +149,97 @@ object Engraver {
         val width = m.box.width / m.space
         for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)
         val placed = m.events.map { it to (it.x - m.box.left) / m.space }
-        drawEvents(marks, placed, m)
+        drawEvents(marks, placed, m, width)
+        drawDirections(marks, m, width) { x -> (x - m.box.left) / m.space }
         marks += Stroke(width, 0f, width, 4f, 0.16f)
         return Drawing(marks, width, listOf(0f to width))
     }
 
-    private fun drawEvents(marks: MutableList<Mark>, placed: List<Pair<Event, Float>>, m: Measure) {
+    /** The dynamic letters a marking is set in ("mf": m, f), by glyph. */
+    private fun dynamicGlyphs(text: String): List<String>? = text.map { c ->
+        when (c) { 'p' -> "dynamicPiano"; 'm' -> "dynamicMezzo"; 'f' -> "dynamicForte"; 'r' -> "dynamicRinforzando"; 's' -> "dynamicSforzando"; 'z' -> "dynamicZ"; else -> return null }
+    }
+
+    /**
+     * [m]'s dynamics, hairpins and slurs, at the places [at] maps its page x to, across a bar
+     * [width] spaces wide. Dynamics and hairpins go under the staff (or over it, where printed so);
+     * a slur arcs over its notes or under them, and runs to the bar's edge where it goes on.
+     */
+    private fun drawDirections(marks: MutableList<Mark>, m: Measure, width: Float, at: (Float) -> Float) {
+        // Under the staff, clear of the lowest note; over it, clear of the highest.
+        val steps = m.events.filterIsInstance<Note>().flatMap { it.steps }
+        val below = max(6.2f, (steps.maxOrNull() ?: 8) * 0.5f + 1.8f)
+        val over = min(-2.2f, (steps.minOrNull() ?: 0) * 0.5f - 1.8f)
+        for (d in m.directions) {
+            val x = at(d.x).coerceIn(0f, width); val x2 = at(d.x2).coerceIn(0f, width)
+            val y = if (d.above) over else below
+            when (d.kind) {
+                "dynamic" -> {
+                    var cx = x
+                    for (g in dynamicGlyphs(d.text) ?: continue) { marks += Symbol(g, cx, y); cx += MusicGlyphs[g].advance - 0.1f }
+                }
+                "cresc", "dim" -> if (x2 - x > 0.5f) {
+                    // Open end apart by a space, the closed end a point.
+                    val (narrow, wide) = if (d.kind == "cresc") x to x2 else x2 to x
+                    marks += Stroke(narrow, y - 0.2f, wide, y - 0.7f, 0.1f)
+                    marks += Stroke(narrow, y - 0.2f, wide, y + 0.3f, 0.1f)
+                }
+                "slur" -> if (x2 - x > 0.5f) {
+                    val y1 = (d.step ?: 0) * 0.5f + (if (d.above) -0.8f else 0.8f)
+                    val y2 = (d.step2 ?: d.step ?: 0) * 0.5f + (if (d.above) -0.8f else 0.8f)
+                    marks += curve(x, y1, x2, y2, min(1.2f, 0.25f + (x2 - x) * 0.06f), d.above)
+                }
+            }
+        }
+    }
+
+    /** The glyph for articulation [name] on the side [above] or below. */
+    private fun articulation(name: String, above: Boolean): String? = when (name) {
+        "accent" -> "articAccent"; "staccato" -> "articStaccato"; "tenuto" -> "articTenuto"
+        "staccatissimo" -> "articStaccatissimo"; "marcato" -> "articMarcato"; else -> null
+    }?.let { it + if (above) "Above" else "Below" }
+
+    /**
+     * Each note's marks - articulations on its head's side, away from the stem, stacked outwards;
+     * a fermata over the staff - and its ties to the next note at a pitch it shares (to the bar's
+     * end, [width], where the note tied to is in the next bar).
+     */
+    private fun drawNoteMarks(marks: MutableList<Mark>, placed: List<Pair<Event, Float>>, width: Float?) {
+        val notes = placed.filter { it.first is Note }.map { it.first as Note to it.second }
+        for ((i, pair) in notes.withIndex()) {
+            val (n, x) = pair
+            val head = when (n.duration.base) { 1 -> "noteheadWhole"; 2 -> "noteheadHalf"; else -> "noteheadBlack" }
+            val headW = MusicGlyphs[head].advance
+            val up = stemUp(n)
+            val top = n.steps.min() * 0.5f; val bottom = n.steps.max() * 0.5f
+            var y = if (up) bottom + 1.0f else top - 1.0f
+            for (a in n.articulations) {
+                if (a == "fermata") {
+                    val g = "fermataAbove"
+                    marks += Symbol(g, x + headW / 2 - MusicGlyphs[g].advance / 2, min(top - 1.6f, -1.2f))
+                    continue
+                }
+                val g = articulation(a, !up) ?: continue
+                marks += Symbol(g, x + headW / 2 - MusicGlyphs[g].advance / 2, y)
+                y += if (up) 0.9f else -0.9f
+            }
+            if (n.tie) {
+                val next = notes.getOrNull(i + 1)
+                for (s in n.steps) {
+                    if (next != null && s !in next.first.steps) continue
+                    val x1 = x + headW + 0.1f
+                    val x2 = next?.second?.minus(0.1f) ?: (width ?: (x + headW + 2.5f))
+                    if (x2 - x1 < 0.3f) continue
+                    // Away from the stem: under the heads when it goes up, over them when down.
+                    val ty = s * 0.5f + if (up) 0.55f else -0.55f
+                    marks += curve(x1, ty, x2, ty, min(0.6f, 0.2f + (x2 - x1) * 0.08f), !up, 0.13f)
+                }
+            }
+        }
+    }
+
+    private fun drawEvents(marks: MutableList<Mark>, placed: List<Pair<Event, Float>>, m: Measure, width: Float? = null) {
+        drawNoteMarks(marks, placed, width)
         // Beams: runs of eighths and shorter within one beat.
         val groups = ArrayList<List<Pair<Note, Float>>>()
         var run = ArrayList<Pair<Note, Float>>()
@@ -240,7 +352,7 @@ object Engraver {
         for (mark in drawing.marks) when (mark) {
             is Stroke -> Fill.line(ink, x + mark.x1 * space, y + mark.y1 * space, x + mark.x2 * space, y + mark.y2 * space, (mark.w * space).coerceAtLeast(1f))
             is Symbol -> Fill.polygons(ink, MusicGlyphs[mark.name].polygons(space, x + mark.x * space, y + mark.y * space))
-            is Slab -> Fill.polygons(ink, listOf(FloatArray(8) { i -> if (i % 2 == 0) x + mark.points[i] * space else y + mark.points[i] * space }))
+            is Slab -> Fill.polygons(ink, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) x + mark.points[i] * space else y + mark.points[i] * space }))
         }
     }
 }
