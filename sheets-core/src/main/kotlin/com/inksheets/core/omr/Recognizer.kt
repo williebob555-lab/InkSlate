@@ -974,6 +974,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         for ((si, s) in staves.withIndex()) {
+            // The bar number printed over the line's start, where it reads clearly, is believed over
+            // the count - a pickup bar numbered 0, a bar missed or found twice before - if it is later
+            // than the last and near the count (a digit missed would put it far off).
+            if (adapt) Digits.number(ink, s.left - (s.space * 3).toInt(), s.left + (s.space * 4).toInt(), s.y(-8, s.left).roundToInt(), s.y(-1, s.left).roundToInt(),
+                (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt())?.first?.let { p ->
+                if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
+            }
             // The start of the staff: clef, key, time.
             var x = s.left + (s.space * 0.3f).toInt()
             val clef = clefAt(clean, s, x, t)
@@ -1016,7 +1023,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A multi-bar rest: its bar and number, and nothing else to read.
                 // A bar with notes in it is no multi-bar rest, whatever runs along its middle line (a beam).
                 val headsHere = allHeads.any { it.x >= from - 2 && it.x < to }
-                val rest = if (headsHere) null else multiRest(clean, s, from, to)
+                val rest = if (headsHere) null else multiRest(clean, s, from, to, ink)
                 if (rest != null) {
                     val (restBars, x) = rest
                     measures += Measure(number, page, si, box, s.space, carry.clef, carry.key, carry.time,
@@ -1059,7 +1066,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             // First and second endings: a long thin bracket over the staff, hooked down at its
             // left end, its number beside the hook. The bars under it are that ending's.
-            for ((x0, x1, n) in endings(clean, s)) {
+            for ((x0, x1, n) in endings(clean, s, ink)) {
                 for (k in measures.indices) {
                     val m = measures[k]
                     if (m.staff == si && m.page == page && (m.box.left + m.box.right) / 2 in x0..x1) measures[k] = m.copy(ending = n)
@@ -1095,7 +1102,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * A multi-bar rest between [from] and [to]: a thick bar across the middle line, its number of
      * bars above the staff. (bars, x) - bars 0 when the number could not be read; null when none.
      */
-    private fun multiRest(clean: Ink, s: Staff, from: Int, to: Int): Pair<Int, Int>? {
+    private fun multiRest(clean: Ink, s: Staff, from: Int, to: Int, page: Ink = clean): Pair<Int, Int>? {
         val sp = s.space
         var best: Pair<Int, Int>? = null   // start, length
         var x = from
@@ -1133,7 +1140,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             dx = hit.second + (sp * 1.4f).toInt()
         }
         // Read whole, in whatever typeface it is printed; the music font's digits if that finds none.
-        val printed = Digits.number(clean, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-5, start).roundToInt())
+        // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
+        val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt())
         val bars = printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
         if (!serifs && bars < 2) return null
@@ -1259,7 +1267,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /** The ending brackets over [s]: (from x, to x, which ending). */
-    private fun endings(clean: Ink, s: Staff): List<Triple<Int, Int, Int>> {
+    private fun endings(clean: Ink, s: Staff, page: Ink = clean): List<Triple<Int, Int, Int>> {
         val sp = s.space
         val out = ArrayList<Triple<Int, Int, Int>>()
         val top = s.y(-12, s.left).roundToInt(); val bottom = s.y(-2, s.left).roundToInt()
@@ -1276,7 +1284,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // Hooked down at its left end, a space or more.
                 val hook = thin && (x - 2..x + 2).any { xx -> (y..y + (sp * 0.9f).toInt()).all { yy -> clean[xx, yy] || clean[xx, yy - 1] } }
                 if (hook) {
-                    val n = Digits.number(clean, x, x + (sp * 3).toInt(), y - (sp * 0.5f).toInt(), y + (sp * 2.5f).toInt(), (sp * 0.5f).toInt(), (sp * 2.2f).toInt())?.first
+                    val n = Digits.number(page, x, x + (sp * 3).toInt(), y - (sp * 0.5f).toInt(), y + (sp * 2.5f).toInt(), (sp * 0.5f).toInt(), (sp * 2.2f).toInt())?.first
                     if (n != null && n in 1..3 && out.none { abs(it.first - x) < sp }) out += Triple(x, e, n)
                 }
                 x = e + 1
@@ -1289,7 +1297,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun fmt(q: Double) = if (q == q.toLong().toDouble()) q.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, q).trimEnd('0')
 
     /** What carries from staff to staff and page to page: the clef, key and time in force. */
-    class Carry(var clef: Clef = Clef.TREBLE, var key: Key = Key(0), var time: TimeSig = TimeSig(4, 4))
+    class Carry(var clef: Clef = Clef.TREBLE, var key: Key = Key(0), var time: TimeSig = TimeSig(4, 4)) {
+        /** The last bar number printed at a line's start and taken: numbers only go up. */
+        var printed = 0
+    }
 
     private fun clefAt(clean: Ink, s: Staff, x0: Int, t: Int = 2): Pair<Clef, Int>? {
         val sp = s.space

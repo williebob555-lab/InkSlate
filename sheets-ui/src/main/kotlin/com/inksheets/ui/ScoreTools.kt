@@ -382,17 +382,18 @@ internal object ScoreTools {
     private fun otherParts(s: SheetsState): List<Pair<com.inksheets.core.Part, File>> {
         val song = s.current ?: return emptyList()
         val mine = s.partShown()
-        return song.parts.filter { it.id != mine?.id && it.firstPage == null && it.lastPage == null && !(it.label ?: "").contains("score", true) &&
+        return song.parts.filter { it.id != mine?.id && !(it.label ?: "").contains("score", true) &&
             it.instrument?.contains("score", true) != true }
-            .mapNotNull { p -> s.fileOf(p.file)?.takeIf { f -> f.isFile && f.absolutePath != s.currentPath }?.let { p to it } }
-            .distinctBy { it.second.absolutePath }
+            .mapNotNull { p -> s.fileOf(p.file)?.takeIf { f -> f.isFile }?.let { p to it } }
+            // A part sharing this part's pages is this part.
+            .filter { (p, f) -> f.absolutePath != s.currentPath || (p.firstPage != null && p.firstPage != mine?.firstPage) }
     }
 
     /** Read whichever of the band's parts are not read yet, one after another, then [then]. */
     private fun readBand(s: SheetsState, then: () -> Unit) {
-        val todo = otherParts(s).filter { Transcriber.cached(s, it.second) == null }
+        val todo = otherParts(s).filter { Transcriber.cached(s, it.second) == null }.distinctBy { it.second.absolutePath }
         if (todo.isEmpty()) { bandReading = null; then(); return }
-        val total = otherParts(s).size
+        val total = otherParts(s).distinctBy { it.second.absolutePath }.size
         fun next(i: Int) {
             if (i >= todo.size) { bandReading = null; then(); return }
             bandReading = "${total - todo.size + i + 1} of $total"
@@ -405,23 +406,26 @@ internal object ScoreTools {
     fun playBand(s: SheetsState) {
         stop(s)
         val path = s.currentPath ?: return
-        val mine = scoreOf(path) ?: run { said = "Read the music first"; return }
+        val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
+        // This part's own bars, numbered as the band's are - and back again for showing.
+        val (mine, offset) = Transcriber.partOf(whole, s.partShown())
         readBand(s) {
             val voices = otherParts(s).mapNotNull { (p, f) ->
-                val sc = Transcriber.cached(s, f) ?: return@mapNotNull null
+                // A part in a band pack: its own pages of the pack's reading.
+                val sc = Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } ?: return@mapNotNull null
                 val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
                 val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
                 com.inksheets.core.omr.EnsemblePlayer.Voice(sc, tr, Synth.patchFor(Midi.program(id)))
             }
             if (voices.isEmpty()) { said = "No other parts of this song here to play"; return@readBand }
             val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
-            val range = selection ?: run {
+            val range = selection?.let { (it.first - offset)..(it.last - offset) } ?: run {
                 val first = mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
                 first..(mine.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: first)
             }
             val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm)
             said = "The band: ${voices.size} parts"
-            playing = Triple(range.first, SharedMetronome.bpm.toInt(), 0)
+            playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
             Sound.play(s, WHO) { buf -> p.fill(buf) }
             var lastBar = -1
@@ -431,11 +435,11 @@ internal object ScoreTools {
                         s.platform.onMain {
                             if (ensemble !== p) return@onMain
                             if (p.finished) { stop(s); return@onMain }
-                            val now = Triple(p.bar, SharedMetronome.bpm.toInt(), 0)
+                            val now = Triple(p.bar + offset, SharedMetronome.bpm.toInt(), 0)
                             if (playing != now) { playing = now; changed() }
                             if (now.first != lastBar) {
                                 lastBar = now.first
-                                mine.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m -> if (m.page != s.pageShown.first) Perform.jumpTo?.invoke(path, m.page) }
+                                whole.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m -> if (m.page != s.pageShown.first) Perform.jumpTo?.invoke(path, m.page) }
                             }
                         }
                     }
@@ -471,8 +475,11 @@ internal object ScoreTools {
 
     /** The entries after four bars' rest or more, and the busiest other part's two bars before each. */
     private fun cuesFor(s: SheetsState, path: String): Map<Int, List<Measure>> {
-        val mine = scoreOf(path) ?: return emptyMap()
-        return cueBars(mine, otherParts(s).mapNotNull { (_, f) -> Transcriber.cached(s, f) })
+        val whole = scoreOf(path) ?: return emptyMap()
+        val (mine, _) = Transcriber.partOf(whole, s.partShown())
+        val found = cueBars(mine, otherParts(s).mapNotNull { (p, f) -> Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } })
+        // Back to the bars of the file, where they are drawn.
+        return found.mapKeys { (k, _) -> mine.measures[k].let { m -> whole.measures.indexOfFirst { it.page == m.page && it.box == m.box } } }.filterKeys { it >= 0 }
     }
 
     /** Cues for [mine] from [others]: by the index of the rest bar each is drawn over. */

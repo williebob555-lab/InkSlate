@@ -144,6 +144,7 @@ class OmrRealPagesTest {
         var printedNumbers = 0; var agreeingNumbers = 0
         var repeatsFound = 0; val repeatParts = ArrayList<String>()
         val numberMisses = ArrayList<String>()
+        val numberShots = ArrayList<BufferedImage>()
         val examples = HashMap<String, MutableList<BufferedImage>>()
         var bars = 0; var sureOld = 0; var sureNew = 0; var parts = 0; var better = 0; var worse = 0
         for (f in picked) {
@@ -162,11 +163,14 @@ class OmrRealPagesTest {
             for ((si, st) in new.staves.withIndex()) {
                 if (si == 0) continue
                 val sp = st.space
-                val printed = com.inksheets.core.omr.Digits.number(clean, st.left - sp.toInt(), st.left + (sp * 3).toInt(),
-                    st.y(-8, st.left).toInt(), st.y(-1, st.left).toInt(), (sp * 0.6f).toInt(), (sp * 2.5f).toInt(), bottomFrom = st.y(-5, st.left).toInt())?.first ?: continue
+                val printed = com.inksheets.core.omr.Digits.number(ink, st.left - (sp * 3).toInt(), st.left + (sp * 4).toInt(),
+                    st.y(-8, st.left).toInt(), st.y(-1, st.left).toInt(), (sp * 0.6f).toInt(), (sp * 2.5f).toInt(), bottomFrom = st.y(-6, st.left).toInt())?.first ?: continue
                 val first = new.measures.firstOrNull { it.staff == si }?.number ?: continue
                 printedHere++
-                if (printed == first) agreeHere++ else if (numberMisses.size < 30) numberMisses += "${f.nameWithoutExtension} staff ${si + 1}: printed $printed, counted $first"
+                if (printed == first) agreeHere++ else if (numberMisses.size < 30) {
+                    numberMisses += "${f.nameWithoutExtension} staff ${si + 1}: printed $printed, counted $first"
+                    if (numberShots.size < 24) numberShots += crop(ink, com.inksheets.core.omr.Measure(first, 0, si, com.inksheets.core.omr.Box(st.left - sp.toInt(), st.top, st.left + (sp * 6).toInt(), st.bottom), sp, com.inksheets.core.omr.Clef.TREBLE, com.inksheets.core.omr.Key(0), com.inksheets.core.omr.TimeSig(4, 4), emptyList()), "printed $printed counted $first")
+                }
             }
             printedNumbers += printedHere; agreeingNumbers += agreeHere
             repeatsFound += new.measures.count { it.repeatStart || it.repeatEnd }
@@ -196,6 +200,7 @@ class OmrRealPagesTest {
             for ((kind, list) in examples) sheet(list, File(dir, "kind-" + kind.replace(Regex("[^a-z]+"), "-") + ".png"))
         }
         numberMisses.forEach { println("  numbers: $it") }
+        System.getProperty("inksheets.shots")?.let { sheet(numberShots, File(it, "bar-numbers.png")) }
         repeatParts.forEach { println("  repeats: $it") }
         println("REPEATS: $repeatsFound")
         println("BAR NUMBERS: $agreeingNumbers of $printedNumbers printed at line starts agree with the count")

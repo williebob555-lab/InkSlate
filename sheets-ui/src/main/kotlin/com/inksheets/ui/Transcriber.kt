@@ -38,6 +38,18 @@ internal object Transcriber {
             ?.also { cache[key(file)] = it }
     }
 
+    /**
+     * [part]'s own bars out of [whole] - the reading of the file it is in: its pages only (a part
+     * in a band pack), numbered from 1; and how far its numbers were moved from the file's.
+     */
+    fun partOf(whole: Score, part: com.inksheets.core.Part?): Pair<Score, Int> {
+        val first = part?.firstPage ?: return whole to 0
+        val last = part.lastPage ?: Int.MAX_VALUE
+        val bars = whole.measures.filter { it.page + 1 in first..last }
+        val offset = (bars.firstOrNull()?.number ?: 1) - 1
+        return whole.copy(measures = bars.map { it.copy(number = it.number - offset) }) to offset
+    }
+
     /** Read [file] (off the UI thread) - [again] even if it has been; [onDone] on the UI thread with the notes, or null. */
     fun read(state: SheetsState, file: File, again: Boolean = false, onDone: (Score?) -> Unit) {
         if (busy != null) return
