@@ -115,6 +115,7 @@ class OmrRealPagesTest {
         read(f.relativeTo(music).path, 1)
         // Bars read differently with the page-adapting steps than without.
         val ink = render(f, 0) ?: return
+        Recognizer().read(ink).measures.filter { it.segno || it.coda || it.repeatStart || it.repeatEnd || it.ending > 0 }.forEach { println("  marks: m${it.number}${if (it.segno) " segno" else ""}${if (it.coda) " coda" else ""}${if (it.repeatStart) " |:" else ""}${if (it.repeatEnd) " :|" else ""}${if (it.ending > 0) " ending ${it.ending}" else ""}") }
         Recognizer().read(ink).measures.take(5).forEach { println("  first: m${it.number} bars ${it.bars} ${it.events.map(::describe)} ${it.doubts} x ${it.box.left}-${it.box.right}") }
         val old = Recognizer(adapt = false).read(ink).measures.associateBy { it.number }
         for (m in Recognizer().read(ink).measures) {
@@ -169,7 +170,7 @@ class OmrRealPagesTest {
             }
             printedNumbers += printedHere; agreeingNumbers += agreeHere
             repeatsFound += new.measures.count { it.repeatStart || it.repeatEnd }
-            if (new.measures.any { it.repeatStart || it.repeatEnd } && repeatParts.size < 12) repeatParts += f.nameWithoutExtension + ": " + new.measures.filter { it.repeatStart || it.repeatEnd }.joinToString { "${it.number}${if (it.repeatStart) "|:" else ""}${if (it.repeatEnd) ":|" else ""}" }
+            if (new.measures.any { it.segno || it.coda || it.ending > 0 } && repeatParts.size < 30) repeatParts += f.nameWithoutExtension + ": " + new.measures.filter { it.segno || it.coda || it.ending > 0 }.joinToString { "${it.number}${if (it.segno) " segno" else ""}${if (it.coda) " coda" else ""}${if (it.ending > 0) " [${it.ending}]" else ""}" }
             println("${f.relativeTo(music).path}: ${old.measures.size} -> ${new.measures.size} bars, sure $a -> $b; bar numbers agree $agreeHere of $printedHere")
             // A few bars of each kind from each part, drawn for looking at.
             val perPart = HashMap<String, Int>()

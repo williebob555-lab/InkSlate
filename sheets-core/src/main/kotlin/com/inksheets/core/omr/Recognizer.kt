@@ -1022,6 +1022,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }
             }
             allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
+            // Segno and coda signs over the staff: to the bar they stand over (or the line's first).
+            // On the page as printed: above the staff there are no lines to take out, and taking out
+            // ledger-like strokes breaks a coda sign's circle into pieces.
+            for ((sx, kind) in signs(ink, s)) {
+                val here = measures.indices.filter { measures[it].staff == si && measures[it].page == page }
+                val k = here.firstOrNull { sx >= measures[it].box.left - s.space && sx < measures[it].box.right } ?: here.firstOrNull() ?: continue
+                measures[k] = if (kind == "segno") measures[k].copy(segno = true) else measures[k].copy(coda = true)
+            }
             // First and second endings: a long thin bracket over the staff, hooked down at its
             // left end, its number beside the hook. The bars under it are that ending's.
             for ((x0, x1, n) in endings(clean, s)) {
@@ -1144,6 +1152,61 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         return false
+    }
+
+    /**
+     * Segno and coda signs over [s]: each shape a sign's size in the band above the staff, the
+     * sign's outline fitted to it and compared - (x of its middle, "segno" or "coda").
+     */
+    private fun signs(clean: Ink, s: Staff): List<Pair<Int, String>> {
+        val sp = s.space
+        val out = ArrayList<Pair<Int, String>>()
+        val y0 = s.y(-14, s.left).roundToInt(); val y1 = s.y(-1, s.left).roundToInt()
+        val seen = HashSet<Long>()
+        for (y in y0..y1) for (x in s.left - (sp * 3).toInt()..s.right) {
+            if (!clean[x, y]) continue
+            val key = x.toLong() shl 32 or (y.toLong() and 0xffffffffL)
+            if (key in seen) continue
+            val stack = ArrayDeque<Long>(); stack += key
+            var l = x; var r = x; var t = y; var b = y; var n = 0
+            while (stack.isNotEmpty() && n < 30_000) {
+                val k = stack.removeLast()
+                if (!seen.add(k)) continue
+                val px = (k shr 32).toInt(); val py = k.toInt()
+                if (!clean[px, py]) continue
+                n++; l = min(l, px); r = max(r, px); t = min(t, py); b = max(b, py)
+                for (dy in -1..1) for (dx in -1..1) if (dx != 0 || dy != 0) stack += (px + dx).toLong() shl 32 or ((py + dy).toLong() and 0xffffffffL)
+            }
+            val w = r - l + 1; val h = b - t + 1
+            if (h < sp * 1.5f || h > sp * 6f || w < sp * 1.2f || w > sp * 6f || b > y1 + sp) continue
+            // Engravers draw both signs their own way: a fair likeness, and clearly more the one than the other.
+            val seg = overlap(clean, l, t, w, h, "segno"); val cod = overlap(clean, l, t, w, h, "coda")
+            when {
+                seg > 0.5f && seg > cod + 0.12f -> out += (l + r) / 2 to "segno"
+                cod > 0.5f && cod > seg + 0.12f -> out += (l + r) / 2 to "coda"
+            }
+        }
+        return out
+    }
+
+    /** How much ink in the box ([l], [t]) [w] x [h] and glyph [name] drawn to fill it share: 1 the same. */
+    private fun overlap(clean: Ink, l: Int, t: Int, w: Int, h: Int, name: String): Float {
+        val g = MusicGlyphs[name]
+        val bb = g.bounds
+        val gw = bb[2] - bb[0]; val gh = bb[3] - bb[1]
+        if (gw <= 0f || gh <= 0f) return 0f
+        // The glyph's shape, not stretched: fitted by its height, then its width checked.
+        val scale = h / gh
+        if (gw * scale > w * 1.35f || gw * scale < w * 0.65f) return 0f
+        val drawn = Ink(w, h)
+        Fill.polygons(drawn, g.polygons(scale, -bb[0] * scale + (w - gw * scale) / 2, -bb[1] * scale))
+        var both = 0; var either = 0
+        for (yy in 0 until h) for (xx in 0 until w) {
+            val a = clean[l + xx, t + yy]; val c = drawn[xx, yy]
+            if (a && c) both++
+            if (a || c) either++
+        }
+        return if (either == 0) 0f else both.toFloat() / either
     }
 
     /** The ending brackets over [s]: (from x, to x, which ending). */

@@ -65,6 +65,9 @@ object Engraver {
                 bottom.forEachIndexed { i, c -> marks += Symbol("timeSig$c", x + i * 1.8f + (w - bottom.length * 1.8f) / 2, 3f) }
                 x += w + 0.8f
             }
+            // D.S. and coda signs over the bar's start.
+            if (m.segno) marks += Symbol("segno", start + 0.3f, -2f)
+            if (m.coda) marks += Symbol("coda", start + 0.3f, -2f)
             // A repeat's start: thick, thin, and its two dots.
             if (m.repeatStart) {
                 marks += Stroke(x + 0.25f, 0f, x + 0.25f, 4f, 0.5f)

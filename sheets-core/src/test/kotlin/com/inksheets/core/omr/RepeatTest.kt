@@ -39,4 +39,22 @@ class RepeatTest {
         assertEquals(bars.map { it.ending }, read.measures.map { it.ending })
         assertEquals(listOf(1, 2, 3, 1, 2, 4, 5), PlayOrder.bars(read.measures))
     }
+
+    @Test
+    fun `D S al Coda is read and taken`() {
+        val r = java.util.Random(5)
+        val space = 18f
+        // Segno at bar 2, To Coda at bar 3, D.S. after bar 4, the coda from bar 5.
+        val bars = (1..6).map { n -> TestPages.randomMeasure(r, n, Clef.TREBLE, Key(0), TimeSig(4, 4), n == 1) }
+            .map { m -> m.copy(segno = m.number == 2, coda = m.number == 3 || m.number == 5) }
+        val d = Engraver.line(bars)
+        val ink = Ink((d.width * space + 4 * space).toInt(), (16 * space).toInt())
+        Engraver.paint(ink, d, space, 2 * space, 8 * space)
+        TestPages.shot("ds-al-coda", ink)
+        val read = Recognizer().read(ink)
+        println(read.measures.map { "${it.number}${if (it.segno) "S" else ""}${if (it.coda) "C" else ""}" })
+        assertEquals(bars.map { it.segno }, read.measures.map { it.segno })
+        assertEquals(bars.map { it.coda }, read.measures.map { it.coda })
+        assertEquals(listOf(1, 2, 3, 4, 2, 3, 5, 6), PlayOrder.unrolled(Score(read.measures, 1)).measures.map { it.number })
+    }
 }

@@ -134,6 +134,9 @@ data class Measure(
     val repeatEnd: Boolean = false,
     /** Under a first or second ending's bracket: which (1, 2), or 0 for none. */
     val ending: Int = 0,
+    /** A segno over its start (where D.S. goes back to), a coda sign (To Coda, or the coda's start). */
+    val segno: Boolean = false,
+    val coda: Boolean = false,
     /** How many bars it stands for: more than one for a multi-bar rest ("rest 4 bars"). */
     val bars: Int = 1
 ) {
@@ -208,8 +211,27 @@ object PlayOrder {
         return out
     }
 
-    /** [score] with its bars in the order they are played - a repeated bar in it twice - for hearing it, or following it. */
-    fun unrolled(score: Score): Score = score.copy(measures = indices(score.measures).map { score.measures[it] })
+    /**
+     * [score] with its bars in the order they are played - a repeated bar in it twice, D.S. al
+     * Coda taken - for hearing it, or following it.
+     */
+    fun unrolled(score: Score): Score = score.copy(measures = withJumps(score.measures).map { score.measures[it] })
+
+    /**
+     * [indices], and D.S. al Coda where a part has one segno and two coda signs - "To Coda" in
+     * the body, the coda's own start after the D.S.: up to the coda, back to the segno (repeats
+     * not taken again), on to "To Coda", then the coda. Anything else is played as it stands:
+     * a jump is never guessed at.
+     */
+    fun withJumps(measures: List<Measure>): List<Int> {
+        val order = indices(measures)
+        val segnos = measures.indices.filter { measures[it].segno }
+        val codas = measures.indices.filter { measures[it].coda }
+        if (segnos.size != 1 || codas.size != 2) return order
+        val s = segnos[0]; val (toCoda, coda) = codas
+        if (!(s <= toCoda && toCoda < coda)) return order
+        return order.filter { it < coda } + (s..toCoda) + order.filter { it >= coda }.distinct()
+    }
 
     /** Bar numbers in the order played. */
     fun bars(measures: List<Measure>): List<Int> = indices(measures).flatMap { k -> measures[k].let { m -> (m.number until m.number + m.bars).toList() } }
