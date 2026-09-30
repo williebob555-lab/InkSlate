@@ -218,10 +218,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 if (state.listenTurns && (state.current?.audio?.isNotEmpty() == true || readHere || Listener.active)) {
                     StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
-                    Listener.status?.let {
-                        Text(it, style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 3,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center, modifier = Modifier.width(64.dp))
-                    }
+                    ListenGauge(state)
+
                 }
                 Box {
                     StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }

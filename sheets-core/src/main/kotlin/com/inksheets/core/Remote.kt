@@ -260,7 +260,10 @@ object RemoteLink {
         /** The instrument chosen for every song (a profile id). */
         val profileId: String? = null,
         /** The windows open over the music: [com.inkslate.core.PerformAction] names (TUNER, RECORDINGS, ...). */
-        val windows: List<String> = emptyList()
+        val windows: List<String> = emptyList(),
+        /** Listen is on, and what it is doing in a few words (it hears nothing, when it turns). */
+        val listening: Boolean = false,
+        val listenStatus: String? = null
     )
 
     /** The library to pick a song or setlist from; sent on joining and when it changes. */

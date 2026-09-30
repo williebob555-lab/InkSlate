@@ -282,7 +282,9 @@ class RemoteControl(private val state: SheetsState) {
             clickPlayback = Click.withPlayback(state),
             stripOpen = !state.stripCollapsed,
             profileId = state.profileId,
-            windows = PerformAction.entries.filter { state.windowOpen(it) }.map { it.name }
+            windows = PerformAction.entries.filter { state.windowOpen(it) }.map { it.name },
+            listening = Listener.active,
+            listenStatus = if (state.listenTurns) Listener.summary(state) else "Listen is off in Settings"
         ))
     }
 
@@ -1172,6 +1174,7 @@ private fun DeckButton(
         b.kind == RemoteButton.COUNT_IN -> (shown?.counting ?: 0) > 0
         b.kind == RemoteButton.COUNT_BARS -> shown?.countInBars == b.value?.toInt()
         b.kind == RemoteButton.PROFILES -> false
+        b.kind == RemoteButton.LISTEN -> shown?.listening == true
         else -> false
     }
     val own = b.color?.let { Color(it) }
@@ -1186,6 +1189,7 @@ private fun DeckButton(
         b.kind == RemoteButton.PARTS -> shown?.part
         b.kind == RemoteButton.COUNT_IN && (shown?.counting ?: 0) > 0 -> "${shown?.counting}"
         b.kind == RemoteButton.MACRO && b.label != null -> "${b.steps.size} steps"
+        b.kind == RemoteButton.LISTEN -> shown?.listenStatus
         else -> null
     }
     Surface(
@@ -1206,7 +1210,12 @@ private fun DeckButton(
                     style = if (small) MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleSmall,
                     textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
-                if (!small) detail?.let { Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                // Listen's state is shown however small the button: it is how you know it hears.
+                if (!small || b.kind == RemoteButton.LISTEN) detail?.let {
+                    val alarm = b.kind == RemoteButton.LISTEN && it.startsWith("Hears nothing")
+                    Text(it, style = MaterialTheme.typography.labelMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center,
+                        color = if (alarm) MaterialTheme.colorScheme.error else Color.Unspecified, fontWeight = if (alarm) androidx.compose.ui.text.font.FontWeight.Bold else null)
+                }
             }
             if (editing) Icon(
                 Icons.Default.DragIndicator, null,

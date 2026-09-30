@@ -24,11 +24,30 @@ import com.inksheets.core.TurnPlan
 internal object Listener {
     /** Listening now: the toolbar button is lit. */
     var active by mutableStateOf(false)
-        private set
+        internal set
 
     /** What it is doing, or why it stopped - shown by the button for a moment. */
     var status by mutableStateOf<String?>(null)
         private set
+
+    /**
+     * Where it is, for showing: its place in what it follows, the page's stretch of it, when it
+     * will turn (null on the last page), whether it hears music, and where the turns come from.
+     */
+    data class Follow(
+        val atMs: Long,
+        val pageFromMs: Long,
+        val turnMs: Long?,
+        val music: Boolean,
+        val source: String,
+        val page: Int,
+        val pages: Int,
+        /** When it last turned a page itself (System time), so the turn can be shown as its own. */
+        val turnedAt: Long = 0L
+    )
+
+    var follow by mutableStateOf<Follow?>(null)
+        internal set
 
     @Volatile private var run: Any? = null
 
@@ -38,6 +57,27 @@ internal object Listener {
     }
 
     fun toggle(state: SheetsState) = if (active) stop(state, null) else start(state)
+
+    /**
+     * What it is doing in a few words - under its button, and on a remote's Listen button: never
+     * quiet about a microphone that hears nothing, and honest when the turns are only guessed.
+     */
+    fun summary(state: SheetsState): String? {
+        if (!state.listenTurns) return null
+        if (!active) return status
+        if (Ears.deaf) return "Hears nothing yet" + (Ears.device?.let { " - $it" } ?: "")
+        val f = follow ?: return status
+        val words = when {
+            System.currentTimeMillis() - f.turnedAt < 2_000 -> "Turned to page ${f.page + 1}"
+            !f.music -> "Waiting for the music"
+            f.turnMs == null -> "Last page - following"
+            else -> {
+                val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)
+                if (s < 1) "Turning..." else "Turn in ${s}s"
+            }
+        }
+        return words + if (f.source == "guessed") " (guessed)" else ""
+    }
 
     fun start(state: SheetsState) {
         if (active) return
@@ -89,6 +129,8 @@ internal object Listener {
             // the music itself (no recording) runs later, so it turns earlier.
             val lead = when { learned != null -> 300L; fromMusic != null && recording != null -> 500L; fromMusic != null -> 1_500L; else -> 1_000L }
             var turnedFrom = -1
+            var turnedAt = 0L
+            var shownAt = 0L
             state.platform.log("Listen: following ${song.title} (${if (recording != null) "its recording" else "its music as read"}) from ${startMs / 1000}s, turns $source" +
                 (fromMusic?.let { t -> " at " + t.joinToString { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) } + "s" } ?: ""))
             state.platform.onMain { if (run === me) status = if (source == "guessed") "Listening - turns guessed" else "Listening - turns $source" }
@@ -101,7 +143,14 @@ internal object Listener {
                     val turn = plan.turnAt(page)
                     if (turn != null && page != turnedFrom && at >= turn - lead) {
                         turnedFrom = page
+                        turnedAt = System.currentTimeMillis()
                         state.platform.onMain { if (run === me) Perform.run(PerformAction.NEXT_PAGE) }
+                    }
+                    val now = System.currentTimeMillis()
+                    if (now - shownAt >= 200) {
+                        shownAt = now
+                        val shown = Follow(at, if (page <= 0) 0L else plan.turnAt(page - 1) ?: 0L, turn?.let { it - lead }, !presence.quiet(f), source, page, pages, turnedAt)
+                        state.platform.onMain { if (run === me) follow = shown }
                     }
                     val why = when {
                         state.current?.id != song.id -> "Stopped: another song"
@@ -129,6 +178,7 @@ internal object Listener {
         Thread({ Ears.stop(WHO) }, "listen-stop").apply { isDaemon = true; start() }
         if (active) why?.let { state.platform.log("Listen: $it") }
         active = false
+        follow = null
         say(state, why)
     }
 

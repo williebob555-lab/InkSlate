@@ -1,4 +1,4 @@
-﻿package com.inksheets.desktop
+package com.inksheets.desktop
 
 import com.inkslate.core.Perform
 import com.inkslate.core.PerformAction
@@ -105,8 +105,23 @@ class ListenTest {
         try {
             javax.swing.SwingUtilities.invokeAndWait { com.inksheets.ui.Listener.start(state) }
             val until = System.currentTimeMillis() + 60_000
-            while (System.currentTimeMillis() < until && (com.inksheets.ui.Listener.active || turns.isEmpty())) Thread.sleep(100)
+            // What the button says as it goes, each change with the time heard.
+            val said = ArrayList<Pair<Double, String>>()
+            while (System.currentTimeMillis() < until && (com.inksheets.ui.Listener.active || turns.isEmpty())) {
+                Thread.sleep(20)
+                var words: String? = null
+                javax.swing.SwingUtilities.invokeAndWait { words = com.inksheets.ui.Listener.summary(state) }
+                val w = words ?: continue
+                if (said.lastOrNull()?.second != w) said += mic.heardSeconds to w
+            }
+            said.forEach { (t, w) -> println("%6.1f s  %s".format(t, w)) }
             println("turns at ${turns.map { "%.1f".format(it) }} s heard; stopped: ${com.inksheets.ui.Listener.status}")
+            // Each turn was said before it came - counted down - and said after as done.
+            for ((i, t) in turns.withIndex()) {
+                assertTrue("no countdown before turn ${i + 1}: $said", said.any { (at, w) -> w.startsWith("Turn in") && at in t - 15.0..t })
+                assertTrue("turn ${i + 1} not shown as done: $said", said.any { (at, w) -> w == "Turned to page ${i + 2} (guessed)" && at in t - 0.5..t + 2.0 })
+            }
+            assertTrue("it never said it hears nothing wrongly: $said", said.none { it.second.startsWith("Hears nothing") })
             // Guessed turns: a quarter, a half and three quarters of the recording, heard at 90%,
             // each a second early.
             assertEquals(3, turns.size)
@@ -116,6 +131,67 @@ class ListenTest {
         } finally {
             javax.swing.SwingUtilities.invokeAndWait { com.inksheets.ui.Listener.stop(state) }
             Perform.document = null
+        }
+    }
+
+    /** A microphone that opens and gives nothing - an unplugged headset's, a muted interface. */
+    private class DeadMic : Microphone {
+        @Volatile private var thread: Thread? = null
+        override val sampleRate = 48_000
+        override fun start(onChunk: (FloatArray) -> Unit): Boolean {
+            thread = Thread {
+                while (!Thread.currentThread().isInterrupted) {
+                    onChunk(FloatArray(480))
+                    try { Thread.sleep(10) } catch (e: InterruptedException) { break }
+                }
+            }.apply { isDaemon = true; start() }
+            return true
+        }
+        override fun stop() { thread?.interrupt() }
+        override val inUse = "Microphone (USB Audio Device)"
+    }
+
+    /** A dead microphone is said to be one, by name, within a few seconds - never shown as waiting for the music. */
+    @Test
+    fun `a microphone that hears nothing says so`() {
+        assumeTrue("no recording here", source.isFile)
+        val root = tmp.newFolder("Music")
+        val rec = File(root, "Band/Sweet Caroline.mp3").apply { parentFile.mkdirs(); source.copyTo(this) }
+        val decoder = DesktopSheetsPlatform {}
+        val platform = object : SheetsPlatform {
+            private val prefs = HashMap<String, String?>().apply { put("sheets_library", root.absolutePath) }
+            override val deviceId = "stand"
+            override val startFolder = root
+            override fun pref(key: String) = prefs[key]
+            override fun setPref(key: String, value: String?) { prefs[key] = value }
+            override fun openPart(song: Song, part: Part, file: File) {}
+            override fun pageText(file: File, page: Int): String? = null
+            override val audioOut: AudioOut? = null
+            override val microphone: Microphone = DeadMic()
+            override fun onMain(block: () -> Unit) = javax.swing.SwingUtilities.invokeLater(block)
+            override val deviceName = "Stand"
+            override val localFolder: File get() = File(root.parentFile, "local")
+            override fun decodeAudio(file: File, onChunk: (FloatArray, Int) -> Unit) = decoder.decodeAudio(file, onChunk)
+            override fun log(message: String) = println(message)
+        }
+        val state = SheetsState(platform)
+        state.change { editSong(ensureSong("Sweet Caroline").id) { audio = listOf(AudioTrack(state.relative(rec)!!)) } }
+        state.listenTurns = true
+        state.current = state.library!!.songs.first { it.title == "Sweet Caroline" }
+        state.pageShown = 0 to 4
+        try {
+            javax.swing.SwingUtilities.invokeAndWait { com.inksheets.ui.Listener.start(state) }
+            val t0 = System.currentTimeMillis()
+            var words: String? = null
+            while (System.currentTimeMillis() - t0 < 20_000) {
+                Thread.sleep(100)
+                javax.swing.SwingUtilities.invokeAndWait { words = com.inksheets.ui.Listener.summary(state) }
+                if (words?.startsWith("Hears nothing") == true) break
+            }
+            println("after ${(System.currentTimeMillis() - t0) / 1000.0} s: $words")
+            assertEquals("Hears nothing yet - Microphone (USB Audio Device)", words)
+        } finally {
+            javax.swing.SwingUtilities.invokeAndWait { com.inksheets.ui.Listener.stop(state) }
         }
     }
 

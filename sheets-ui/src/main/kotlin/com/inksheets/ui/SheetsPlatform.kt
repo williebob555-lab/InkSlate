@@ -219,6 +219,17 @@ interface Microphone {
      */
     fun start(onChunk: (FloatArray) -> Unit): Boolean
     fun stop()
+
+    /** The inputs to choose from, by name; empty where the system picks (a phone, a tablet). */
+    val devices: List<String> get() = emptyList()
+
+    /** The input chosen by name, or null for the system's own - passed over if it hears nothing. */
+    var device: String?
+        get() = null
+        set(@Suppress("UNUSED_PARAMETER") value) {}
+
+    /** The input being heard now, by name, when there is a choice; null otherwise. */
+    val inUse: String? get() = null
 }
 
 /** A file's pages as pictures, for a quick look. Close it when done. */

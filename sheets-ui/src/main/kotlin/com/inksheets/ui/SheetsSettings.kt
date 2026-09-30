@@ -3,7 +3,10 @@ package com.inksheets.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -17,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -224,6 +228,7 @@ private fun LibraryHealth(state: SheetsState) {
             }
             androidx.compose.material3.Switch(checked = state.listenTurns, onCheckedChange = { state.listenTurns = it })
         }
+        if (state.listenTurns) MicrophoneChoice(state)
         Row(
             Modifier.fillMaxWidth().clickable { state.readMusic = !state.readMusic }.padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -239,6 +244,57 @@ private fun LibraryHealth(state: SheetsState) {
                 )
             }
             androidx.compose.material3.Switch(checked = state.readMusic, onCheckedChange = { state.readMusic = it })
+        }
+    }
+}
+
+/**
+ * Which input Listen (and the tuner, and following the band's tempo) hears, where there is a
+ * choice - a laptop with a headset, an audio interface - and a test with a live meter, so it is
+ * plain whether it hears anything before the music starts.
+ */
+@Composable
+private fun MicrophoneChoice(state: SheetsState) {
+    val mic = state.platform.microphone ?: return
+    val devices = remember { mic.devices }
+    if (devices.isEmpty()) return
+    var chosen by remember { mutableStateOf(mic.device) }
+    var testing by remember { mutableStateOf(false) }
+    androidx.compose.runtime.DisposableEffect(testing, chosen) {
+        if (testing) Ears.listen(state, "settings") {}
+        onDispose { Ears.stop("settings") }
+    }
+    Column(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 6.dp)) {
+        Text("Microphone", style = MaterialTheme.typography.titleSmall)
+        (listOf<String?>(null) + devices).forEach { name ->
+            Row(
+                Modifier.fillMaxWidth().clickable { chosen = name; mic.device = name }.padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.RadioButton(selected = chosen == name, onClick = { chosen = name; mic.device = name })
+                Text(name ?: "Automatic - the system's, or another that hears if it gives nothing", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.OutlinedButton(onClick = { testing = !testing }) { Text(if (testing) "Stop test" else "Test") }
+            if (testing) {
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.fillMaxWidth().height(8.dp).clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        androidx.compose.foundation.layout.Box(
+                            Modifier.fillMaxHeight().fillMaxWidth(Ears.level)
+                                .background(if (Ears.deaf) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                        )
+                    }
+                    Text(
+                        (if (Ears.deaf) "Hears nothing yet - " else "Hearing: ") + (Ears.device ?: "the microphone"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (Ears.deaf) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }

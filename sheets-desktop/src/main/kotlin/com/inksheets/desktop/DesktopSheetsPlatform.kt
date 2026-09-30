@@ -294,30 +294,91 @@ private class JavaSoundOut : AudioOut {
     }
 }
 
-/** The default microphone through Java Sound, delivered as it arrives. */
+/**
+ * A microphone through Java Sound, delivered as it arrives: the one chosen in Settings, else the
+ * system's own. An input that gives nothing but digital silence (a headset's unplugged microphone
+ * left as the default, a muted interface) is passed over for the loudest one that hears.
+ */
 private class JavaSoundMic : Microphone {
     override val sampleRate = 48_000
     @Volatile private var line: TargetDataLine? = null
     @Volatile private var running = false
+    @Volatile override var inUse: String? = null
+        private set
+
+    private val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
+
+    /** Every input that can be opened as a microphone, the system's own first. */
+    private fun inputs(): List<javax.sound.sampled.Mixer.Info> = AudioSystem.getMixerInfo().filter { info ->
+        runCatching { AudioSystem.getMixer(info).isLineSupported(javax.sound.sampled.DataLine.Info(TargetDataLine::class.java, format)) }.getOrDefault(false)
+    }
+
+    override val devices: List<String> get() = inputs().map { it.name }.filter { it != SYSTEM }
+
+    override var device: String?
+        get() = DesktopPrefs.get(K_MIC)
+        set(value) = DesktopPrefs.put(K_MIC, value)
+
+    private fun open(info: javax.sound.sampled.Mixer.Info?): TargetDataLine? = runCatching {
+        (if (info == null) AudioSystem.getTargetDataLine(format) else AudioSystem.getTargetDataLine(format, info)).apply { open(format); start() }
+    }.onFailure { EventLog.warn("sheets", "Microphone ${info?.name ?: "(the system's)"} failed: ${it.message}") }.getOrNull()
+
+    /** The loudest sound in [ms] from [l]; -1 if it could not be read. */
+    private fun peak(l: TargetDataLine, ms: Int): Int {
+        val bytes = ByteArray(sampleRate * ms / 1000 * 2)
+        var got = 0
+        val until = System.currentTimeMillis() + ms + 500
+        while (got < bytes.size && System.currentTimeMillis() < until) { val n = l.read(bytes, got, bytes.size - got); if (n > 0) got += n else if (n < 0) return -1 }
+        var peak = 0
+        for (i in 0 until got / 2) peak = maxOf(peak, kotlin.math.abs(((bytes[2 * i].toInt() and 0xFF) or (bytes[2 * i + 1].toInt() shl 8)).toShort().toInt()))
+        return peak
+    }
+
+    /** The input that hears, trying each a moment - a microphone before a line in, then the loudest; null when none hears. */
+    private fun loudest(except: String?): Pair<javax.sound.sampled.Mixer.Info, Int>? =
+        inputs().filter { it.name != except && it.name != SYSTEM }.mapNotNull { info ->
+            val l = open(info) ?: return@mapNotNull null
+            val p = try { peak(l, 400) } finally { runCatching { l.stop(); l.close() } }
+            (info to p).takeIf { p > HEARD }
+        }.maxWithOrNull(compareBy({ mic(it.first.name) }, { it.second }))
+
+    /** Named as a microphone - hears the room - rather than a line in, which carries whatever is plugged into it. */
+    private fun mic(name: String) = name.contains("mic", ignoreCase = true)
 
     override fun start(onChunk: (FloatArray) -> Unit): Boolean {
         stop()
-        val opened = runCatching {
-            val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
-            AudioSystem.getTargetDataLine(format).apply {
-                open(format)
-                start()
-            }
-        }.onFailure { EventLog.warn("sheets", "Microphone failed: ${it.message}") }.getOrNull() ?: return false
+        val chosen = device?.let { name -> inputs().firstOrNull { it.name == name } }
+        val opened = open(chosen) ?: (if (chosen != null) open(null) else null) ?: return false
         line = opened
+        inUse = chosen?.name ?: defaultName()
         running = true
         Thread({
+            var current = opened
             val bytes = ByteArray(sampleRate / 100 * 2)     // 10 ms at a time
+            // A good microphone in a quiet room gives near-silence too: an input is only taken as
+            // dead while it has heard nothing at all since it was opened, and until then the
+            // others are tried every few seconds, so the first sound anyone makes finds one.
+            var everHeard = false
+            var lookAt = System.currentTimeMillis() + 1_500
             while (running) {
-                val n = opened.read(bytes, 0, bytes.size)
+                val n = current.read(bytes, 0, bytes.size)
                 if (n <= 0) continue
                 val chunk = FloatArray(n / 2) { i ->
                     ((bytes[2 * i].toInt() and 0xFF) or (bytes[2 * i + 1].toInt() shl 8)).toShort() / 32768f
+                }
+                if (!everHeard) for (v in chunk) if (kotlin.math.abs(v * 32768) > HEARD) { everHeard = true; break }
+                if (!everHeard && System.currentTimeMillis() >= lookAt) {
+                    val was = inUse
+                    val better = loudest(except = was)
+                    if (better != null && running) {
+                        val l = open(better.first)
+                        if (l != null) {
+                            runCatching { current.stop(); current.close() }
+                            current = l; line = l; inUse = better.first.name
+                            EventLog.info("sheets", "Microphone: $was hears nothing; using ${better.first.name}")
+                        }
+                    }
+                    lookAt = System.currentTimeMillis() + 4_000
                 }
                 onChunk(chunk)
             }
@@ -325,9 +386,20 @@ private class JavaSoundMic : Microphone {
         return true
     }
 
+    /** What the system's own input is called, where Java Sound says (Windows: the capture driver). */
+    private fun defaultName(): String = SYSTEM
+
     override fun stop() {
         running = false
         line?.let { runCatching { it.stop(); it.close() } }
         line = null
+    }
+
+    companion object {
+        private const val K_MIC = "sheets_microphone"
+        /** Windows' name for "whatever the system's default input is". */
+        const val SYSTEM = "Primary Sound Capture Driver"
+        /** A sample louder than this (of 32768) is something heard, not digital silence and its dither. */
+        const val HEARD = 24
     }
 }
