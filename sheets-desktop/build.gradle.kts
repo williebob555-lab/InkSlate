@@ -101,6 +101,8 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
+    // Whole pages drawn large, read and compared, many in one run.
+    maxHeapSize = "3g"
     // Never the real app's settings folder: see desktop/build.gradle.kts.
     val sandbox = layout.buildDirectory.dir("test-appdata").get().asFile
     doFirst { sandbox.deleteRecursively(); sandbox.mkdirs() }
@@ -112,7 +114,7 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     }
     testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null || System.getProperty("inksheets.msdb") != null
-    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs")) {
+    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs", "inksheets.omr.why")) {
         System.getProperty(name)?.let {
             systemProperty(name, it)
             outputs.upToDateWhen { false }

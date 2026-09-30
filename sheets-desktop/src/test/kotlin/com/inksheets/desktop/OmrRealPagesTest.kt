@@ -26,7 +26,10 @@ class OmrRealPagesTest {
     private val music = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets")
 
     /** [file]'s page [index], drawn so a staff space is about [space] pixels. */
-    fun render(file: File, index: Int, space: Float = 18f): Ink? {
+    fun render(file: File, index: Int, space: Float = 18f): Ink? = renderAt(file, index, space)?.first
+
+    /** [render], and the dots per inch it was drawn at. */
+    fun renderAt(file: File, index: Int, space: Float = 18f): Pair<Ink, Float>? {
         Loader.loadPDF(file).use { doc ->
             if (index >= doc.numberOfPages) return null
             val r = PDFRenderer(doc)
@@ -37,12 +40,12 @@ class OmrRealPagesTest {
                 return Ink.fromArgb(img.width, img.height, px)
             }
             val first = at(100f)
-            val m = Recognizer().metrics(first) ?: return first
+            val m = Recognizer().metrics(first) ?: return first to 100f
             val dpi = 100f * space / m.second
             System.getProperty("inksheets.shots")?.takeIf { System.getProperty("inksheets.omr") == "one" }?.let { dir ->
                 ImageIO.write(r.renderImageWithDPI(index, dpi, ImageType.RGB), "png", File(dir, "grey-${file.nameWithoutExtension}-p${index + 1}.png"))
             }
-            return at(dpi)
+            return at(dpi) to dpi
         }
     }
 

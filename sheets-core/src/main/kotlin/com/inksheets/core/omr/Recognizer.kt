@@ -32,7 +32,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /** What was found on a page, for drawing over it: staves, barlines, heads. */
-    class PageReading(val staves: List<Staff>, val barlines: List<List<Int>>, val measures: List<Measure>, val thickness: Int, val space: Float)
+    class PageReading(val staves: List<Staff>, val barlines: List<List<Int>>, val measures: List<Measure>, val thickness: Int, val space: Float,
+                      /** Heads found and then let go, with why: for finding out what the reader gets wrong. */
+                      val dropped: List<Pair<Head, String>> = emptyList())
 
     // ---- measuring ---------------------------------------------------------------------------
 
@@ -71,25 +73,34 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 for (x in sx until x1) if (ink.bits[y * ink.width + x]) c++
                 rows[y] = c.toFloat() / (x1 - sx)
             }
-            // Line candidates: runs of rows mostly ink, no thicker than a line and a bit.
+            // Line candidates: runs of rows mostly ink, no thicker than a line and a bit - and how
+            // much of the slice each fills.
             val lines = ArrayList<Float>()
+            val fills = ArrayList<Float>()
             var y = 0
             while (y < ink.height) {
                 if (rows[y] > 0.55f) {
                     val y0 = y
-                    while (y < ink.height && rows[y] > 0.55f) y++
-                    if (y - y0 <= t * 2 + 2) lines += (y0 + y - 1) / 2f
+                    var most = 0f
+                    while (y < ink.height && rows[y] > 0.55f) { most = max(most, rows[y]); y++ }
+                    if (y - y0 <= t * 2 + 2) { lines += (y0 + y - 1) / 2f; fills += most }
                 } else y++
             }
-            // Fives, evenly spaced.
+            // Fives, evenly spaced. Where a passage high or low sets its ledger lines in a row, six
+            // or more line up: the five that run fullest are the staff's, the ledger row only
+            // under its notes.
+            fun even(from: Int) = from + 4 < lines.size && (from + 1..from + 4).all { abs(lines[it] - lines[it - 1] - space) <= space * 0.3f }
             var i = 0
             while (i + 4 < lines.size) {
-                val five = lines.subList(i, i + 5)
-                val gaps = (1..4).map { five[it] - five[it - 1] }
-                if (gaps.all { abs(it - space) <= space * 0.3f }) {
-                    groups += Group((sx + x1) / 2, five.toFloatArray())
-                    i += 5
-                } else i++
+                if (!even(i)) { i++; continue }
+                var best = i
+                var k = i + 1
+                while (even(k) && k <= i + 2) {
+                    if ((k until k + 5).minOf { fills[it] } > (best until best + 5).minOf { fills[it] }) best = k
+                    k++
+                }
+                groups += Group((sx + x1) / 2, lines.subList(best, best + 5).toFloatArray())
+                i = best + 5
             }
             sx += slice
         }
@@ -464,7 +475,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             while (j + 1 < path.size && path[j + 1]) j++
             // Down the right side, a long way: the head's own stem, however thick, not a stroke off it.
             val stem = i > topEnd && j <= sideEnd && j - i + 1 >= sp * 0.5f
-            if (!stem) runs++
+            // Along the top or bottom, a long way: a slur or tie passing, or a chord's next head - a
+            // letter's or digit's strokes leave upright and cross short.
+            val passing = (j <= topEnd || i > sideEnd) && j - i + 1 >= sp * 0.5f
+            if (!stem && !passing) runs++
             i = j + 1
         }
         return runs <= 2
@@ -484,8 +498,26 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return n > 0 && got >= n * 0.97f
     }
 
+    /**
+     * How far filled head [h] ([w] wide) runs up and down, measured down its middle columns on
+     * [ink] (the page with thin strokes worn away, so a stem or ledger line is not its edge):
+     * (top, bottom), or null where the columns disagree.
+     */
+    private fun extentOf(ink: Ink, h: Head, w: Int, sp: Float): Pair<Int, Int>? {
+        val reach = (sp * 4.5f).toInt()
+        val tops = ArrayList<Int>(); val bottoms = ArrayList<Int>()
+        for (x in h.x + w / 3..h.x + 2 * w / 3) {
+            if (!ink[x, h.y]) continue
+            var top = h.y; while (ink[x, top - 1] && h.y - top < reach) top--
+            var bottom = h.y; while (ink[x, bottom + 1] && bottom - h.y < reach) bottom++
+            tops += top; bottoms += bottom
+        }
+        if (tops.size < 2) return null
+        tops.sort(); bottoms.sort()
+        return tops[tops.size / 2] to bottoms[bottoms.size / 2]
+    }
     /** A notehead found: where, which kind, how sure. */
-    class Head(val x: Int, val step: Int, val y: Int, val kind: String, val score: Float) {
+    class Head(val x: Int, val step: Int, val y: Int, val kind: String, var score: Float) {
         var stemX = -1
         var stemEnd = 0
         var up = false
@@ -542,6 +574,26 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }
             }
         }
+        // A chord's heads a third apart touch, one over the other, and a single head's shape fits
+        // across the two better than either: a filled "head" standing two spaces tall is two
+        // heads (three spaces, three), each a space from the next.
+        val stacked = ArrayList<Head>()
+        for (h in found) {
+            if (h.kind != "noteheadBlack") continue
+            val w = tpl(h.kind, sp).ink.width - 2
+            val (top, bottom) = extentOf(solid ?: clean, h, w, sp) ?: continue
+            val n = Math.round((bottom - top + 1) / sp)
+            if (n < 2 || n > 4) continue
+            val centre = s.lineY(0, h.x + w / 2); val half = (s.lineY(4, h.x + w / 2) - centre) / 8f
+            for (k in 0 until n) {
+                val y = top + sp * (k + 0.5f)
+                val step = Math.round((y - centre) / half)
+                stacked += Head(h.x, step, s.y(step, h.x + w / 2).roundToInt(), h.kind, h.score)
+            }
+            h.weak = true; h.score = -1f   // replaced by the heads it stands for
+        }
+        found.removeAll { it.score < 0f }
+        found += stacked
         // A note off the staff stands on ledger lines: without one at the staff's edge it is a
         // dynamic's loop, an accent, a word - not a note.
         if (lines != null) found.retainAll { h ->
@@ -797,11 +849,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
         for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") stem(clean, staves[si], h, t)
         // A weak head needs a stem of its own: one it shares with a sure head is that head's flag or beam.
-        for (hs in headsOf) hs.removeAll { h -> h.weak && (h.stemX < 0 || hs.any { o -> !o.weak && o.stemX >= 0 && abs(o.stemX - h.stemX) <= t + 2 }) }
+        val dropped = ArrayList<Pair<Head, String>>()
+        for (hs in headsOf) hs.removeAll { h -> (h.weak && (h.stemX < 0 || hs.any { o -> !o.weak && o.stemX >= 0 && abs(o.stemX - h.stemX) <= t + 2 }))
+            .also { if (it) dropped += h to (if (h.stemX < 0) "weak, no stem" else "weak, stem shared") } }
         val unflagged = headsOf.map { hs ->
             hs.filter { h ->
-                h.kind == "noteheadBlack" || hs.none { o -> o !== h && o.stemX >= 0 &&
-                    abs(o.stemX - (h.x + space * 0.6f)) < space * 1.3f && abs(o.stemEnd - h.y) < space * 1.3f }
+                (h.kind == "noteheadBlack" || hs.none { o -> o !== h && o.stemX >= 0 &&
+                    abs(o.stemX - (h.x + space * 0.6f)) < space * 1.3f && abs(o.stemEnd - h.y) < space * 1.3f }).also { if (!it) dropped += h to "a flag's curl" }
             }
         }
         val kept = unflagged.mapIndexed { si, hs ->
@@ -810,7 +864,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 listOf(si - 1, si + 1).none { oi ->
                     val other = unflagged.getOrNull(oi) ?: return@none false
                     other.any { o -> abs(o.x - h.x) <= 3 && abs(o.y - h.y) <= 3 && abs(o.step - 4) < mine }
-                }
+                }.also { if (!it) dropped += h to "the other staff's" }
             }
         }
         for ((si, s) in staves.withIndex()) {
@@ -832,6 +886,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
             val allHeads = kept[si].filter { it.x >= x }
+            kept[si].filter { it.x < x }.forEach { dropped += it to "before the staff's start (clef, key, time end at $x)" }
             // Nothing fits between a staff's start and a line under three spaces on: that is a time
             // signature in another font, not a barline.
             val b = barlines(ink, clean, s, t, allHeads.filter { it.stemX >= 0 }.map { it.stemX }, allHeads).filter { it > x + s.space * 3f }
@@ -839,8 +894,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val edges = (listOf(s.left) + b).distinct().sorted()
             val spans = edges.zipWithNext().filter { (a, c) -> c - a > s.space * 2 } +
                 (if (b.isEmpty() || s.right - b.last() > s.space * 3) listOf((b.lastOrNull() ?: s.left) to s.right) else emptyList())
+            val inSpan = HashSet<Head>()
             for ((i, span) in spans.withIndex()) {
                 val from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
+                inSpan += allHeads.filter { it.x >= from - 2 && it.x < span.second - (s.space * 0.2f).toInt() }
                 val to = span.second - (s.space * 0.2f).toInt()
                 val box = Box(span.first, s.top, span.second, s.bottom)
                 // A multi-bar rest: its bar and number, and nothing else to read.
@@ -871,8 +928,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 measures += m.copy(doubts = doubts)
                 }
             }
+            allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
         }
-        return PageReading(staves, bars, measures, t, space)
+        return PageReading(staves, bars, measures, t, space, dropped)
     }
 
     /**
