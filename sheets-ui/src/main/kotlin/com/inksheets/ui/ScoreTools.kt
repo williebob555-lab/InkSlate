@@ -363,7 +363,85 @@ internal object ScoreTools {
         }
     }
 
+    // ---- the band without you ------------------------------------------------------------------
+
+    /** Play the other parts, not this one. */
+    var band by mutableStateOf(false)
+
+    /** Reading the band's parts: "3 of 11" - null when not. */
+    var bandReading by mutableStateOf<String?>(null)
+        private set
+
+    /** The song's other parts that have files of their own here: (part, file). */
+    private fun otherParts(s: SheetsState): List<Pair<com.inksheets.core.Part, File>> {
+        val song = s.current ?: return emptyList()
+        val mine = s.partShown()
+        return song.parts.filter { it.id != mine?.id && it.firstPage == null && it.lastPage == null && !(it.label ?: "").contains("score", true) &&
+            it.instrument?.contains("score", true) != true }
+            .mapNotNull { p -> s.fileOf(p.file)?.takeIf { f -> f.isFile && f.absolutePath != s.currentPath }?.let { p to it } }
+            .distinctBy { it.second.absolutePath }
+    }
+
+    /** Read whichever of the band's parts are not read yet, one after another, then [then]. */
+    private fun readBand(s: SheetsState, then: () -> Unit) {
+        val todo = otherParts(s).filter { Transcriber.cached(s, it.second) == null }
+        if (todo.isEmpty()) { bandReading = null; then(); return }
+        val total = otherParts(s).size
+        fun next(i: Int) {
+            if (i >= todo.size) { bandReading = null; then(); return }
+            bandReading = "${total - todo.size + i + 1} of $total"
+            Transcriber.read(s, todo[i].second) { next(i + 1) }
+        }
+        next(0)
+    }
+
+    /** The band - every other part read - from the bars chosen or the page in front, without this part. */
+    fun playBand(s: SheetsState) {
+        stop(s)
+        val path = s.currentPath ?: return
+        val mine = scoreOf(path) ?: run { said = "Read the music first"; return }
+        readBand(s) {
+            val voices = otherParts(s).mapNotNull { (p, f) ->
+                val sc = Transcriber.cached(s, f) ?: return@mapNotNull null
+                val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
+                val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
+                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, tr, Synth.patchFor(Midi.program(id)))
+            }
+            if (voices.isEmpty()) { said = "No other parts of this song here to play"; return@readBand }
+            val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
+            val range = selection ?: run {
+                val first = mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
+                first..(mine.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: first)
+            }
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm)
+            said = "The band: ${voices.size} parts"
+            playing = Triple(range.first, SharedMetronome.bpm.toInt(), 0)
+            ensemble = p
+            Sound.play(s, WHO) { buf -> p.fill(buf) }
+            var lastBar = -1
+            watcher = java.util.Timer("band-play", true).apply {
+                schedule(object : java.util.TimerTask() {
+                    override fun run() {
+                        s.platform.onMain {
+                            if (ensemble !== p) return@onMain
+                            if (p.finished) { stop(s); return@onMain }
+                            val now = Triple(p.bar, SharedMetronome.bpm.toInt(), 0)
+                            if (playing != now) { playing = now; changed() }
+                            if (now.first != lastBar) {
+                                lastBar = now.first
+                                mine.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m -> if (m.page != s.pageShown.first) Perform.jumpTo?.invoke(path, m.page) }
+                            }
+                        }
+                    }
+                }, 100L, 100L)
+            }
+        }
+    }
+
+    private var ensemble: com.inksheets.core.omr.EnsemblePlayer? = null
+
     fun stop(s: SheetsState) {
+        ensemble?.let { ensemble = null; Sound.stop(WHO) }
         watcher?.cancel(); watcher = null
         if (player != null) Sound.stop(WHO)
         player = null

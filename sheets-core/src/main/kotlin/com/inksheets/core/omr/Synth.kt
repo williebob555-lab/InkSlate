@@ -247,3 +247,71 @@ class ScorePlayer(
         }
     }
 }
+
+/**
+ * The band without you: every other part's bars played together on a [Synth], each on its own
+ * instrument, laid on [mine]'s timeline bar by bar - by bar number, so repeats and time changes
+ * follow the part being played from. From bar [from] to [to] of [mine] (in playing order), at [bpm].
+ */
+class EnsemblePlayer(
+    val synth: Synth,
+    mine: Score,
+    others: List<Voice>,
+    val from: Int,
+    val to: Int,
+    val bpm: Double,
+    /** Your own part, quietly, to play along with: its loudness (0 for none). */
+    guide: Pair<Voice, Float>? = null
+) {
+    /** One part: its notes, how far it is written above where it sounds, how it sounds. */
+    class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch)
+
+    @Volatile var bar: Int = from
+        private set
+    @Volatile var finished = false
+        private set
+
+    private val starts: LongArray
+    private val numbers: IntArray
+    private val length: Long
+
+    init {
+        val order = PlayOrder.unrolled(mine).measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
+        val loud = 0.75f / kotlin.math.sqrt(others.size.coerceAtLeast(1).toFloat())
+        val tones = ArrayList<Synth.Tone>()
+        val s = ArrayList<Long>(); val n = ArrayList<Int>()
+        var t = 0L
+        fun samples(q: Double) = (q * 60.0 / bpm * synth.sampleRate).toLong()
+        fun lay(v: Voice, m: Measure, at: Long, velocity: Float) {
+            if (m.bars > 1) return
+            var q = 0.0
+            for (e in m.events) {
+                if (e is Note && q < m.time.quarters) {
+                    val len = max(1L, samples(min(e.duration.quarters, m.time.quarters - q)) - synth.sampleRate / 60)
+                    for (p in e.pitches) tones += Synth.Tone((p.midi - v.transpose).coerceIn(12, 115), at + samples(q), len, velocity, v.patch)
+                }
+                q += e.duration.quarters
+            }
+        }
+        for (mm in order) {
+            for (k in 0 until mm.bars) {
+                val number = mm.number + k
+                s += t; n += number
+                val barLen = samples(mm.time.quarters)
+                for (v in others) v.score.measures.firstOrNull { number >= it.number && number < it.number + it.bars }?.let { lay(v, it, t, loud) }
+                guide?.let { (v, g) -> if (g > 0f && k == 0) lay(v, mm, t, g) }
+                t += barLen
+            }
+        }
+        starts = s.toLongArray(); numbers = n.toIntArray(); length = t
+        synth.add(tones)
+    }
+
+    fun fill(buf: FloatArray) {
+        if (finished) return
+        synth.fill(buf)
+        val i = starts.indexOfLast { it <= synth.position }
+        if (i >= 0) bar = numbers[i]
+        if (synth.position >= length + synth.sampleRate / 2) finished = true
+    }
+}

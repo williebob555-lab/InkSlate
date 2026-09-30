@@ -64,6 +64,7 @@ class MusicStripShots {
         File(root, "Band/Tune - Trumpet.pdf").writeText("x")
         val state = SheetsState(Stand(root))
         state.readMusic = true
+        state.listenTurns = true
         state.change { editSong(ensureSong("Tune").id) { parts = listOf(Part(id = com.inksheets.core.Library.partIdFor("Band/Tune - Trumpet.pdf"), file = "Band/Tune - Trumpet.pdf")) } }
         state.current = state.library!!.songs.first()
         val path = File(root, "Band/Tune - Trumpet.pdf").absolutePath
@@ -79,7 +80,7 @@ class MusicStripShots {
                     waitForIdle()
                     runOnIdle { ScoreTools.open = true; ScoreTools.select(3..5) }
                     waitForIdle()
-                    for (d in listOf("Play the bars selected, or from this page", "Go to a bar by its number", "Put the music tools away")) {
+                    for (d in listOf("Play the bars selected, or from this page", "Play the other parts, not yours", "Go to a bar by its number", "Put the music tools away")) {
                         val node = onNode(hasContentDescription(d)).fetchSemanticsNode()
                         val b = node.boundsInRoot
                         assertTrue("$name: $d on screen", b.top >= 0f && b.bottom <= h.toFloat() && b.left >= 0f && b.right <= w.toFloat())

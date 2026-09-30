@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Hearing
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.MoreVert
@@ -76,7 +77,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     var printingFor by remember { mutableStateOf(false) }
     val named = true
     BoxWithConstraints(Modifier.matchParentSize()) {
-        val btn = ((maxHeight - 140.dp) / 11 - 12.dp).coerceIn(30.dp, 42.dp)
+        val btn = ((maxHeight - 150.dp) / 14 - 12.dp).coerceIn(26.dp, 40.dp)
         Surface(
             shape = RoundedCornerShape(20.dp),
             tonalElevation = 3.dp,
@@ -119,8 +120,11 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     val playing = ScoreTools.playing
                     StripButton(if (playing != null) Icons.Default.Stop else Icons.Default.PlayArrow, if (playing != null) "Stop" else "Play",
                         "Play the bars selected, or from this page", btn, named, lit = playing != null) {
-                        if (playing != null) ScoreTools.stop(state) else ScoreTools.play(state)
+                        if (playing != null) ScoreTools.stop(state) else if (ScoreTools.band) ScoreTools.playBand(state) else ScoreTools.play(state)
                     }
+                    // The band without you: the other parts played, yours left for you.
+                    StripButton(Icons.Default.Groups, "Band", "Play the other parts, not yours", btn, named, lit = ScoreTools.band) { ScoreTools.band = !ScoreTools.band }
+                    ScoreTools.bandReading?.let { Text("Reading $it", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center) }
                     StripButton(Icons.Default.Repeat, "Loop", "Play round and round", btn, named, lit = ScoreTools.loop) { ScoreTools.loop = !ScoreTools.loop }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         StripButton(Icons.Default.FastForward, "Speed up", "Each time round a little faster, up to the tempo", btn, named, lit = ScoreTools.ramp && ScoreTools.loop) {

@@ -89,4 +89,21 @@ class SynthTest {
         assertEquals(listOf(0 to 1, 0 to 2, 1 to 1, 1 to 2, 2 to 1, 2 to 2, 3 to 1), seen.take(7))
         assertEquals(70.0, p.bpm, 1e-9)
     }
+
+    @Test
+    fun `the band plays the other parts in time, not mine`() {
+        // Mine: C5s; a second part E5s; a third G4s - two bars each.
+        val mine = Score(listOf(bar(1, 72, 72, 72, 72), bar(2, 72, 72, 72, 72)), 1, listOf(1000))
+        val second = Score(listOf(bar(1, 76, 76, 76, 76), bar(2, 76, 76, 76, 76)), 1, listOf(1000))
+        val third = Score(listOf(bar(1, 67, 67, 67, 67), bar(2, 67, 67, 67, 67)), 1, listOf(1000))
+        val p = EnsemblePlayer(Synth(rate), mine, listOf(EnsemblePlayer.Voice(second, 0, Synth.BRASS), EnsemblePlayer.Voice(third, 0, Synth.SAX)), 1, 2, 120.0)
+        val out = FloatArray(rate * 4)
+        val block = FloatArray(480)
+        var i = 0
+        while (i < out.size) { java.util.Arrays.fill(block, 0f); p.fill(block); System.arraycopy(block, 0, out, i, minOf(block.size, out.size - i)); i += block.size }
+        val c5 = power(out, 523.25); val e5 = power(out, 659.26); val g4 = power(out, 392.0)
+        println("mine C5 $c5, others E5 $e5 G4 $g4")
+        assertTrue(e5 > c5 * 20 && g4 > c5 * 20)
+        assertEquals(2, p.bar)
+    }
 }
