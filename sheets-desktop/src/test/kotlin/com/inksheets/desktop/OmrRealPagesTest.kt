@@ -140,6 +140,8 @@ class OmrRealPagesTest {
         // The same parts each run, whatever is added to the library: chosen by a hash of their place in it.
         val picked = all.sortedBy { java.util.zip.CRC32().apply { update(it.relativeTo(music).path.lowercase().replace('\\', '/').toByteArray()) }.value }.take(want)
         val reasons = HashMap<String, Int>()
+        var printedNumbers = 0; var agreeingNumbers = 0
+        val numberMisses = ArrayList<String>()
         val examples = HashMap<String, MutableList<BufferedImage>>()
         var bars = 0; var sureOld = 0; var sureNew = 0; var parts = 0; var better = 0; var worse = 0
         for (f in picked) {
@@ -152,7 +154,20 @@ class OmrRealPagesTest {
             val a = old.measures.count { it.sure }; val b = new.measures.count { it.sure }
             sureOld += a; sureNew += b
             if (b > a) better++; if (b < a) worse++
-            println("${f.relativeTo(music).path}: ${old.measures.size} -> ${new.measures.size} bars, sure $a -> $b")
+            // Bar numbers printed at the start of a line: does the count agree?
+            val clean = Recognizer().let { r -> r.withoutLines(ink, new.staves, new.thickness) }
+            var printedHere = 0; var agreeHere = 0
+            for ((si, st) in new.staves.withIndex()) {
+                if (si == 0) continue
+                val sp = st.space
+                val printed = com.inksheets.core.omr.Digits.number(clean, st.left - sp.toInt(), st.left + (sp * 3).toInt(),
+                    st.y(-8, st.left).toInt(), st.y(-1, st.left).toInt(), (sp * 0.6f).toInt(), (sp * 2.5f).toInt(), bottomFrom = st.y(-5, st.left).toInt())?.first ?: continue
+                val first = new.measures.firstOrNull { it.staff == si }?.number ?: continue
+                printedHere++
+                if (printed == first) agreeHere++ else if (numberMisses.size < 30) numberMisses += "${f.nameWithoutExtension} staff ${si + 1}: printed $printed, counted $first"
+            }
+            printedNumbers += printedHere; agreeingNumbers += agreeHere
+            println("${f.relativeTo(music).path}: ${old.measures.size} -> ${new.measures.size} bars, sure $a -> $b; bar numbers agree $agreeHere of $printedHere")
             // A few bars of each kind from each part, drawn for looking at.
             val perPart = HashMap<String, Int>()
             for (m in new.measures) {
@@ -176,6 +191,8 @@ class OmrRealPagesTest {
         System.getProperty("inksheets.shots")?.let { dir ->
             for ((kind, list) in examples) sheet(list, File(dir, "kind-" + kind.replace(Regex("[^a-z]+"), "-") + ".png"))
         }
+        numberMisses.forEach { println("  numbers: $it") }
+        println("BAR NUMBERS: $agreeingNumbers of $printedNumbers printed at line starts agree with the count")
         println("WHY: " + reasons.entries.sortedByDescending { it.value }.joinToString("; ") { "${it.key} ${it.value}" })
         println("ALL: $parts parts, $bars bars; sure ${sureOld * 100 / max(1, bars)}% -> ${sureNew * 100 / max(1, bars)}% ($sureOld -> $sureNew); better in $better, worse in $worse")
     }

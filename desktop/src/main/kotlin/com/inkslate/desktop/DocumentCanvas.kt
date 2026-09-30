@@ -179,8 +179,16 @@ fun DocumentCanvas(
     atRest: () -> Boolean = { false },
     /** Put a fitted page of music back where it belongs after a drag that did not turn it. */
     recentre: () -> Unit = {},
+    /** The file shown, for the music tools' marks and gestures (InkSheets); null for none. */
+    musicPath: String? = null,
     modifier: Modifier = Modifier
 ) {
+    // Drawn again when the music tools change what they lay on the pages.
+    var marksVersion by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        val stop = com.inkslate.core.Perform.onMarksChanged { marksVersion++ }
+        onDispose { stop() }
+    }
     val swipe by rememberUpdatedState(onSwipe)
     val resting by rememberUpdatedState(atRest)
     val settle by rememberUpdatedState(recentre)
@@ -547,6 +555,8 @@ fun DocumentCanvas(
                     var fitted = false
                     while (true) {
                         val event = awaitPointerEvent(PointerEventPass.Initial)
+                        // A music tool in hand takes presses for itself: no page turns under it.
+                        if (com.inkslate.core.Perform.musicTool && musicPath != null) { start = null; continue }
                         // A finger, or - on music with its tools away - the mouse, which then turns
                         // pages rather than writing: click a half, or drag across. A pen still writes.
                         // Not a hand the strip has given a pen or eraser to: that one writes.
@@ -629,6 +639,28 @@ fun DocumentCanvas(
                         it.pressed && it.type == PointerType.Stylus
                     }
                     if (down.type == PointerType.Touch && stylusDown) return@awaitEachGesture
+
+                    // A music tool in hand: the press is its - which bars to select, which to clean -
+                    // not a mark and not a page turn. Two fingers still move the page.
+                    if (com.inkslate.core.Perform.musicTool && musicPath != null && !PenInput.gesturing) {
+                        val start = viewport.screenToDoc(down.position)
+                        val page = slotAt(start.x, start.y) ?: return@awaitEachGesture
+                        val pts = ArrayList<Float>()
+                        fun add(p: Offset) { val d = viewport.screenToDoc(p); val i = page.toInk(d.x, d.y); pts += i.x; pts += i.y }
+                        add(down.position)
+                        down.consume()
+                        com.inkslate.core.Perform.musicGesture?.invoke(musicPath, page.index, pts.toFloatArray(), false)
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                            if (e.changes.count { it.pressed } > 1) break
+                            add(c.position); c.consume()
+                            if (!c.pressed) break
+                            com.inkslate.core.Perform.musicGesture?.invoke(musicPath, page.index, pts.toFloatArray(), false)
+                        }
+                        com.inkslate.core.Perform.musicGesture?.invoke(musicPath, page.index, pts.toFloatArray(), true)
+                        return@awaitEachGesture
+                    }
 
                     // Music with its tools away: the mouse turns pages (see above), it does not write.
                     if (down.type == PointerType.Mouse && resting() && swipe != null && InputSignal.deviceOf(down) != InputDevice.PEN &&
@@ -760,7 +792,8 @@ fun DocumentCanvas(
                                     tools.rulerVisible && tools.rulerOwner === rulerOwner &&
                                         it.page == slot.index
                                 },
-                                images = images
+                                images = images,
+                                marks = musicPath?.let { path -> marksVersion.let { com.inkslate.core.Perform.pageMarks?.invoke(path, slot.index, extents.getOrNull(slot.index)?.width ?: slot.width, extents.getOrNull(slot.index)?.height ?: slot.height) } }
                             )
                         }
                     }
@@ -1004,7 +1037,9 @@ private fun DrawScope.drawPage(
     crop: InkBox?,
     scale: Float,
     ruler: com.inkslate.core.Ruler?,
-    images: (String) -> ImageBitmap?
+    images: (String) -> ImageBitmap?,
+    /** What the music tools lay on this page, in its ink coordinates: over the print, under the ink. */
+    marks: List<com.inkslate.core.PageMark>? = null
 ): Int {
     var drawn = 0
     if (canvas != null) {
@@ -1036,6 +1071,7 @@ private fun DrawScope.drawPage(
         tile?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter, tileAlpha) }
         RenderStats.addRaster(System.nanoTime() - pageAt)
     }
+    if (!marks.isNullOrEmpty()) translate(-slot.inkLeft, -slot.inkTop) { drawPageMarks(marks) }
 
     // Ink is stored in page coordinates, which for a canvas are the canvas's own - so the whole
     // layer shifts by the canvas origin and nothing else changes. Taken from the slot rather than
@@ -1469,5 +1505,39 @@ internal fun DrawScope.drawSelection(box: InkBox, scale: Float) {
         val c = Offset(h.x(box), h.y(box))
         drawCircle(Color.White, r, c)
         drawCircle(accent, r, c, style = DrawStroke(1.4f / scale))
+    }
+}
+
+/** Outlines made once per mark: a page of clean music is a few thousand of them, drawn every frame. */
+private val markPaths = java.util.WeakHashMap<com.inkslate.core.PageMark, androidx.compose.ui.graphics.Path>()
+
+/** The music tools' marks, in the page's own coordinates. */
+private fun DrawScope.drawPageMarks(marks: List<com.inkslate.core.PageMark>) {
+    for (m in marks) {
+        val color = Color(m.color)
+        when (m.kind) {
+            com.inkslate.core.PageMark.Kind.FILL -> {
+                val path = markPaths.getOrPut(m) {
+                    androidx.compose.ui.graphics.Path().apply {
+                        fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
+                        for (c in m.contours) {
+                            if (c.size < 6) continue
+                            moveTo(c[0], c[1])
+                            var i = 2
+                            while (i + 1 < c.size) { lineTo(c[i], c[i + 1]); i += 2 }
+                            close()
+                        }
+                    }
+                }
+                drawPath(path, color)
+            }
+            com.inkslate.core.PageMark.Kind.LINE -> for (c in m.contours) {
+                var i = 2
+                while (i + 1 < c.size) {
+                    drawLine(color, Offset(c[i - 2], c[i - 1]), Offset(c[i], c[i + 1]), strokeWidth = m.width)
+                    i += 2
+                }
+            }
+        }
     }
 }

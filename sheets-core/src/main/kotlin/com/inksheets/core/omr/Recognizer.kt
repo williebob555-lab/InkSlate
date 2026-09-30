@@ -673,15 +673,19 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * and larger, and taken loosely.
      */
     private fun digit(clean: Ink, s: Staff, x0: Int, x1: Int, steps: List<Int>): Pair<Int, Int>? {
-        var best: Triple<Int, Int, Float>? = null
-        for (size in listOf(1f, 0.85f, 1.15f)) {
+        // Each digit's best fit, at whatever size and place.
+        class Fit(val d: Int, val x: Int, val y: Int, val sp: Float, val sc: Float)
+        val fits = HashMap<Int, Fit>()
+        for (size in listOf(1f, 0.85f, 1.15f, 0.7f)) {
             val sp = s.space * size
             for (d in 0..9) for (xx in x0..x1) for (step in steps) {
-                val sc = score(clean, "timeSig$d", sp, xx, s.y(step, xx).roundToInt())
-                if (sc > 0.5f && (best == null || sc > best.third)) best = Triple(d, xx, sc)
+                val y = s.y(step, xx).roundToInt()
+                val sc = score(clean, "timeSig$d", sp, xx, y)
+                if (sc > 0.5f && sc > (fits[d]?.sc ?: 0f)) fits[d] = Fit(d, xx, y, sp, sc)
             }
         }
-        return best?.let { it.first to it.second }
+        val best = fits.values.maxByOrNull { it.sc } ?: return null
+        return best.d to best.x
     }
 
     /** The end of something shaped like a time signature just after [x0] - ink in both halves of the staff. */
@@ -1024,7 +1028,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             fun thick(xx: Int): Boolean {
                 var a = y; while (clean[xx, a - 1] && y - a < sp) a--
                 var b = y; while (clean[xx, b + 1] && b - y < sp) b++
-                return clean[xx, y] && b - a + 1 >= sp * 0.4f && b - a + 1 <= sp * 1.2f
+                // Engravers' bars run from a third of a space thick to a whole one.
+                return clean[xx, y] && b - a + 1 >= sp * 0.3f && b - a + 1 <= sp * 1.2f
             }
             if (!thick(x)) { x++; continue }
             val start = x
@@ -1038,7 +1043,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val up = s.y(2, xx).roundToInt(); val down = s.y(6, xx).roundToInt()
             (up..down).count { clean[xx, it] } >= (down - up) * 0.8f
         }
-        if (!serif(start) || !serif(start + len - 1)) return null
+        val serifs = serif(start) && serif(start + len - 1)
         // The number above: engravers' digits, as in a time signature, a space and a half over the top line.
         val digits = ArrayList<Pair<Int, Int>>()
         var dx = start - (sp * 0.5f).toInt()
@@ -1051,7 +1056,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             digits += hit
             dx = hit.second + (sp * 1.4f).toInt()
         }
-        val bars = digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }
+        // Read whole, in whatever typeface it is printed; the music font's digits if that finds none.
+        val printed = Digits.number(clean, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-5, start).roundToInt())
+        val bars = printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }
+        // Some engravers end the bar in short strokes, or none: its number over it says what it is.
+        if (!serifs && bars < 2) return null
         return bars to start
     }
 

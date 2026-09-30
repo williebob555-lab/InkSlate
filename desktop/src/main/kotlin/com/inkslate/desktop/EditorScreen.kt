@@ -1130,7 +1130,7 @@ fun EditorScreen(
                 }
             }
             paperBox(clamped)?.let {
-                viewport.fitClear(it, padding = 8f, lane = AppFlavor.stripLaneDp * density, laneOnLeft = AppFlavor.stripOnLeft)
+                viewport.fitClear(it, padding = 8f, lane = AppFlavor.stripLaneDp * density, laneOnLeft = AppFlavor.stripOnLeft, otherLane = AppFlavor.musicLaneDp * density)
                 fittedScale = viewport.scale
                 return
             }
@@ -1929,6 +1929,7 @@ fun EditorScreen(
                     // Music with its tools put away: a finger turns pages rather than moving them.
                     atRest = { AppFlavor.musicView && immersive },
                     recentre = { goToPage(page) },
+                    musicPath = if (AppFlavor.musicView) file.absolutePath else null,
                     viewport = view.viewport,
                     layout = layout,
                     currentPage = view.page,

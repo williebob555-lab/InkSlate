@@ -345,6 +345,7 @@ class SheetsState(val platform: SheetsPlatform) {
             }
         }
         com.inkslate.core.Perform.centreTap = { bottom -> centreTap(bottom) }
+        ScoreTools.install(this)
         // Whichever song is in front is "the song": the one the play button plays and the one a
         // leading tablet tells its followers about.
         com.inkslate.core.Perform.onPosition = { page, count ->

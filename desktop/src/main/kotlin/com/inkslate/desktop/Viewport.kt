@@ -164,17 +164,18 @@ class Viewport {
      * portrait one) for buttons. When the margin left by fitting is already that wide nothing
      * changes and the page stays centred; otherwise it is fitted into what the lane leaves.
      */
-    fun fitClear(box: Box, padding: Float, lane: Float, laneOnLeft: Boolean = false) {
+    fun fitClear(box: Box, padding: Float, lane: Float, laneOnLeft: Boolean = false, otherLane: Float = 0f) {
         fit(box, padding)
-        if (lane <= 0f || viewSize.width <= 0f || viewSize.height <= 0f) return
+        if ((lane <= 0f && otherLane <= 0f) || viewSize.width <= 0f || viewSize.height <= 0f) return
         // The lane is always down a side, and always kept whatever the page's shape, so every
-        // page of every song sits in the same place and nothing jumps as you turn.
-        val w = viewSize.width - lane
+        // page of every song sits in the same place and nothing jumps as you turn. A second lane
+        // - the music tools' - down the other side when they are out.
+        val w = viewSize.width - lane - otherLane
         val h = viewSize.height
         val s = min((w - padding * 2f) / box.width, (h - padding * 2f) / box.height).coerceIn(MIN_SCALE, MAX_SCALE)
         scale = s
-        val shift = if (laneOnLeft) lane / s else 0f
-        offset = Offset(box.centerX - w / (2f * s) - shift, box.centerY - h / (2f * s))
+        val leftLane = if (laneOnLeft) lane else otherLane
+        offset = Offset(box.centerX - w / (2f * s) - leftLane / s, box.centerY - h / (2f * s))
     }
 
     /** Fit the width of [box], leaving the top where it is - how a page is usually read. */

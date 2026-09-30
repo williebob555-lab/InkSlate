@@ -172,7 +172,7 @@ internal fun DrawScope.drawMarks(drawing: Engraver.Drawing, space: Float, origin
 }
 
 /** The read part as a MIDI file beside the app's shared files, handed to the system to send or open. */
-private fun exportMidi(state: SheetsState, file: File, score: Score): String {
+internal fun exportMidi(state: SheetsState, file: File, score: Score): String {
     val song = state.current
     val part = state.partShown()
     val instrumentId = part?.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }

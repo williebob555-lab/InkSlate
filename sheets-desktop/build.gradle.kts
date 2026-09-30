@@ -114,7 +114,7 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     }
     testLogging.showStandardStreams = System.getProperty("inksheets.msb") != null || System.getProperty("inksheets.msdb") != null
-    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs", "inksheets.omr.why")) {
+    for (name in listOf("inksheets.msdb", "inksheets.lib", "inksheets.bluetooth", "inksheets.glyphs", "inksheets.omr", "inksheets.omr.file", "inksheets.omr.bar", "inksheets.omr.songs", "inksheets.omr.why", "inksheets.digits")) {
         System.getProperty(name)?.let {
             systemProperty(name, it)
             outputs.upToDateWhen { false }

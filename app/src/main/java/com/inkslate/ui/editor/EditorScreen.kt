@@ -2073,6 +2073,8 @@ fun EditorScreen(
                 else -> AndroidView(
                     factory = { ctx ->
                         DrawingView(ctx).also { view ->
+                    // Music (InkSheets): the music tools may lay marks on its pages and take presses.
+                    if (DrawingView.fitWholePage) view.musicPath = file.absolutePath
                             // The document's marks and their ids, shared with any other view of it.
                             view.model = model
                             view.onContentChanged = {

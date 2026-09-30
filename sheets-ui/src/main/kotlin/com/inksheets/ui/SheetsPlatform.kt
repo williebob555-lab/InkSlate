@@ -62,6 +62,9 @@ interface SheetsPlatform {
     /** Whether the strip is open down its side, so the page keeps room clear for it (true), or folded into its corner. */
     fun setStripLane(open: Boolean) {}
 
+    /** Keep a lane clear for the music tools down the side away from the strip, or not. */
+    fun setMusicLane(open: Boolean) {}
+
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
 

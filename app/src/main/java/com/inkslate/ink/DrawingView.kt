@@ -1889,6 +1889,7 @@ class DrawingView @JvmOverloads constructor(
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         model.attach(this)
+        marksStop = com.inkslate.core.Perform.onMarksChanged { postInvalidate() }
         // The song turned to: take over what the last one left on screen.
         handoff?.let { h ->
             handoff = null
@@ -2547,10 +2548,12 @@ class DrawingView @JvmOverloads constructor(
         var w = width.toFloat()
         val h = height.toFloat()
         val lane = stripLaneDp * resources.displayMetrics.density
+        val music = musicLaneDp * resources.displayMetrics.density
         var laneShift = 0f
-        if (fitWholePage && lane > 0f) {
-            w -= lane
-            if (stripOnLeft) laneShift = lane
+        if (fitWholePage && (lane > 0f || music > 0f)) {
+            w -= lane + music
+            // The strip's lane on its side, the music tools' on the other.
+            laneShift = if (stripOnLeft) lane else music
         }
         val s = min((w - 24f) / b.width(), (h - 24f) / b.height())
         out.reset(); out.postScale(s, s)
@@ -2774,6 +2777,8 @@ class DrawingView @JvmOverloads constructor(
             }
             // The edge belongs to the whole surface, so on a canvas it goes round the canvas.
             canvas.drawRect(canvasRect ?: pageRect, pageEdge)
+            // The music tools' marks: over the print, under the ink (InkSheets).
+            musicPath?.let { path -> com.inkslate.core.Perform.pageMarks?.invoke(path, slot.index, slot.width, slot.height)?.let { drawPageMarks(canvas, it) } }
 
             // Clip so ink cannot bleed from one page onto its neighbour - except on a canvas,
             // which has no neighbour and where the clip would instead hide the end of a stroke
@@ -3073,6 +3078,10 @@ class DrawingView @JvmOverloads constructor(
 
         if (action == MotionEvent.ACTION_DOWN) { stopFling(); clearHighlight() }
         trackVelocity(event)
+
+        // A music tool in hand: one finger or the pen selects bars, cleans them up - it neither
+        // writes nor turns the page. A second finger lets it go, and moves the page as ever.
+        if (musicTouch(event)) return true
 
         // Two fingers on the ruler adjust the ruler rather than the page. Without this
         // exception, the most natural way to grab a straightedge instead zooms the document.
@@ -3819,6 +3828,7 @@ class DrawingView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         model.detach(this)
+        marksStop?.invoke(); marksStop = null
         stopFling()
         velocityTracker?.recycle()
         velocityTracker = null
@@ -4783,6 +4793,91 @@ class DrawingView @JvmOverloads constructor(
         return v
     }
 
+    /** The file shown, for the music tools' marks and gestures (InkSheets); null for none. */
+    var musicPath: String? = null
+
+    private var marksStop: (() -> Unit)? = null
+
+    private var musicPts: ArrayList<Float>? = null
+    private var musicPage = 0
+
+    /** A press taken by a music tool; true when it was. */
+    private fun musicTouch(event: MotionEvent): Boolean {
+        val path = musicPath
+        val tool = com.inkslate.core.Perform.musicTool && path != null
+        val pts = musicPts
+        if (event.pointerCount > 1 || !tool || path == null) {
+            // A second finger, or the tool put down, mid-press: the press ends where it was.
+            if (pts != null && path != null) com.inkslate.core.Perform.musicGesture?.invoke(path, musicPage, pts.toFloatArray(), true)
+            musicPts = null
+            return false
+        }
+        fun add(vx: Float, vy: Float, into: ArrayList<Float>) {
+            toDoc(vx, vy)
+            val o = originOf(musicPage)
+            into += tmpPts[0] - o[0]; into += tmpPts[1] - o[1]
+        }
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                toDoc(event.x, event.y)
+                musicPage = pageAtDoc(tmpPts[0], tmpPts[1])
+                val started = ArrayList<Float>()
+                add(event.x, event.y, started)
+                musicPts = started
+                com.inkslate.core.Perform.musicGesture?.invoke(path, musicPage, started.toFloatArray(), false)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val live = pts ?: return true
+                for (h in 0 until event.historySize) add(event.getHistoricalX(h), event.getHistoricalY(h), live)
+                add(event.x, event.y, live)
+                com.inkslate.core.Perform.musicGesture?.invoke(path, musicPage, live.toFloatArray(), false)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val live = pts ?: return true
+                add(event.x, event.y, live)
+                com.inkslate.core.Perform.musicGesture?.invoke(path, musicPage, live.toFloatArray(), true)
+                musicPts = null
+            }
+        }
+        return true
+    }
+
+    private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val markPaths = java.util.WeakHashMap<com.inkslate.core.PageMark, android.graphics.Path>()
+
+    /** The music tools' marks, in the page's own coordinates. */
+    private fun drawPageMarks(canvas: Canvas, marks: List<com.inkslate.core.PageMark>) {
+        for (m in marks) {
+            markPaint.color = m.color
+            when (m.kind) {
+                com.inkslate.core.PageMark.Kind.FILL -> {
+                    markPaint.style = Paint.Style.FILL
+                    val path = markPaths.getOrPut(m) {
+                        android.graphics.Path().apply {
+                            fillType = android.graphics.Path.FillType.EVEN_ODD
+                            for (c in m.contours) {
+                                if (c.size < 6) continue
+                                moveTo(c[0], c[1])
+                                var i = 2
+                                while (i + 1 < c.size) { lineTo(c[i], c[i + 1]); i += 2 }
+                                close()
+                            }
+                        }
+                    }
+                    canvas.drawPath(path, markPaint)
+                }
+                com.inkslate.core.PageMark.Kind.LINE -> {
+                    markPaint.style = Paint.Style.STROKE
+                    markPaint.strokeWidth = m.width
+                    for (c in m.contours) {
+                        var i = 2
+                        while (i + 1 < c.size) { canvas.drawLine(c[i - 2], c[i - 1], c[i], c[i + 1], markPaint); i += 2 }
+                    }
+                }
+            }
+        }
+    }
+
     private fun syncInverse() = pageToView.invert(viewToPage)
 
     /** Document-space coordinates of a view point, left in [tmpPts]. */
@@ -4852,6 +4947,11 @@ class DrawingView @JvmOverloads constructor(
 
         /** Room kept clear beside a fitted page for buttons laid over it, in dp. */
         var stripLaneDp: Float = 0f
+
+        /** The music tools' lane, down the side away from the strip, while they are out; 0 when not. */
+        @JvmStatic
+        @Volatile
+        var musicLaneDp: Float = 0f
 
         /** That room is on the left rather than the right. */
         @JvmStatic

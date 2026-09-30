@@ -112,6 +112,10 @@ object AppFlavor {
     /** Room kept clear beside a page of music for the strip, in dp; none while it is folded away. */
     var stripLaneDp: Float = 64f
 
+    /** The music tools' lane down the side away from the strip, while they are out; 0 when not. */
+    @Volatile
+    var musicLaneDp: Float = 0f
+
     /** How a page turn in music is shown: "slide", "fade" or "none". */
     @Volatile
     var turnAnimation: String = "slide"

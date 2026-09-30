@@ -167,6 +167,10 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.stripOnLeft = left
     }
 
+    override fun setMusicLane(open: Boolean) {
+        com.inkslate.desktop.AppFlavor.musicLaneDp = if (open) 72f else 0f
+    }
+
     override fun setStripLane(open: Boolean) {
         com.inkslate.desktop.AppFlavor.stripLaneDp = if (open) 64f else 0f
     }

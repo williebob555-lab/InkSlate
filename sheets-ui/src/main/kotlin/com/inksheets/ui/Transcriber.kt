@@ -25,7 +25,10 @@ internal object Transcriber {
 
     private val cache = HashMap<String, Score>()
 
-    private fun key(file: File) = "${file.absolutePath}|${file.length()}|${file.lastModified()}"
+    /** Bumped whenever the reader reads better: what was read before is read again. */
+    private const val READER = 3
+
+    private fun key(file: File) = "${file.absolutePath}|${file.length()}|${file.lastModified()}|r$READER"
     private fun stored(state: SheetsState, file: File) =
         File(File(state.platform.localFolder, "scores"), Integer.toHexString(key(file).hashCode()) + ".json")
 
@@ -35,9 +38,10 @@ internal object Transcriber {
             ?.also { cache[key(file)] = it }
     }
 
-    /** Read [file] (off the UI thread); [onDone] on the UI thread with the notes, or null. */
-    fun read(state: SheetsState, file: File, onDone: (Score?) -> Unit) {
+    /** Read [file] (off the UI thread) - [again] even if it has been; [onDone] on the UI thread with the notes, or null. */
+    fun read(state: SheetsState, file: File, again: Boolean = false, onDone: (Score?) -> Unit) {
         if (busy != null) return
+        if (again) synchronized(cache) { cache.remove(key(file)); stored(state, file).delete() }
         busy = "Getting ready..."
         Thread({
             val score = runCatching { readNow(state, file) }

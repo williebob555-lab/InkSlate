@@ -70,16 +70,16 @@ internal object Click {
     }
 
     private fun begin(state: SheetsState, why: Purpose, countBeats: Int): Metronome? {
-        val out = state.platform.audioOut ?: return null
+        state.platform.audioOut ?: return null
         val e = engine(state) ?: return null
-        if (purpose != null) out.stop()
+        if (purpose != null) Sound.stop(WHO)
         e.reset()
         counting = countBeats
         e.onBeat = { beat ->
             SharedMetronome.beat = beat
             if (counting > 0) state.platform.onMain { if (counting > 0) counting-- }
         }
-        out.start { e.fill(it) }
+        Sound.play(state, WHO) { e.fill(it) }
         purpose = why
         live = why
         SharedMetronome.running = true
@@ -88,7 +88,7 @@ internal object Click {
 
     fun stop(state: SheetsState) {
         if (purpose == null) return
-        state.platform.audioOut?.stop()
+        Sound.stop(WHO)
         purpose = null
         live = null
         counting = 0
@@ -136,6 +136,7 @@ internal object Click {
         return true
     }
 
+    private const val WHO = "click"
     private const val K_COUNT_IN = "sheets_count_in_bars"
     private const val K_WITH_RECORDING = "sheets_click_recording"
     private const val K_WITH_PLAYBACK = "sheets_click_playback"

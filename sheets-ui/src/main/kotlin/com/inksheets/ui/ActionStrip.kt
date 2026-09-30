@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.FirstPage
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.LastPage
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Timer
@@ -216,6 +217,12 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 val readHere = remember(state.readMusic, state.currentPath, Transcriber.shown) {
                     state.readMusic && state.currentPath?.let { Transcriber.cached(state, java.io.File(it)) } != null
                 }
+                // The music tools, with reading the music on: their own strip, down the other side.
+                if (state.readMusic && state.current != null) {
+                    StripButton(Icons.Default.MusicNote, "Music", "The music tools: clean view, play bars, go to a bar", btn, named, lit = ScoreTools.open) {
+                        if (ScoreTools.open) ScoreTools.close(state) else ScoreTools.open = true
+                    }
+                }
                 if (state.listenTurns && (state.current?.audio?.isNotEmpty() == true || readHere || Listener.active)) {
                     StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
                     ListenGauge(state)
@@ -312,6 +319,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     val song = state.current
     if (state.audioOpen && song != null) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
+    // The music tools' strip, down the other side, in its own lane.
+    if (!state.homeInFront) MusicStrip(state)
 }
 
 /** An instrument's name for a part, or what the part calls itself. */
@@ -586,7 +595,7 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
  * [description] is what a screen reader says.
  */
 @Composable
-private fun StripButton(
+internal fun StripButton(
     icon: ImageVector,
     name: String,
     description: String,

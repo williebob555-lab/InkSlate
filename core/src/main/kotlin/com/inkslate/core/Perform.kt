@@ -114,6 +114,43 @@ object Perform {
     @Volatile
     var viewBy: ((dx: Float, dy: Float, zoom: Float, fx: Float, fy: Float) -> Unit)? = null
 
+    // ---- music tools on the page (InkSheets) ------------------------------------------
+
+    /**
+     * What the music tools lay on page [page] (0-based) of [path], whose size is [width] x
+     * [height] points: the clean reading under or over the print, a selection, a bar found. In
+     * the page's own coordinates; drawn by each editor over the page's picture and under the
+     * handwriting, so what anybody wrote stays on top. Null or empty for nothing.
+     */
+    @Volatile
+    var pageMarks: ((path: String, page: Int, width: Float, height: Float) -> List<PageMark>?)? = null
+
+    private val marksListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    /** An editor asks to be told when [pageMarks] would give something different, to draw again. */
+    fun onMarksChanged(listener: () -> Unit): () -> Unit {
+        marksListeners += listener
+        return { marksListeners -= listener }
+    }
+
+    /** The music tools changed what they lay on the page: every editor draws again. */
+    fun marksChanged() = marksListeners.forEach { runCatching { it() } }
+
+    /**
+     * A music tool in hand (select bars, the clean-up pen): a press on the page goes to
+     * [musicGesture] rather than writing or turning the page. Pinching and two-finger moves still
+     * move the page.
+     */
+    @Volatile
+    var musicTool: Boolean = false
+
+    /**
+     * A press on the page with a music tool in hand: where it has been so far, as x, y pairs in
+     * [page]'s own coordinates (points), and [done] once it lifts. UI thread.
+     */
+    @Volatile
+    var musicGesture: ((path: String, page: Int, points: FloatArray, done: Boolean) -> Unit)? = null
+
     /** Show a page (0-based) of the document in front; set by whichever editor has focus. */
     @Volatile
     var jumpTo: ((path: String, page: Int) -> Unit)? = null
@@ -277,4 +314,21 @@ object QuickTools {
 
     /** Which of the three the finger has, for lighting its switch; null when it turns pages. */
     fun onForHands(hands: List<ToolConfig>): PerformAction? = hands.firstOrNull()?.let { current(it) }
+}
+
+/**
+ * A shape the music tools lay on a page, in the page's own coordinates (points from its top-left):
+ * [FILL] one or more outlines filled together (even-odd, so a whole note keeps its hole), [LINE]
+ * a stroke through the points [width] wide. [color] is ARGB, its alpha how see-through.
+ */
+class PageMark(val kind: Kind, val contours: List<FloatArray>, val color: Int, val width: Float = 0f) {
+    enum class Kind { FILL, LINE }
+
+    companion object {
+        fun rect(left: Float, top: Float, right: Float, bottom: Float, color: Int) =
+            PageMark(Kind.FILL, listOf(floatArrayOf(left, top, right, top, right, bottom, left, bottom)), color)
+
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float, width: Float, color: Int) =
+            PageMark(Kind.LINE, listOf(floatArrayOf(x1, y1, x2, y2)), color, width)
+    }
 }

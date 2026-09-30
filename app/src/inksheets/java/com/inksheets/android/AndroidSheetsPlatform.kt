@@ -88,6 +88,10 @@ class AndroidSheetsPlatform(
         }
     }
 
+    override fun setMusicLane(open: Boolean) {
+        com.inkslate.ink.DrawingView.musicLaneDp = if (open) 72f else 0f
+    }
+
     override fun setStripLane(open: Boolean) {
         com.inkslate.ink.DrawingView.stripLaneDp = if (open) 64f else 0f
     }
