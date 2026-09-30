@@ -885,6 +885,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         h.stemX = if (h.up) upX else downX
         h.stemEnd = if (h.up) h.y - (sp * 0.3f).toInt() - up else h.y + (sp * 0.3f).toInt() + down
         // Beams or flags: separate strokes crossing a column just beside the stem, near its end.
+        // A run of ink as tall as two beams and the gap between them, running on level (a beam, not a
+        // flag's steep curve), is two beams a scan has run together.
+        fun strokes(cx: Int, after: Int, inRun: Int): Int {
+            if (inRun < sp * 0.25f || inRun > sp * 2.2f) return 0
+            if (inRun < sp * 1.0f) return 1
+            val mid = if (h.up) after - inRun / 2 else after + inRun / 2
+            val level = (-(sp * 0.4f).toInt()..(sp * 0.4f).toInt()).all { d -> clean[cx + d, mid] }
+            return if (level && inRun <= sp * 1.7f) 2 else 1
+        }
         var most = 0
         for (dx in listOf(-(sp * 0.55f).toInt(), (sp * 0.55f).toInt())) {
             val cx = h.stemX + dx
@@ -895,9 +904,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             for (k in 0..span) {
                 val y = if (h.up) h.stemEnd + k else h.stemEnd - k
                 // A beam crosses in about half a space; a flag, steep by the stem, in up to two.
-                if (clean[cx, y]) inRun++ else { if (inRun >= sp * 0.25f && inRun <= sp * 2.2f) count++; inRun = 0 }
+                if (clean[cx, y]) inRun++ else { count += strokes(cx, y, inRun); inRun = 0 }
             }
-            if (inRun >= sp * 0.25f && inRun <= sp * 2.2f) count++
+            count += strokes(cx, if (h.up) h.stemEnd + span + 1 else h.stemEnd - span - 1, inRun)
             most = max(most, count)
         }
         h.flags = most.coerceAtMost(3)
