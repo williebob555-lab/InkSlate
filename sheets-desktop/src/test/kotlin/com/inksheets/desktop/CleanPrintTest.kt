@@ -44,6 +44,11 @@ class CleanPrintTest {
             r.measures.lastOrNull()?.let { number = it.number + it.bars }
         }
         val bytes = CleanPrint.pdf(Score(read, 2), "Sweet Caroline", "Trumpet 1")
+        // The same, re-written for an alto sax (trumpet 2 above sounding, alto 9).
+        System.getProperty("inksheets.shots")?.let { dir ->
+            val alto = CleanPrint.pdf(com.inksheets.core.omr.Transpose.forInstrument(Score(read, 2), 2, 9), "Sweet Caroline", "Alto Sax (from Trumpet 1)")
+            Loader.loadPDF(alto).use { ImageIO.write(PDFRenderer(it).renderImageWithDPI(0, 110f, ImageType.RGB), "png", File(dir, "clean-print-alto.png")) }
+        }
         val out = File(System.getProperty("inksheets.shots") ?: System.getProperty("java.io.tmpdir"), "clean-sweet-caroline.pdf")
         out.parentFile.mkdirs(); out.writeBytes(bytes)
         Loader.loadPDF(bytes).use { doc ->

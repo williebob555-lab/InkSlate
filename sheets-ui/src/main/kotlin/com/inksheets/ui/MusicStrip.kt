@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -69,6 +72,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     var more by remember { mutableStateOf(false) }
     var sounds by remember { mutableStateOf(false) }
     var speeding by remember { mutableStateOf(false) }
+    var printingFor by remember { mutableStateOf(false) }
     val named = true
     BoxWithConstraints(Modifier.matchParentSize()) {
         val btn = ((maxHeight - 140.dp) / 11 - 12.dp).coerceIn(30.dp, 42.dp)
@@ -150,6 +154,10 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                                 more = false
                                 if (file != null) ScoreTools.said = cleanPrint(state, file, score)
                             })
+                            DropdownMenuItem(text = { Text("Print it for another instrument...") }, onClick = {
+                                more = false
+                                printingFor = true
+                            })
                             DropdownMenuItem(text = { Text("The notes read, and bars that may be wrong...") }, onClick = {
                                 more = false
                                 state.readMusicOpen = true
@@ -170,6 +178,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
         }
     }
     if (goingTo) GoToBar(state) { goingTo = false }
+    if (printingFor && file != null && score != null) PrintFor(state, file, score) { printingFor = false }
 }
 
 /** The speed-up settings: from what share of the tempo, and how much faster each time round. */
@@ -225,10 +234,11 @@ private fun GoToBar(state: SheetsState, onDone: () -> Unit) {
 }
 
 /** The part engraved afresh from its reading, as a PDF beside the app's shared files, handed to the system to open or send. */
-private fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core.omr.Score): String {
+private fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, forName: String? = null): String {
     val song = state.current
-    val part = state.partShown()?.let { com.inksheets.core.Instruments.partName(it) } ?: file.nameWithoutExtension
-    val out = File(state.platform.cacheFolder, "${file.nameWithoutExtension} (clean).pdf")
+    val own = state.partShown()?.let { com.inksheets.core.Instruments.partName(it) } ?: file.nameWithoutExtension
+    val part = forName?.let { "$it (from $own)" } ?: own
+    val out = File(state.platform.cacheFolder, "${file.nameWithoutExtension} (${forName ?: "clean"}).pdf")
     return runCatching {
         val bytes = com.inksheets.core.omr.CleanPrint.pdf(score, song?.title ?: file.nameWithoutExtension, part)
         out.parentFile?.mkdirs()
@@ -237,3 +247,28 @@ private fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core
         "Printed ${score.measures.size} bars afresh: ${out.name}"
     }.getOrElse { "Couldn't print it: ${it.message}" }
 }
+
+/** The part re-written for another instrument - sounding the same - and printed afresh. */
+@Composable
+private fun PrintFor(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, onDone: () -> Unit) {
+    val own = state.partShown()?.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }?.let { com.inksheets.core.Instruments.byId[it] }
+    AlertDialog(
+        onDismissRequest = onDone,
+        title = { Text("Print it for...") },
+        text = {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                Text("Re-written so it sounds the same, in the other instrument's key.", style = MaterialTheme.typography.bodySmall)
+                for (ins in com.inksheets.core.Instruments.byId.values.sortedBy { it.name }) {
+                    Text(ins.name, Modifier.fillMaxWidthClickable {
+                        val moved = com.inksheets.core.omr.Transpose.forInstrument(score, own?.transpose ?: 0, ins.transpose)
+                        ScoreTools.said = cleanPrint(state, file, moved, ins.name)
+                        onDone()
+                    }.padding(vertical = 8.dp))
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDone) { Text("Cancel") } }
+    )
+}
+
+private fun Modifier.fillMaxWidthClickable(onClick: () -> Unit): Modifier = this.fillMaxWidth().clickable(onClick = onClick)
