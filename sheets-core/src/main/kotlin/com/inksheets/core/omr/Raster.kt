@@ -15,6 +15,41 @@ class Ink(val width: Int, val height: Int, val bits: BooleanArray = BooleanArray
     /** Ink as ARGB pixels (black on white), for looking at. */
     fun argb(): IntArray = IntArray(width * height) { if (bits[it]) 0xFF000000.toInt() else 0xFFFFFFFF.toInt() }
 
+    /**
+     * This ink with every stroke thinner than [r] * 2 + 1 pixels worn away and the rest grown back
+     * to its own shape (an opening): ties, slurs, stems, accents, hairpins and letters' strokes go,
+     * solid things - noteheads, beams, dots - stay.
+     */
+    fun opened(r: Int): Ink {
+        if (r <= 0) return copy()
+        fun pass(src: BooleanArray, erode: Boolean, horizontal: Boolean, rr: Int = r): BooleanArray {
+            val out = BooleanArray(src.size)
+            val n = if (horizontal) width else height
+            val lines = if (horizontal) height else width
+            for (line in 0 until lines) {
+                // How many of the window are ink, slid along: all of it (erode) or any (grow).
+                var count = 0
+                fun at(i: Int) = if (horizontal) line * width + i else i * width + line
+                fun inkAt(i: Int) = i in 0 until n && src[at(i)]
+                for (i in -rr..rr) if (inkAt(i)) count++
+                for (i in 0 until n) {
+                    out[at(i)] = if (erode) count == 2 * rr + 1 else count > 0
+                    if (inkAt(i - rr)) count--
+                    if (inkAt(i + rr + 1)) count++
+                }
+            }
+            return out
+        }
+        // Specks of paper inside a scanned head filled first, or the wearing away would bite into it.
+        var b = pass(bits, false, true, 1); b = pass(b, false, false, 1)
+        b = pass(pass(b, true, true, 1), true, false, 1)
+        b = pass(b, true, true); b = pass(b, true, false)
+        b = pass(b, false, true); b = pass(b, false, false)
+        // Grown back no further than the ink itself.
+        for (i in b.indices) b[i] = b[i] && bits[i]
+        return Ink(width, height, b)
+    }
+
     companion object {
         /**
          * Ink from grey levels (0 black - 255 white), each pixel against the light around it

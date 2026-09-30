@@ -4,6 +4,8 @@ import com.inksheets.core.omr.Recognizer
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * One bar of a real part, looked at closely: every head the reader finds in it, its stem and
@@ -39,5 +41,18 @@ class OmrBarDebug {
             loud.debugStem(clean, s, h, t)
             println("  head x=${h.x} step=${h.step} ${h.kind} score=${"%.2f".format(h.score)} stemX=${h.stemX} end=${h.stemEnd} up=${h.up} flags=${h.flags}")
         }
+        // Every upright line along the staff, and why each was or was not taken for a barline.
+        val all = r.heads(clean, s, s.left, s.right, ink)
+        for (h in all) Recognizer().debugStem(clean, s, h, t)
+        // The traced lines against the page's: for each line, how far off the nearest long run of ink is.
+        for (x in s.left until s.right step 60) {
+            val offs = (0..4).map { i ->
+                val y0 = s.lineY(i, x).roundToInt()
+                (-6..6).filter { dy -> (x - 4..x + 4).all { ink[it, y0 + dy] } }.minByOrNull { abs(it) }
+            }
+            println("  trace x=$x: $offs")
+        }
+        println("barlines found: ${reading.barlines[m.staff]}")
+        loud.barlines(ink, clean, s, t, all.filter { it.stemX >= 0 }.map { it.stemX }, all)
     }
 }

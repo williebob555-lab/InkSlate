@@ -30,6 +30,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -136,8 +140,24 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
             // Experimental (Settings): the tempo taken from the band, by ear.
             if (state.listenTurns) {
                 SwitchRow("Follow the band's tempo (listens; the click goes quiet so it only hears the band)", TempoFollow.on) { TempoFollow.set(state, it) }
-                TempoFollow.heard?.takeIf { TempoFollow.on }?.let {
-                    Text("Hearing about ${it.roundToInt()} bpm", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                if (TempoFollow.on) {
+                    // What it hears, always shown: a dead microphone must not look like a quiet band.
+                    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.foundation.layout.Box(
+                            Modifier.width(80.dp).height(6.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            androidx.compose.foundation.layout.Box(Modifier.fillMaxHeight().fillMaxWidth(Ears.level).background(MaterialTheme.colorScheme.primary))
+                        }
+                        Text(
+                            when {
+                                Ears.deaf -> "  Hears nothing" + (Ears.device?.let { " - $it" } ?: "") + " (Settings, Microphone)"
+                                TempoFollow.heard != null -> "  Hearing about ${TempoFollow.heard!!.roundToInt()} bpm"
+                                else -> "  Listening for a steady beat..."
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (Ears.deaf) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
                 TempoFollow.problem?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
             }

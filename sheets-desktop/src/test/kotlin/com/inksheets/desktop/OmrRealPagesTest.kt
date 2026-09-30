@@ -38,7 +38,11 @@ class OmrRealPagesTest {
             }
             val first = at(100f)
             val m = Recognizer().metrics(first) ?: return first
-            return at(100f * space / m.second)
+            val dpi = 100f * space / m.second
+            System.getProperty("inksheets.shots")?.takeIf { System.getProperty("inksheets.omr") == "one" }?.let { dir ->
+                ImageIO.write(r.renderImageWithDPI(index, dpi, ImageType.RGB), "png", File(dir, "grey-${file.nameWithoutExtension}-p${index + 1}.png"))
+            }
+            return at(dpi)
         }
     }
 
@@ -108,6 +112,7 @@ class OmrRealPagesTest {
         read(f.relativeTo(music).path, 1)
         // Bars read differently with the page-adapting steps than without.
         val ink = render(f, 0) ?: return
+        Recognizer().read(ink).measures.take(5).forEach { println("  first: m${it.number} bars ${it.bars} ${it.events.map(::describe)} ${it.doubts} x ${it.box.left}-${it.box.right}") }
         val old = Recognizer(adapt = false).read(ink).measures.associateBy { it.number }
         for (m in Recognizer().read(ink).measures) {
             val o = old[m.number] ?: continue
@@ -128,9 +133,11 @@ class OmrRealPagesTest {
         assumeTrue(System.getProperty("inksheets.omr") == "library")
         val want = (System.getProperty("inksheets.omr.songs") ?: "80").toInt()
         val all = music.walkTopDown().filter { it.isFile && it.extension.equals("pdf", true) && !it.name.contains("score", true) }
-            .sortedBy { it.path.lowercase() }.toList()
-        val step = max(1, all.size / want)
-        val picked = all.filterIndexed { i, _ -> i % step == 0 }.take(want)
+            .toList()
+        // The same parts each run, whatever is added to the library: chosen by a hash of their place in it.
+        val picked = all.sortedBy { java.util.zip.CRC32().apply { update(it.relativeTo(music).path.lowercase().replace('\\', '/').toByteArray()) }.value }.take(want)
+        val reasons = HashMap<String, Int>()
+        val examples = HashMap<String, MutableList<BufferedImage>>()
         var bars = 0; var sureOld = 0; var sureNew = 0; var parts = 0; var better = 0; var worse = 0
         for (f in picked) {
             val ink = runCatching { render(f, 0) }.getOrNull() ?: continue
@@ -143,7 +150,30 @@ class OmrRealPagesTest {
             sureOld += a; sureNew += b
             if (b > a) better++; if (b < a) worse++
             println("${f.relativeTo(music).path}: ${old.measures.size} -> ${new.measures.size} bars, sure $a -> $b")
+            // A few bars of each kind from each part, drawn for looking at.
+            val perPart = HashMap<String, Int>()
+            for (m in new.measures) {
+                val kind = kindOf(m)
+                if ((perPart[kind] ?: 0) >= 2 || (examples[kind]?.size ?: 0) >= 24) continue
+                perPart[kind] = (perPart[kind] ?: 0) + 1
+                examples.getOrPut(kind) { ArrayList() } += crop(ink, m, "${f.nameWithoutExtension} m${m.number}: ${m.events.joinToString(" ") { describe(it) }}")
+            }
+            for (m in new.measures) for (d in m.doubts) {
+                val kind = when {
+                    d.contains("beats found") -> {
+                        val got = Regex("([0-9.]+) beats found, ([0-9.]+) expected").find(d)
+                        val g = got?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0; val e = got?.groupValues?.get(2)?.toDoubleOrNull() ?: 0.0
+                        when { g < e - 1.5 -> "far too few beats"; g < e -> "a little short"; g > e + 1.5 -> "far too many beats"; else -> "a little long" }
+                    }
+                    else -> d.replace(Regex("\\d+"), "#")
+                }
+                reasons[kind] = (reasons[kind] ?: 0) + 1
+            }
         }
+        System.getProperty("inksheets.shots")?.let { dir ->
+            for ((kind, list) in examples) sheet(list, File(dir, "kind-" + kind.replace(Regex("[^a-z]+"), "-") + ".png"))
+        }
+        println("WHY: " + reasons.entries.sortedByDescending { it.value }.joinToString("; ") { "${it.key} ${it.value}" })
         println("ALL: $parts parts, $bars bars; sure ${sureOld * 100 / max(1, bars)}% -> ${sureNew * 100 / max(1, bars)}% ($sureOld -> $sureNew); better in $better, worse in $worse")
     }
 
@@ -156,5 +186,55 @@ class OmrRealPagesTest {
         music.resolve("MobileSheets").listFiles { f -> f.extension.equals("pdf", true) }?.sortedBy { it.name }?.take(3)?.forEach {
             read("MobileSheets/${it.name}")
         }
+    }
+
+    /** The one thing most wrong with [m]: what its bar is filed under for looking at. */
+    private fun kindOf(m: com.inksheets.core.omr.Measure): String {
+        if (m.sure) return "sure"
+        val beats = m.doubts.firstOrNull { it.contains("beats found") }
+        if (beats != null) {
+            val got = Regex("([0-9.]+) beats found, ([0-9.]+) expected").find(beats)
+            val g = got?.groupValues?.get(1)?.toDoubleOrNull() ?: 0.0; val e = got?.groupValues?.get(2)?.toDoubleOrNull() ?: 0.0
+            return when { g < e - 1.5 -> "far too few"; g < e -> "a little short"; g > e + 1.5 -> "far too many"; else -> "a little long" }
+        }
+        if (m.doubts.any { it.contains("nothing read") }) return "nothing read"
+        if (m.doubts.all { it.contains("unclear") }) return "only unclear"
+        return "other"
+    }
+
+    /** [m]'s bar from the page with room round it, and [caption] under it. */
+    private fun crop(ink: Ink, m: com.inksheets.core.omr.Measure, caption: String): BufferedImage {
+        val sp = m.space
+        val x0 = (m.box.left - sp).toInt().coerceAtLeast(0); val x1 = (m.box.right + sp).toInt().coerceAtMost(ink.width)
+        val y0 = (m.box.top - sp * 5).toInt().coerceAtLeast(0); val y1 = (m.box.bottom + sp * 5).toInt().coerceAtMost(ink.height)
+        val w = max(1, x1 - x0); val h = max(1, y1 - y0)
+        val img = BufferedImage(max(w, 420), h + 30, BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        g.color = Color.WHITE; g.fillRect(0, 0, img.width, img.height)
+        val argb = ink.argb()
+        for (y in 0 until h) for (x in 0 until w) img.setRGB(x, y, argb[(y0 + y) * ink.width + x0 + x])
+        g.color = Color(200, 60, 0); g.font = g.font.deriveFont(12f)
+        caption.chunked(70).forEachIndexed { i, line -> if (i < 2) g.drawString(line, 3, h + 12 + 13 * i) }
+        g.dispose()
+        return img
+    }
+
+    /** [images] one under another, in two columns, into [out]. */
+    private fun sheet(images: List<BufferedImage>, out: File) {
+        if (images.isEmpty()) return
+        val colW = images.maxOf { it.width }.coerceAtMost(900)
+        val half = (images.size + 1) / 2
+        val cols = listOf(images.take(half), images.drop(half))
+        val height = cols.maxOf { c -> c.sumOf { it.height + 6 } }
+        val img = BufferedImage(colW * 2 + 10, height, BufferedImage.TYPE_INT_RGB)
+        val g = img.createGraphics()
+        g.color = Color(230, 230, 230); g.fillRect(0, 0, img.width, img.height)
+        cols.forEachIndexed { c, list ->
+            var y = 0
+            for (im in list) { g.drawImage(im, c * (colW + 10), y, minOf(im.width, colW), im.height, null); y += im.height + 6 }
+        }
+        g.dispose()
+        out.parentFile.mkdirs()
+        ImageIO.write(img, "png", out)
     }
 }

@@ -115,9 +115,76 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             right -= miss
             if (right - left < space * 10) continue
             val lines = Array(5) { l -> FloatArray(right - left + 1) { i -> centreY(left + i, l) } }
-            staves += Staff(left, right, lines, space)
+            staves += refine(ink, Staff(left, right, lines, space), t)
         }
         return staves.sortedBy { it.top }
+    }
+
+    /**
+     * [s] fitted to the page's lines closely: between the slices it was found in, a scan's lines
+     * bow and a slice's reading can be pulled off by the ink round them, a third of a space or
+     * more - enough to put a note on the wrong line, leave lines unerased and hide barlines. Every
+     * few pixels along, where the five lines really are near where they were thought to be - thin
+     * ink running along, not a head or a beam - and the shift most of them agree on, smoothed.
+     */
+    private fun refine(ink: Ink, s: Staff, t: Int): Staff {
+        val step = 4
+        val reach = max(2, (s.space * 0.4f).roundToInt())
+        val xs = (s.left..s.right step step).toList()
+        val shift = FloatArray(xs.size) { Float.NaN }
+        for ((k, x) in xs.withIndex()) {
+            val offs = ArrayList<Float>()
+            for (l in 0..4) {
+                val want = s.lineY(l, x)
+                val y0 = want.roundToInt()
+                var best: Float? = null
+                var dy = -reach
+                while (dy <= reach) {
+                    val y = y0 + dy
+                    if (!(x - 3..x + 3).all { ink[it, y] }) { dy++; continue }
+                    // The run of ink up and down here: a line is thin.
+                    var a = y; while (ink[x, a - 1] && y - a <= t + 2) a--
+                    var b = y; while (ink[x, b + 1] && b - y <= t + 2) b++
+                    if (b - a + 1 <= t + 2) {
+                        val off = (a + b) / 2f - want
+                        if (best == null || abs(off) < abs(best)) best = off
+                    }
+                    dy = b - y0 + 1
+                }
+                best?.let { offs += it }
+            }
+            if (offs.size < 3) continue
+            offs.sort()
+            val mid = offs[offs.size / 2]
+            // The lines move together: most of them within a couple of pixels of the same shift.
+            if (offs.count { abs(it - mid) <= 2f } >= 3) shift[k] = mid
+        }
+        if (shift.all { it.isNaN() }) return s
+        // Gaps (barlines, chords, beams across every line) from their neighbours; then smoothed.
+        val known = shift.indices.filter { !shift[it].isNaN() }
+        val filled = FloatArray(shift.size) { i ->
+            if (!shift[i].isNaN()) shift[i] else {
+                val before = known.lastOrNull { it < i }; val after = known.firstOrNull { it > i }
+                when {
+                    before == null -> shift[after!!]
+                    after == null -> shift[before]
+                    else -> shift[before] + (shift[after] - shift[before]) * (i - before) / (after - before).toFloat()
+                }
+            }
+        }
+        val smooth = FloatArray(filled.size) { i ->
+            val w = (max(0, i - 3)..min(filled.size - 1, i + 3)).map { filled[it] }.sorted()
+            w[w.size / 2]
+        }
+        val lines = Array(5) { l ->
+            FloatArray(s.right - s.left + 1) { i ->
+                val f = i / step.toFloat()
+                val k = f.toInt().coerceAtMost(smooth.size - 1)
+                val k2 = (k + 1).coerceAtMost(smooth.size - 1)
+                s.lines[l][i] + smooth[k] + (smooth[k2] - smooth[k]) * (f - k)
+            }
+        }
+        return Staff(s.left, s.right, lines, s.space)
     }
 
     /** A line's height at [x], between the slices it was found in. */
@@ -232,6 +299,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * How well [name] sits with its origin at ([x], [y]): the share of its ink found, less the
      * share of ink where it has none - 1 perfect, 0 or below nothing like it.
      */
+    /**
+     * The page with its thin strokes worn away (see [Ink.opened]): filled heads are matched here, so a
+     * tie, slur or accent touching a head costs it nothing, and none of them can pass for a head.
+     */
+    private var solid: Ink? = null
+
     /** The filled notehead fitted to this page (see fitHeads); null for the font's own. */
     private var fitted: MusicGlyphs.Template? = null
 
@@ -361,6 +434,42 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return BooleanArray(t.width * t.height) { !outside[it] && !t.bits[it] }
     }
 
+    /**
+     * Whether a hollow head's outline at ([x], [y]), [w] wide, stands on its own as a note's does:
+     * strokes leaving it through a frame a little outside it - above, right and below (an
+     * accidental may sit close on the left) - at most two, a stem and a tie or dot. A digit's
+     * or a letter's loop, or a clef's, has more running off it.
+     */
+    private fun standsAlone(clean: Ink, sp: Float, x: Int, y: Int, w: Int, besides: Head? = null): Boolean {
+        val m = max(2, (sp * 0.3f).roundToInt())
+        // Half the head's height - heads are about three quarters as tall as wide - whatever size this page's are.
+        val halfH = max(sp * 0.5f, w * 0.38f).roundToInt() + 1
+        // From a quarter in: an accidental's strokes reach past the head's left side, above and below.
+        val left = x + w / 4; val right = x + w + m; val top = y - halfH - m; val bottom = y + halfH + m
+        // Walked round: top edge left to right, down the right side, bottom edge right to left.
+        val path = ArrayList<Boolean>()
+        val topEnd = right - left
+        // Ink of [besides] - the next head of a chord - taken as paper.
+        fun at(xx: Int, yy: Int) = clean[xx, yy] && (besides == null || xx !in besides.x - 1..besides.x + w + 1 || yy !in besides.y - halfH..besides.y + halfH)
+        for (xx in left..right) path += at(xx, top)
+        for (yy in top + 1 until bottom) path += at(right, yy)
+        val sideEnd = path.size - 1
+        for (xx in right downTo left) path += at(xx, bottom)
+        // Each run of ink crossed.
+        var runs = 0
+        var i = 0
+        while (i < path.size) {
+            if (!path[i]) { i++; continue }
+            var j = i
+            while (j + 1 < path.size && path[j + 1]) j++
+            // Down the right side, a long way: the head's own stem, however thick, not a stroke off it.
+            val stem = i > topEnd && j <= sideEnd && j - i + 1 >= sp * 0.5f
+            if (!stem) runs++
+            i = j + 1
+        }
+        return runs <= 2
+    }
+
     /** Whether the middle of a filled head at ([x], [y]) - its shape worn in a fifth of a space all round - is all ink. */
     private fun solidCore(ink: Ink, sp: Float, x: Int, y: Int): Boolean {
         val tp = tpl("noteheadBlack", sp)
@@ -382,6 +491,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         var up = false
         var flags = 0
         var dots = 0
+        /** A hollow head with strokes running off it (see standsAlone): kept only in a chord. */
+        var crowded = false
         /** Only just like a head (touched by an accent, a tie, a smudge): kept only if it has a stem. */
         var weak = false
     }
@@ -403,11 +514,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (!mid && !sides) continue
                 if (mid) {
                     // The page's size of head or the font's, whichever fits this one better.
-                    val sc = if (fitted == null) score(clean, "noteheadBlack", sp, x, y)
-                        else max(score(clean, "noteheadBlack", sp, x, y), fontScore(clean, "noteheadBlack", sp, x, y))
+                    val body = solid ?: clean
+                    val sc = if (fitted == null) score(body, "noteheadBlack", sp, x, y)
+                        else max(score(body, "noteheadBlack", sp, x, y), fontScore(body, "noteheadBlack", sp, x, y))
                     // Ties, slurs and accents touch heads and cost them a little.
                     if (sc > 0.68f) found += Head(x, step, y, "noteheadBlack", sc)
-                    else if (adapt && sc > 0.5f && !filledOnly && solidCore(clean, sp, x, y) && !accidentalLike(clean, sp, x, y, headW) &&
+                    else if (adapt && sc > 0.5f && !filledOnly && solidCore(body, sp, x, y) && !accidentalLike(clean, sp, x, y, headW) &&
                         // Not a piece of a beam: ink that runs on past both sides of the head.
                         !(-1..1).all { dy -> clean[x - (sp * 0.35f).toInt(), y + dy] && clean[x + headW + (sp * 0.35f).toInt(), y + dy] })
                         found += Head(x, step, y, "noteheadBlack", sc).also { it.weak = true }
@@ -415,7 +527,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (sides && !filledOnly) {
                     for (kind in listOf("noteheadHalf", "noteheadWhole")) {
                         val sc = score(clean, kind, sp, x, y)
-                        if (sc > 0.66f && holeClear(clean, kind, sp, x, y) > 0.6f) found += Head(x, step, y, kind, sc)
+                        if (sc > 0.66f && holeClear(clean, kind, sp, x, y) > 0.6f) found += Head(x, step, y, kind, sc).also { it.crowded = !standsAlone(clean, sp, x, y, tpl(kind, sp).ink.width - 2) }
                     }
                     // Any engraver's hollow head: a head-shaped ring of ink round a clear middle -
                     // and not a flat's or natural's bowl, whose strokes rise on the left or fall on
@@ -423,9 +535,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     if (!accidentalLike(clean, sp, x, y, headW)) {
                         // The page's own head's shape, or the font's - a whole note is rounder than either.
                         val ring = max(hollow(clean, sp, x, y, "noteheadBlack"), if (fitted != null) hollow(clean, sp, x, y, "noteheadBlack", font = true) else 0f)
-                        if (ring > 0.72f) found += Head(x, step, y, "noteheadHalf", ring)
+                        if (ring > 0.72f) found += Head(x, step, y, "noteheadHalf", ring).also { it.crowded = !standsAlone(clean, sp, x, y, headW) }
                         val wide = hollow(clean, sp, x, y, "noteheadWhole")
-                        if (wide > 0.74f) found += Head(x, step, y, "noteheadWhole", wide)
+                        if (wide > 0.74f) found += Head(x, step, y, "noteheadWhole", wide).also { it.crowded = !standsAlone(clean, sp, x, y, tpl("noteheadWhole", sp).ink.width - 2) }
                     }
                 }
             }
@@ -447,6 +559,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 b - a + 1 >= w * 0.9f
             }
         }
+        // A hollow head with strokes running off it is a letter's, a digit's or a clef's loop - unless
+        // another hollow head sits right above or below it: a chord's heads touch each other.
+        found.removeAll { h -> h.crowded && found.none { o -> o !== h && o.kind != "noteheadBlack" && abs(o.x - h.x) <= headW / 3 && abs(o.step - h.step) in 2..3 &&
+            standsAlone(clean, sp, h.x, h.y, tpl(h.kind, sp).ink.width - 2, besides = o) } }
         // A weak head beside a sure one is that head's smudge, or a beam's end, not another note.
         found.removeAll { h -> h.weak && found.any { o -> !o.weak && abs(o.x - h.x) < headW * 1.3f && abs(o.step - h.step) <= 3 } }
         // The best of each cluster: heads cannot overlap, except a second's two in a chord.
@@ -670,6 +786,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
         val staves = staves(ink, t, space)
         val clean = withoutLines(ink, staves, t)
+        solid = if (adapt && staves.isNotEmpty()) clean.opened(max(1, (staves.first().space * 0.11f).roundToInt())) else null
         if (adapt) fitHeads(clean, staves, ink) else fitted = null
         val measures = ArrayList<Measure>()
         val bars = ArrayList<List<Int>>()
@@ -699,7 +816,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         for ((si, s) in staves.withIndex()) {
             // The start of the staff: clef, key, time.
             var x = s.left + (s.space * 0.3f).toInt()
-            val clef = clefAt(clean, s, x)
+            val clef = clefAt(clean, s, x, t)
             var showsClef = false
             if (clef != null) { carry.clef = clef.first; x = clef.second; showsClef = true }
             val key = keyAt(clean, s, x, carry.clef)
@@ -790,8 +907,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val digits = ArrayList<Pair<Int, Int>>()
         var dx = start - (sp * 0.5f).toInt()
         while (dx < start + len) {
-            val hit = digit(clean, s, dx, dx + (sp * 0.8f).toInt(), listOf(-3, -4, -2, -5))
-            if (hit == null) { dx += (sp * 0.8f).toInt(); continue }
+            val first = digit(clean, s, dx, dx + (sp * 0.8f).toInt(), listOf(-3, -4, -2, -5))
+            if (first == null) { dx += (sp * 0.8f).toInt(); continue }
+            // The first window with anything in it may hold only the edge of a digit - a "1" fits
+            // the side of a bold "8": the best match around it is the digit.
+            val hit = digit(clean, s, first.second - (sp * 0.6f).toInt(), first.second + (sp * 0.9f).toInt(), listOf(-3, -4, -2, -5)) ?: first
             digits += hit
             dx = hit.second + (sp * 1.4f).toInt()
         }
@@ -804,16 +924,61 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     /** What carries from staff to staff and page to page: the clef, key and time in force. */
     class Carry(var clef: Clef = Clef.TREBLE, var key: Key = Key(0), var time: TimeSig = TimeSig(4, 4))
 
-    private fun clefAt(clean: Ink, s: Staff, x0: Int): Pair<Clef, Int>? {
+    private fun clefAt(clean: Ink, s: Staff, x0: Int, t: Int = 2): Pair<Clef, Int>? {
         val sp = s.space
         var best: Triple<Clef, Int, Float>? = null
-        for ((clef, glyph, step) in listOf(Triple(Clef.TREBLE, "gClef", 6), Triple(Clef.BASS, "fClef", 2), Triple(Clef.ALTO, "cClef", 4), Triple(Clef.TENOR, "cClef", 2))) {
+        // The music font's clefs, and a little smaller and larger: engravers' clefs differ in size more than heads.
+        for (size in listOf(1f, 0.9f, 1.1f)) for ((clef, glyph, step) in listOf(Triple(Clef.TREBLE, "gClef", 6), Triple(Clef.BASS, "fClef", 2), Triple(Clef.ALTO, "cClef", 4), Triple(Clef.TENOR, "cClef", 2))) {
             for (x in x0..x0 + (sp * 2.5f).toInt()) {
-                val sc = score(clean, glyph, sp, x, s.y(step, x).roundToInt())
-                if (sc > 0.6f && (best == null || sc > best.third)) best = Triple(clef, x + (MusicGlyphs[glyph].advance * sp).toInt(), sc)
+                val sc = score(clean, glyph, sp * size, x, s.y(step, x).roundToInt())
+                if (sc > 0.6f && (best == null || sc > best.third)) best = Triple(clef, x + (MusicGlyphs[glyph].advance * sp * size).toInt(), sc)
             }
         }
-        return best?.let { it.first to it.second + (sp * 0.4f).toInt() }
+        best?.let { return it.first to it.second + (sp * 0.4f).toInt() }
+        return clefByShape(clean, s, x0, t)
+    }
+
+    /**
+     * A clef in a shape no font here draws: the first big shape at the staff's start, read by its
+     * outline - a treble clef stands out above and below the staff, a bass clef fills its upper
+     * half (its dots beside it), a C clef its middle. So its loops are never read as notes.
+     */
+    private fun clefByShape(clean: Ink, s: Staff, x0: Int, t: Int): Pair<Clef, Int>? {
+        val sp = s.space
+        val yTop = s.y(-8, x0).roundToInt(); val yBottom = s.y(16, x0).roundToInt()
+        val xMax = x0 + (sp * 6).toInt()
+        val startX = (x0..x0 + (sp * 3).toInt()).firstOrNull { x -> (s.y(0, x).roundToInt()..s.y(8, x).roundToInt()).any { clean[x, it] } } ?: return null
+        val startY = (s.y(0, startX).roundToInt()..s.y(8, startX).roundToInt()).first { clean[startX, it] }
+        // Followed across the gaps the staff lines left in it.
+        val gap = t + 1
+        val seen = HashSet<Long>()
+        val stack = ArrayDeque<Long>()
+        fun key(x: Int, y: Int) = x.toLong() shl 32 or (y.toLong() and 0xffffffffL)
+        stack += key(startX, startY)
+        var l = startX; var r = startX; var top = startY; var bottom = startY
+        while (stack.isNotEmpty() && seen.size < 40_000) {
+            val k = stack.removeLast()
+            if (!seen.add(k)) continue
+            val x = (k shr 32).toInt(); val y = k.toInt()
+            l = min(l, x); r = max(r, x); top = min(top, y); bottom = max(bottom, y)
+            for (dx in -1..1) for (dy in -gap..gap) {
+                val nx = x + dx; val ny = y + dy
+                if (nx < x0 - sp || nx > xMax || ny < yTop || ny > yBottom) continue
+                if (clean[nx, ny] && key(nx, ny) !in seen) stack += key(nx, ny)
+            }
+        }
+        val w = (r - l) / sp; val h = (bottom - top) / sp
+        val above = (s.y(0, l) - top) / sp; val below = (bottom - s.y(8, l)) / sp
+        val clef = when {
+            w in 1.2f..4.5f && h >= 5f && above > 0.5f && below > 0.5f -> Clef.TREBLE
+            w in 1.5f..4.5f && h in 2.2f..4.8f && top <= s.y(1, l) && bottom <= s.y(7, l) -> Clef.BASS
+            w in 1.5f..4.5f && h in 3.6f..5.2f && above < 0.8f && below < 0.8f -> Clef.ALTO
+            else -> return null
+        }
+        if (debug) println("clef by shape: $clef, ${"%.1f".format(w)} x ${"%.1f".format(h)} spaces")
+        // A bass clef's dots follow it.
+        val end = if (clef != Clef.BASS) r else (r + 1..r + (sp * 1.2f).toInt()).lastOrNull { xx -> (s.y(1, xx).roundToInt()..s.y(3, xx).roundToInt()).any { clean[xx, it] } } ?: r
+        return clef to end + (sp * 0.4f).toInt()
     }
 
     private fun keyAt(clean: Ink, s: Staff, x0: Int, clef: Clef): Pair<Key, Int>? {
