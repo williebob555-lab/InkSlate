@@ -87,7 +87,7 @@ internal fun ListenGauge(state: SheetsState) {
                         val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)
                         Text(if (s < 1) "Now" else "${s}s", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
                             color = if (soon) scheme.onTertiaryContainer else scheme.onSecondaryContainer, lineHeight = 24.sp)
-                        Text("to page ${f.page + 2}", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, lineHeight = 11.sp)
+                        Text("to page ${(f.nextPage ?: f.page + 1) + 1}", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, lineHeight = 11.sp)
                     } else {
                         Text(text.removeSuffix(" (guessed)"), style = MaterialTheme.typography.labelMedium, textAlign = TextAlign.Center, lineHeight = 14.sp)
                     }

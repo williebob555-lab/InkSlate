@@ -129,6 +129,11 @@ data class Measure(
     val showsTime: Boolean = false,
     /** Why it may be read wrong: "4 beats found, 3 expected". */
     val doubts: List<String> = emptyList(),
+    /** A repeat begins here (dots after its barline) / ends here (dots before the barline after it). */
+    val repeatStart: Boolean = false,
+    val repeatEnd: Boolean = false,
+    /** Under a first or second ending's bracket: which (1, 2), or 0 for none. */
+    val ending: Int = 0,
     /** How many bars it stands for: more than one for a multi-bar rest ("rest 4 bars"). */
     val bars: Int = 1
 ) {
@@ -166,4 +171,46 @@ object Scores {
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; classDiscriminator = "kind" }
     fun encode(s: Score): String = json.encodeToString(Score.serializer(), s)
     fun decode(text: String): Score? = runCatching { json.decodeFromString(Score.serializer(), text) }.getOrNull()
+}
+
+/**
+ * The order bars are played in: repeats played twice, a first ending the first time round and a
+ * second the second, and on. Bar numbers as read, a multi-bar rest counted out bar by bar.
+ */
+object PlayOrder {
+    /** The measures (by index into [measures]) in the order they are played. */
+    fun indices(measures: List<Measure>): List<Int> {
+        val out = ArrayList<Int>()
+        var i = 0
+        var start = 0
+        var pass = 1
+        val repeated = HashSet<Int>()
+        var guard = 0
+        while (i < measures.size && guard++ < measures.size * 4) {
+            val m = measures[i]
+            if (m.repeatStart && pass == 1) start = i
+            // An ending not for this time round is stepped over.
+            if (m.ending != 0 && m.ending != pass) { i++; continue }
+            out += i
+            if (m.repeatEnd && i !in repeated) {
+                repeated += i
+                pass = 2
+                i = start
+                continue
+            }
+            // Past the section repeated: back to the first time round for the next.
+            if (pass == 2 && (m.repeatEnd || (m.ending == 0 && i > start && measures.getOrNull(i - 1)?.ending != 0))) {
+                pass = 1
+                start = i + 1
+            }
+            i++
+        }
+        return out
+    }
+
+    /** [score] with its bars in the order they are played - a repeated bar in it twice - for hearing it, or following it. */
+    fun unrolled(score: Score): Score = score.copy(measures = indices(score.measures).map { score.measures[it] })
+
+    /** Bar numbers in the order played. */
+    fun bars(measures: List<Measure>): List<Int> = indices(measures).flatMap { k -> measures[k].let { m -> (m.number until m.number + m.bars).toList() } }
 }

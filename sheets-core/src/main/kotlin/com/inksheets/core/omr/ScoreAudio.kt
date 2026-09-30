@@ -23,6 +23,27 @@ object ScoreAudio {
         }
     }
 
+    /**
+     * Every change of page as the music is played - [played] in playing order (see
+     * [PlayOrder.unrolled]), so a repeat across a page break turns back to it: (ms, page).
+     */
+    fun pageChanges(played: Score, bpm: Double): List<Pair<Long, Int>> {
+        val starts = measureStarts(played, bpm)
+        val out = ArrayList<Pair<Long, Int>>()
+        var page = played.measures.firstOrNull()?.page ?: return out
+        for ((i, m) in played.measures.withIndex()) if (m.page != page) { page = m.page; out += starts[i] to page }
+        return out
+    }
+
+    /** The same, lined up with [recording] (its frames). */
+    fun changesIn(played: Score, recording: List<Chroma.Frame>, bpm: Double, transpose: Int = 0): List<Pair<Long, Int>> {
+        val map = align(frames(played, bpm, transpose), recording)
+        return pageChanges(played, bpm).map { (ms, page) ->
+            val f = (ms / Chroma.FRAME_MS).toInt().coerceIn(0, map.size - 1)
+            map[f] * Chroma.FRAME_MS to page
+        }
+    }
+
     /** The whole length, in ms at [bpm]. */
     fun length(score: Score, bpm: Double): Long {
         val t = score.timeline(bpm).lastOrNull() ?: return 0

@@ -329,7 +329,9 @@ internal object ScoreTools {
         val tempo = SharedMetronome.bpm
         val start = if (ramp && loop) tempo * rampFrom / 100.0 else tempo
         val sounding = soundAs ?: id
-        val p = ScorePlayer(Synth(rate), score, range.first, range.last, start, transpose, Synth.patchFor(Midi.program(sounding)),
+        // From the page on: as it is played, repeats and all. A passage chosen: straight through, for practising it.
+        val source = if (selection == null) com.inksheets.core.omr.PlayOrder.unrolled(score) else score
+        val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, Synth.patchFor(Midi.program(sounding)),
             loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble())
         player = p
         playing = Triple(range.first, start.toInt(), 0)

@@ -38,7 +38,8 @@ object Midi {
         events += Triple(0L, 1, byteArrayOf(0xC0.toByte(), program.coerceIn(0, 127).toByte()))
         var at = 0L
         var lastTime: TimeSig? = null
-        for (m in score.measures) {
+        // As played: repeats twice, the right ending each time.
+        for (m in PlayOrder.unrolled(score).measures) {
             if (m.time != lastTime) {
                 lastTime = m.time
                 val denomPow = Integer.numberOfTrailingZeros(m.time.beatType)

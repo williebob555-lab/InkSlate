@@ -973,6 +973,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val edges = (listOf(s.left) + b).distinct().sorted()
             val spans = edges.zipWithNext().filter { (a, c) -> c - a > s.space * 2 } +
                 (if (b.isEmpty() || s.right - b.last() > s.space * 3) listOf((b.lastOrNull() ?: s.left) to s.right) else emptyList())
+            // Repeats: a barline with a dot in each of the two middle spaces beside it.
+            fun dotsAt(x0: Int, x1: Int) = listOf(3, 5).all { st -> val y = s.y(st, x0).roundToInt(); dotIn(clean, s.space, x0, y - (s.space * 0.4f).toInt(), x1, y + (s.space * 0.4f).toInt(), centreY = y) }
+            fun dotsBefore(bx: Int) = dotsAt(bx - (s.space * 2.2f).toInt(), bx - (s.space * 0.25f).toInt())
+            fun dotsAfter(bx: Int) = dotsAt(bx + (s.space * 0.25f).toInt(), bx + (s.space * 2.2f).toInt())
             val inSpan = HashSet<Head>()
             for ((i, span) in spans.withIndex()) {
                 var from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
@@ -1011,10 +1015,21 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // Another engraver's heads match these a little less well and are read right: only
                 // a weak match is a doubt.
                 events.filterIsInstance<Note>().filter { it.confidence < 0.75f }.takeIf { it.isNotEmpty() }?.let { doubts += "${it.size} unclear note${if (it.size > 1) "s" else ""}" }
-                measures += m.copy(doubts = doubts)
+                // A repeat starting at a line's start sits just after the clef and key.
+                val starts = (span.first in b && dotsAfter(span.first)) || (i == 0 && dotsAt(x - (s.space * 0.5f).toInt(), x + (s.space * 2.5f).toInt()))
+                val ends = span.second in b && dotsBefore(span.second)
+                measures += m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends)
                 }
             }
             allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
+            // First and second endings: a long thin bracket over the staff, hooked down at its
+            // left end, its number beside the hook. The bars under it are that ending's.
+            for ((x0, x1, n) in endings(clean, s)) {
+                for (k in measures.indices) {
+                    val m = measures[k]
+                    if (m.staff == si && m.page == page && (m.box.left + m.box.right) / 2 in x0..x1) measures[k] = m.copy(ending = n)
+                }
+            }
         }
         return PageReading(staves, bars, measures, t, space, dropped)
     }
@@ -1129,6 +1144,34 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         return false
+    }
+
+    /** The ending brackets over [s]: (from x, to x, which ending). */
+    private fun endings(clean: Ink, s: Staff): List<Triple<Int, Int, Int>> {
+        val sp = s.space
+        val out = ArrayList<Triple<Int, Int, Int>>()
+        val top = s.y(-12, s.left).roundToInt(); val bottom = s.y(-2, s.left).roundToInt()
+        var y = top
+        while (y <= bottom) {
+            var x = s.left
+            while (x < s.right) {
+                if (!clean[x, y]) { x++; continue }
+                var e = x
+                while (e < s.right && (clean[e + 1, y] || clean[e + 2, y])) e++
+                val len = e - x
+                // Thin: nothing just above or below it along most of its length.
+                val thin = len >= sp * 4 && (x..e step 3).count { xx -> !clean[xx, y - (sp * 0.35f).toInt()] && !clean[xx, y + (sp * 0.35f).toInt()] } >= len / 3 * 0.8f
+                // Hooked down at its left end, a space or more.
+                val hook = thin && (x - 2..x + 2).any { xx -> (y..y + (sp * 0.9f).toInt()).all { yy -> clean[xx, yy] || clean[xx, yy - 1] } }
+                if (hook) {
+                    val n = Digits.number(clean, x, x + (sp * 3).toInt(), y - (sp * 0.5f).toInt(), y + (sp * 2.5f).toInt(), (sp * 0.5f).toInt(), (sp * 2.2f).toInt())?.first
+                    if (n != null && n in 1..3 && out.none { abs(it.first - x) < sp }) out += Triple(x, e, n)
+                }
+                x = e + 1
+            }
+            y++
+        }
+        return out
     }
 
     private fun fmt(q: Double) = if (q == q.toLong().toDouble()) q.toLong().toString() else "%.2f".format(java.util.Locale.ROOT, q).trimEnd('0')

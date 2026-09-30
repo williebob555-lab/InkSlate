@@ -43,7 +43,9 @@ internal object Listener {
         val page: Int,
         val pages: Int,
         /** When it last turned a page itself (System time), so the turn can be shown as its own. */
-        val turnedAt: Long = 0L
+        val turnedAt: Long = 0L,
+        /** The page it turns to next (0-based) when that is not simply the next - a repeat going back. */
+        val nextPage: Int? = null
     )
 
     var follow by mutableStateOf<Follow?>(null)
@@ -108,26 +110,34 @@ internal object Listener {
                 if (ok && stream.isNotEmpty()) stream.also { synchronized(cache) { cache[f.path] = it } } else null
             } }
             if (run !== me) return@Thread
+            // The music as it is played: repeats twice, the right ending each time.
+            val played = score?.let { com.inksheets.core.omr.PlayOrder.unrolled(it) }
             // What to follow: the recording where there is one, else the music as read.
-            val reference = recording ?: score?.let { com.inksheets.core.omr.ScoreAudio.frames(it, bpm, instrument?.transpose ?: 0) }
+            val reference = recording ?: played?.let { com.inksheets.core.omr.ScoreAudio.frames(it, bpm, instrument?.transpose ?: 0) }
             if (reference == null || reference.isEmpty()) { state.platform.onMain { stop(state, "Couldn't read the recording") }; return@Thread }
             val (page0, pages) = state.pageShown
             // Where the turns come from: learned by playing along; else from the music read (lined
             // up with the recording, or the music itself); else guessed.
             val learned = track?.turnsMs.orEmpty().takeIf { pages > 1 && it.size >= pages - 1 }
-            val fromMusic = if (learned == null && score != null) runCatching {
-                if (recording != null) com.inksheets.core.omr.ScoreAudio.turnsIn(score, recording, bpm, instrument?.transpose ?: 0)
-                else com.inksheets.core.omr.ScoreAudio.pageStarts(score, bpm)
-            }.getOrNull()?.takeIf { it.size >= pages - 1 } else null
+            // Every change of page from the music: with a repeat across a page break, some go back.
+            val changes = if (learned == null && played != null) runCatching {
+                if (recording != null) com.inksheets.core.omr.ScoreAudio.changesIn(played, recording, bpm, instrument?.transpose ?: 0)
+                else com.inksheets.core.omr.ScoreAudio.pageChanges(played, bpm)
+            }.getOrNull() else null
+            val goesBack = changes != null && changes.zipWithNext().any { (a, b) -> b.second < a.second }
+            val fromMusic = if (changes != null && !goesBack) changes.map { it.first }.takeIf { it.size >= pages - 1 } else null
+            val path = state.currentPath
             val plan = TurnPlan(learned ?: fromMusic ?: emptyList(), pages, reference.size * Chroma.FRAME_MS)
-            val source = when { learned != null -> "learned"; fromMusic != null -> "from the music"; else -> "guessed" }
+            val source = when { learned != null -> "learned"; fromMusic != null || goesBack -> "from the music"; else -> "guessed" }
             val startMs = if (page0 <= 0) 0L else plan.turnAt(page0 - 1) ?: 0L
             val follower = ScoreFollower(reference, startMs)
             val presence = MusicPresence()
             val stream = Chroma.Stream(rate)
             // Learned turns were made when the player turned, already a little early; following
             // the music itself (no recording) runs later, so it turns earlier.
-            val lead = when { learned != null -> 300L; fromMusic != null && recording != null -> 500L; fromMusic != null -> 1_500L; else -> 1_000L }
+            val lead = when { learned != null -> 300L; (fromMusic != null || goesBack) && recording != null -> 500L; fromMusic != null || goesBack -> 1_500L; else -> 1_000L }
+            // Following the changes themselves (repeats): the next one to make.
+            var next = changes?.indexOfFirst { it.first > startMs }?.takeIf { it >= 0 } ?: 0
             var turnedFrom = -1
             var turnedAt = 0L
             var shownAt = 0L
@@ -140,8 +150,17 @@ internal object Listener {
                     presence.hear(f)
                     val at = follower.hear(f, presence.quiet(f))
                     val page = state.pageShown.first
-                    val turn = plan.turnAt(page)
-                    if (turn != null && page != turnedFrom && at >= turn - lead) {
+                    if (goesBack && changes != null && path != null) {
+                        // To whichever page comes next - on, or back for a repeat.
+                        val c = changes.getOrNull(next)
+                        if (c != null && at >= c.first - lead) {
+                            next++
+                            turnedAt = System.currentTimeMillis()
+                            state.platform.onMain { if (run === me) Perform.jumpTo?.invoke(path, c.second) }
+                        }
+                    }
+                    val turn = if (goesBack) changes?.getOrNull(next)?.first else plan.turnAt(page)
+                    if (!goesBack && turn != null && page != turnedFrom && at >= turn - lead) {
                         turnedFrom = page
                         turnedAt = System.currentTimeMillis()
                         state.platform.onMain { if (run === me) Perform.run(PerformAction.NEXT_PAGE) }
@@ -149,7 +168,9 @@ internal object Listener {
                     val now = System.currentTimeMillis()
                     if (now - shownAt >= 200) {
                         shownAt = now
-                        val shown = Follow(at, if (page <= 0) 0L else plan.turnAt(page - 1) ?: 0L, turn?.let { it - lead }, !presence.quiet(f), source, page, pages, turnedAt)
+                        val from = if (goesBack) changes?.getOrNull(next - 1)?.first ?: 0L else if (page <= 0) 0L else plan.turnAt(page - 1) ?: 0L
+                        val shown = Follow(at, from, turn?.let { it - lead }, !presence.quiet(f), source, page, pages, turnedAt,
+                            nextPage = if (goesBack) changes?.getOrNull(next)?.second else null)
                         state.platform.onMain { if (run === me) follow = shown }
                     }
                     val why = when {

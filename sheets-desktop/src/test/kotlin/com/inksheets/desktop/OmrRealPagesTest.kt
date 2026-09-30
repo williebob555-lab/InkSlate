@@ -141,6 +141,7 @@ class OmrRealPagesTest {
         val picked = all.sortedBy { java.util.zip.CRC32().apply { update(it.relativeTo(music).path.lowercase().replace('\\', '/').toByteArray()) }.value }.take(want)
         val reasons = HashMap<String, Int>()
         var printedNumbers = 0; var agreeingNumbers = 0
+        var repeatsFound = 0; val repeatParts = ArrayList<String>()
         val numberMisses = ArrayList<String>()
         val examples = HashMap<String, MutableList<BufferedImage>>()
         var bars = 0; var sureOld = 0; var sureNew = 0; var parts = 0; var better = 0; var worse = 0
@@ -167,6 +168,8 @@ class OmrRealPagesTest {
                 if (printed == first) agreeHere++ else if (numberMisses.size < 30) numberMisses += "${f.nameWithoutExtension} staff ${si + 1}: printed $printed, counted $first"
             }
             printedNumbers += printedHere; agreeingNumbers += agreeHere
+            repeatsFound += new.measures.count { it.repeatStart || it.repeatEnd }
+            if (new.measures.any { it.repeatStart || it.repeatEnd } && repeatParts.size < 12) repeatParts += f.nameWithoutExtension + ": " + new.measures.filter { it.repeatStart || it.repeatEnd }.joinToString { "${it.number}${if (it.repeatStart) "|:" else ""}${if (it.repeatEnd) ":|" else ""}" }
             println("${f.relativeTo(music).path}: ${old.measures.size} -> ${new.measures.size} bars, sure $a -> $b; bar numbers agree $agreeHere of $printedHere")
             // A few bars of each kind from each part, drawn for looking at.
             val perPart = HashMap<String, Int>()
@@ -192,6 +195,8 @@ class OmrRealPagesTest {
             for ((kind, list) in examples) sheet(list, File(dir, "kind-" + kind.replace(Regex("[^a-z]+"), "-") + ".png"))
         }
         numberMisses.forEach { println("  numbers: $it") }
+        repeatParts.forEach { println("  repeats: $it") }
+        println("REPEATS: $repeatsFound")
         println("BAR NUMBERS: $agreeingNumbers of $printedNumbers printed at line starts agree with the count")
         println("WHY: " + reasons.entries.sortedByDescending { it.value }.joinToString("; ") { "${it.key} ${it.value}" })
         println("ALL: $parts parts, $bars bars; sure ${sureOld * 100 / max(1, bars)}% -> ${sureNew * 100 / max(1, bars)}% ($sureOld -> $sureNew); better in $better, worse in $worse")

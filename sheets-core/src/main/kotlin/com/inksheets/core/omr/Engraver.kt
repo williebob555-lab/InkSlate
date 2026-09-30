@@ -65,6 +65,14 @@ object Engraver {
                 bottom.forEachIndexed { i, c -> marks += Symbol("timeSig$c", x + i * 1.8f + (w - bottom.length * 1.8f) / 2, 3f) }
                 x += w + 0.8f
             }
+            // A repeat's start: thick, thin, and its two dots.
+            if (m.repeatStart) {
+                marks += Stroke(x + 0.25f, 0f, x + 0.25f, 4f, 0.5f)
+                marks += Stroke(x + 0.85f, 0f, x + 0.85f, 4f, 0.16f)
+                marks += Symbol("augmentationDot", x + 1.2f, 1.5f)
+                marks += Symbol("augmentationDot", x + 1.2f, 2.5f)
+                x += 1.8f
+            }
             x += 0.6f
             // Notes and rests, each its own room; beamed notes grouped a beat at a time.
             val placed = ArrayList<Pair<Event, Float>>()
@@ -76,7 +84,23 @@ object Engraver {
             }
             drawEvents(marks, placed, m)
             x += 0.4f
-            marks += Stroke(x, 0f, x, 4f, 0.16f)
+            if (m.ending > 0) {
+                // An ending's bracket over the bar, its number by the hook where it begins.
+                val begins = mi == 0 || measures[mi - 1].ending != m.ending
+                marks += Stroke(start + 0.2f, -3f, x, -3f, 0.12f)
+                if (begins) {
+                    marks += Stroke(start + 0.2f, -3f, start + 0.2f, -1.8f, 0.12f)
+                    marks += Symbol("timeSig${m.ending}", start + 0.6f, -1.9f)
+                }
+            }
+            if (m.repeatEnd) {
+                // A repeat's end: its two dots, thin, thick.
+                marks += Symbol("augmentationDot", x, 1.5f)
+                marks += Symbol("augmentationDot", x, 2.5f)
+                marks += Stroke(x + 0.7f, 0f, x + 0.7f, 4f, 0.16f)
+                marks += Stroke(x + 1.3f, 0f, x + 1.3f, 4f, 0.5f)
+                x += 1.55f
+            } else marks += Stroke(x, 0f, x, 4f, 0.16f)
             spans += start to x
             x += 0.3f
         }
