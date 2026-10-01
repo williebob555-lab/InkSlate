@@ -25,7 +25,7 @@ internal object Transcriber {
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 5
+    private const val READER = 6
 
     /**
      * Where [file]'s reading is kept: a page to a file, in the library's own `.inksheets/readings`
@@ -144,13 +144,15 @@ internal object Transcriber {
                 val printed = runCatching { peek.printed(p) }.getOrNull()
                 val reading = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) Net.shipped else null)
                 measures += reading.measures
-                widths[p] = width
+                // The width the page really came back at: a renderer may draw a small page narrower
+                // than asked (a cap on how far it magnifies), and every bar is placed by it.
+                widths[p] = ink.width
                 reading.measures.lastOrNull()?.let { number = it.number + it.bars }
                 // Kept as soon as read: a reading stopped part way carries on from here, and the
                 // pages read so far reach the other devices.
                 runCatching {
                     dir.mkdirs()
-                    val one = Score(reading.measures, peek.pageCount, List(peek.pageCount) { if (it == p) width else 0 }, listOf(p))
+                    val one = Score(reading.measures, peek.pageCount, List(peek.pageCount) { if (it == p) ink.width else 0 }, listOf(p))
                     val tmp = File(dir, "p${p + 1}.json.tmp"); tmp.writeText(Scores.encode(one))
                     val dest = pageFile(dir, p); dest.delete(); tmp.renameTo(dest)
                 }
