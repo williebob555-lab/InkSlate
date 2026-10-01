@@ -1432,6 +1432,44 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (end == measures.size) carry.time = time
             }
         }
+        // A change of time not read: three bars or more in a row, on one line, coming to the same
+        // length - not the time they were taken in - the first of them with a signature's ink at its
+        // start (both halves of the staff filled before its first note): the time changed there.
+        run {
+            var k = 0
+            while (k < measures.size) {
+                val m = measures[k]
+                val len = Math.round(m.quarters * 4) / 4.0
+                if (m.bars != 1 || m.events.isEmpty() || abs(len - m.time.quarters) < 1e-6 || len !in 1.0..12.0) { k++; continue }
+                var end = k + 1
+                while (end < measures.size && measures[end].staff == m.staff && measures[end].page == m.page && measures[end].bars == 1 &&
+                    measures[end].time == m.time && abs(Math.round(measures[end].quarters * 4) / 4.0 - len) < 1e-6) end++
+                val s = staves[m.staff]
+                val firstX = m.events.minOf { it.x }.roundToInt()
+                val signed = firstX - m.box.left > s.space * 1.5f && run {
+                    val x0 = m.box.left + (s.space * 0.3f).toInt(); val x1 = firstX - (s.space * 0.3f).toInt()
+                    var upper = 0; var lower = 0; var n = 0
+                    for (x in x0..x1) {
+                        val top = s.lineY(0, x).roundToInt(); val mid = s.lineY(2, x).roundToInt(); val bottom = s.lineY(4, x).roundToInt()
+                        for (y in top until mid) if (clean[x, y]) upper++
+                        for (y in mid until bottom) if (clean[x, y]) lower++
+                        n += mid - top
+                    }
+                    n > 0 && upper >= n * 0.08f && lower >= n * 0.08f
+                }
+                if (end - k >= 3 && signed) {
+                    // Counted in quarters where it comes to whole ones (3/4), else in eighths (7/8).
+                    val beatType = if ((len * 2).roundToInt() % 2 != 0) 8 else 4
+                    val time = TimeSig(Math.round(len * beatType / 4.0).toInt(), beatType)
+                    if (abs(time.quarters - len) < 1e-6) {
+                        for (j in k until end) measures[j] = measures[j].copy(time = time, showsTime = j == k || measures[j].showsTime,
+                            doubts = measures[j].doubts.filterNot { it.contains("beats found") })
+                        k = end; continue
+                    }
+                }
+                k++
+            }
+        }
         if (alone) {
             carry.alone = false
             // Agreeing within a couple of bars: the count across a scanned page can be a bar or two out.
