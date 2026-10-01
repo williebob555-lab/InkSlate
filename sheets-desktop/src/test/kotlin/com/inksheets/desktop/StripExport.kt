@@ -155,4 +155,70 @@ class StripExport {
         File(out, "labels.jsonl").writeText(labels.joinToString("\n"))
         println("STRIPS: ${parts.size} parts, ${labels.size} strips in ${(System.currentTimeMillis() - t0) / 1000}s")
     }
+
+    /**
+     * Learning from the library's own scans: each read by the trained reader (-Dinksheets.bench.net),
+     * and what it found in bars it is sure of - they add up, every head likely - kept as their
+     * labels; bars in doubt left out of teaching either way (a [-3, from, to] column span). Into
+     * <dir>/strips and <dir>/labels.jsonl, as the labelled export. -Dinksheets.pseudo=<dir>
+     */
+    @Test
+    fun `cut the library's scans into strips labelled by the reader`() {
+        val out = System.getProperty("inksheets.pseudo") ?: return assumeTrue(false)
+        val net = File(System.getProperty("inksheets.bench.net")!!).inputStream().use { com.inksheets.core.omr.Net.load(it) }
+        val pages = (System.getProperty("inksheets.strips.pages") ?: "6").toInt()
+        val dir = File(out, "strips").apply { mkdirs() }
+        val bench = ReadingBenchmark()
+        val labelled = bench.corpus().map { it.absolutePath }.toSet()
+        val held = File("../train/held.txt").readLines().map { it.trim() }.toSet()
+        val files = music.walkTopDown().filter { it.isFile && it.extension.equals("pdf", true) && !it.name.contains("score", true) && !it.path.contains(".inksheets") }
+            .filter { it.absolutePath !in labelled && bench.song(it) !in held }.distinctBy { it.length() }.toList()
+        val labels = java.util.Collections.synchronizedList(ArrayList<String>())
+        var bars = 0; var sure = 0
+        val pool = Executors.newFixedThreadPool(3)
+        val t0 = System.currentTimeMillis()
+        files.map { f -> pool.submit { for (p in 0 until pages) runCatching {
+            val (img, _, ink) = render(f, p) ?: return@runCatching
+            val argb = IntArray(img.width * img.height); img.getRGB(0, 0, img.width, img.height, argb, 0, img.width)
+            val grey = Strips.grey(argb)
+            val rec = Recognizer()
+            val (t, space) = rec.metrics(ink) ?: return@runCatching
+            val staves = rec.staves(ink, t, space)
+            if (staves.isEmpty()) return@runCatching
+            val found = com.inksheets.core.omr.Learned.symbols(grey, img.width, img.height, staves, net)
+            val reading = Recognizer().read(ink, p, grey = grey, net = net)
+            synchronized(this) { bars += reading.measures.size; sure += reading.measures.count { it.sure } }
+            val name = "x${Integer.toHexString(f.absolutePath.hashCode())}-p$p"
+            for ((si, s) in staves.withIndex()) {
+                val mine = reading.measures.filter { it.staff == si && it.bars == 1 }
+                if (mine.none { it.sure }) continue
+                val strip = Strips.cut(grey, img.width, img.height, s)
+                val objs = ArrayList<String>()
+                fun f1(v: Float) = "%.1f".format(java.util.Locale.ROOT, v)
+                for (m in mine) if (!m.sure) objs += "[-3,${f1(strip.column(m.box.left.toFloat()))},${f1(strip.column(m.box.right.toFloat()))}]"
+                // Before the first bar and after the last (clef, key, time; a line's end): not taught either way.
+                mine.minOfOrNull { it.box.left }?.let { objs += "[-3,0,${f1(strip.column(it.toFloat()))}]" }
+                mine.maxOfOrNull { it.box.right }?.let { objs += "[-3,${f1(strip.column(it.toFloat()))},${strip.width}]" }
+                for (sym in found.symbols) {
+                    val m = mine.firstOrNull { sym.x + sym.width / 2 >= it.box.left && sym.x + sym.width / 2 < it.box.right && it.sure } ?: continue
+                    val col = strip.column(sym.x + sym.width / 2); val row = strip.row(sym.x + sym.width / 2, sym.y)
+                    if (row < 0 || row >= Strips.H || m.staff != si) continue
+                    val c = when (sym.kind) {
+                        com.inksheets.core.omr.Printed.Kind.HEAD_BLACK -> 0; com.inksheets.core.omr.Printed.Kind.HEAD_HALF -> 1; com.inksheets.core.omr.Printed.Kind.HEAD_WHOLE -> 2
+                        com.inksheets.core.omr.Printed.Kind.REST_1 -> 3; com.inksheets.core.omr.Printed.Kind.REST_2 -> 4; com.inksheets.core.omr.Printed.Kind.REST_4 -> 5
+                        com.inksheets.core.omr.Printed.Kind.REST_8 -> 6; com.inksheets.core.omr.Printed.Kind.REST_16 -> 7; com.inksheets.core.omr.Printed.Kind.DOT -> 8
+                        com.inksheets.core.omr.Printed.Kind.SHARP -> 9; com.inksheets.core.omr.Printed.Kind.FLAT -> 10; com.inksheets.core.omr.Printed.Kind.NATURAL -> 11
+                        else -> continue
+                    }
+                    objs += if (c <= 2) "[$c,${f1(col)},${f1(row)},${sym.beams},${sym.dots}]" else "[$c,${f1(col)},${f1(row)}]"
+                }
+                val file = "$name-s$si.png"
+                save(strip, File(dir, file))
+                labels += "{\"file\":\"$file\",\"song\":\"${bench.song(f)}\",\"dev\":false,\"held\":false,\"pseudo\":true,\"w\":${strip.width},\"objs\":[${objs.joinToString(",")}]}"
+            }
+        } } }.forEach { it.get() }
+        pool.shutdown()
+        File(out, "labels.jsonl").writeText(labels.joinToString("\n"))
+        println("PSEUDO: ${files.size} files, $bars bars read, $sure sure; ${labels.size} strips in ${(System.currentTimeMillis() - t0) / 1000}s")
+    }
 }

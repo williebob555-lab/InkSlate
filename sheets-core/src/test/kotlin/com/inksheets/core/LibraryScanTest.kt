@@ -54,6 +54,18 @@ class LibraryScanTest {
     }
 
     @Test
+    fun `the training folder is kept out of the library`() {
+        val root = tmp.newFolder("training-lib")
+        File(root, "Songs/Tune - Trumpet.pdf").apply { parentFile.mkdirs(); writeText("x") }
+        File(root, "Training/Method Book/Page 3.pdf").apply { parentFile.mkdirs(); writeText("x") }
+        File(root, "training/scan.pdf").apply { parentFile.mkdirs(); writeText("x") }
+        // A folder called Training further in is a song's own, and stays.
+        File(root, "Songs/Training/Drill - Flute.pdf").apply { parentFile.mkdirs(); writeText("x") }
+        val found = LibraryScan.listMusic(root).map { it.path.replace('\\', '/') }.sorted()
+        assertEquals(listOf("Songs/Training/Drill - Flute.pdf", "Songs/Tune - Trumpet.pdf"), found)
+    }
+
+    @Test
     fun `two devices finding the same new music make one song, not two`() {
         val tablet = Device("tablet")
         val laptop = Device("laptop")

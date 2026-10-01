@@ -64,7 +64,8 @@ class Strips(torch.utils.data.Dataset):
             t = canvas
             for o in objs:
                 o[1] = o[1] * scale
-                o[2] = o[2] * scale + oy
+                # A span in doubt is two columns; everything else a column and a row.
+                o[2] = o[2] * scale if o[0] == -3 else o[2] * scale + oy
         img = t[0, 0]
         w = img.shape[1]
         # A window of the strip.
@@ -76,7 +77,7 @@ class Strips(torch.utils.data.Dataset):
             img = F.pad(img, (0, self.width - w), value=1.0)
         if self.scan:
             img = degrade(img, rng)
-        heat, off, beams, dots, mask = targets([(o[0], o[1] - x0, o[2]) + tuple(o[3:]) for o in objs], self.width)
+        heat, off, beams, dots, mask = targets([(o[0], o[1] - x0, o[2] - x0 if o[0] == -3 else o[2]) + tuple(o[3:]) for o in objs], self.width)
         return img[None], heat, off, beams, dots, mask
 
 
@@ -146,6 +147,12 @@ def targets(objs, width):
     ys = torch.arange(gh, dtype=torch.float32).view(gh, 1)
     xs = torch.arange(gw, dtype=torch.float32).view(1, gw)
     for o in objs:
+        if int(o[0]) == -3:
+            # A span of columns in doubt (a bar the reader was unsure of): not taught either way.
+            a, b = max(0, int(o[1] / STRIDE)), min(gw, int(o[2] / STRIDE) + 1)
+            if b > a:
+                mask[:, :, a:b] = 0
+            continue
         c, x, y = int(o[0]), o[1] / STRIDE, o[2] / STRIDE
         if not (0 <= x < gw and 0 <= y < gh):
             continue

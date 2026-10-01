@@ -331,7 +331,13 @@ class LibraryScan(
         val MUSIC = setOf("pdf", "png", "jpg", "jpeg", "webp")
         val SOUND = setOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff")
 
-        /** The music and recordings in [root], library-relative, skipping dot folders and sync debris. */
+        /**
+         * A folder at the library's top kept out of it: music gathered for teaching the trained
+         * reader, not for playing (it never shows among the songs).
+         */
+        const val TRAINING = "Training"
+
+        /** The music and recordings in [root], library-relative, skipping dot folders, the training folder and sync debris. */
         fun listMusic(root: File): List<Found> {
             if (!root.isDirectory) return emptyList()
             // One walk that is handed each file's size and date with its name, as the system lists
@@ -341,7 +347,8 @@ class LibraryScan(
             val out = ArrayList<Found>()
             java.nio.file.Files.walkFileTree(base, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
                 override fun preVisitDirectory(dir: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
-                    if (dir != base && dir.fileName.toString().startsWith(".")) java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    if (dir != base && (dir.fileName.toString().startsWith(".") || dir.parent == base && dir.fileName.toString().equals(TRAINING, ignoreCase = true)))
+                        java.nio.file.FileVisitResult.SKIP_SUBTREE
                     else java.nio.file.FileVisitResult.CONTINUE
 
                 override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
