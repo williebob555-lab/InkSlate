@@ -1520,6 +1520,21 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             for (dx in -1..1) { if (clean[x + dx, y - 1]) over = true; if (clean[x + dx, bot + 1]) under = true }
             if (over && under) for (yy in y..bot) healed.bits[yy * w + x] = true
         }
+        // A slur or tie running level where a ledger line would be was taken out as one: put back
+        // where the stroke taken out runs on into ink at both its ends (a ledger line stops short,
+        // free at both ends; a curve carries on beyond them).
+        val wasErased = BooleanArray(w * ink.height)
+        for (e in 0 until erased.size step 2) wasErased[erased.data[e + 1] * w + erased.data[e]] = true
+        fun erasedAt(x: Int, y: Int) = x in 0 until w && y in 0 until ink.height && wasErased[y * w + x]
+        fun onStaffLine(x: Int, y: Int) = staves.any { st -> x >= st.left - 2 && x <= st.right + 2 && (0..4).any { l -> abs(st.lineY(l, x) - y) <= t + 1 } }
+        for (e in 0 until erased.size step 2) {
+            val x = erased.data[e]; val y = erased.data[e + 1]
+            if (healed[x, y] || erasedAt(x - 1, y) || onStaffLine(x, y)) continue   // each level run once, from its left end
+            var xb = x; while (erasedAt(xb + 1, y)) xb++
+            fun inkAt(cx: Int) = (-2..2).any { dy -> clean[cx, y + dy] }
+            if (xb - x >= 2 && (inkAt(x - 1) || inkAt(x - 2)) && (inkAt(xb + 1) || inkAt(xb + 2)))
+                for (xx in x..xb) for (dy in -t..t) if (erasedAt(xx, y + dy)) healed.bits[(y + dy) * w + xx] = true
+        }
         clock.mark("healed")
         for (i in measures.indices) {
             val m = measures[i]
@@ -2318,9 +2333,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
          * a stem column (l, t, r, b) covers only what stands tall in it ([upright]: a stem, either way
          * from its head - not an accent or a dot over or under it).
          */
-        fun covers(x: Float, y: Float, upright: Boolean = false): Boolean {
-            for (bx in boxes) if (x >= bx[0] && x <= bx[2] && y >= bx[1] && y <= bx[3]) return true
-            if (upright) for (bx in stems) if (x >= bx[0] && x <= bx[2] && y >= bx[1] && y <= bx[3]) return true
+        fun covers(x: Float, y: Float, upright: Boolean = false,
+                   /** A slur's or tie's stroke: only a beam's band takes it (a head's or stem's box does not). */
+                   stroke: Boolean = false): Boolean {
+            if (!stroke) for (bx in boxes) if (x >= bx[0] && x <= bx[2] && y >= bx[1] && y <= bx[3]) return true
+            if (upright && !stroke) for (bx in stems) if (x >= bx[0] && x <= bx[2] && y >= bx[1] && y <= bx[3]) return true
             for (b in bands) if (x >= b[0] && x <= b[1]) {
                 val f = if (b[1] - b[0] > 1f) (x - b[0]) / (b[1] - b[0]) else 0f
                 if (y >= b[2] + (b[4] - b[2]) * f && y <= b[3] + (b[5] - b[3]) * f) return true
@@ -2429,6 +2446,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return false
     }
 
+    /**
+     * How far a thin stroke through ([x], [y]) runs left and right, as far as [cap]: following its ink
+     * a pixel up or down at each step, as a curve rises and falls.
+     */
+    private fun run(ink: Ink, x: Int, y: Int, cap: Float): Int {
+        var n = 0
+        for (dir in listOf(-1, 1)) {
+            var cx = x; var cy = y
+            while (n < cap * 2) {
+                val nx = cx + dir
+                cy = listOf(cy, cy - 1, cy + 1).firstOrNull { ink[nx, it] } ?: break
+                cx = nx; n++
+            }
+        }
+        return n
+    }
+
     private fun keptIn(clean: Ink, s: Staff, m: Measure, staffBars: List<Measure>): Pair<List<IntArray>, List<Int>> {
         val sp = s.space
         val mid = (m.box.left + m.box.right) / 2
@@ -2513,7 +2547,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var a = qy; while (page[qx, a - 1] && qy - a < sp * 2) a--
                 var e = qy; while (page[qx, e + 1] && e - qy < sp * 2) e++
                 val upright = e - a + 1 >= sp * 1.4f
-                if (covering.none { c -> c.covers(px[i].toFloat(), px[i + 1].toFloat(), upright) }) { rest += px[i]; rest += px[i + 1] }
+                // A slur or tie running past a head or across a stem's way: a thin stroke (on the page
+                // without its lines, under half a space deep) running on longer than a head is wide - not
+                // the head, stem or flag the redraw draws again. Kept whole where it passes them (a beam's
+                // band, as deep, still takes what is in it).
+                var ta = qy; while (clean[qx, ta - 1] && qy - ta < sp) ta--
+                var tb = qy; while (clean[qx, tb + 1] && tb - qy < sp) tb++
+                val thin = tb - ta + 1 < sp * 0.45f && run(clean, qx, qy, sp * 1.6f) > sp * 1.6f
+                if (covering.none { c -> c.covers(px[i].toFloat(), px[i + 1].toFloat(), upright, stroke = thin) }) { rest += px[i]; rest += px[i + 1] }
             }
             if (rest.size < px.size) {
                 if (rest.size < 8) continue
