@@ -136,6 +136,7 @@ internal object Transcriber {
                     else number = 1
                 }
                 last = p
+                val pageStarted = System.currentTimeMillis()
                 val first = inkOf(peek, p, 1600)?.second ?: continue
                 val space = Recognizer().metrics(first)?.second
                 val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
@@ -148,6 +149,7 @@ internal object Transcriber {
                 // than asked (a cap on how far it magnifies), and every bar is placed by it.
                 widths[p] = ink.width
                 reading.measures.lastOrNull()?.let { number = it.number + it.bars }
+                pageTimes += System.currentTimeMillis() - pageStarted
                 // Kept as soon as read: a reading stopped part way carries on from here, and the
                 // pages read so far reach the other devices.
                 runCatching {
@@ -237,6 +239,16 @@ internal object Transcriber {
                 File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
             }.onFailure { state.platform.log("Keeping a fix for teaching failed: ${it.message}") }
         }
+    }
+
+    /** How long each page read on this device lately took, in ms (the last few dozen): shown so how fast it is can be seen. */
+    val pageTimes: MutableList<Long> = java.util.Collections.synchronizedList(ArrayList())
+
+    /** "About 2.4 s a page on this device", from the pages read lately; null before any. */
+    fun speedSaid(): String? {
+        val times = synchronized(pageTimes) { pageTimes.takeLast(30) }
+        if (times.isEmpty()) return null
+        return "About ${"%.1f".format(times.average() / 1000.0)} s a page on this device (${times.size} page${if (times.size == 1) "" else "s"}, slowest ${"%.1f".format(times.max() / 1000.0)} s)"
     }
 
     /** One look at a time: a phone renders and reads one page at once, never a pile of them. */

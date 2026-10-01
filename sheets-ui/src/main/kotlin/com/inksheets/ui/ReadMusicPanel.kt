@@ -66,7 +66,7 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
             Text(
                 "${score.measures.sumOf { it.bars }} bars on " + (score.readPages?.let { r -> "page${if (r.size == 1) "" else "s"} ${r.joinToString(", ") { "${it + 1}" }} (of ${score.pages})" }
                     ?: "${score.pages} page${if (score.pages == 1) "" else "s"}") + "; " +
-                    "$sure of ${score.measures.size} add up. Tap a bar to go to it.",
+                    "$sure of ${score.measures.size} add up. Tap a bar to go to it." + (Transcriber.speedSaid()?.let { "\n$it" } ?: ""),
                 style = MaterialTheme.typography.bodyMedium
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
