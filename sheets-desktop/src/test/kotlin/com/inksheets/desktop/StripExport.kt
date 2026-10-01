@@ -24,8 +24,8 @@ import kotlin.math.abs
  *
  * Classes: 0 black head, 1 half head, 2 whole head, 3 whole rest, 4 half rest, 5 quarter rest,
  * 6 eighth rest, 7 sixteenth rest, 8 note's dot, 9 sharp, 10 flat, 11 natural. A head also carries
- * its beams-or-flags count (0-3, -1 not shown plainly) and dots; a cue or grace head is marked
- * "ignore" (not taught either way).
+ * its beams-or-flags count (0-3, -1 not shown plainly) and dots; a cue or grace head, and what is
+ * set small with it, is marked "small" (taught as nothing: no note played).
  */
 class StripExport {
     private val music = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets")
@@ -123,10 +123,11 @@ class StripExport {
                 if (sym.kind == Kind.OTHER) { add(-1, sym.x + sym.width / 2, sym.y, ",\"U+%04X\"".format(sym.text.codePointAt(0))); continue }
                 val c = cls(sym.kind) ?: continue
                 val cx = sym.x + sym.width / 2
-                if (sym.kind in heads) {
-                    val cue = sym.size < normal * 0.85f
-                    add(c, cx, sym.y, ",${if (cue) -2 else beams(sym)},${dotsOf(sym)}${if (cue) ",\"ignore\"" else ""}")
-                } else add(c, cx, sym.y)
+                // A cue or grace note's head, and the accidentals and dots set small with it: taught as
+                // nothing - a cue takes no time, and its sharp is no sharp of the notes played.
+                val small = sym.size < normal * 0.85f
+                if (sym.kind in heads) add(c, cx, sym.y, ",${if (small) -2 else beams(sym)},${dotsOf(sym)}${if (small) ",\"small\"" else ""}")
+                else add(c, cx, sym.y, if (small) ",-2,0,\"small\"" else "")
             }
             for ((dx, dy) in augDots) add(8, dx, dy)
             val file = "$name-s$si.png"

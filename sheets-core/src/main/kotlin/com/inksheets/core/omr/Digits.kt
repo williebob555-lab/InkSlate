@@ -48,6 +48,50 @@ object Digits {
         return out
     }
 
+    /**
+     * The trained digit reader (resources omr/digitnet.bin, made by train/digits.py from the
+     * library's printed digits, clean and scanned): a figure's grid, its height in staff spaces
+     * and its width over its height, and whether it is in the staff (a time signature's) - which
+     * digit, or none. Judged on songs it never saw: 89% of digits right where the masks got 65%,
+     * and 2% of other marks taken for digits where the masks took 28%.
+     */
+    private class Trained(val inputs: Int, val hidden: Int, val aw: FloatArray, val ab: FloatArray, val bw: FloatArray, val bb: FloatArray) {
+        /** (digit 0-9 or 10 for none, its odds). */
+        fun classify(x: FloatArray): Pair<Int, Float> {
+            val h = FloatArray(hidden)
+            for (j in 0 until hidden) { var v = ab[j]; val o = j * inputs; for (i in 0 until inputs) v += aw[o + i] * x[i]; h[j] = if (v > 0f) v else 0f }
+            val out = FloatArray(11)
+            for (c in 0 until 11) { var v = bb[c]; val o = c * hidden; for (j in 0 until hidden) v += bw[o + j] * h[j]; out[c] = v }
+            val top = out.max(); var sum = 0f; for (c in 0 until 11) sum += kotlin.math.exp(out[c] - top)
+            val best = out.indices.maxBy { out[it] }
+            return best to 1f / sum
+        }
+    }
+
+    private val trained: Trained? by lazy {
+        runCatching {
+            val bytes = Digits::class.java.getResourceAsStream("/omr/digitnet.bin")?.use { it.readBytes() } ?: return@lazy null
+            val b = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            val inputs = b.int; val hidden = b.int
+            fun floats(n: Int) = FloatArray(n) { b.float }
+            Trained(inputs, hidden, floats(hidden * inputs), floats(hidden), floats(11 * hidden), floats(11))
+        }.getOrNull()
+    }
+
+    /** The trained reader's digit for figure [m], [heightSp] staff spaces tall, [aspect] wide over tall: null when it says none. */
+    fun readTrained(m: BooleanArray, heightSp: Float, aspect: Float, inStaff: Boolean = false): Pair<Int, Float>? {
+        val t = trained ?: return null
+        if (t.inputs != W * H + 3) return null
+        val x = FloatArray(t.inputs)
+        for (i in m.indices) x[i] = if (m[i]) 1f else 0f
+        x[W * H] = heightSp / 3f; x[W * H + 1] = aspect; x[W * H + 2] = if (inStaff) 1f else 0f
+        val (d, p) = t.classify(x)
+        return if (d == 10 || p < 0.5f) null else d to p
+    }
+
+    /** Whether the trained reader is shipped (else the masks are all there is). */
+    val hasTrained: Boolean get() = trained != null
+
     /** The digit [m] is most like, and how alike (1 the same): null when nothing is close. */
     fun read(m: BooleanArray): Pair<Int, Float>? {
         var best: Pair<Int, Int>? = null
@@ -84,7 +128,7 @@ object Digits {
         return out
     }
 
-    fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0): Pair<Int, Int>? {
+    fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0, space: Float = 0f): Pair<Int, Int>? {
         // Each shape in the band, followed no further than a figure's height outside it.
         val rx0 = max(0, x0 - maxH); val ry0 = max(0, y0 - maxH)
         val region = Outline.Region(rx0, ry0, min(ink.width, x1 + maxH + 1) - rx0, min(ink.height, y1 + maxH + 1) - ry0)
@@ -99,12 +143,13 @@ object Digits {
             // A number in a box (a rehearsal number), its figures touching the box on a scan: the
             // box's sides taken away and what is inside read.
             if (h in minH..maxH * 2 && w in minH..maxH * 5 && (l + r) / 2 in x0..x1) framed(ink, l, t, r, b)?.let { inside ->
-                number(inside, l, r, t, b, minH * 2 / 3, maxH)?.let { return it }
+                number(inside, l, r, t, b, minH * 2 / 3, maxH, space = space)?.let { return it }
             }
             // A figure: a digit's height, over the place asked about, ending near enough the line asked.
             if (h < minH || h > maxH || w > h * 1.3f || (l + r) / 2 !in x0..x1 || b < bottomFrom) continue
             val m = mask(ink, l, t, r, b) ?: continue
-            val (d, _) = read(m) ?: continue
+            // Read by the trained reader where the staff's size is known; else by the masks.
+            val (d, _) = (if (space > 0f && hasTrained) readTrained(m, h / space, w.toFloat() / h) else read(m)) ?: continue
             figures += Triple(d, (l + r) / 2, b)
         }
         if (figures.isEmpty()) return null

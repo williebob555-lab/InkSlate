@@ -86,6 +86,14 @@ object AnswerKey {
                             continue
                         }
                         if (!musical(fname)) continue
+                        // A font with no map at all (a Mac's print to PDF sets each character by its
+                        // glyph's number): every character told by its outline, as the app tells them.
+                        val code0 = p.characterCodes?.firstOrNull()
+                        if (code0 != null && runCatching { p.font.toUnicode(code0) }.getOrNull() == null) {
+                            val kind = byOutline(p.font, code0, fname) ?: Kind.OTHER
+                            out += Symbol(kind, p.xDirAdj * k, p.yDirAdj * k, p.widthDirAdj * k, "#$code0", p.textMatrix.scalingFactorX * k)
+                            continue
+                        }
                         // The font's own map: the stripper merges a dot over a note into its text.
                         val uni = p.characterCodes?.firstOrNull()?.let { c -> runCatching { p.font.toUnicode(c) }.getOrNull() } ?: p.unicode ?: continue
                         p.characterCodes?.firstOrNull()?.let { codesToText.getOrPut(fname) { HashMap() }[it] = uni }

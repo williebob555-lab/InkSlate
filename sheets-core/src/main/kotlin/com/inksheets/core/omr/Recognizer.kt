@@ -1267,7 +1267,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // the count - a pickup bar numbered 0, a bar missed or found twice before - if it is later
             // than the last and near the count (a digit missed would put it far off).
             if (adapt) clock.sum("numbers") { Digits.number(ink, s.left - (s.space * 3).toInt(), s.left + (s.space * 4).toInt(), s.y(-8, s.left).roundToInt(), s.y(-1, s.left).roundToInt(),
-                (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt()) }?.first?.let { p ->
+                (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt(), space = s.space) }?.first?.let { p ->
                 if (alone) offsets += p - number
                 else {
                     // A multi-bar rest of unknown length on the line before: the bars it is short by are its.
@@ -1584,7 +1584,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         // Read whole, in whatever typeface it is printed; the music font's digits if that finds none.
         // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
-        val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt())
+        val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp)
         val bars = (printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }).takeIf { it in 0..300 } ?: 0
         if (traceRests) println("    multiRest serifs $serifs bars $bars digits $digits")
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
@@ -1693,9 +1693,27 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun printedThree(clean: Ink, s: Staff, x0: Int, x1: Int): Boolean {
         val sp = s.space
         val bands = listOf(s.y(-14, x0).roundToInt() to s.y(-2, x0).roundToInt(), s.y(10, x0).roundToInt() to s.y(22, x0).roundToInt())
-        // Where the PDF states its text, the 3 is one of its characters.
-        printed?.let { p -> return p.symbols.any { d -> d.digit == 3 && (d.kind == Printed.Kind.TEXT_DIGIT || d.kind == Printed.Kind.TIME_DIGIT) &&
+        // Where the PDF states its text, the 3 is one of its characters. (The trained reader's symbols
+        // are no PDF's: they hold no digits, and the 3 is looked for on the page.)
+        printed?.takeIf { !it.learned }?.let { p -> return p.symbols.any { d -> d.digit == 3 && (d.kind == Printed.Kind.TEXT_DIGIT || d.kind == Printed.Kind.TIME_DIGIT) &&
             d.x >= x0 - sp && d.x <= x1 + sp && bands.any { (a, b) -> d.y >= a && d.y <= b } } }
+        // Each figure-sized shape over or under the group, read by the trained digit reader: a 3 in
+        // any typeface (an old engraving's bold italic one is nothing like the music font's).
+        if (Digits.hasTrained) for ((a, b) in bands) {
+            val rx0 = max(0, x0 - (sp * 2).toInt()); val ry0 = max(0, a - sp.toInt())
+            val region = Outline.Region(rx0, ry0, min(clean.width, x1 + (sp * 2).toInt()) - rx0, min(clean.height, b + sp.toInt()) - ry0)
+            for (y in max(0, a)..min(clean.height - 1, b)) for (x in max(0, x0 - (sp * 0.5f).toInt())..min(clean.width - 1, x1 + (sp * 0.5f).toInt())) {
+                if (!clean[x, y] || !region.inside(x, y) || region.seen[region.index(x, y)]) continue
+                val px = Outline.component(clean, x, y, region, 4_000)
+                if (px.isEmpty()) continue
+                var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var bt = Int.MIN_VALUE
+                for (i in px.indices step 2) { l = min(l, px[i]); r = max(r, px[i]); t = min(t, px[i + 1]); bt = max(bt, px[i + 1]) }
+                val h = bt - t + 1; val w = r - l + 1
+                if (h < sp * 0.5f || h > sp * 2.2f || w > h * 1.3f || (l + r) / 2 !in x0 - sp.toInt()..x1 + sp.toInt()) continue
+                val m = Digits.mask(clean, l, t, r, bt) ?: continue
+                if (Digits.readTrained(m, h / sp, w.toFloat() / h)?.first == 3) return true
+            }
+        }
         for (size in listOf(0.5f, 0.6f, 0.7f)) for ((a, b) in bands) {
             var y = a
             while (y <= b) {
@@ -1773,7 +1791,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // Hooked down at its left end, a space or more.
                 val hook = thin && (x - 2..x + 2).any { xx -> (y..y + (sp * 0.9f).toInt()).all { yy -> clean[xx, yy] || clean[xx, yy - 1] } }
                 if (hook) {
-                    val n = Digits.number(page, x, x + (sp * 3).toInt(), y - (sp * 0.5f).toInt(), y + (sp * 2.5f).toInt(), (sp * 0.5f).toInt(), (sp * 2.2f).toInt())?.first
+                    val n = Digits.number(page, x, x + (sp * 3).toInt(), y - (sp * 0.5f).toInt(), y + (sp * 2.5f).toInt(), (sp * 0.5f).toInt(), (sp * 2.2f).toInt(), space = sp)?.first
                     if (n != null && n in 1..3 && out.none { abs(it.first - x) < sp }) out += Triple(x, e, n)
                 }
                 x = e + 1

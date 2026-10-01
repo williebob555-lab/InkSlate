@@ -52,6 +52,15 @@ class Strips(torch.utils.data.Dataset):
         it = self.items[i]
         img = self.image(it)
         objs = [list(o) for o in it["objs"]]
+        # A scan's heads the reader found itself: one narrower than a head is (a cue or grace note's,
+        # 93% of them; 3% of full ones) not taught either way - the reader once took cues for notes.
+        if it.get("pseudo"):
+            for o in objs:
+                if int(o[0]) in (0, 1, 2) and len(o) < 6:
+                    wv = head_width(img, o[1], o[2])
+                    if wv is not None and wv <= 9:
+                        while len(o) < 5: o.append(0)
+                        o.append("ignore")
         # Size and place jitter: the staff tracing is never exact, nor a page's space.
         scale = rng.uniform(0.87, 1.15) if self.scan else 1.0
         dy = rng.uniform(-3, 3) if self.scan else 0.0
@@ -85,6 +94,32 @@ class Strips(torch.utils.data.Dataset):
             img = degrade(img, rng)
         heat, off, beams, dots, mask = targets([(o[0], o[1] - x0, o[2] - x0 if o[0] == -3 else o[2]) + tuple(o[3:]) for o in objs], self.width)
         return img[None], heat, off, beams, dots, mask
+
+
+def head_width(img, x, y):
+    """A head's ink width in a strip (a space is 10 pixels): the dark run through its middle, two
+    rows above and below it (off a staff line through it), the middle of the four."""
+    h, w = img.shape
+    out = []
+    for dy in (-2, 2, -1, 1):
+        r = int(round(y + dy))
+        if not (0 <= r < h):
+            continue
+        row = img[r] < 0.5
+        c = int(round(x))
+        if not (0 <= c < w) or not row[c]:
+            near = [c + d for d in (-1, 1, -2, 2) if 0 <= c + d < w and row[c + d]]
+            if not near:
+                continue
+            c = near[0]
+        a = c
+        while a > 0 and row[a - 1]:
+            a -= 1
+        b = c
+        while b < w - 1 and row[b + 1]:
+            b += 1
+        out.append(b - a + 1)
+    return sorted(out)[len(out) // 2] if out else None
 
 
 def degrade(img, rng):
@@ -167,8 +202,11 @@ def targets(objs, width):
             # A symbol the key cannot name: not taught either way, nearby.
             mask[:, max(0, cy - 2):cy + 3, max(0, cx - 2):cx + 3] = 0
             continue
+        if len(o) > 5 and o[5] == "small":
+            # A cue or grace note (or what is set small with it): taught as nothing - no note played.
+            continue
         if len(o) > 5 and o[5] == "ignore":
-            # A cue or grace head: not taught either way.
+            # Not taught either way (an older export's cue heads; a scan's head too narrow to trust).
             mask[:, max(0, cy - 2):cy + 3, max(0, cx - 2):cx + 3] = 0
             continue
         sigma = 0.8
