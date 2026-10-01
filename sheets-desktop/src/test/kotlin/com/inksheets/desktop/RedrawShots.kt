@@ -36,13 +36,15 @@ class RedrawShots {
         val shots = File(System.getProperty("inksheets.shots") ?: "build/redraw").apply { mkdirs() }
         val net = Net.shipped
         val pages = Loader.loadPDF(file).use { it.numberOfPages }
+        val source = com.inkslate.desktop.DesktopSources.open(file, detached = true)!!
         val measures = ArrayList<Measure>(); val widths = ArrayList<Int>()
         val carry = Recognizer.Carry(); var number = 1
         for (p in 0 until pages) {
-            val (wPts, _) = Loader.loadPDF(file).use { d -> d.getPage(p).cropBox.let { it.width to it.height } }
+            // Drawn by the app's own renderer (as the Read button reads): its page size, its leaving out
+            // of this app's own handwriting, and its limit on how far a small page is magnified.
             fun draw(width: Int): Pair<IntArray, Ink> {
-                val img = Loader.loadPDF(file).use { PDFRenderer(it).renderImageWithDPI(p, width / wPts * 72f, ImageType.RGB) }
-                val px = IntArray(img.width * img.height); img.getRGB(0, 0, img.width, img.height, px, 0, img.width)
+                val img = source.render(p, width)!!
+                val px = IntArray(img.width * img.height); img.readPixels(px)
                 return Strips.grey(px) to Ink.fromArgb(img.width, img.height, px)
             }
             val space = Recognizer().metrics(draw(1600).second)?.second
@@ -51,6 +53,11 @@ class RedrawShots {
             val printed = runCatching { PdfPrinted.read(file, p) }.getOrNull()
             val r = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) net else null)
             println("REDRAW page ${p + 1}: drawn ${ink.width}x${ink.height}, ${if (printed != null) "PDF's symbols" else "trained reader"}, ${r.measures.size} bars, ${r.measures.count { it.sure }} sure, numbers ${r.measures.firstOrNull()?.number}..${r.measures.lastOrNull()?.number}")
+            System.getProperty("inksheets.omr.bars")?.split(",")?.map { it.toInt() }?.let { want ->
+                for (m in r.measures.filter { it.number in want }) println("  BAR ${m.number}: " + m.events.joinToString(" ") { e ->
+                    when (e) { is com.inksheets.core.omr.Note -> "n${e.duration.base}${if (e.tie) "~" else ""}${if (e.articulations.isNotEmpty()) e.articulations.toString() else ""}"; is com.inksheets.core.omr.Rest -> "r${e.duration.base}" } } +
+                    " | directions " + m.directions.joinToString { "${it.kind}${if (it.above) "^" else "v"} ${it.x.toInt()}..${it.x2.toInt()}" } + " | kept ${m.kept.size}")
+            }
             measures += r.measures; widths += ink.width
             r.measures.lastOrNull()?.let { number = it.number + it.bars }
         }
@@ -58,11 +65,15 @@ class RedrawShots {
         val path = file.absolutePath
         ScoreTools.scoreSource = { if (it == path) score else null }
         try {
-            ScoreTools.showUnderlay(true)
+            // -Dinksheets.omr.clean=1: every bar cleaned up (the print hidden, the redraw and what it keeps in its place).
+            val cleanAll = System.getProperty("inksheets.omr.clean") != null
+            if (cleanAll) ScoreTools.cleanUp(path, measures.map { it.number }) else ScoreTools.showUnderlay(true)
+            // -Dinksheets.omr.layers=1: what is kept as printed in red, the redraw in black.
+            if (System.getProperty("inksheets.omr.layers") != null) ScoreTools.keptColor = 0xFFE02020.toInt()
             for (p in 0 until minOf(pages, 2)) {
-                val (wPts, hPts) = Loader.loadPDF(file).use { d -> d.getPage(p).cropBox.let { it.width to it.height } }
+                val (wPts, hPts) = source.pageDim(p).let { it.width to it.height }
                 val marks = ScoreTools.marks(path, p, wPts, hPts).orEmpty()
-                val k = 2f
+                val k = (System.getProperty("inksheets.omr.zoom") ?: "2").toFloat()
                 val img = Loader.loadPDF(file).use { PDFRenderer(it).renderImageWithDPI(p, 72f * k, ImageType.RGB) }
                 val g = img.createGraphics()
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
@@ -77,11 +88,13 @@ class RedrawShots {
                     }
                 }
                 g.dispose()
-                ImageIO.write(img, "png", File(shots, "redraw-${file.nameWithoutExtension.replace(Regex("[^A-Za-z0-9]+"), "-")}-p${p + 1}.png"))
+                ImageIO.write(img, "png", File(shots, (if (cleanAll) "clean-" else "redraw-") + "${file.nameWithoutExtension.replace(Regex("[^A-Za-z0-9]+"), "-")}-p${p + 1}.png"))
             }
         } finally {
             ScoreTools.scoreSource = null
             ScoreTools.showUnderlay(false)
+            ScoreTools.undoAllClean(path)
+            ScoreTools.keptColor = null
         }
     }
 }

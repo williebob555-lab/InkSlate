@@ -72,6 +72,9 @@ object BarChoices {
         val out = ArrayList<Edit>()
         fun pitchOf(step: Int): Pitch { val d = m.clef.at(step); return Pitch.fromDiatonic(d, m.key.alterOf(d.mod(7))) }
         for ((i, e) in events.withIndex()) {
+            // Where the trained reader gave its odds, each change costs as much as it is less likely.
+            val odds = (e as? Note)?.odds.orEmpty()
+            if (odds.size == 8) { out += likely(events, i, e as Note, odds); continue }
             // A note the reader was surer of costs more to change.
             val sure = (e as? Note)?.confidence ?: 0.85f
             val base = e.duration.base
@@ -103,6 +106,26 @@ object BarChoices {
             if (!d.tuplet && d.dots == 0 && (1..2).all { events[i + it].duration == d }) out += Edit(i, "triplet", cost("triplet", 0f), "a triplet from the ${named(events, i)}")
         }
         return out.sortedBy { it.cost }
+    }
+
+    /**
+     * The changes to note [i] the trained reader's [odds] allow, each costing -ln of how much less
+     * likely it is than what was read: another number of beams or flags, of dots, or not a note.
+     */
+    private fun likely(events: List<Event>, i: Int, e: Note, odds: List<Float>): List<Edit> {
+        val out = ArrayList<Edit>()
+        fun c(pNew: Float, pNow: Float) = (-ln(pNew.coerceAtLeast(1e-4f)) + ln(pNow.coerceAtLeast(1e-4f))).coerceAtLeast(0.05f)
+        val base = e.duration.base
+        if (base >= 4) {
+            val now = when (base) { 4 -> 0; 8 -> 1; 16 -> 2; else -> 3 }
+            for (k in 0..3) if (k != now) out += Edit(i, "value", c(odds[k], odds[now]), "${named(events, i)} as 1/${4 shl k}", { withBase(it, 4 shl k) })
+        } else out += Edit(i, "hollow", cost("hollow", e.confidence), "${named(events, i)} as ${if (base == 1) "half" else "whole"}", { withBase(it, if (base == 1) 2 else 1) })
+        val dotsNow = e.duration.dots.coerceIn(0, 2)
+        for (d in 0..2) if (d != dotsNow) out += Edit(i, "dot", c(odds[4 + d], odds[4 + dotsNow]),
+            "${named(events, i)} ${if (d == 0) "without its dot" else if (d == 1) "dotted" else "double dotted"}", { withDots(it, d) })
+        val head = odds[7]
+        out += Edit(i, "remove", c(1f - head, head), "${named(events, i)} not a note", { null })
+        return out
     }
 
     private fun apply(m: Measure, chosen: List<Edit>): List<Event>? {

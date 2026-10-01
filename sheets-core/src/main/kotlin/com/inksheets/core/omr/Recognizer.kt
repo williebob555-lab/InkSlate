@@ -915,6 +915,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     var stemMin = 2.2f
         private set
 
+    /** The page in grey being read, where given: how dark what a cleaned bar keeps is printed. */
+    private var pageGrey: IntArray? = null
+
     /** [stem]'s run from [h] (the longer of up and down), without taking it for a stem. */
     private fun stemLength(clean: Ink, s: Staff, h: Head, t: Int): Int {
         val keep = stemMin
@@ -951,7 +954,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // pixels is crossed where the stem carries on straight beyond it.
             var cx = x
             val gap = max(2, (sp * 0.2f).toInt())
-            val wideGap = (sp * 0.4f).toInt(); val steady = (sp * 0.4f).toInt()
+            // (At least a staff line's thickness and a little: where a line was taken out of a faint stem.)
+            val wideGap = max((sp * 0.4f).toInt(), lineThickness + 3); val steady = (sp * 0.4f).toInt()
             while (true) {
                 if (clean[cx, yy]) { yy += dir; continue }
                 val side = listOf(cx - 1, cx + 1).firstOrNull { abs(it - x) <= 2 && clean[it, yy] }
@@ -1093,6 +1097,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // What the PDF says is printed, where it says it: heads, rests, accidentals, dots, flags,
         // stems and beams taken as stated rather than found. Staves, barlines, clefs and keys are
         // still read from the picture.
+        pageGrey = grey?.takeIf { it.size == ink.width * ink.height }
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
             ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves, net) else null
         this.staves = staves
@@ -1127,6 +1132,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         headsOf.forEachIndexed { si, hs -> hs.forEach { staffOf[it] = si } }
         // A weak head needs a stem of its own: one it shares with a sure head is that head's flag or beam.
         val dropped = ArrayList<Pair<Head, String>>()
+        // The trained reader's faint heads, each to the staff it is nearest: what a doubtful bar's other readings may put back.
+        this.printed?.takeIf { it.learned }?.heads?.filter { Learned.faint(it) }?.forEach { sym ->
+            val si = staves.indices.filter { sym.x >= staves[it].left - staves[it].space && sym.x <= staves[it].right }
+                .minByOrNull { abs((staves[it].top + staves[it].bottom) / 2f - sym.y) } ?: return@forEach
+            val s = staves[si]; val x = sym.x.roundToInt()
+            val step = ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
+            val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
+            val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.odds[7])
+            dropped += h to "faint"
+            staffOf[h] = si
+        }
         // An x or slash head with a stem of its own is a note, and a clear one: its thin strokes match less well than a head's fill.
         for (hs in headsOf) for (h in hs) if (h.kind != "noteheadBlack" && h.kind.startsWith("notehead") && h.weak && h.stemX >= 0 && (h.kind.contains("X") || h.kind.contains("Slash"))) h.score = max(h.score, 0.8f)
         for (hs in headsOf) hs.removeAll { h -> (h.weak && (h.stemX < 0 || hs.any { o -> !o.weak && o.stemX >= 0 && abs(o.stemX - h.stemX) <= t + 2 }))
@@ -1150,6 +1166,24 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // only where two lines agree (a single figure misread would number the page wrongly).
         val alone = carry.alone
         val offsets = ArrayList<Int>()
+        // Each line's key, read first and then made to agree: a key read differently from the lines
+        // either side of it, which agree with each other, is a misreading (a change of key comes
+        // at a double bar within a line far more often than at a line's start) - theirs is taken.
+        val lineKeys: List<Pair<Key, Int>?> = if (stated) emptyList() else {
+            var clefNow = carry.clef
+            val read = staves.map { s ->
+                var x = s.left + (s.space * 0.3f).toInt()
+                clefAt(clean, s, x, t)?.let { clefNow = it.first; x = it.second }
+                keyAt(clean, s, x, clefNow)
+            }
+            read.mapIndexed { i, k ->
+                val before = read.getOrNull(i - 1)?.first; val after = read.getOrNull(i + 1)?.first
+                val others = listOfNotNull(before, after)
+                val agreed = if (others.size == 2 && before == after) before else if (i == 0 && read.size > 2 && read[1]?.first == read[2]?.first) read[1]?.first
+                    else if (i == read.size - 1 && read.size > 2 && read[i - 1]?.first == read[i - 2]?.first) read[i - 1]?.first else null
+                if (k != null && agreed != null && k.first != agreed) agreed to k.second else k
+            }
+        }
         for ((si, s) in staves.withIndex()) {
             // The bar number printed over the line's start, where it reads clearly, is believed over
             // the count - a pickup bar numbered 0, a bar missed or found twice before - if it is later
@@ -1164,7 +1198,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val clef = clefAt(clean, s, x, t)
             var showsClef = false
             if (clef != null) { carry.clef = clef.first; x = clef.second; showsClef = true }
-            val key = if (stated) printedKey(s, x) else keyAt(clean, s, x, carry.clef)
+            val key = if (stated) printedKey(s, x) else lineKeys.getOrNull(si) ?: keyAt(clean, s, x, carry.clef)
             var showsKey = false
             if (key != null) { carry.key = key.first; x = key.second; showsKey = true }
             val time = if (stated) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0)
@@ -1245,7 +1279,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A repeat starting at a line's start sits just after the clef and key.
                 val starts = (span.first in b && dotsAfter(span.first)) || (i == 0 && dotsAt(x - (s.space * 0.5f).toInt(), x + (s.space * 2.5f).toInt()))
                 val ends = span.second in b && dotsBefore(span.second)
-                measures += m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = if (stated) printedDirections(s, span.first, span.second) else emptyList())
+                // A curve read as a slur that is a tie (from a tied note, or short - a tie's end
+                // arriving over the barline) is the tie's: drawn once, as a tie.
+                val tiedAt = events.filterIsInstance<Note>().filter { it.tie }.map { it.x + s.space * 1.2f }
+                val directions = if (!stated) emptyList() else printedDirections(s, span.first, span.second).filterNot { d ->
+                    d.kind == "slur" && (d.x2 - d.x < s.space * 3f || tiedAt.any { abs(it - d.x) < s.space * 1.5f })
+                }
+                val done = m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = directions)
+                measures += done
                 }
             }
             allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
@@ -1296,6 +1337,26 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 measures.replaceAll { it.copy(number = it.number + o) }
                 carry.printed = measures.last().number
             }
+        }
+        // The page without its staff lines, but with every stroke that crossed a line whole again
+        // (a tie, a slur, a hairpin, a word): what was taken out with the line is put back where
+        // there is ink just above and just below it - one shape, not pieces either side.
+        val healed = clean.copy()
+        for (y in 0 until ink.height) for (x in 0 until ink.width) {
+            if (!ink[x, y] || clean[x, y]) continue
+            var a = y; while (a > 0 && ink[x, a - 1] && !clean[x, a - 1] && y - a < t + 3) a--
+            var b = y; while (b < ink.height - 1 && ink[x, b + 1] && !clean[x, b + 1] && b - y < t + 3) b++
+            val over = (-1..1).any { clean[x + it, a - 1] }; val under = (-1..1).any { clean[x + it, b + 1] }
+            if (over && under) healed[x, y] = true
+        }
+        // What each bar keeps as printed, once every bar is read: a shape across a barline (a
+        // hairpin, a slur, a word) is redrawn if either bar redraws it, kept only if neither does.
+        for (i in measures.indices) {
+            val m = measures[i]
+            if (m.bars > 1) continue
+            val staffBars = measures.filter { it.staff == m.staff && it.bars == 1 }
+            val (kept, shades) = keptIn(healed, staves[m.staff], m, staffBars)
+            measures[i] = m.copy(kept = kept, keptShade = shades)
         }
         return PageReading(staves, bars, measures, t, space, dropped)
     }
@@ -1707,6 +1768,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val small = Printed.small(all)
         for (sym in all) {
             if (sym in small) continue
+            // The trained reader's faint heads: not notes, but put back if a bar wants them (see read).
+            if (p.learned && Learned.faint(sym)) continue
             val si = staves.indices.filter { val s = staves[it]; sym.x >= s.left - s.space && sym.x <= s.right }
                 .minByOrNull { abs((staves[it].top + staves[it].bottom) / 2f - sym.y) } ?: continue
             val s = staves[si]
@@ -1741,7 +1804,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // The trained reader says how many beams or flags; a stem is taken as there (a chord's
             // heads share it, at their middle) for every filled or half head.
             h.stemX = (sym.x + sym.width / 2).roundToInt()
-            h.stemEnd = sym.y.roundToInt()
+            // Where its stem ends is not known until it is seen on the page (see read): none yet.
+            h.stemEnd = 0
             h.flags = sym.beams.coerceIn(0, 3)
             return
         }
@@ -1980,7 +2044,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val dim = abs(a.x1 - b.x1) < sp * 0.4f && abs(a.y1 - b.y1) < sp * 0.4f && abs(a.y0 - b.y0) in sp * 0.4f..sp * 3f
             if (!cresc && !dim) continue
             used += a; used += b
-            out += Direction(if (cresc) "cresc" else "dim", maxOf(a.x0, from.toFloat()), minOf(a.x1, to.toFloat()), above = (a.y0 + a.y1) / 2 < s.top)
+            // Its whole length, not just this bar's piece: each bar it crosses draws its slice of the one wedge.
+            out += Direction(if (cresc) "cresc" else "dim", a.x0, a.x1, above = (a.y0 + a.y1) / 2 < s.top)
         }
         // Slurs: every curve that is not a note's tie, in each bar it crosses.
         for (a in p.arcs) {
@@ -2011,6 +2076,156 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val dotted = p.symbols.any { d -> d.kind == Printed.Kind.DOT && d.x > r.x + r.width * 0.8f && d.x < r.x + r.width + sp * 1.2f && abs(d.y - r.y) < sp * 1.5f }
             Rest(Duration(base, if (dotted) 1 else 0), r.x, ((r.y - s.lineY(0, r.x.roundToInt())) / (sp / 2)).roundToInt()) to 1f
         }
+    }
+
+    /**
+     * What is printed in and round bar [m] (on [clean], staff [s]) that its redrawing will not
+     * draw again, each shape whole as its outline (see [Measure.kept]). A shape is redrawn - and so
+     * not kept - where it holds a note's head or a rest the bar was read with, is a note's
+     * accidental or dot, or is the clef, key or time at the bar's start where those are redrawn;
+     * and, from a PDF that states them, a note's articulations and ties and the bar's dynamics,
+     * hairpins and slurs. Everything else - numbers, words, boxes, marks not read - is kept.
+     */
+    /**
+     * Whether page point ([x], [y]) on staff [s] is part of what bar [m]'s redraw draws again, as
+     * printed: a note's head, its stem (up from its right side, down from its left, to where the
+     * print's ends), the flag at the stem's end, or the beam joining it to the next note.
+     */
+    private fun covers(m: Measure, s: Staff, x: Float, y: Float): Boolean {
+        val sp = s.space
+        val notes = m.events.filterIsInstance<Note>()
+        for ((i, n) in notes.withIndex()) {
+            val headW = sp * (if (n.duration.base == 1) 1.6f else 1.18f)
+            val ys = n.steps.map { s.y(it, n.x.roundToInt()) }
+            // The heads.
+            if (x >= n.x - sp * 0.2f && x <= n.x + headW + sp * 0.2f && ys.any { abs(y - it) <= sp * 0.65f }) return true
+            if (n.duration.base < 2) continue
+            val top = s.lineY(0, n.x.roundToInt()); val space = (s.lineY(4, n.x.roundToInt()) - top) / 4f
+            // Which way the stem goes, where seen; where not, both ways are looked at.
+            val known = n.stemUp
+            if (known == null) {
+                val upTip = ys.min() - sp * 3.5f; val downTip = ys.max() + sp * 3.5f
+                if (x >= n.x - sp * 0.3f && x <= n.x + headW + sp * 0.3f && y >= upTip - sp * 0.6f && y <= downTip + sp * 0.6f) return true
+                continue
+            }
+            val up = known
+            val sx = if (up) n.x + headW - sp * 0.1f else n.x + sp * 0.1f
+            val tip = n.stemTip?.let { top + it * space } ?: (if (up) ys.min() - sp * 3.5f else ys.max() + sp * 3.5f)
+            // As far as a stem usually reaches, where the one seen stopped short (a scan's faint stem
+            // broken where it crosses a line): what is printed past the break is stem too.
+            val reach = if (up) min(tip, ys.min() - sp * 3.5f) else max(tip, ys.max() + sp * 3.5f)
+            val y0 = min(reach, if (up) ys.max() else ys.min()); val y1 = max(reach, if (up) ys.max() else ys.min())
+            // The stem: anywhere across the head's column (engravers' heads differ in width, so where
+            // a stem stands beside one does too), from the head to a little past where it ends.
+            if (x >= n.x - sp * 0.3f && x <= n.x + headW + sp * 0.3f && y >= y0 - sp * 0.6f && y <= y1 + sp * 0.6f && (y < ys.min() - sp * 0.4f || y > ys.max() + sp * 0.4f || ys.any { abs(y - it) <= sp * 0.65f })) return true
+            // A flag, from the stem's end.
+            if (n.duration.base >= 8 && n.beam == 0 && x >= sx - sp * 0.2f && x <= sx + sp * 1.4f &&
+                (if (up) y in tip - sp * 0.2f..tip + sp * 3.2f else y in tip - sp * 3.2f..tip + sp * 0.2f)) return true
+            // The beam to the next note of its group: between the stems, along the line of their ends.
+            val next = notes.getOrNull(i + 1)
+            if (n.beam > 0 && next != null && next.beam == n.beam && next.stemTip != null && n.stemTip != null) {
+                val nUp = next.stemUp ?: up
+                val nW = sp * 1.18f
+                val nx = if (nUp) next.x + nW - sp * 0.1f else next.x + sp * 0.1f
+                val nTop = s.lineY(0, next.x.roundToInt()); val nSpace = (s.lineY(4, next.x.roundToInt()) - nTop) / 4f
+                val nTip = nTop + next.stemTip * nSpace
+                if (x >= sx - sp * 0.3f && x <= nx + sp * 0.3f) {
+                    val f = if (nx - sx > 1f) (x - sx) / (nx - sx) else 0f
+                    val line = tip + (nTip - tip) * f
+                    // Up to three beams, stacked back towards the heads.
+                    val depth = sp * 1.9f
+                    if (if (up) y in line - sp * 0.3f..line + depth else y in line - depth..line + sp * 0.3f) return true
+                }
+            }
+        }
+        // Rests, accidentals and dots are shapes of their own (see keptIn): nothing to cut from another.
+        return false
+    }
+
+    private fun keptIn(clean: Ink, s: Staff, m: Measure, staffBars: List<Measure>): Pair<List<IntArray>, List<Int>> {
+        val sp = s.space
+        val mid = (m.box.left + m.box.right) / 2
+        val x0 = m.box.left; val x1 = m.box.right
+        val y0 = (s.lineY(0, mid) - sp * 4.5f).roundToInt(); val y1 = (s.lineY(4, mid) + sp * 4.5f).roundToInt()
+        val headW = sp * 1.18f
+        val stated = this.printed?.learned == false
+        val seen = HashSet<Long>()
+        val out = ArrayList<IntArray>()
+        val shades = ArrayList<Int>()
+        val g = pageGrey
+        // How dark a shape is printed: the darkest tenth of its pixels (an edge's softness aside).
+        fun shadeOf(px: IntArray): Int = if (g == null) 0 else {
+            val levels = (px.indices step 2).map { i -> g.getOrElse(px[i + 1] * clean.width + px[i]) { 0 } }.sorted()
+            levels[levels.size / 10]
+        }
+        for (y in y0..y1) for (x in x0..x1) {
+            if (!clean[x, y] || (x.toLong() shl 32 or (y.toLong() and 0xffffffffL)) in seen) continue
+            val px = Outline.component(clean, x, y, seen, 60_000)
+            if (px.isEmpty()) continue
+            var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+            for (i in px.indices step 2) { l = min(l, px[i]); r = max(r, px[i]); t = min(t, px[i + 1]); b = max(b, px[i + 1]) }
+            val w = r - l + 1; val h = b - t + 1
+            // Holds a head's middle: inside the shape's bounds and ink near it (a hollow head's middle is paper, its ring a little way out).
+            fun holds(cx: Float, cy: Float) = cx >= l - 1 && cx <= r + 1 && cy >= t - 1 && cy <= b + 1 &&
+                (0 until px.size step 2).any { i -> abs(px[i] - cx) <= sp * 0.75f && abs(px[i + 1] - cy) <= sp * 0.5f }
+            val top = s.lineY(0, (l + r) / 2); val bottom = s.lineY(4, (l + r) / 2)
+            // [heads]: whether it holds a head of [m]'s notes (then only what the redraw covers goes);
+            // else whether [m]'s redraw draws the whole of it again (a rest, accidental, dot, signature, marking).
+            fun redrawnBy(m: Measure, heads: Boolean): Boolean {
+            val notes = m.events.filterIsInstance<Note>()
+            val rests = m.events.filterIsInstance<Rest>()
+            val firstX = m.events.minOfOrNull { it.x } ?: m.box.right.toFloat()
+            // A head of a note read here (its stem and beams with it, where they touch).
+            if (heads) return notes.any { n -> n.steps.any { st -> holds(n.x + headW / 2, s.y(st, n.x.roundToInt())) } }
+            return (
+                // A rest read here.
+                rests.any { rr -> val ry = rr.step?.let { s.y(it, rr.x.roundToInt()) } ?: ((top + bottom) / 2)
+                    l <= rr.x + sp * 1.2f && r >= rr.x - sp * 0.2f && t <= ry + sp * 1.6f && b >= ry - sp * 1.6f && w <= sp * 2.2f && h <= sp * 4f } ||
+                // A note's accidental, just left of its head.
+                notes.any { n -> n.accidentals.isNotEmpty() && r <= n.x + sp * 0.2f && l >= n.x - sp * 2.4f && w <= sp * 1.6f &&
+                    n.steps.any { st -> val hy = s.y(st, n.x.roundToInt()); t <= hy + sp * 1.5f && b >= hy - sp * 1.5f } } ||
+                // A note's dot, just right of its head.
+                notes.any { n -> n.duration.dots > 0 && w <= sp * 0.7f && h <= sp * 0.7f && l >= n.x + headW - sp * 0.2f && r <= n.x + headW + sp * 2.2f &&
+                    n.steps.any { st -> abs((t + b) / 2f - s.y(st, n.x.roundToInt())) <= sp * 0.9f } } ||
+                // The clef, key and time at the bar's start, where redrawn: on the staff, before the first note.
+                ((m.showsClef || m.showsKey || m.showsTime) && r < firstX - sp * 0.2f && b >= top - sp * 0.5f && t <= bottom + sp * 0.5f && t >= top - sp * 3f && b <= bottom + sp * 3f) ||
+                // From a PDF that states them: a note's articulations (small, over or under it), its ties, and the bar's dynamics, hairpins and slurs.
+                (stated && (
+                    notes.any { n -> n.articulations.isNotEmpty() && w <= sp * 1.6f && h <= sp * 1.6f && l <= n.x + headW && r >= n.x &&
+                        n.steps.any { st -> val hy = s.y(st, n.x.roundToInt()); abs((t + b) / 2f - hy) in sp * 0.6f..sp * 4f } } ||
+                    m.directions.any { d -> d.kind != "slur" && l <= d.x2 + sp && r >= d.x - sp && (if (d.above) b < top else t > bottom) }
+                )))
+            }
+            // Redrawn by any bar it reaches into, this one or a neighbour: then only the parts the
+            // redraw covers go - heads, stems, flags and beams where printed - and what is joined to
+            // them (a tie leaving a head, an accent touching a stem) is kept as printed.
+            val near = staffBars.filter { o -> o.box.right >= l && o.box.left <= r }
+            if (near.any { o -> redrawnBy(o, heads = false) }) continue
+            // Any part of it the redraw covers goes (a head, a stem - whole or a piece a scan broke off -
+            // a flag, a beam); what is left of it is kept as printed.
+            val rest = ArrayList<Int>()
+            for (i in px.indices step 2) if (near.none { o -> covers(o, s, px[i].toFloat(), px[i + 1].toFloat()) }) { rest += px[i]; rest += px[i + 1] }
+            if (rest.size < px.size) {
+                if (rest.size < 8) continue
+                // What is left, piece by piece: each kept if it is more than a sliver.
+                val left = Ink(clean.width, clean.height)
+                for (i in rest.indices step 2) left[rest[i], rest[i + 1]] = true
+                val seen2 = HashSet<Long>()
+                for (i in rest.indices step 2) {
+                    val piece = Outline.component(left, rest[i], rest[i + 1], seen2)
+                    if (piece.isEmpty()) continue
+                    var pl = Int.MAX_VALUE; var pr = Int.MIN_VALUE; var pt = Int.MAX_VALUE; var pb = Int.MIN_VALUE
+                    for (j in piece.indices step 2) { pl = min(pl, piece[j]); pr = max(pr, piece[j]); pt = min(pt, piece[j + 1]); pb = max(pb, piece[j + 1]) }
+                    if (max(pr - pl, pb - pt) < sp * 0.6f || piece.size / 2 < sp * sp * 0.08f) continue
+                    val shade = shadeOf(piece)
+                    Outline.loops(piece).forEach { loop -> out += IntArray(loop.size) { loop[it].toInt() }; shades += shade }
+                }
+                continue
+            }
+            val shade = shadeOf(px)
+            Outline.loops(px).forEach { loop -> out += IntArray(loop.size) { loop[it].toInt() }; shades += shade }
+        }
+        return out to shades
     }
 
     private fun eventsIn(clean: Ink, s: Staff, from: Int, to: Int, t: Int, carry: Carry, heads: List<Head>): List<Event> {
@@ -2047,7 +2262,45 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 Pitch.fromDiatonic(d, alter)
             }
             val (marks, tied) = if (printed?.learned == false) printedMarks(s, c) else emptyList<String>() to false
-            events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { h.stemX >= 0 }, c.minOf { it.score }, marks, tied)
+            // Its stem's direction where its stem was seen (a trained reader's head whose stem was not found on the page: unknown).
+            val seen = h.stemX >= 0 && (this.printed?.learned != true || h.stemEnd != 0)
+            events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { seen }, c.minOf { it.score }, marks, tied,
+                odds = symbolOf[h]?.odds.orEmpty())
+        }
+        // As printed: where each stem ends, and which notes one beam joins - a stroke along from one
+        // stem's end to the next's - so a redrawn bar keeps the print's groups and their slant.
+        if (chords.size == events.size) {
+            fun tipOf(c: List<Head>): Pair<Int, Int>? {
+                // A stem seen on the page, and long enough to be one (not a head's own edge).
+                val h = c.firstOrNull { it.stemX >= 0 && it.stemEnd != 0 && abs(it.stemEnd - it.y) >= sp * 1.5f } ?: return null
+                return h.stemX to h.stemEnd
+            }
+            val tips = chords.map { tipOf(it) }
+            fun joined(a: Pair<Int, Int>, b: Pair<Int, Int>): Boolean {
+                if (b.first - a.first < sp * 0.8f || b.first - a.first > sp * 12f) return false
+                var hit = 0; var n = 0
+                for (x in a.first + 1 until b.first) {
+                    val y = a.second + (b.second - a.second) * (x - a.first).toFloat() / (b.first - a.first)
+                    n++
+                    if ((-(sp * 0.35f).toInt()..(sp * 0.35f).toInt()).any { clean[x, (y + it).roundToInt()] }) hit++
+                }
+                return n > 0 && hit >= n * 0.9f
+            }
+            var group = 0
+            for (i in events.indices) {
+                val n = events[i] as? Note ?: continue
+                val tip = tips[i]
+                val spaceAt = tip?.let { (s.lineY(4, it.first) - s.lineY(0, it.first)) / 4f }
+                var beam = 0
+                if (tip != null && n.duration.base >= 8) {
+                    val prev = events.getOrNull(i - 1) as? Note
+                    val prevTip = tips.getOrNull(i - 1)
+                    beam = if (prev != null && prev.beam > 0 && prevTip != null && prev.duration.base >= 8 && joined(prevTip, tip)) prev.beam
+                        else if (i + 1 < events.size && (events[i + 1] as? Note)?.duration?.base?.let { it >= 8 } == true && tips[i + 1]?.let { joined(tip, it) } == true) ++group
+                        else 0
+                }
+                events[i] = n.copy(stemTip = if (tip != null && spaceAt != null && spaceAt > 0f) (tip.second - s.lineY(0, tip.first)) / spaceAt else null, beam = beam)
+            }
         }
         // Rests, where no note is.
         val rests = ArrayList<Pair<Rest, Float>>()

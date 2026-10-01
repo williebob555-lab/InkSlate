@@ -18,6 +18,11 @@ object Learned {
     /** Below this a peak is not taken at all; between it and [SURE] it is taken, doubted. */
     var floor = 0.3f
     const val SURE = 0.6f
+    /** A head this likely, under [floor], is faint: offered among a doubtful bar's other readings. */
+    const val FAINT = 0.12f
+
+    /** Whether [s] is a faint head (see [FAINT]). */
+    fun faint(s: Printed.Symbol) = s.odds.size == 8 && s.odds[7] < floor
 
     private fun sigmoid(v: Float) = 1f / (1f + exp(-v))
 
@@ -47,7 +52,8 @@ object Learned {
         for (c in 0 until NC) for (y in 0 until gh) for (x in 0 until gw) {
             val v = at(c, y, x)
             val p = sigmoid(v)
-            if (p < floor) continue
+            // Heads a little under the floor are kept too, as faint: not read, but offered (a bar's maybe).
+            if (p < (if (c <= 2) FAINT else floor)) continue
             // A peak: no neighbour higher.
             var peak = true
             loop@ for (dy in -1..1) for (dx in -1..1) {
@@ -62,19 +68,26 @@ object Learned {
             val kind = kinds[c]
             // A head's left edge and width as a font's character would give them; the rest by their middles.
             val width = when (kind) { Printed.Kind.HEAD_WHOLE -> space * 1.6f; Printed.Kind.HEAD_BLACK, Printed.Kind.HEAD_HALF -> space * 1.18f; Printed.Kind.DOT -> space * 0.4f; else -> space }
-            var beams = -1; var dots = -1; var conf = p
+            var beams = -1; var dots = -1; var conf = p; var odds = emptyList<Float>()
             if (c <= 2) {
                 beams = argmax(4) { at(NC + 2 + it, y, x) }
                 dots = argmax(3) { at(NC + 6 + it, y, x) }
+                odds = softmax(4) { at(NC + 2 + it, y, x) } + softmax(3) { at(NC + 6 + it, y, x) } + listOf(p)
                 // How sure, all told: that it is a head, and of its value.
                 conf = p * softmaxMax(4) { at(NC + 2 + it, y, x) } * softmaxMax(3) { at(NC + 6 + it, y, x) }
             }
-            found += Found(Printed.Symbol(kind, px - width / 2, py, width, space * 4f, beams = beams, dots = dots, confidence = conf), abs(row - (Strips.TOP + 20f)))
+            found += Found(Printed.Symbol(kind, px - width / 2, py, width, space * 4f, beams = beams, dots = dots, confidence = conf, odds = odds), abs(row - (Strips.TOP + 20f)))
         }
         return found
     }
 
     private inline fun argmax(n: Int, f: (Int) -> Float): Int { var b = 0; for (i in 1 until n) if (f(i) > f(b)) b = i; return b }
+
+    private inline fun softmax(n: Int, f: (Int) -> Float): List<Float> {
+        var m = f(0); for (i in 1 until n) m = maxOf(m, f(i))
+        val e = List(n) { exp(f(it) - m) }; val sum = e.sum()
+        return e.map { it / sum }
+    }
 
     private inline fun softmaxMax(n: Int, f: (Int) -> Float): Float {
         var m = f(0); for (i in 1 until n) m = maxOf(m, f(i))

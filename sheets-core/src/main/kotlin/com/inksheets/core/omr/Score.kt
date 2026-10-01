@@ -98,7 +98,16 @@ data class Note(
     /** Marks on it: "accent", "staccato", "staccatissimo", "tenuto", "marcato", "fermata". */
     val articulations: List<String> = emptyList(),
     /** Tied to the next note at its pitch (held on, not struck again). */
-    val tie: Boolean = false
+    val tie: Boolean = false,
+    /**
+     * As the trained reader saw it, where it did: how likely 0-3 beams or flags (4), 0-2 dots (3),
+     * and that it is a note at all (1) - what the other readings of its bar are weighed by.
+     */
+    val odds: List<Float> = emptyList(),
+    /** Where its stem ends as printed: spaces down from the top line (null where none was seen). */
+    val stemTip: Float? = null,
+    /** Notes of a bar with the same non-zero number share one beam, as printed. */
+    val beam: Int = 0
 ) : Event()
 
 /**
@@ -180,7 +189,15 @@ data class Measure(
      * Notes the reader saw here and let go (too faint, a stem it thought another's): what it may
      * have missed, for offering other readings of the bar ([BarChoices]).
      */
-    val maybe: List<Event> = emptyList()
+    val maybe: List<Event> = emptyList(),
+    /**
+     * Whatever is printed in and round the bar that its redrawing does not draw - a bar number, a
+     * rehearsal box, words, a hairpin, a mark not read - each as its exact outline (pixel corners,
+     * even-odd loops, in the reading's pixels): drawn back over a cleaned bar as printed, whole.
+     */
+    val kept: List<IntArray> = emptyList(),
+    /** How dark each of [kept]'s loops is printed, 0 black - 255 paper (pencil and highlighter come back light). */
+    val keptShade: List<Int> = emptyList()
 ) {
     /** Line [i] (0 the top) at [x] across the bar (page pixels), as printed. */
     fun lineAt(i: Int, x: Float): Float {

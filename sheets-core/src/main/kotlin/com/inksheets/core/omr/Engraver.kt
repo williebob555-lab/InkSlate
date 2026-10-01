@@ -56,39 +56,7 @@ object Engraver {
         var x = 0.3f
         for ((mi, m) in measures.withIndex()) {
             val start = x
-            if (m.showsClef || mi == 0) {
-                val (glyph, y) = when (m.clef) {
-                    Clef.TREBLE -> "gClef" to 3f
-                    Clef.BASS -> "fClef" to 1f
-                    Clef.ALTO -> "cClef" to 2f
-                    Clef.TENOR -> "cClef" to 1f
-                }
-                marks += Symbol(glyph, x + 0.4f, y)
-                x += MusicGlyphs[glyph].advance + 0.8f
-            }
-            if (m.showsKey || (mi == 0 && m.key.fifths != 0)) {
-                val name = if (m.key.fifths > 0) "accidentalSharp" else "accidentalFlat"
-                for (s in keySteps(m.key, m.clef)) { marks += Symbol(name, x, s * 0.5f); x += 1.0f }
-                x += 0.4f
-            }
-            if (m.showsTime) {
-                val top = m.time.beats.toString(); val bottom = m.time.beatType.toString()
-                val w = max(top.length, bottom.length) * 1.8f
-                top.forEachIndexed { i, c -> marks += Symbol("timeSig$c", x + i * 1.8f + (w - top.length * 1.8f) / 2, 1f) }
-                bottom.forEachIndexed { i, c -> marks += Symbol("timeSig$c", x + i * 1.8f + (w - bottom.length * 1.8f) / 2, 3f) }
-                x += w + 0.8f
-            }
-            // D.S. and coda signs over the bar's start.
-            if (m.segno) marks += Symbol("segno", start + 0.3f, -2f)
-            if (m.coda) marks += Symbol("coda", start + 0.3f, -2f)
-            // A repeat's start: thick, thin, and its two dots.
-            if (m.repeatStart) {
-                marks += Stroke(x + 0.25f, 0f, x + 0.25f, 4f, 0.5f)
-                marks += Stroke(x + 0.85f, 0f, x + 0.85f, 4f, 0.16f)
-                marks += Symbol("augmentationDot", x + 1.2f, 1.5f)
-                marks += Symbol("augmentationDot", x + 1.2f, 2.5f)
-                x += 1.8f
-            }
+            x = drawStart(marks, m, mi == 0, x)
             x += 0.6f
             // Notes and rests, each its own room; beamed notes grouped a beat at a time.
             val placed = ArrayList<Pair<Event, Float>>()
@@ -147,10 +115,63 @@ object Engraver {
      * staff spaces from the bar's left edge), no clef or key - to lay over the page, or replace a
      * patch of it, and line up with everything around it.
      */
-    fun aligned(m: Measure): Drawing {
+    /**
+     * What stands at a bar's start, from [x] (spaces): its clef, key and time where it shows them
+     * ([first]: a line's first bar shows clef and key), a segno or coda, a repeat's start. Where
+     * the bar's notes may begin.
+     */
+    private fun drawStart(marks: MutableList<Mark>, m: Measure, first: Boolean, x0: Float): Float {
+        var x = x0
+        val start = x
+        if (m.showsClef || first) {
+            val (glyph, y) = when (m.clef) {
+                Clef.TREBLE -> "gClef" to 3f
+                Clef.BASS -> "fClef" to 1f
+                Clef.ALTO -> "cClef" to 2f
+                Clef.TENOR -> "cClef" to 1f
+            }
+            marks += Symbol(glyph, x + 0.4f, y)
+            x += MusicGlyphs[glyph].advance + 0.8f
+        }
+        if (m.showsKey || (first && m.key.fifths != 0)) {
+            val name = if (m.key.fifths > 0) "accidentalSharp" else "accidentalFlat"
+            for (s in keySteps(m.key, m.clef)) { marks += Symbol(name, x, s * 0.5f); x += 1.0f }
+            x += 0.4f
+        }
+        if (m.showsTime) {
+            val top = m.time.beats.toString(); val bottom = m.time.beatType.toString()
+            val w = max(top.length, bottom.length) * 1.8f
+            top.forEachIndexed { i, c -> marks += Symbol("timeSig$c", x + i * 1.8f + (w - top.length * 1.8f) / 2, 1f) }
+            bottom.forEachIndexed { i, c -> marks += Symbol("timeSig$c", x + i * 1.8f + (w - bottom.length * 1.8f) / 2, 3f) }
+            x += w + 0.8f
+        }
+        // D.S. and coda signs over the bar's start.
+        if (m.segno) marks += Symbol("segno", start + 0.3f, -2f)
+        if (m.coda) marks += Symbol("coda", start + 0.3f, -2f)
+        // A repeat's start: thick, thin, and its two dots.
+        if (m.repeatStart) {
+            marks += Stroke(x + 0.25f, 0f, x + 0.25f, 4f, 0.5f)
+            marks += Stroke(x + 0.85f, 0f, x + 0.85f, 4f, 0.16f)
+            marks += Symbol("augmentationDot", x + 1.2f, 1.5f)
+            marks += Symbol("augmentationDot", x + 1.2f, 2.5f)
+            x += 1.8f
+        }
+        return x
+    }
+
+    /**
+     * [m] drawn where it is printed, for showing in place of its print. Ties and slurs are left to
+     * the print itself (a cleaned bar keeps them exactly as printed - see [Measure.kept]): free
+     * curves, which the print's own shape follows truly and a drawn arc only roughly.
+     */
+    fun aligned(m0: Measure): Drawing {
+        val m = m0.copy(events = m0.events.map { if (it is Note && it.tie) it.copy(tie = false) else it }, directions = m0.directions.filter { it.kind != "slur" })
         val marks = ArrayList<Mark>()
         val width = m.box.width / m.space
         for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)
+        // A line's first bar, or one changing clef, key or time: those redrawn where printed, in
+        // the room before its first note.
+        if (m.showsClef || m.showsKey || m.showsTime || m.repeatStart || m.segno || m.coda) drawStart(marks, m, false, 0.3f)
         val placed = m.events.map { it to (it.x - m.box.left) / m.space }
         drawEvents(marks, placed, m, width)
         drawDirections(marks, m, width) { x -> (x - m.box.left) / m.space }
@@ -199,11 +220,18 @@ object Engraver {
                     var cx = x
                     for (g in dynamicGlyphs(d.text) ?: continue) { marks += Symbol(g, cx, y); cx += MusicGlyphs[g].advance - 0.1f }
                 }
-                "cresc", "dim" -> if (x2 - x > 0.5f) {
-                    // Open end apart by a space, the closed end a point.
-                    val (narrow, wide) = if (d.kind == "cresc") x to x2 else x2 to x
-                    marks += Stroke(narrow, y - 0.2f, wide, y - 0.7f, 0.1f)
-                    marks += Stroke(narrow, y - 0.2f, wide, y + 0.3f, 0.1f)
+                "cresc", "dim" -> {
+                    // One wedge however many bars it crosses: closed end a point, open end a space
+                    // apart, and this bar drawing its slice of it - as open at each edge as the
+                    // whole wedge is there.
+                    val xa = at(d.x); val xb = at(d.x2)
+                    val c0 = max(xa, from); val c1 = min(xb, width)
+                    if (xb - xa > 0.5f && c1 - c0 > 0.05f) {
+                        fun open(xx: Float) = (if (d.kind == "cresc") (xx - xa) else (xb - xx)) / (xb - xa) * 0.5f
+                        val yc = y - 0.2f
+                        marks += Stroke(c0, yc - open(c0), c1, yc - open(c1), 0.1f)
+                        marks += Stroke(c0, yc + open(c0), c1, yc + open(c1), 0.1f)
+                    }
                 }
                 "slur" -> if (x2 - x > 0.5f) {
                     val y1 = (d.step ?: 0) * 0.5f + (if (d.above) -0.8f else 0.8f)
@@ -261,13 +289,20 @@ object Engraver {
 
     private fun drawEvents(marks: MutableList<Mark>, placed: List<Pair<Event, Float>>, m: Measure, width: Float? = null) {
         drawNoteMarks(marks, placed, width)
-        // Beams: runs of eighths and shorter within one beat.
+        // Beams: the print's own groups where it was read (notes sharing a beam number), else runs
+        // of eighths and shorter within one beat.
         val groups = ArrayList<List<Pair<Note, Float>>>()
+        val printedGroups = placed.any { (e, _) -> e is Note && e.beam > 0 }
         var run = ArrayList<Pair<Note, Float>>()
         var runBeat = -1.0
         var at = 0.0
         val beat = if (m.time.beatType == 8 && m.time.beats % 3 == 0) 1.5 else 1.0
-        for ((e, x) in placed) {
+        if (printedGroups) {
+            for ((e, x) in placed) {
+                if (e is Note && e.beam > 0 && run.isNotEmpty() && run.last().first.beam == e.beam) run += e to x
+                else { if (run.isNotEmpty()) groups += run; run = if (e is Note && e.beam > 0) arrayListOf(e to x) else ArrayList() }
+            }
+        } else for ((e, x) in placed) {
             val b = Math.floor(at / beat + 1e-9)
             if (e is Note && e.duration.beams > 0) {
                 if (run.isNotEmpty() && b != runBeat) { groups += run; run = ArrayList() }
@@ -313,7 +348,8 @@ object Engraver {
                         val up = stemUp(e)
                         val sx = if (up) x + headW - STEM / 2 else x + STEM / 2
                         val from = if (up) bottom * 0.5f else top * 0.5f
-                        val to = if (up) min(top * 0.5f - STEM_LENGTH, 2f) else max(bottom * 0.5f + STEM_LENGTH, 2f)
+                        // As long as printed, where it was seen; else the usual length.
+                        val to = e.stemTip ?: if (up) min(top * 0.5f - STEM_LENGTH, 2f) else max(bottom * 0.5f + STEM_LENGTH, 2f)
                         if (e !in beamed) {
                             marks += Stroke(sx, from, sx, to, STEM)
                             if (e.duration.beams > 0) {
@@ -327,16 +363,19 @@ object Engraver {
         }
         // Beamed groups: stems to one straight beam, a second beam for sixteenths.
         for (g in groups.filter { it.size > 1 }) {
-            val up = g.map { it.first.steps.average() }.average() >= 4
+            // The print's stems' side and ends, where they were seen: its beam, slant and all.
+            val tips = g.map { it.first.stemTip }
+            val asPrinted = tips.all { it != null }
+            val up = if (asPrinted) g.first().first.stemUp ?: (tips.first()!! < g.first().first.steps.min() * 0.5f) else g.map { it.first.steps.average() }.average() >= 4
             val headW = MusicGlyphs["noteheadBlack"].advance
             val xs = g.map { (n, x) -> if (up) x + headW - STEM / 2 else x + STEM / 2 }
             val ends = g.map { (n, _) -> if (up) n.steps.min() * 0.5f - STEM_LENGTH else n.steps.max() * 0.5f + STEM_LENGTH }
-            val y0 = if (up) min(ends.first(), 1f) else max(ends.first(), 3f)
-            val y1 = if (up) min(ends.last(), 1f) else max(ends.last(), 3f)
-            val slope = ((y1 - y0) / (xs.last() - xs.first())).coerceIn(-0.25f, 0.25f)
+            val y0 = if (asPrinted) tips.first()!! else if (up) min(ends.first(), 1f) else max(ends.first(), 3f)
+            val y1 = if (asPrinted) tips.last()!! else if (up) min(ends.last(), 1f) else max(ends.last(), 3f)
+            val slope = ((y1 - y0) / (xs.last() - xs.first())).let { if (asPrinted) it else it.coerceIn(-0.25f, 0.25f) }
             // The beam clears every note: moved away from the heads as far as the lowest (highest) needs.
             var shift = 0f
-            g.forEachIndexed { i, (n, _) ->
+            if (!asPrinted) g.forEachIndexed { i, (n, _) ->
                 val y = y0 + slope * (xs[i] - xs.first())
                 val need = if (up) n.steps.min() * 0.5f - 2.5f - y else y - (n.steps.max() * 0.5f + 2.5f)
                 if (need < 0) shift = if (up) min(shift, need) else max(shift, -need)

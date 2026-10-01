@@ -43,6 +43,9 @@ internal object ScoreTools {
     var underlay by mutableStateOf(false)
         private set
 
+    /** For pictures that tell the layers apart: what a cleaned bar keeps as printed drawn in this colour (tests). */
+    internal var keptColor: Int? = null
+
     /** Bars chosen, by number (first to last); null for none. */
     var selection by mutableStateOf<IntRange?>(null)
         private set
@@ -365,6 +368,13 @@ internal object ScoreTools {
                     val (above, below) = reachOf(m)
                     out += paper(m, k, above, below, PAPER)
                     out += drawn
+                    // What the redraw does not draw, kept as printed: whole, never cut at the paper's edge.
+                    // Each in its own shade: ink black, pencil and highlighter light, as printed.
+                    if (m.kept.isNotEmpty()) m.kept.indices.groupBy { (m.keptShade.getOrNull(it) ?: 0) / 32 }.forEach { (band, loops) ->
+                        val grey = (band * 32 + 16).coerceAtMost(220).let { if (band == 0) 0 else it }
+                        out += PageMark(PageMark.Kind.FILL, loops.map { i -> m.kept[i].let { loop -> FloatArray(loop.size) { loop[it] * k } } },
+                            keptColor ?: if (band == 0) INK else (0xFF shl 24) or (grey shl 16) or (grey shl 8) or grey)
+                    }
                 }
                 underlay -> {
                     out += engraved(m, k, UNDER)

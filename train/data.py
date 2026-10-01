@@ -12,13 +12,17 @@ from PIL import Image
 from reader import H, NC, STRIDE
 
 
-def load_labels(root):
+def load_labels(roots):
+    """Every strip's labels from one data folder or several (comma separated); each remembers its folder."""
     out = []
-    with open(os.path.join(root, "labels.jsonl"), encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                out.append(json.loads(line))
+    for root in roots.split(","):
+        with open(os.path.join(root, "labels.jsonl"), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    it = json.loads(line)
+                    it["_root"] = root
+                    out.append(it)
     return out
 
 
@@ -31,12 +35,13 @@ class Strips(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.items)
 
-    def image(self, name):
+    def image(self, it):
+        name = os.path.join(it.get("_root", self.root), "strips", it["file"])
         img = self.cache.get(name)
         if img is None:
             # Kept as bytes (a quarter of floats' room: each loader worker holds its own copy).
-            img = np.asarray(Image.open(os.path.join(self.root, "strips", name)), dtype=np.uint8)
-            if len(self.cache) < 30000:
+            img = np.asarray(Image.open(name), dtype=np.uint8)
+            if len(self.cache) < int(os.environ.get("CACHE", "1500")):
                 self.cache[name] = img
         return img.astype(np.float32) / 255.0
 
@@ -45,7 +50,7 @@ class Strips(torch.utils.data.Dataset):
         # checking: the same damage every time, so epochs compare.
         rng = random.Random(self.seed * 100003 + i) if self.seed is not None else random.Random(random.getrandbits(64))
         it = self.items[i]
-        img = self.image(it["file"])
+        img = self.image(it)
         objs = [list(o) for o in it["objs"]]
         # Size and place jitter: the staff tracing is never exact, nor a page's space.
         scale = rng.uniform(0.87, 1.15) if self.scan else 1.0
@@ -75,7 +80,8 @@ class Strips(torch.utils.data.Dataset):
         else:
             x0 = 0
             img = F.pad(img, (0, self.width - w), value=1.0)
-        if self.scan:
+        # A real scan (learned from the reader's own sure readings) is damaged already: only sometimes more.
+        if self.scan and (not it.get("pseudo") or rng.random() < 0.5):
             img = degrade(img, rng)
         heat, off, beams, dots, mask = targets([(o[0], o[1] - x0, o[2] - x0 if o[0] == -3 else o[2]) + tuple(o[3:]) for o in objs], self.width)
         return img[None], heat, off, beams, dots, mask

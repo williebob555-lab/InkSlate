@@ -157,6 +157,56 @@ class StripExport {
     }
 
     /**
+     * DeepScoresV2's pages (train/ds2.py made them: a PNG and its labels as a .tsv per page) cut into
+     * strips as the library's are: the staves found as the app finds them, each symbol at its place
+     * in its strip. Its own test pages kept out of teaching (song "ds2test", in held.txt).
+     * -Dinksheets.ds2=<dir with img/> -Dinksheets.ds2.out=<dir>
+     */
+    @Test
+    fun `cut DeepScores into strips`() {
+        val src = System.getProperty("inksheets.ds2") ?: return assumeTrue(false)
+        val out = File(System.getProperty("inksheets.ds2.out")!!)
+        val dir = File(out, "strips").apply { mkdirs() }
+        val pages = File(src, "img").listFiles { f -> f.name.endsWith(".png") }.orEmpty().sortedBy { it.name }
+        val labels = java.util.Collections.synchronizedList(ArrayList<String>())
+        val pool = Executors.newFixedThreadPool(3)
+        val t0 = System.currentTimeMillis()
+        pages.map { png -> pool.submit { runCatching {
+            val tsv = File(png.path.removeSuffix(".png") + ".tsv").readLines()
+            val split = tsv.first()
+            val img = ImageIO.read(png)
+            val argb = IntArray(img.width * img.height); img.getRGB(0, 0, img.width, img.height, argb, 0, img.width)
+            val ink = Ink.fromArgb(img.width, img.height, argb)
+            val grey = Strips.grey(argb)
+            val rec = Recognizer()
+            val (t, space) = rec.metrics(ink) ?: return@runCatching
+            val staves = rec.staves(ink, t, space)
+            val syms = tsv.drop(1).filter { it.isNotBlank() }.map { it.split('\t') }
+            for ((si, s) in staves.withIndex()) {
+                val strip = Strips.cut(grey, img.width, img.height, s)
+                val objs = ArrayList<String>()
+                fun f1(v: Float) = "%.1f".format(java.util.Locale.ROOT, v)
+                for (r in syms) {
+                    val x = r[1].toFloat(); val y = r[2].toFloat()
+                    val col = strip.column(x); val row = strip.row(x, y)
+                    if (col < 0 || col >= strip.width || row < 0 || row >= Strips.H) continue
+                    objs += when {
+                        r[0] == "-1" -> "[-1,${f1(col)},${f1(row)},\"odd\"]"
+                        r.size >= 5 -> "[${r[0]},${f1(col)},${f1(row)},${r[3]},${r[4]}]"
+                        else -> "[${r[0]},${f1(col)},${f1(row)}]"
+                    }
+                }
+                val file = "d${png.nameWithoutExtension.hashCode().toUInt().toString(16)}-s$si.png"
+                save(strip, File(dir, file))
+                labels += "{\"file\":\"$file\",\"song\":\"${if (split == "test") "ds2test" else "ds2"}\",\"dev\":false,\"held\":${split == "test"},\"w\":${strip.width},\"objs\":[${objs.joinToString(",")}]}"
+            }
+        }.onFailure { println("  failed ${png.name}: ${it.message}") } } }.forEach { it.get() }
+        pool.shutdown()
+        File(out, "labels.jsonl").writeText(labels.joinToString("\n"))
+        println("DS2: ${pages.size} pages, ${labels.size} strips in ${(System.currentTimeMillis() - t0) / 1000}s")
+    }
+
+    /**
      * Learning from the library's own scans: each read by the trained reader (-Dinksheets.bench.net),
      * and what it found in bars it is sure of - they add up, every head likely - kept as their
      * labels; bars in doubt left out of teaching either way (a [-3, from, to] column span). Into

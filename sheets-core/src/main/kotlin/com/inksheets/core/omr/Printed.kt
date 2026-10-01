@@ -52,7 +52,9 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
      */
     data class Symbol(val kind: Kind, val x: Float, val y: Float, val width: Float, val size: Float = 0f, val digit: Int = -1, val name: String = "",
                       /** Learned: a head's beams or flags (0-3), its dots, and how likely it is there at all. */
-                      val beams: Int = -1, val dots: Int = -1, val confidence: Float = 1f)
+                      val beams: Int = -1, val dots: Int = -1, val confidence: Float = 1f,
+                      /** Learned: the odds behind those (see [Note.odds]). */
+                      val odds: List<Float> = emptyList())
     /** A stem: upright at [x], from [y0] (top) to [y1]. */
     data class Stem(val x: Float, val y0: Float, val y1: Float)
     /** A beam: a filled slab across [x0]..[x1], its middle at [y0] and [y1] at each end, [thick] thick. */
