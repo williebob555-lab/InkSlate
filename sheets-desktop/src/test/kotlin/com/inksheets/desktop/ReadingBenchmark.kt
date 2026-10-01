@@ -421,6 +421,8 @@ class ReadingBenchmark {
 
     /** [ink] as a photocopy scanned: turned [degrees], its ink spread, blurred, lit unevenly, with noise. */
     /** The trained reader's weights (-Dinksheets.bench.net=path), or none. */
+    init { System.getProperty("inksheets.bench.sure")?.toFloatOrNull()?.let { com.inksheets.core.omr.Learned.SURE = it } }
+
     private val net: com.inksheets.core.omr.Net? by lazy { System.getProperty("inksheets.bench.net")?.let { File(it).inputStream().use { s -> com.inksheets.core.omr.Net.load(s) } } }
 
     private fun scanned(ink: Ink, degrees: Double, seed: Long): Ink = Ink.fromGrey(ink.width, ink.height, scannedGrey(ink, degrees, seed))

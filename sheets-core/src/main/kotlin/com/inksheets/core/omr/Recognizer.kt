@@ -1359,7 +1359,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // The bars tell their own metre: where a time signature was read here but most of this
         // page's bars agree on another length, the signature was misread (a 4 taken for a 1) and
         // the bars are right.
-        val readTimes = measures.filter { it.showsTime }.map { it.time }.distinct()
+        // (A signature not read at all, taken as the time carried, is put to the same test.)
+        val readTimes = measures.filter { it.showsTime || it.doubts.any { d -> d.startsWith("time signature not read") } }.map { it.time }.distinct()
         for (signed in readTimes) {
             val totals = measures.filter { it.time == signed && it.bars == 1 && it.events.any { e -> e is Note } }.map { it.quarters }
             val common = totals.groupingBy { Math.round(it * 4) / 4.0 }.eachCount().maxByOrNull { it.value }

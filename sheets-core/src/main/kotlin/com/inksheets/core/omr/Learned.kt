@@ -17,7 +17,7 @@ object Learned {
 
     /** Below this a peak is not taken at all; between it and [SURE] it is taken, doubted. */
     var floor = 0.3f
-    const val SURE = 0.6f
+    var SURE = 0.7f
     /** A head this likely, under [floor], is faint: offered among a doubtful bar's other readings. */
     const val FAINT = 0.12f
 
