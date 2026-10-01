@@ -131,7 +131,8 @@ object Engraver {
                 Clef.TENOR -> "cClef" to 1f
             }
             marks += Symbol(glyph, x + 0.4f, y)
-            x += MusicGlyphs[glyph].advance + 0.8f
+            // Clear of the clef's dots (an F clef's reach past its advance) before a key or time.
+            x += MusicGlyphs[glyph].advance + 1.2f
         }
         if (m.showsKey || (first && m.key.fifths != 0)) {
             val name = if (m.key.fifths > 0) "accidentalSharp" else "accidentalFlat"

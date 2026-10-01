@@ -926,6 +926,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     var stemMin = 2.2f
         private set
 
+    /** Say why each bar was or was not taken for a multi-bar rest (for finding out). */
+    var traceRests = false
+
     /** How long the last [read]'s stages took, for finding what is slow: "staves 40 ms, ...". */
     var timings = ""
         private set
@@ -1223,7 +1226,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             if (adapt) clock.sum("numbers") { Digits.number(ink, s.left - (s.space * 3).toInt(), s.left + (s.space * 4).toInt(), s.y(-8, s.left).roundToInt(), s.y(-1, s.left).roundToInt(),
                 (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt()) }?.first?.let { p ->
                 if (alone) offsets += p - number
-                else if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
+                else {
+                    // A multi-bar rest of unknown length on the line before: the bars it is short by are its.
+                    val unknown = measures.filter { it.page == page && it.staff == si - 1 && "rest of how many bars?" in it.doubts }
+                    val delta = p - number
+                    if (p > carry.printed && delta > 0 && delta <= 300 && unknown.size == 1) {
+                        val k = measures.indexOf(unknown[0])
+                        measures[k] = unknown[0].copy(bars = unknown[0].bars + delta, doubts = unknown[0].doubts - "rest of how many bars?")
+                        for (j in k + 1 until measures.size) measures[j] = measures[j].copy(number = measures[j].number + delta)
+                        number = p; carry.printed = p
+                    } else if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
+                }
             }
             // The start of the staff: clef, key, time.
             var x = s.left + (s.space * 0.3f).toInt()
@@ -1268,7 +1281,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val lines = measuredLines(ink, s, span.first, -1) + measuredLines(ink, s, span.second, 1)
                 // A multi-bar rest: its bar and number, and nothing else to read.
                 // A bar with notes in it is no multi-bar rest, whatever runs along its middle line (a beam).
-                val headsHere = allHeads.any { it.x >= from - 2 && it.x < to }
+                // (A head far over the staff is a tempo marking's note, not one played here.)
+                val headsHere = allHeads.any { it.x >= from - 2 && it.x < to && it.step in -6..14 }
+                if (traceRests) println("  bar ${span.first}..${span.second} heads here: ${allHeads.filter { it.x >= from - 2 && it.x < to }.map { "${it.kind} ${it.step}" }}")
                 val rest = if (headsHere) null else multiRest(clean, s, from, to, ink)
                 if (rest != null) {
                     val (restBars, x) = rest
@@ -1430,25 +1445,43 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val sp = s.space
         var best: Pair<Int, Int>? = null   // start, length
         var x = from
+        // Its middle on the middle line, or (some engravers', a scan's) half a space either side of it.
+        val step = listOf(4, 3, 5).maxByOrNull { st ->
+            var run = 0; var longest = 0
+            for (xx in from until to) {
+                val yy = s.y(st, xx).roundToInt()
+                if (clean[xx, yy] || (page[xx, yy] && page[xx, yy - 2] && page[xx, yy + 2])) { run++; longest = max(longest, run) } else run = 0
+            }
+            longest
+        } ?: 4
         while (x < to) {
-            val y = s.y(4, x).roundToInt()
+            val y = s.y(step, x).roundToInt()
             fun thick(xx: Int): Boolean {
                 var a = y; while (clean[xx, a - 1] && y - a < sp) a--
                 var b = y; while (clean[xx, b + 1] && b - y < sp) b++
                 // Engravers' bars run from a third of a space thick to a whole one.
-                return clean[xx, y] && b - a + 1 >= sp * 0.3f && b - a + 1 <= sp * 1.2f
+                if (clean[xx, y] && b - a + 1 >= sp * 0.3f && b - a + 1 <= sp * 1.2f) return true
+                // Some draw it thin, lying on the middle line - taken out with the line: on the page
+                // as printed it is the line made plainly thicker.
+                var pa = y; while (page[xx, pa - 1] && y - pa < sp) pa--
+                var pb = y; while (page[xx, pb + 1] && pb - y < sp) pb++
+                return page[xx, y] && pb - pa + 1 >= max(sp * 0.3f, lineThickness + 3f) && pb - pa + 1 <= sp * 1.2f
             }
             if (!thick(x)) { x++; continue }
             val start = x
             while (x < to && thick(x)) x++
             if (best == null || x - start > best.second) best = start to (x - start)
         }
+        if (traceRests) println("    multiRest $from..$to step $step best $best (space $sp)")
         val (start, len) = best ?: return null
         if (len < sp * 2.5f) return null
         // Its ends are short upright strokes, a space or so each way from the middle line.
+        // (Short ones too: some engravers' run only a little way past the bar - on the page as printed,
+        // as the middle line may have been taken out across them.)
         fun serif(x0: Int): Boolean = (x0 - 3..x0 + 3).any { xx ->
             val up = s.y(2, xx).roundToInt(); val down = s.y(6, xx).roundToInt()
-            (up..down).count { clean[xx, it] } >= (down - up) * 0.8f
+            val mid = s.y(step, xx).roundToInt(); val a = mid - (sp * 0.8f).toInt(); val b = mid + (sp * 0.8f).toInt()
+            (up..down).count { clean[xx, it] } >= (down - up) * 0.8f || (a..b).count { page[xx, it] } >= (b - a) * 0.85f
         }
         val serifs = serif(start) && serif(start + len - 1)
         // The number above: engravers' digits, as in a time signature, a space and a half over the top line.
@@ -1467,9 +1500,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
         val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt())
         val bars = (printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }).takeIf { it in 0..300 } ?: 0
+        if (traceRests) println("    multiRest serifs $serifs bars $bars digits $digits")
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
         if (!serifs && bars < 2) return null
-        return bars to start
+        // A multi-bar rest is never of one bar (that is a whole rest): a 1 read over it is a figure
+        // misread - how many it is, unknown (the next bar number printed may tell; see read).
+        return (if (bars == 1) 0 else bars) to start
     }
 
     /**
