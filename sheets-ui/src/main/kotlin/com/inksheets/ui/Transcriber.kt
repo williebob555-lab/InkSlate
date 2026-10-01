@@ -111,13 +111,36 @@ internal object Transcriber {
         }, "transcribe").apply { isDaemon = true; start() }
     }
 
+    /** Left in a part's readings while every page of it is being read: a read cut off carries on ([resume]). */
+    private fun wholeMark(dir: File) = File(dir, "whole")
+
+    /**
+     * Carry on reading [file] if a reading of every page was started and cut off part way (the
+     * app closed) - from the page in front. The look at the folder is off the UI thread.
+     */
+    fun resume(state: SheetsState, file: File) {
+        if (busy != null) return
+        Thread({
+            val dir = folder(state, file)
+            if (!wholeMark(dir).isFile) return@Thread
+            val c = cached(state, file)
+            if (c != null && (0 until c.pages).all { c.hasRead(it) }) { wholeMark(dir).delete(); return@Thread }
+            state.platform.onMain { if (busy == null && state.currentPath == file.absolutePath) read(state, file) { com.inkslate.core.Perform.marksChanged() } }
+        }, "read-resume").apply { isDaemon = true; start() }
+    }
+
     private fun readNow(state: SheetsState, file: File, only: Set<Int>? = null): Score? {
         val peek = state.platform.peek(file) ?: return null
         peek.use {
             val dir = folder(state, file)
+            if (only == null) runCatching { dir.mkdirs(); wholeMark(dir).writeText("") }
             // What was read before (here or elsewhere): a whole read carries on where it left off.
             val before = cached(state, file)
-            val todo = (only ?: (0 until peek.pageCount).filter { before == null || !before.hasRead(it) }.toSet()).filter { it in 0 until peek.pageCount }.sorted()
+            // A whole read starts at the page in front (a long book is opened at the study being
+            // worked on) and goes on from there, coming back round to the pages before it last.
+            val here = if (only == null && state.currentPath == file.absolutePath) state.pageShown.first.coerceIn(0, maxOf(0, peek.pageCount - 1)) else 0
+            val todo = (only ?: (0 until peek.pageCount).filter { before == null || !before.hasRead(it) }.toSet()).filter { it in 0 until peek.pageCount }
+                .sortedWith(compareBy({ it < here }, { it }))
             val carry = Recognizer.Carry()
             val measures = ArrayList<Measure>()
             // One width a page, whether read or not: a bar's box is on its page's scale.
@@ -161,6 +184,7 @@ internal object Transcriber {
                 synchronized(known) { known.remove(dir.path) }
             }
             val score = cached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
+            if (only == null) wholeMark(dir).delete()
             state.platform.log("Read ${file.name}${if (only != null) " pages ${todo.map { it + 1 }}" else ""}: ${measures.size} bars, ${measures.count { it.sure }} sure, in ${(System.currentTimeMillis() - t0) / 1000}s")
             return score
         }

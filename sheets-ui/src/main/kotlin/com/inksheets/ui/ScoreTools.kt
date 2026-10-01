@@ -413,6 +413,15 @@ internal object ScoreTools {
             if (numbers.any { it in off }) out += PageMark.rect(left + sp * 0.3f, top - sp * 3.4f, right - sp * 0.3f, top - sp * 2.9f, OFF)
             cueHere[index]?.let { out += cueMarks(it, left, right, top, sp) }
             when {
+                // A bar in doubt is never redrawn: a guess drawn cleanly is worse than the print. It
+                // stays as printed, framed, until it is checked (Fix) - then it is redrawn.
+                numbers.first in clean && !m.sure -> {
+                    val pad = sp * 0.4f
+                    out += PageMark.line(left, top - sp * 2f, right, top - sp * 2f, pad * 0.35f, DOUBT)
+                    out += PageMark.line(left, bottom + sp * 2f, right, bottom + sp * 2f, pad * 0.35f, DOUBT)
+                    out += PageMark.line(left, top - sp * 2f, left, bottom + sp * 2f, pad * 0.35f, DOUBT)
+                    out += PageMark.line(right, top - sp * 2f, right, bottom + sp * 2f, pad * 0.35f, DOUBT)
+                }
                 numbers.first in clean -> {
                     // Cleaned up: the print hidden, the reading in its place.
                     // The paper over the print reaches as far as what is redrawn in its place (a dynamic under it, a high note).

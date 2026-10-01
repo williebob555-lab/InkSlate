@@ -363,6 +363,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
             Listener.pageChanged(this, path, page)
+            // A whole read of this part cut off part way (the app closed) carries on.
+            if (currentPath != path) Transcriber.resume(this, File(path))
             currentPath = path
             if (pagesWanted == path) { pagesWanted = null; com.inkslate.core.Perform.openPages?.invoke() }
             songAt(path)?.let { song ->

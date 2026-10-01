@@ -39,7 +39,10 @@ class RedrawShots {
         val source = com.inkslate.desktop.DesktopSources.open(file, detached = true)!!
         val measures = ArrayList<Measure>(); val widths = ArrayList<Int>()
         val carry = Recognizer.Carry(); var number = 1
+        // -Dinksheets.omr.pages=3..5: only those pages (1-based), for a long book.
+        val only = System.getProperty("inksheets.omr.pages")?.split("..")?.let { (a, b) -> (a.toInt() - 1) until b.toInt() }
         for (p in 0 until pages) {
+            if (only != null && p !in only) continue
             // Drawn by the app's own renderer (as the Read button reads): its page size, its leaving out
             // of this app's own handwriting, and its limit on how far a small page is magnified.
             fun draw(width: Int): Pair<IntArray, Ink> {
@@ -59,7 +62,7 @@ class RedrawShots {
                     when (e) { is com.inksheets.core.omr.Note -> "n${e.duration.base}${if (e.tie) "~" else ""}${if (e.articulations.isNotEmpty()) e.articulations.toString() else ""}"; is com.inksheets.core.omr.Rest -> "r${e.duration.base}" } } +
                     " | directions " + m.directions.joinToString { "${it.kind}${if (it.above) "^" else "v"} ${it.x.toInt()}..${it.x2.toInt()}" } + " | kept ${m.kept.size} | bars ${m.bars} doubts ${m.doubts}")
             }
-            measures += r.measures; widths += ink.width
+            measures += r.measures; while (widths.size < p) widths += 0; widths += ink.width
             r.measures.lastOrNull()?.let { number = it.number + it.bars }
         }
         val score = Score(measures, pages, widths)
@@ -71,7 +74,7 @@ class RedrawShots {
             if (cleanAll) ScoreTools.cleanUp(path, measures.map { it.number }) else ScoreTools.showUnderlay(true)
             // -Dinksheets.omr.layers=1: what is kept as printed in red, the redraw in black.
             if (System.getProperty("inksheets.omr.layers") != null) ScoreTools.keptColor = 0xFFE02020.toInt()
-            for (p in 0 until minOf(pages, 2)) {
+            for (p in (only?.toList() ?: (0 until minOf(pages, 2)).toList())) {
                 val (wPts, hPts) = source.pageDim(p).let { it.width to it.height }
                 val marks = ScoreTools.marks(path, p, wPts, hPts).orEmpty()
                 val k = (System.getProperty("inksheets.omr.zoom") ?: "2").toFloat()

@@ -38,6 +38,11 @@ tasks.withType<Test>().configureEach {
     environment("XDG_DATA_HOME", sandbox.absolutePath)
     systemProperty("user.home", sandbox.absolutePath)
 
+    // What a document carries inside it, read only (InkDump).
+    System.getProperty("inkslate.inkdump")?.let {
+        systemProperty("inkslate.inkdump", it)
+        outputs.upToDateWhen { false }
+    }
     // Opens the Windows picker for real and cancels it, to prove it still opens.
     System.getProperty("inkslate.picker")?.let {
         systemProperty("inkslate.picker", it)
