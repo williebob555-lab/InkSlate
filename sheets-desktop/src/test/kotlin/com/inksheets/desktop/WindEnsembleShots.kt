@@ -54,8 +54,8 @@ class WindEnsembleShots {
                 r.measures.lastOrNull()?.let { number = it.number + it.bars }
                 bars += r.measures.size; sure += r.measures.count { it.sure }
             }
-            if (System.getProperty("inksheets.omr.why") != null) measures.take(24).forEach { m ->
-                println("  BAR $name m${m.number} p${m.page} st${m.staff} ${m.time.beats}/${m.time.beatType}${if (m.showsTime) "*" else ""} q=${"%.2f".format(m.quarters)} ${m.doubts} | " +
+            if (System.getProperty("inksheets.omr.why") != null) measures.take((System.getProperty("inksheets.omr.why") ?: "24").toIntOrNull() ?: 24).forEach { m ->
+                println("  BAR $name m${m.number}x${m.bars} p${m.page} st${m.staff} ${m.time.beats}/${m.time.beatType}${if (m.showsTime) "*" else ""} q=${"%.2f".format(m.quarters)} ${m.doubts} | " +
                     m.events.joinToString(" ") { e -> when (e) { is com.inksheets.core.omr.Note -> "n${e.duration.base}${".".repeat(e.duration.dots)}${if (e.duration.tuplet) "t" else ""}"; is com.inksheets.core.omr.Rest -> "r${e.duration.base}${".".repeat(e.duration.dots)}" } })
             }
             val doubts = measures.filter { !it.sure }.flatMap { it.doubts }.map { it.replace(Regex("[0-9.]+"), "#") }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(4)

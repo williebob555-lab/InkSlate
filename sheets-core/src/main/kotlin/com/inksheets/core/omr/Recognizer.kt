@@ -318,7 +318,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             x = x2 + 1
         }
-        return found
+        // A time signature changed at a bar's start: its digits' upright strokes, just after the
+        // barline, are no barline of their own - two lines under three spaces apart with ink in both
+        // halves of the staff between them (a signature's two figures) are one barline and a signature.
+        return found.filterIndexed { i, b ->
+            val a = found.getOrNull(i - 1) ?: return@filterIndexed true
+            if (b - a >= s.space * 3.2f) return@filterIndexed true
+            val x0 = a + (s.space * 0.3f).toInt(); val x1 = b - (s.space * 0.3f).toInt()
+            if (x1 <= x0) return@filterIndexed true
+            var upper = 0; var lower = 0; var n = 0
+            for (xx in x0..x1) {
+                val tp = s.lineY(0, xx).roundToInt(); val md = s.lineY(2, xx).roundToInt(); val bt = s.lineY(4, xx).roundToInt()
+                for (y in tp until md) if (clean[xx, y]) upper++
+                for (y in md until bt) if (clean[xx, y]) lower++
+                n += md - tp
+            }
+            !(n > 0 && upper >= n * 0.12f && lower >= n * 0.12f)
+        }
     }
 
     private fun dense(ink: Ink, x: Int, y: Int, w: Int, h: Int): Boolean {
@@ -1185,6 +1201,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
+        val startTime = carry.time
         val clock = Clock()
         val staves = staves(ink, t, space)
         clock.mark("staves")
@@ -1434,17 +1451,26 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // the bars are right.
         // (A signature not read at all, taken as the time carried, is put to the same test.)
         val readTimes = measures.filter { it.showsTime || it.doubts.any { d -> d.startsWith("time signature not read") } }.map { it.time }.distinct()
-        for (signed in readTimes) {
-            val totals = measures.filter { it.time == signed && it.bars == 1 && it.events.any { e -> e is Note } }.map { it.quarters }
+        // The time this page began in, carried from the page before - a change at that page's end not
+        // read (a scan's signature run into its lines) - put to the same test, the bars before this
+        // page's first signature only, and more of them agreeing.
+        val carriedIn = startTime.takeIf { page > 0 && it !in readTimes }
+        for (signed in readTimes + listOfNotNull(carriedIn)) {
+            val carried = signed == carriedIn
+            val firstSigned = measures.indexOfFirst { it.showsTime }.let { if (it < 0) measures.size else it }
+            val pool = if (carried) measures.subList(0, firstSigned) else measures
+            val totals = pool.filter { it.time == signed && it.bars == 1 && it.events.any { e -> e is Note } }.map { it.quarters }
             val common = totals.groupingBy { Math.round(it * 4) / 4.0 }.eachCount().maxByOrNull { it.value }
-            if (common != null && totals.size >= 6 && common.value >= totals.size * 0.6 && abs(common.key - signed.quarters) > 1e-6 && common.key in 1.0..12.0) {
-                val beats = Math.round(common.key * signed.beatType / 4.0).toInt()
-                val time = TimeSig(beats, signed.beatType)
+            if (common != null && totals.size >= (if (carried) 8 else 6) && common.value >= totals.size * (if (carried) 0.75 else 0.6) && abs(common.key - signed.quarters) > 1e-6 && common.key in 1.0..12.0) {
+                // A whole number of quarters in quarters (2/4, not 4/8), else in eighths.
+                val beatType = if (carried) (if (abs(common.key - Math.round(common.key)) < 1e-6) 4 else 8) else signed.beatType
+                val beats = Math.round(common.key * beatType / 4.0).toInt()
+                val time = TimeSig(beats, beatType)
                 if (abs(time.quarters - common.key) < 1e-6) {
-                    carry.time = time
+                    if (!carried || firstSigned == measures.size) carry.time = time
                     for (k in measures.indices) {
                         val m = measures[k]
-                        if (m.time != signed) continue
+                        if (m.time != signed || (carried && k >= firstSigned)) continue
                         val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
                         if (m.bars == 1 && m.events.isNotEmpty() && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
                         measures[k] = m.copy(time = time, doubts = doubts)
@@ -1629,7 +1655,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Read whole, in whatever typeface it is printed; the music font's digits if that finds none.
         // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
         val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp, musicFont = true)
-        val bars = (printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }).takeIf { it in 0..300 } ?: 0
+        // (Over 64 bars is a figure misread - pencilled words over it, a tempo's equation - not a
+        // part's rest: how many, unknown, and the next bar number printed tells.)
+        val bars = (printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }).takeIf { it in 0..64 } ?: 0
         if (traceRests) println("    multiRest serifs $serifs bars $bars digits $digits")
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
         if (!serifs && bars < 2) return null
