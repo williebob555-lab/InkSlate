@@ -42,7 +42,7 @@ internal object Transcriber {
     private val ids = HashMap<String, String>()
 
     /** [file]'s contents in a word: its size and a checksum of every byte. */
-    private fun idOf(file: File): String = synchronized(ids) {
+    internal fun idOf(file: File): String = synchronized(ids) {
         ids.getOrPut("${file.absolutePath}|${file.length()}|${file.lastModified()}") {
             val crc = java.util.zip.CRC32()
             runCatching { file.inputStream().buffered().use { input -> val buf = ByteArray(1 shl 16); while (true) { val n = input.read(buf); if (n < 0) break; crc.update(buf, 0, n) } } }
@@ -185,6 +185,57 @@ internal object Transcriber {
                 }
             }.onFailure { state.platform.log("Looking again at bar ${m.number} of ${file.name} failed: ${it.message}") }.getOrNull().orEmpty()
             state.platform.onMain { onDone(found) }
+        }
+    }
+
+    /**
+     * Bar [m] of [file] as printed, cut from its page drawn [width] wide (as it was read): the bar
+     * and a space either side, three and a half over and under its staff - off the UI thread, [onDone] on it.
+     */
+    fun barPicture(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int,
+                   wanted: () -> Boolean = { true }, onDone: (androidx.compose.ui.graphics.ImageBitmap?) -> Unit) {
+        looker.execute {
+            if (!wanted()) return@execute
+            val picture = runCatching {
+                state.platform.peek(file)?.use { peek ->
+                    val page = peek.render(m.page, width) ?: return@use null
+                    val sp = m.space
+                    val l = maxOf(0, (m.box.left - sp).toInt()); val r = minOf(page.width, (m.box.right + sp).toInt())
+                    val t = maxOf(0, (m.box.top - sp * 3.5f).toInt()); val b = minOf(page.height, (m.box.bottom + sp * 3.5f).toInt())
+                    if (r - l < 4 || b - t < 4) return@use null
+                    val out = androidx.compose.ui.graphics.ImageBitmap(r - l, b - t)
+                    androidx.compose.ui.graphics.Canvas(out).drawImageRect(page,
+                        androidx.compose.ui.unit.IntOffset(l, t), androidx.compose.ui.unit.IntSize(r - l, b - t),
+                        androidx.compose.ui.unit.IntOffset.Zero, androidx.compose.ui.unit.IntSize(r - l, b - t), androidx.compose.ui.graphics.Paint())
+                    out
+                }
+            }.getOrNull()
+            state.platform.onMain { onDone(picture) }
+        }
+    }
+
+    /**
+     * What bar [m] of [file] really is - [events], as picked in Fix - written down for teaching the
+     * trained reader: a line in the library's Training folder (which syncs, and is no song), one
+     * file a device so two never write the same one.
+     */
+    fun recordFix(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, events: List<com.inksheets.core.omr.Event>) {
+        val root = state.root ?: return
+        val rel = state.relative(file) ?: return
+        looker.execute {
+            runCatching {
+                val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
+                val line = buildString {
+                    append("{\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
+                    append(",\"id\":\"").append(idOf(file)).append('"')
+                    append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
+                    append(",\"width\":").append(width)
+                    append(",\"box\":[").append(m.box.left).append(',').append(m.box.top).append(',').append(m.box.right).append(',').append(m.box.bottom).append(']')
+                    append(",\"events\":").append(com.inksheets.core.omr.Scores.encodeFixes(mapOf(m.number to events)))
+                    append(",\"at\":").append(System.currentTimeMillis()).append('}')
+                }
+                File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
+            }.onFailure { state.platform.log("Keeping a fix for teaching failed: ${it.message}") }
         }
     }
 

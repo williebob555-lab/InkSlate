@@ -168,6 +168,9 @@ internal object ScoreTools {
         private set
     /** What the other looks at the bar up saw. */
     private var looked: List<com.inksheets.core.omr.Measure> = emptyList()
+    /** The bar up as printed, cut from its page (null until it is ready). */
+    var barPicture by mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null)
+        private set
     /** Changed whenever another bar comes up (or the check ends): a look for an earlier one is let go. */
     private var lookToken = 0
     /** Looked further at the bar up already (once is enough: the reader sees the same each time). */
@@ -213,8 +216,16 @@ internal object ScoreTools {
 
     private fun showBar(s: SheetsState) {
         rejected = ArrayList(); askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
+        barPicture = null
         val m = barUp(s) ?: run { endCheck(); return }
         offered = com.inksheets.core.omr.BarChoices.of(m, 3)
+        // Its picture first (quick), then the looks again.
+        val path = s.currentPath
+        val width = scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }
+        if (path != null && width != null) {
+            val token = lookToken
+            Transcriber.barPicture(s, File(path), m, width, wanted = { token == lookToken }) { pic -> if (token == lookToken) barPicture = pic }
+        }
         lookAt(s, m, deeper = false)
         goTo(s, m.number)
         selection = m.number..m.number
@@ -226,6 +237,11 @@ internal object ScoreTools {
         val path = s.currentPath ?: return
         val m = barUp(s) ?: return
         fix(path, m.number, choice.events)
+        // What it really is, kept for teaching the reader (the bar as it was read: its place on the page).
+        scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
+            val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
+            Transcriber.recordFix(s, File(path), read, w, choice.events)
+        }
         next(s)
     }
 
@@ -252,6 +268,7 @@ internal object ScoreTools {
     fun endCheck() {
         checking = false
         looking = false
+        barPicture = null
         lookToken++
         offered = emptyList()
         selection = null

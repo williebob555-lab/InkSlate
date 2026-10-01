@@ -96,6 +96,8 @@ class BarCheckTest {
             val lookEnd = System.currentTimeMillis() + 90_000
             while (ScoreTools.looking && System.currentTimeMillis() < lookEnd) settle(10)
             shot("looked-again")
+            println("bar picture ready: ${ScoreTools.barPicture != null}")
+            assertTrue("the bar as printed shown", ScoreTools.barPicture != null)
             println("after looking again at bar $first: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
             assertTrue("done looking", !ScoreTools.looking)
             // Pick the first: kept, the bar no longer in doubt, on to the next.
