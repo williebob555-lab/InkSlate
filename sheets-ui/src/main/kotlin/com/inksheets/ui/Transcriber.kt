@@ -25,7 +25,7 @@ internal object Transcriber {
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 8
+    private const val READER = 9
 
     /**
      * Where [file]'s reading is kept: a page to a file, in the library's own `.inksheets/readings`
@@ -169,8 +169,12 @@ internal object Transcriber {
      * ([deeper]: further still) - by the trained reader, off the UI thread: [onDone] on the UI thread
      * with each look's reading of the bar (none for a PDF that states its notes: read exactly already).
      */
-    fun lookAgain(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, deeper: Boolean, onDone: (List<com.inksheets.core.omr.Measure>) -> Unit) {
-        Thread({
+    fun lookAgain(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, deeper: Boolean,
+                  /** Whether the look is still wanted when its turn comes (the user may have gone on). */
+                  wanted: () -> Boolean = { true }, onDone: (List<com.inksheets.core.omr.Measure>) -> Unit) {
+        looker.execute {
+            // Gone on to another bar before this one's turn: not looked at at all.
+            if (!wanted()) return@execute
             val found = runCatching {
                 val peek = state.platform.peek(file) ?: return@runCatching emptyList()
                 peek.use {
@@ -181,8 +185,11 @@ internal object Transcriber {
                 }
             }.onFailure { state.platform.log("Looking again at bar ${m.number} of ${file.name} failed: ${it.message}") }.getOrNull().orEmpty()
             state.platform.onMain { onDone(found) }
-        }, "look-again").apply { isDaemon = true; start() }
+        }
     }
+
+    /** One look at a time: a phone renders and reads one page at once, never a pile of them. */
+    private val looker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "look-again").apply { isDaemon = true } }
 
     /** Page [page] drawn [width] wide: its grey levels, and in black and white. */
     private fun inkOf(peek: PagePeek, page: Int, width: Int): Pair<IntArray, Ink>? {

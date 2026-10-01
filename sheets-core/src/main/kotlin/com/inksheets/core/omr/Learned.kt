@@ -72,7 +72,8 @@ object Learned {
             if (c <= 2) {
                 beams = argmax(4) { at(NC + 2 + it, y, x) }
                 dots = argmax(3) { at(NC + 6 + it, y, x) }
-                odds = softmax(4) { at(NC + 2 + it, y, x) } + softmax(3) { at(NC + 6 + it, y, x) } + listOf(p)
+                // (Kept to three places: what is stored of it is read by the page, not to the last digit.)
+                odds = (softmax(4) { at(NC + 2 + it, y, x) } + softmax(3) { at(NC + 6 + it, y, x) } + listOf(p)).map { Math.round(it * 1000f) / 1000f }
                 // How sure, all told: that it is a head, and of its value.
                 conf = p * softmaxMax(4) { at(NC + 2 + it, y, x) } * softmaxMax(3) { at(NC + 6 + it, y, x) }
             }

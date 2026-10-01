@@ -1,7 +1,45 @@
 package com.inksheets.core.omr
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
+
+/**
+ * Outlines (closed loops of whole-pixel corners) kept as text the compact way: each loop its point
+ * count and first corner, then each step to the next corner, as zigzag variable-length numbers,
+ * all in base 64 - a fifth of the room of the numbers written out, which a page's readings sync in.
+ */
+object OutlinesSerializer : KSerializer<List<IntArray>> {
+    override val descriptor = PrimitiveSerialDescriptor("Outlines", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: List<IntArray>) {
+        val out = java.io.ByteArrayOutputStream()
+        fun put(v: Int) { var z = (v shl 1) xor (v shr 31); while (z and 0x7F.inv() != 0) { out.write((z and 0x7F) or 0x80); z = z ushr 7 }; out.write(z) }
+        put(value.size)
+        for (loop in value) {
+            put(loop.size / 2)
+            var px = 0; var py = 0
+            for (i in loop.indices step 2) { put(loop[i] - px); put(loop[i + 1] - py); px = loop[i]; py = loop[i + 1] }
+        }
+        encoder.encodeString(java.util.Base64.getEncoder().withoutPadding().encodeToString(out.toByteArray()))
+    }
+
+    override fun deserialize(decoder: Decoder): List<IntArray> {
+        val bytes = java.util.Base64.getDecoder().decode(decoder.decodeString())
+        var at = 0
+        fun get(): Int { var z = 0; var shift = 0; while (true) { val b = bytes[at++].toInt() and 0xFF; z = z or ((b and 0x7F) shl shift); if (b and 0x80 == 0) break; shift += 7 }; return (z ushr 1) xor -(z and 1) }
+        val n = get()
+        return List(n) {
+            val points = get()
+            var px = 0; var py = 0
+            IntArray(points * 2).also { a -> for (i in 0 until points) { px += get(); py += get(); a[2 * i] = px; a[2 * i + 1] = py } }
+        }
+    }
+}
 
 /**
  * Music read off the page: its measures, and in each the notes and rests in order, with the clef,
@@ -197,6 +235,7 @@ data class Measure(
      * rehearsal box, words, a hairpin, a mark not read - each as its exact outline (pixel corners,
      * even-odd loops, in the reading's pixels): drawn back over a cleaned bar as printed, whole.
      */
+    @Serializable(with = OutlinesSerializer::class)
     val kept: List<IntArray> = emptyList(),
     /** How dark each of [kept]'s loops is printed, 0 black - 255 paper (pencil and highlighter come back light). */
     val keptShade: List<Int> = emptyList()

@@ -41,4 +41,15 @@ class OutlineTest {
             assertEquals(0, roundTrip(ink))
         }
     }
+
+    @Test
+    fun `outlines kept as text come back exactly`() {
+        val r = java.util.Random(9)
+        val loops = List(40) { IntArray(2 * (3 + r.nextInt(60))) { r.nextInt(5000) - 100 } } + listOf(intArrayOf(0, 0, 70000, -3, 12, 999999))
+        val json = kotlinx.serialization.json.Json
+        val text = json.encodeToString(OutlinesSerializer, loops)
+        val back = json.decodeFromString(OutlinesSerializer, text)
+        assertEquals(loops.size, back.size)
+        for (i in loops.indices) org.junit.Assert.assertArrayEquals(loops[i], back[i])
+    }
 }

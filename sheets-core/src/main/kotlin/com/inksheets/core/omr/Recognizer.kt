@@ -1196,7 +1196,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val si = staves.indices.filter { sym.x >= staves[it].left - staves[it].space && sym.x <= staves[it].right }
                 .minByOrNull { abs((staves[it].top + staves[it].bottom) / 2f - sym.y) } ?: return@forEach
             val s = staves[si]; val x = sym.x.roundToInt()
+            // As a head read outright would be: near its staff, and not where one already was.
+            if (abs((s.top + s.bottom) / 2f - sym.y) > s.space * 9) return@forEach
             val step = ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
+            if (headsOf[si].any { o -> abs(o.x - x) < s.space * 0.6f && abs(o.step - step) <= 1 }) return@forEach
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
             val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.odds[7])
             dropped += h to "faint"
@@ -1257,7 +1260,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     // A multi-bar rest of unknown length on the line before: the bars it is short by are its.
                     val unknown = measures.filter { it.page == page && it.staff == si - 1 && "rest of how many bars?" in it.doubts }
                     val delta = p - number
-                    if (p > carry.printed && delta > 0 && delta <= 300 && unknown.size == 1) {
+                    // (A long rest, but not a misread figure's worth: 12 read as 112 is no 100-bar rest.)
+                    if (p > carry.printed && delta > 0 && delta <= 64 && unknown.size == 1) {
                         val k = measures.indexOf(unknown[0])
                         measures[k] = unknown[0].copy(bars = unknown[0].bars + delta, doubts = unknown[0].doubts - "rest of how many bars?")
                         for (j in k + 1 until measures.size) measures[j] = measures[j].copy(number = measures[j].number + delta)
@@ -2336,6 +2340,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val out = ArrayList<IntArray>()
         val shades = ArrayList<Int>()
         val g = pageGrey
+        // Each shape kept once, by the bar its middle is in (a bar cleaned draws its neighbours' that
+        // reach into it too - see ScoreTools); one no single bar holds (over a multi-bar rest) by this one.
+        fun owns(shape: IntArray): Boolean {
+            var lo = Int.MAX_VALUE; var hi = Int.MIN_VALUE
+            for (i in shape.indices step 2) { lo = min(lo, shape[i]); hi = max(hi, shape[i]) }
+            val cx = (lo + hi) / 2
+            if (cx >= m.box.left && cx < m.box.right) return true
+            return staffBars.none { o -> o !== m && cx >= o.box.left && cx < o.box.right }
+        }
         // How dark a shape is printed: the darkest tenth of its pixels (an edge's softness aside).
         fun shadeOf(px: IntArray): Int = if (g == null) 0 else {
             val levels = (px.indices step 2).map { i -> g.getOrElse(px[i + 1] * clean.width + px[i]) { 0 } }.sorted()
@@ -2405,13 +2418,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     var pl = Int.MAX_VALUE; var pr = Int.MIN_VALUE; var pt = Int.MAX_VALUE; var pb = Int.MIN_VALUE
                     for (j in piece.indices step 2) { pl = min(pl, piece[j]); pr = max(pr, piece[j]); pt = min(pt, piece[j + 1]); pb = max(pb, piece[j + 1]) }
                     if (max(pr - pl, pb - pt) < sp * 0.6f || piece.size / 2 < sp * sp * 0.08f) continue
+                    if (!owns(piece)) continue
                     val shade = shadeOf(piece)
-                    Outline.loops(piece).forEach { loop -> out += IntArray(loop.size) { loop[it].toInt() }; shades += shade }
+                    Outline.loops(piece).forEach { loop -> out += Outline.simplified(loop).let { sl -> IntArray(sl.size) { sl[it].toInt() } }; shades += shade }
                 }
                 continue
             }
+            if (!owns(px)) continue
             val shade = shadeOf(px)
-            Outline.loops(px).forEach { loop -> out += IntArray(loop.size) { loop[it].toInt() }; shades += shade }
+            Outline.loops(px).forEach { loop -> out += Outline.simplified(loop).let { sl -> IntArray(sl.size) { sl[it].toInt() } }; shades += shade }
         }
         return out to shades
     }

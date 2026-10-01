@@ -168,19 +168,26 @@ internal object ScoreTools {
         private set
     /** What the other looks at the bar up saw. */
     private var looked: List<com.inksheets.core.omr.Measure> = emptyList()
+    /** Changed whenever another bar comes up (or the check ends): a look for an earlier one is let go. */
+    private var lookToken = 0
+    /** Looked further at the bar up already (once is enough: the reader sees the same each time). */
+    private var lookedDeeper = false
 
     /** The bar up looked at again in the background; the readings offered made again with what was seen, if it is still up. */
     private fun lookAt(s: SheetsState, m: com.inksheets.core.omr.Measure, deeper: Boolean) {
         val path = s.currentPath ?: return
         val width = scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 } ?: return
         val number = m.number
+        val token = lookToken
+        if (deeper) lookedDeeper = true
         looking = true
-        Transcriber.lookAgain(s, File(path), m, width, deeper) { seen ->
-            if (!checking || barUp(s)?.number != number) return@lookAgain
+        Transcriber.lookAgain(s, File(path), m, width, deeper, wanted = { token == lookToken }) { seen ->
+            if (token != lookToken || !checking || barUp(s)?.number != number) return@lookAgain
             looking = false
             looked = looked + seen
             val now = barUp(s) ?: return@lookAgain
-            offered = com.inksheets.core.omr.BarChoices.of(now, 3, rejected = rejected, deeper = deeper, looked = looked)
+            // As far as the user has gone with this bar now - not as when this look began.
+            offered = com.inksheets.core.omr.BarChoices.of(now, 3, rejected = rejected, deeper = askedAgain, looked = looked)
             // Nothing left to offer, even looked at further: left in doubt, on to the next.
             if (offered.isEmpty()) { said = "No other reading of bar $number - left in doubt"; next(s); return@lookAgain }
             changed()
@@ -205,7 +212,7 @@ internal object ScoreTools {
     }
 
     private fun showBar(s: SheetsState) {
-        rejected = ArrayList(); askedAgain = false; looked = emptyList(); looking = false
+        rejected = ArrayList(); askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
         val m = barUp(s) ?: run { endCheck(); return }
         offered = com.inksheets.core.omr.BarChoices.of(m, 3)
         lookAt(s, m, deeper = false)
@@ -228,8 +235,8 @@ internal object ScoreTools {
         rejected += offered.map { it.events }
         val more = com.inksheets.core.omr.BarChoices.of(m, 3, rejected = rejected, deeper = true, looked = looked)
         askedAgain = true
-        // Looked at further still, whatever is offered meanwhile: what that sees joins in.
-        lookAt(s, m, deeper = true)
+        // Looked at further still (once), whatever is offered meanwhile: what that sees joins in.
+        if (!lookedDeeper) lookAt(s, m, deeper = true)
         if (more.isEmpty() && !looking) { said = "No other reading of bar ${m.number} - left in doubt"; next(s); return }
         offered = more
         changed()
@@ -245,6 +252,7 @@ internal object ScoreTools {
     fun endCheck() {
         checking = false
         looking = false
+        lookToken++
         offered = emptyList()
         selection = null
         changed()
@@ -396,10 +404,19 @@ internal object ScoreTools {
                     out += paper(m, k, above, below, PAPER)
                     out += drawn
                     // What the redraw does not draw, kept as printed: whole, never cut at the paper's edge.
-                    // Each in its own shade: ink black, pencil and highlighter light, as printed.
-                    if (m.kept.isNotEmpty()) m.kept.indices.groupBy { (m.keptShade.getOrNull(it) ?: 0) / 32 }.forEach { (band, loops) ->
+                    // Each in its own shade: ink black, pencil and highlighter light, as printed. Its own
+                    // and its neighbours' on the line that reach into it (each shape is kept by one bar).
+                    val paperTop = (m.box.top - m.space * above) ; val paperBottom = (m.box.bottom + m.space * below)
+                    val shapes = score.measures.filter { o -> o.page == m.page && o.staff == m.staff && kotlin.math.abs(o.number - m.number) <= 3 }.flatMap { o ->
+                        o.kept.indices.filter { i -> o === m || o.kept[i].let { loop ->
+                            var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+                            for (j in loop.indices step 2) { l = minOf(l, loop[j]); r = maxOf(r, loop[j]); t = minOf(t, loop[j + 1]); b = maxOf(b, loop[j + 1]) }
+                            r >= m.box.left && l <= m.box.right && b >= paperTop && t <= paperBottom
+                        } }.map { i -> o.kept[i] to (o.keptShade.getOrNull(i) ?: 0) }
+                    }
+                    shapes.indices.groupBy { shapes[it].second / 32 }.forEach { (band, ids) ->
                         val grey = (band * 32 + 16).coerceAtMost(220).let { if (band == 0) 0 else it }
-                        out += PageMark(PageMark.Kind.FILL, loops.map { i -> m.kept[i].let { loop -> FloatArray(loop.size) { loop[it] * k } } },
+                        out += PageMark(PageMark.Kind.FILL, ids.map { i -> shapes[i].first.let { loop -> FloatArray(loop.size) { loop[it] * k } } },
                             keptColor ?: if (band == 0) INK else (0xFF shl 24) or (grey shl 16) or (grey shl 8) or grey)
                     }
                 }

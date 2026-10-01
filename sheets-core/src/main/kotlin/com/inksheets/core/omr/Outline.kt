@@ -125,4 +125,39 @@ object Outline {
         }
         return out
     }
+
+    /**
+     * [loop] (x, y pairs, closed) with every corner dropped that lies within [tolerance] of the line
+     * its neighbours would make without it (Douglas-Peucker, per side of the loop): a pixel
+     * staircase along a slant becomes one edge - the shape the same to the eye, far fewer points.
+     */
+    fun simplified(loop: FloatArray, tolerance: Float = 0.6f): FloatArray {
+        val n = loop.size / 2
+        if (n <= 4) return loop
+        // Split the loop at its two points furthest apart, and simplify each half.
+        var far = 0; var best = -1f
+        for (i in 1 until n) { val dx = loop[2 * i] - loop[0]; val dy = loop[2 * i + 1] - loop[1]; val d = dx * dx + dy * dy; if (d > best) { best = d; far = i } }
+        val keep = BooleanArray(n); keep[0] = true; keep[far] = true
+        fun run(a: Int, b: Int) {
+            // Indices a..b going round (b may wrap past n).
+            val stack = ArrayDeque<Pair<Int, Int>>(); stack += a to b
+            while (stack.isNotEmpty()) {
+                val (i0, i1) = stack.removeLast()
+                if (i1 - i0 < 2) continue
+                val ax = loop[2 * (i0 % n)]; val ay = loop[2 * (i0 % n) + 1]; val bx = loop[2 * (i1 % n)]; val by = loop[2 * (i1 % n) + 1]
+                val len = kotlin.math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)).coerceAtLeast(1e-6f)
+                var worst = -1f; var at = -1
+                for (k in i0 + 1 until i1) {
+                    val px = loop[2 * (k % n)]; val py = loop[2 * (k % n) + 1]
+                    val d = kotlin.math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len
+                    if (d > worst) { worst = d; at = k }
+                }
+                if (worst > tolerance) { keep[at % n] = true; stack += i0 to at; stack += at to i1 }
+            }
+        }
+        run(0, far); run(far, n)
+        val out = ArrayList<Float>()
+        for (i in 0 until n) if (keep[i]) { out += loop[2 * i]; out += loop[2 * i + 1] }
+        return if (out.size >= 6) out.toFloatArray() else loop
+    }
 }

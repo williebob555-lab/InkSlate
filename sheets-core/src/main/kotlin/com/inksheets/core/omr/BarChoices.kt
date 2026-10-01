@@ -41,7 +41,8 @@ object BarChoices {
     private class Edit(val index: Int, val kind: String, val cost: Float, val say: String, val make: ((Event) -> Event?)? = null, val add: Event? = null)
 
     private fun withBase(e: Event, base: Int): Event = when (e) {
-        is Note -> e.copy(duration = e.duration.copy(base = base))
+        // Another value: the print's beam and stem end it was read with no longer go with it.
+        is Note -> e.copy(duration = e.duration.copy(base = base), beam = if (base == e.duration.base) e.beam else 0, stemTip = if (base == e.duration.base) e.stemTip else null)
         is Rest -> e.copy(duration = e.duration.copy(base = base))
     }
 
@@ -74,7 +75,18 @@ object BarChoices {
         for ((i, e) in events.withIndex()) {
             // Where the trained reader gave its odds, each change costs as much as it is less likely.
             val odds = (e as? Note)?.odds.orEmpty()
-            if (odds.size == 8) { out += likely(events, i, e as Note, odds); continue }
+            if (odds.size == 8) {
+                out += likely(events, i, e as Note, odds)
+                // A step higher or lower, or a chord's head less: the trained reader's odds say nothing of these.
+                val sureOf = e.confidence
+                if (e.steps.size > 1) for (st in e.steps) out += Edit(i, "chord-head", cost("chord-head", sureOf), "${named(events, i)}: one head less", { n ->
+                    (n as Note).let { c -> val keep = c.steps.indices.filter { c.steps[it] != st }; c.copy(steps = keep.map { c.steps[it] }, pitches = keep.map { c.pitches[it] }) }
+                })
+                if (e.steps.size == 1) for (d in listOf(-1, 1)) out += Edit(i, "pitch", cost("pitch", sureOf), "${named(events, i)} a step ${if (d < 0) "higher" else "lower"}", { n ->
+                    (n as Note).let { c -> val st = c.steps[0] + d; c.copy(steps = listOf(st), pitches = listOf(pitchOf(st)), accidentals = emptyMap()) }
+                })
+                continue
+            }
             // A note the reader was surer of costs more to change.
             val sure = (e as? Note)?.confidence ?: 0.85f
             val base = e.duration.base

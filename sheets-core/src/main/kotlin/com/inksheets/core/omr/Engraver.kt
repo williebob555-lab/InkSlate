@@ -172,7 +172,8 @@ object Engraver {
         for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)
         // A line's first bar, or one changing clef, key or time: those redrawn where printed, in
         // the room before its first note.
-        if (m.showsClef || m.showsKey || m.showsTime || m.repeatStart || m.segno || m.coda) drawStart(marks, m, false, 0.3f)
+        // (A repeat's start, a segno or a coda stay as printed: kept, not drawn again.)
+        if (m.showsClef || m.showsKey || m.showsTime) drawStart(marks, m.copy(repeatStart = false, segno = false, coda = false), false, 0.3f)
         val placed = m.events.map { it to (it.x - m.box.left) / m.space }
         drawEvents(marks, placed, m, width)
         drawDirections(marks, m, width) { x -> (x - m.box.left) / m.space }
