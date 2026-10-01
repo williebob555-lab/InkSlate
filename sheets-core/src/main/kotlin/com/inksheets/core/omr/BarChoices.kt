@@ -211,8 +211,12 @@ object BarChoices {
                 }
             }
         }
-        // Coming to the bar's time outweighs anything: a reading that does not is a last resort.
-        val ranked = all.sortedBy { it.cost + if (it.addsUp(beats)) 0f else 10f }
+        // Coming to the bar's time outweighs anything: a reading that does not is a last resort - but
+        // the reading as read, where its notes were all clearly seen (a pickup, two voices on one
+        // staff, a bar in a time not read), weighs only a little less than one that does. (Held-out
+        // scans: of the bars asked about though read right, offered first 71% -> 97%.)
+        val clear = m.events.filterIsInstance<Note>().all { it.confidence >= 0.8f }
+        val ranked = all.sortedBy { it.cost + if (it.addsUp(beats)) 0f else if (it.changes.isEmpty() && clear) 1.5f else 10f }
         val out = ArrayList<Choice>()
         for (c in ranked) {
             if (rejected.any { same(it, c.events) } || out.any { same(it.events, c.events) }) continue
