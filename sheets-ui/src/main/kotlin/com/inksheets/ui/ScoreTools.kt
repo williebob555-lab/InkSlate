@@ -222,7 +222,7 @@ internal object ScoreTools {
 
     private fun showBar(s: SheetsState) {
         rejected = ArrayList(); askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
-        barPicture = null
+        barPicture = null; editing = null
         val m = barUp(s) ?: run { endCheck(); return }
         offered = com.inksheets.core.omr.BarChoices.of(m, 3)
         // Its picture first (quick), then the looks again.
@@ -251,6 +251,32 @@ internal object ScoreTools {
         next(s)
     }
 
+    /** The bar up being put right by hand (none of the readings is it): its events as they stand, or null. */
+    var editing by mutableStateOf<List<com.inksheets.core.omr.Event>?>(null)
+        private set
+    /** Which of [editing]'s events is chosen to change. */
+    var editAt by mutableStateOf(0)
+
+    /** Put bar up right by hand, starting from [choice] - the reading nearest what is printed. */
+    fun startEdit(choice: com.inksheets.core.omr.BarChoices.Choice) { editing = choice.events; editAt = 0 }
+
+    /** One change made by hand: [change] gives the events anew; the event chosen kept in range. */
+    fun edit(change: (List<com.inksheets.core.omr.Event>) -> List<com.inksheets.core.omr.Event>) {
+        val now = editing ?: return
+        val next = change(now)
+        editing = next
+        editAt = editAt.coerceIn(0, maxOf(0, next.size - 1))
+    }
+
+    fun cancelEdit() { editing = null }
+
+    /** The bar as put right by hand is what it is: kept (and taught), and on to the next. */
+    fun finishEdit(s: SheetsState) {
+        val events = editing ?: return
+        editing = null
+        pick(s, com.inksheets.core.omr.BarChoices.Choice(events, listOf("Put right by hand"), 0f))
+    }
+
     /** None of those: others, looked for further; when there are none left, on to the next bar. */
     fun noneOfThese(s: SheetsState) {
         val m = barUp(s) ?: return
@@ -264,6 +290,18 @@ internal object ScoreTools {
         changed()
     }
 
+    /** Bar up is not one bar as read (part of one, or two run together): noted for teaching, and on to the next. */
+    fun notOneBar(s: SheetsState) {
+        val path = s.currentPath ?: return
+        val m = barUp(s) ?: return
+        scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
+            val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
+            Transcriber.recordNotABar(s, File(path), read, w)
+        }
+        said = "Bar ${m.number} noted as not one bar"
+        next(s)
+    }
+
     /** Leave bar up as it is, and on to the next. */
     fun next(s: SheetsState) {
         if (checkAt + 1 >= checkBars.size) { endCheck(); said = "All the bars in doubt gone through"; return }
@@ -273,6 +311,7 @@ internal object ScoreTools {
 
     fun endCheck() {
         checking = false
+        editing = null
         looking = false
         barPicture = null
         lookToken++

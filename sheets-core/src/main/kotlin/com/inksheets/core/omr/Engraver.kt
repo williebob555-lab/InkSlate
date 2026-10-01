@@ -30,8 +30,11 @@ object Engraver {
         return Slab(pts.toFloatArray())
     }
 
-    /** Measures laid out: the shapes, how wide, and where each measure starts and ends. */
-    class Drawing(val marks: List<Mark>, val width: Float, val measures: List<Pair<Float, Float>>)
+    /**
+     * Measures laid out: the shapes, how wide, where each measure starts and ends, and where each of
+     * its events stands (x in spaces, a measure's in its order) - what a tap on the drawing is on.
+     */
+    class Drawing(val marks: List<Mark>, val width: Float, val measures: List<Pair<Float, Float>>, val events: List<List<Float>> = emptyList())
 
     const val LINE = 0.13f
     const val STEM = 0.12f
@@ -49,14 +52,19 @@ object Engraver {
 
     private fun widthOf(d: Duration) = when (d.base) { 1 -> 4f; 2 -> 3f; 4 -> 2.4f; 8 -> 1.9f; else -> 1.6f } + d.dots * 0.4f
 
-    /** A line of [measures] drawn in turn, from x 0. */
-    fun line(measures: List<Measure>): Drawing {
+    /**
+     * A line of [measures] drawn in turn, from x 0. [lineStart]: the first bar shows its clef and key
+     * as a line's first bar does; otherwise only what each bar prints itself (one bar shown alone,
+     * beside the print of it).
+     */
+    fun line(measures: List<Measure>, lineStart: Boolean = true): Drawing {
         val marks = ArrayList<Mark>()
         val spans = ArrayList<Pair<Float, Float>>()
+        val eventXs = ArrayList<List<Float>>()
         var x = 0.3f
         for ((mi, m) in measures.withIndex()) {
             val start = x
-            x = drawStart(marks, m, mi == 0, x)
+            x = drawStart(marks, m, mi == 0 && lineStart, x)
             x += 0.6f
             // Notes and rests, each its own room; beamed notes grouped a beat at a time.
             val placed = ArrayList<Pair<Event, Float>>()
@@ -67,6 +75,7 @@ object Engraver {
                 x += widthOf(e.duration)
             }
             drawEvents(marks, placed, m, x + 0.4f)
+            eventXs += placed.map { it.second }
             // Dynamics, hairpins and slurs where they were printed among the notes: a page x mapped
             // across by the notes either side of it.
             val anchors = placed.map { (e, lx) -> e.x to lx }.sortedBy { it.first }
@@ -107,7 +116,7 @@ object Engraver {
         }
         val end = x
         for (i in 0..4) marks.add(0, Stroke(0f, i.toFloat(), end, i.toFloat(), LINE))
-        return Drawing(marks, end, spans)
+        return Drawing(marks, end, spans, eventXs)
     }
 
     /**

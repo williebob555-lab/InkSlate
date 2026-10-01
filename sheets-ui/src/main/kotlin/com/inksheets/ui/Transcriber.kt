@@ -25,7 +25,7 @@ internal object Transcriber {
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 10
+    private const val READER = 11
 
     /**
      * Where [file]'s reading is kept: a page to a file, in the library's own `.inksheets/readings`
@@ -226,13 +226,31 @@ internal object Transcriber {
                 state.platform.peek(file)?.use { peek ->
                     val page = peek.render(m.page, width) ?: return@use null
                     val sp = m.space
-                    val l = maxOf(0, (m.box.left - sp).toInt()); val r = minOf(page.width, (m.box.right + sp).toInt())
-                    val t = maxOf(0, (m.box.top - sp * 3.5f).toInt()); val b = minOf(page.height, (m.box.bottom + sp * 3.5f).toInt())
+                    // A little of the bars either side, so a bar split or run together where it should not be shows as such.
+                    val l = maxOf(0, (m.box.left - sp * 3).toInt()); val r = minOf(page.width, (m.box.right + sp * 3).toInt())
+                    // As far up and down as the bar's ink goes - a note high on ledger lines, a slur over it -
+                    // to the first clear gap, at most seven spaces from the staff.
+                    val px = IntArray(page.width * page.height).also { page.readPixels(it) }
+                    fun inkRow(y: Int): Boolean = y in 0 until page.height && (maxOf(0, m.box.left)..minOf(page.width - 1, m.box.right)).any { x ->
+                        val c = px[y * page.width + x]; ((c shr 16 and 0xFF) + (c shr 8 and 0xFF) + (c and 0xFF)) < 3 * 140 }
+                    fun reach(from: Int, step: Int): Int {
+                        var y = from; var last = from; var gap = 0
+                        while (kotlin.math.abs(y - from) < sp * 7 && gap < sp * 1.2f) { y += step; if (inkRow(y)) { last = y; gap = 0 } else gap++ }
+                        return last
+                    }
+                    val t = maxOf(0, minOf(reach(m.box.top, -1), (m.box.top - sp * 2.5f).toInt()) - (sp * 0.6f).toInt())
+                    val b = minOf(page.height, maxOf(reach(m.box.bottom, 1), (m.box.bottom + sp * 2.5f).toInt()) + (sp * 0.6f).toInt())
                     if (r - l < 4 || b - t < 4) return@use null
                     val out = androidx.compose.ui.graphics.ImageBitmap(r - l, b - t)
-                    androidx.compose.ui.graphics.Canvas(out).drawImageRect(page,
+                    val canvas = androidx.compose.ui.graphics.Canvas(out)
+                    canvas.drawImageRect(page,
                         androidx.compose.ui.unit.IntOffset(l, t), androidx.compose.ui.unit.IntSize(r - l, b - t),
                         androidx.compose.ui.unit.IntOffset.Zero, androidx.compose.ui.unit.IntSize(r - l, b - t), androidx.compose.ui.graphics.Paint())
+                    // The bars either side dimmed: the bar asked about is what is left bright.
+                    val dim = androidx.compose.ui.graphics.Paint().apply { color = androidx.compose.ui.graphics.Color(0xB0FFFFFF) }
+                    val bl = (m.box.left - l).toFloat(); val br = (m.box.right - l).toFloat()
+                    if (bl > 0) canvas.drawRect(0f, 0f, bl, (b - t).toFloat(), dim)
+                    if (br < r - l) canvas.drawRect(br, 0f, (r - l).toFloat(), (b - t).toFloat(), dim)
                     out
                 }
             }.getOrNull()
@@ -273,6 +291,29 @@ internal object Transcriber {
         val times = synchronized(pageTimes) { pageTimes.takeLast(30) }
         if (times.isEmpty()) return null
         return "About ${"%.1f".format(times.average() / 1000.0)} s a page on this device (${times.size} page${if (times.size == 1) "" else "s"}, slowest ${"%.1f".format(times.max() / 1000.0)} s)"
+    }
+
+    /**
+     * Bar [m] of [file] is not one bar as read - its barlines found wrong (a stem taken for one, or one
+     * missed) - written down beside the fixes, for finding and teaching barlines.
+     */
+    fun recordNotABar(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int) {
+        val root = state.root ?: return
+        val rel = state.relative(file) ?: return
+        looker.execute {
+            runCatching {
+                val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
+                val line = buildString {
+                    append("{\"kind\":\"not one bar\",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
+                    append(",\"id\":\"").append(idOf(file)).append('"')
+                    append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
+                    append(",\"width\":").append(width)
+                    append(",\"box\":[").append(m.box.left).append(',').append(m.box.top).append(',').append(m.box.right).append(',').append(m.box.bottom).append(']')
+                    append(",\"at\":").append(System.currentTimeMillis()).append('}')
+                }
+                File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
+            }.onFailure { state.platform.log("Keeping a barline mistake for teaching failed: ${it.message}") }
+        }
     }
 
     /** One look at a time: a phone renders and reads one page at once, never a pile of them. */

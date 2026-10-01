@@ -119,8 +119,10 @@ class ReadingBenchmark {
     fun markPage(f: File, page: Int, scan: Boolean, shots: Boolean, usePrinted: Boolean = false): PageResult? {
         val (printed, dpi) = OmrRealPagesTest().renderAt(f, page) ?: return null
         val keyRaw = AnswerKey.read(f, page, dpi) ?: return null
-        val turn = if (scan) 0.6 else 0.0
-        val greyScan = if (scan) scannedGrey(printed, turn, (f.name + page).hashCode().toLong()) else null
+        val warpKind = if (scan) System.getProperty("inksheets.bench.warp") else null
+        val turn = if (!scan) 0.0 else if (warpKind == "tilt3") 3.0 else 0.6
+        val warp = warpKind?.takeIf { it != "tilt3" }?.let { Warp(it, printed.width, printed.height) }
+        val greyScan = if (scan) scannedGrey(printed, turn, (f.name + page).hashCode().toLong(), warp) else null
         val ink = if (greyScan == null) printed else Ink.fromGrey(printed.width, printed.height, greyScan)
         // The trained reader, given the page in grey: the scan's, or the print drawn again.
         val greyPage = if (net == null) null else greyScan ?: org.apache.pdfbox.Loader.loadPDF(f).use { d ->
@@ -129,8 +131,11 @@ class ReadingBenchmark {
             com.inksheets.core.omr.Strips.grey(px)
         }
         val a = Math.toRadians(-turn); val cx = printed.width / 2.0; val cy = printed.height / 2.0
-        fun tx(x: Float, y: Float) = (Math.cos(a) * (x - cx) + Math.sin(a) * (y - cy) + cx).toFloat()
-        fun ty(x: Float, y: Float) = (-Math.sin(a) * (x - cx) + Math.cos(a) * (y - cy) + cy).toFloat()
+        fun rx(x: Float, y: Float) = Math.cos(a) * (x - cx) + Math.sin(a) * (y - cy) + cx
+        fun ry(x: Float, y: Float) = -Math.sin(a) * (x - cx) + Math.cos(a) * (y - cy) + cy
+        // Where a point of the flat page lands on the scan: turned, then warped.
+        fun tx(x: Float, y: Float) = (warp?.forward(rx(x, y), ry(x, y))?.first ?: rx(x, y)).toFloat()
+        fun ty(x: Float, y: Float) = (warp?.forward(rx(x, y), ry(x, y))?.second ?: ry(x, y)).toFloat()
         val turned = if (!scan) keyRaw else keyRaw.map { s -> s.copy(x = tx(s.x, s.y), y = ty(s.x, s.y)) }
         val vectors = VectorKey.read(f, page, dpi)?.let { v ->
             if (!scan) v else VectorKey.Page(
@@ -352,7 +357,10 @@ class ReadingBenchmark {
             val t0 = System.nanoTime()
             val again = if (looking) Recognizer().lookAgain(ink, greyPage!!, net!!, m) else emptyList()
             if (looking) synchronized(looks) { looks.merge("ms looking", ((System.nanoTime() - t0) / 1_000_000).toInt(), Int::plus); looks.merge("bars looked at", 1, Int::plus) }
-            val offered = com.inksheets.core.omr.BarChoices.of(m, 3, looked = again)
+            // -Dinksheets.bench.overlay=1: a dozen readings laid over the bar as printed, the best lined up three offered.
+            val overlay = System.getProperty("inksheets.bench.overlay")?.toFloatOrNull()
+            val offered = if (overlay == null) com.inksheets.core.omr.BarChoices.of(m, 3, looked = again)
+                else com.inksheets.core.omr.Overlay.rank(ink, m, com.inksheets.core.omr.BarChoices.of(m, 12, looked = again), overlay).take(3)
             if (!now && looking) {
                 val rightIn = again.map { barRight(mi, it.events) == true }
                 synchronized(looks) {
@@ -471,21 +479,54 @@ class ReadingBenchmark {
 
     private fun scanned(ink: Ink, degrees: Double, seed: Long): Ink = Ink.fromGrey(ink.width, ink.height, scannedGrey(ink, degrees, seed))
 
-    private fun scannedGrey(ink: Ink, degrees: Double, seed: Long): IntArray {
+    /**
+     * A scan's distortion beyond a slight turn (-Dinksheets.bench.warp=): "keystone" - a phone's
+     * photo, the bottom of the page 6% narrower than the top; "spine" - a book pressed on the glass,
+     * its left edge in the gutter: the first fifth of the page squeezed sideways (by half at the
+     * edge), its staves pinched toward the middle and sagging there; "tilt3" (a 3 degree turn, no
+     * warp). [forward] takes a point of the page as printed to where it is on the scan, [inverse] back.
+     */
+    internal class Warp(val kind: String, w: Int, private val h: Int) {
+        private val cx = w / 2.0; private val cy = h / 2.0
+        private val band = w * 0.2
+        private fun near(x: Double) = Math.exp(-x.coerceAtLeast(0.0) / band)
+        private fun squeeze(x: Double) = x - 0.5 * band * (1 - near(x))
+        fun forward(x: Double, y: Double): Pair<Double, Double> = when (kind) {
+            "keystone" -> (cx + (x - cx) * (1 - 0.06 * y / h)) to y
+            "spine" -> squeeze(x) to (cy + (y - cy) * (1 - 0.08 * near(x)) + 0.012 * h * near(x))
+            else -> x to y
+        }
+        fun inverse(x: Double, y: Double): Pair<Double, Double> = when (kind) {
+            "keystone" -> (cx + (x - cx) / (1 - 0.06 * y / h)) to y
+            "spine" -> {
+                // The squeeze undone by halving: it only grows with x.
+                var lo = 0.0; var hi = x + band
+                if (x <= 0) lo = x - band
+                repeat(40) { val mid = (lo + hi) / 2; if (squeeze(mid) < x) lo = mid else hi = mid }
+                val px = (lo + hi) / 2
+                px to (cy + (y - 0.012 * h * near(px) - cy) / (1 - 0.08 * near(px)))
+            }
+            else -> x to y
+        }
+    }
+
+    private fun scannedGrey(ink: Ink, degrees: Double, seed: Long, warp: Warp? = null): IntArray {
         val r = java.util.Random(seed)
         val a = Math.toRadians(degrees)
         val cos = Math.cos(a); val sin = Math.sin(a)
         val cx = ink.width / 2.0; val cy = ink.height / 2.0
         val grey = IntArray(ink.width * ink.height)
-        for (y in 0 until ink.height) for (x in 0 until ink.width) {
+        for (y0 in 0 until ink.height) for (x0 in 0 until ink.width) {
+            // The point of the (turned) page this pixel of the scan shows.
+            val (x, y) = warp?.inverse(x0.toDouble(), y0.toDouble()) ?: (x0.toDouble() to y0.toDouble())
             var dark = 0.0
             for (dy in -1..1) for (dx in -1..1) {
                 val sx = cos * (x + dx * 0.7 - cx) + sin * (y + dy * 0.7 - cy) + cx
                 val sy = -sin * (x + dx * 0.7 - cx) + cos * (y + dy * 0.7 - cy) + cy
                 if (ink[sx.toInt(), sy.toInt()]) dark += 1.0 / 7
             }
-            val paper = 220 + (x * 25 / ink.width) - (y * 10 / ink.height)
-            grey[y * ink.width + x] = (paper - dark.coerceAtMost(1.0) * 210 + r.nextGaussian() * 14).toInt().coerceIn(0, 255)
+            val paper = 220 + (x0 * 25 / ink.width) - (y0 * 10 / ink.height)
+            grey[y0 * ink.width + x0] = (paper - dark.coerceAtMost(1.0) * 210 + r.nextGaussian() * 14).toInt().coerceIn(0, 255)
         }
         return grey
     }
