@@ -660,6 +660,22 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * the ledger line at the staff's edge ([lines]: the page with its staff and ledger lines) -
      * without one it is a dynamic's loop, an accent, a word's letter, not a note.
      */
+    /**
+     * Whether head [h] has a stem: an upright stroke at its left or right side, from about its middle,
+     * two and a half spaces long or more - a note's, where a letter of a word has none.
+     */
+    private fun hasStem(h: Head, s: Staff, lines: Ink): Boolean {
+        val sp = s.space
+        val w = tpl(h.kind, sp).ink.width
+        val need = (sp * 2.5f).toInt()
+        for (x in listOf(h.x - 2..h.x + 2, h.x + w - 3..h.x + w + 2).flatten()) for (dir in listOf(-1, 1)) {
+            var y = h.y; var gap = 0; var len = 0
+            while (len < need && gap <= 2) { y += dir; if (lines[x, y]) { len++; gap = 0 } else { gap++; len++ } }
+            if (len >= need && gap <= 2) return true
+        }
+        return false
+    }
+
     private fun onLedger(h: Head, s: Staff, lines: Ink): Boolean {
         if (h.step in -1..9) return true
         val w = tpl(h.kind, s.space).ink.width - 2
@@ -2012,8 +2028,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
             val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.confidence)
             // The trained reader takes a word's letter off the staff for a head (legato's "o"): off
-            // the staff, a head needs its ledger line. (A PDF's own heads are its notes.)
-            if (p.learned && lines != null && !onLedger(h, s, lines)) continue
+            // the staff, a head needs its ledger line - or, where a worn scan's ledger line is too
+            // faint to see, its stem. (A PDF's own heads are its notes.)
+            if (p.learned && lines != null && !onLedger(h, s, lines) && !hasStem(h, s, lines)) continue
             symbolOf[h] = sym
             out[si] += h
         }

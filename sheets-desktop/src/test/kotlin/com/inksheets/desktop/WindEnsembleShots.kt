@@ -31,7 +31,10 @@ class WindEnsembleShots {
         assumeTrue(System.getProperty("inksheets.omr") == "wind")
         val pieces = listOf("Chester.pdf", "Be Glad Then, America.pdf", "Fanfare and Allegro.pdf", "Highwater Rising.pdf", "Untitled (p2-3).pdf", "Untitled (p8-9).pdf")
         val shots = System.getProperty("inksheets.shots")
+        // -Dinksheets.omr.only=Glad: just the pieces whose names have it.
+        val only = System.getProperty("inksheets.omr.only")
         for (name in pieces) {
+            if (only != null && !name.contains(only, ignoreCase = true)) continue
             val file = File(music, name)
             if (!file.isFile) continue
             val pages = Loader.loadPDF(file).use { it.numberOfPages }
