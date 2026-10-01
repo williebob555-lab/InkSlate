@@ -191,19 +191,22 @@ object Engraver {
     }
 
     /**
-     * A multi-bar rest [m] drawn where it is: its staff, the thick bar across the middle with its
-     * end strokes, and how many bars over it.
+     * A multi-bar rest [m] drawn where it is: its staff, the clef, key and time where the bar shows
+     * them (a line beginning with a long rest), then the thick bar across the middle with its end
+     * strokes, and how many bars over it.
      */
     fun multiRest(m: Measure): Drawing {
         val marks = ArrayList<Mark>()
         val width = m.box.width / m.space
         for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)
-        val a = width * 0.18f; val b = width * 0.82f
+        val from = if (m.showsClef || m.showsKey || m.showsTime) drawStart(marks, m.copy(repeatStart = false, segno = false, coda = false), false, 0.3f) + 0.6f else 0f
+        val room = (width - from).coerceAtLeast(1f)
+        val a = from + room * 0.18f; val b = from + room * 0.82f
         marks += Slab(floatArrayOf(a, 1.6f, b, 1.6f, b, 2.4f, a, 2.4f))
         marks += Stroke(a, 1f, a, 3f, 0.16f); marks += Stroke(b, 1f, b, 3f, 0.16f)
         val n = m.bars.toString()
         val digitW = 1.8f
-        n.forEachIndexed { i, c -> marks += Symbol("timeSig$c", width / 2 - n.length * digitW / 2 + i * digitW, -1.2f) }
+        n.forEachIndexed { i, c -> marks += Symbol("timeSig$c", (a + b) / 2 - n.length * digitW / 2 + i * digitW, -1.2f) }
         marks += Stroke(width, 0f, width, 4f, 0.16f)
         return Drawing(marks, width, listOf(0f to width))
     }
