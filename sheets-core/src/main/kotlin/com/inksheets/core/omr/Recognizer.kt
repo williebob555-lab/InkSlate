@@ -299,13 +299,19 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     c > n * 0.5f
                 }
             }
-            val isStem = stems.any { abs(it - centre) <= t + 2 }
+            // A head's stem runs from the head one way only: a line going on well past the head the
+            // other way too is a barline the head stands against (a pickup's last note), not its stem.
+            val isStem = if (heads.none { it.stemX >= 0 }) stems.any { abs(it - centre) <= t + 2 }
+                else heads.any { h ->
+                    h.stemX >= 0 && abs(h.stemX - centre) <= t + 2 &&
+                        (if (h.stemEnd < h.y) runBottom - h.y else h.y - runTop) <= s.space * 1.2f
+                }
             // Through a head's middle half: a head found a few pixels off, or a wide whole note, may reach a barline at its edge.
             val throughHead = heads.any { h -> val w = tpl(h.kind, s.space).ink.width; centre in h.x + w / 4..h.x + 3 * w / 4 }
             val headNear = isStem || throughHead || (stems.isEmpty() && listOf(runTop, runBottom).any { yEnd -> touching(-1, yEnd) || touching(1, yEnd) })
             val staysOnStaff = above < s.space * 0.6f && below < s.space * 0.6f
             val reachesAnotherStaff = above > s.space * 3 || below > s.space * 3
-            if (debug) println("bar? x=$centre w=$width above=$above below=$below thin=$thin head=$headNear")
+            if (debug) println("bar? x=$centre w=$width above=$above below=$below thin=$thin head=$headNear (stem $isStem, through ${heads.filter { h -> val w = tpl(h.kind, s.space).ink.width; centre in h.x + w / 4..h.x + 3 * w / 4 }.map { "${it.kind}@${it.x},${it.step}" }})")
             if (thin && (staysOnStaff || reachesAnotherStaff) && !headNear) {
                 if (found.isEmpty() || centre - found.last() > s.space * 1.5f) found += centre
                 else found[found.size - 1] = centre   // a double or final barline: its last stroke
@@ -649,6 +655,27 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         var lined = false
     }
 
+    /**
+     * Whether head [h] could be a note where it stands: on or near the staff, or off it standing on
+     * the ledger line at the staff's edge ([lines]: the page with its staff and ledger lines) -
+     * without one it is a dynamic's loop, an accent, a word's letter, not a note.
+     */
+    private fun onLedger(h: Head, s: Staff, lines: Ink): Boolean {
+        if (h.step in -1..9) return true
+        val w = tpl(h.kind, s.space).ink.width - 2
+        val ledger = if (h.step < 0) -2 else 10
+        val ly = s.y(ledger, h.x + w / 2).roundToInt()
+        // A horizontal line under (or through) the head, at least as long as it is wide.
+        return (-1..1).any { dy ->
+            val y = ly + dy
+            var a = h.x + w / 2; var b = a
+            if (!lines[a, y]) return@any false
+            while (lines[a - 1, y] && a > h.x - w) a--
+            while (lines[b + 1, y] && b < h.x + 2 * w) b++
+            b - a + 1 >= w * 0.9f
+        }
+    }
+
     /** Noteheads on [s] between [from] and [to]; [lines] is the page with its staff and ledger lines, to check notes off the staff by. */
     fun heads(clean: Ink, s: Staff, from: Int, to: Int, lines: Ink? = null, filledOnly: Boolean = false): List<Head> {
         val found = ArrayList<Head>()
@@ -733,21 +760,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         found += stacked
         // A note off the staff stands on ledger lines: without one at the staff's edge it is a
         // dynamic's loop, an accent, a word - not a note.
-        if (lines != null) found.retainAll { h ->
-            if (h.step in -1..9) return@retainAll true
-            val w = tpl(h.kind, sp).ink.width - 2
-            val ledger = if (h.step < 0) -2 else 10
-            val ly = s.y(ledger, h.x + w / 2).roundToInt()
-            // A horizontal line under (or through) the head, at least as long as it is wide.
-            (-1..1).any { dy ->
-                val y = ly + dy
-                var a = h.x + w / 2; var b = a
-                if (!lines[a, y]) return@any false
-                while (lines[a - 1, y] && a > h.x - w) a--
-                while (lines[b + 1, y] && b < h.x + 2 * w) b++
-                b - a + 1 >= w * 0.9f
-            }
-        }
+        if (lines != null) found.retainAll { h -> onLedger(h, s, lines) }
         // A hollow head with strokes running off it is a letter's, a digit's or a clef's loop - unless
         // another hollow head sits right above or below it: a chord's heads touch each other.
         found.removeAll { h -> h.crowded && found.none { o -> o !== h && o.kind != "noteheadBlack" && abs(o.x - h.x) <= headW / 3 && abs(o.step - h.step) in 2..3 &&
@@ -1170,7 +1183,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Every staff's heads first: a note high over one staff is also low under the one above,
         // and belongs to whichever it is nearer the middle of.
         clock.mark("symbols")
-        val headsOf = if (this.printed != null) printedHeads(staves) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
+        val headsOf = if (this.printed != null) printedHeads(staves, ink) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
         clock.mark("heads")
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
         if (this.printed == null) fitStemMin(clean, staves, headsOf, t)
@@ -1332,8 +1345,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // Still too long, and a stemless "whole note" (a loop - a flag's curl, a digit's, a letter's) or a
                 // doubtful hollow head among other notes is what makes it so: without it the bar comes out exactly.
                 if (!inVoices && events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) events = withoutLoops(events, carry.time.quarters)
-                // A piece may start with a short bar - a pickup - when what is in it is certain.
-                val pickup = page == 0 && measures.isEmpty() && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
+                // A piece may start with a short bar - a pickup - when what is in it is certain: the
+                // file's first bar, or the first on a line that sets out its time (a book's next study).
+                val pickup = (page == 0 && measures.isEmpty() || i == 0 && showsTime) && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
                     (stated || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
                 // What was seen here and let go: another reading of the bar may want it back.
                 val maybe = dropped.filter { (h, why) -> staffOf[h] == si && h.x >= from - 2 && h.x < to && !why.startsWith("the other staff") }
@@ -1936,7 +1950,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /** The printed heads, each on the staff it is nearest the middle of; cue and grace notes (small) left out, as they take no time in the bar. */
-    private fun printedHeads(staves: List<Staff>): List<MutableList<Head>> {
+    private fun printedHeads(staves: List<Staff>, lines: Ink? = null): List<MutableList<Head>> {
         val p = printed!!
         val all = p.heads
         val out = staves.map { ArrayList<Head>() }
@@ -1954,6 +1968,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val step = ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
             val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.confidence)
+            // The trained reader takes a word's letter off the staff for a head (legato's "o"): off
+            // the staff, a head needs its ledger line. (A PDF's own heads are its notes.)
+            if (p.learned && lines != null && !onLedger(h, s, lines)) continue
             symbolOf[h] = sym
             out[si] += h
         }

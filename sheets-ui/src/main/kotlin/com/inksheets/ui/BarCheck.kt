@@ -61,7 +61,7 @@ fun BoxScope.BarCheck(state: SheetsState) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Which bar, and how far through.
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Bar ${m.number}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Bar ${m.number} · page ${m.page + 1}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("${ScoreTools.checkAt + 1} of $total to check", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             LinearProgressIndicator(progress = { (ScoreTools.checkAt + 1f) / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().height(3.dp))

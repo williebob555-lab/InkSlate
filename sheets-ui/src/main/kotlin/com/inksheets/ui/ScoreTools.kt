@@ -206,7 +206,13 @@ internal object ScoreTools {
     /** The bars in doubt in the part in front, to go through; false when there are none. */
     fun startCheck(s: SheetsState): Boolean {
         val score = scoreHere(s) ?: return false
-        checkBars = score.measures.filter { !it.sure && it.bars == 1 }.map { it.number }
+        // Where you are first: on the page in front, the bars you asked to clean (framed until
+        // checked), then its others; then the pages after it, and those before it last.
+        val here = s.pageShown.first
+        val clean = s.currentPath?.let { cleanedIn(it) }.orEmpty()
+        checkBars = score.measures.filter { !it.sure && it.bars == 1 }
+            .sortedWith(compareBy({ it.page < here }, { it.page != here }, { it.page }, { it.number !in clean }, { it.number }))
+            .map { it.number }
         if (checkBars.isEmpty()) { said = "No bars in doubt"; return false }
         checking = true
         checkAt = 0

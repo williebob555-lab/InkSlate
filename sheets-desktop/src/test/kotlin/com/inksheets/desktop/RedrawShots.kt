@@ -54,10 +54,11 @@ class RedrawShots {
             val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
             val (grey, ink) = draw(width)
             val printed = runCatching { PdfPrinted.read(file, p) }.getOrNull()
-            val rec = Recognizer().apply { traceRests = System.getProperty("inksheets.omr.rests") != null && p == 0 }
+            val rec = Recognizer(debug = System.getProperty("inksheets.omr.debug") != null).apply { traceRests = System.getProperty("inksheets.omr.rests") != null && p == 0 }
             val r = rec.read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) net else null)
             println("REDRAW page ${p + 1}: drawn ${ink.width}x${ink.height}, ${if (printed != null) "PDF's symbols" else "trained reader"}, ${r.measures.size} bars, ${r.measures.count { it.sure }} sure, numbers ${r.measures.firstOrNull()?.number}..${r.measures.lastOrNull()?.number}")
             System.getProperty("inksheets.omr.bars")?.split(",")?.map { it.toInt() }?.let { want ->
+                println("  BARLINES first staff: ${r.barlines.firstOrNull()} space ${r.space}")
                 for (m in r.measures.filter { it.number in want }) println("  BAR ${m.number}: " + m.events.joinToString(" ") { e ->
                     when (e) { is com.inksheets.core.omr.Note -> "n${e.duration.base}${if (e.tie) "~" else ""}${if (e.articulations.isNotEmpty()) e.articulations.toString() else ""}"; is com.inksheets.core.omr.Rest -> "r${e.duration.base}" } } +
                     " | directions " + m.directions.joinToString { "${it.kind}${if (it.above) "^" else "v"} ${it.x.toInt()}..${it.x2.toInt()}" } + " | kept ${m.kept.size} | bars ${m.bars} doubts ${m.doubts}")

@@ -17,7 +17,8 @@ class OmrBarDebug {
         assumeTrue(System.getProperty("inksheets.omr") == "bar")
         val file = File(System.getProperty("inksheets.omr.file")!!)
         val bar = System.getProperty("inksheets.omr.bar")!!.toInt()
-        val (ink, dpi) = OmrRealPagesTest().renderAt(file, 0)!!
+        // -Dinksheets.omr.page=3: another page than the first (1-based).
+        val (ink, dpi) = OmrRealPagesTest().renderAt(file, (System.getProperty("inksheets.omr.page") ?: "1").toInt() - 1)!!
         val r = Recognizer()
         val reading = r.read(ink)
         val m = reading.measures.first { it.number == bar }
