@@ -1157,7 +1157,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
              /** A second look: each staff as the trained reader sees it, a little larger or smaller, higher or lower (see [Staff.looked]). */
              look: Pair<Float, Float>? = null,
              /** Only this staff read (a second look at one bar): the rest of the page left alone. */
-             onlyStaff: Int? = null): PageReading {
+             onlyStaff: Int? = null,
+             /** A picture of a page turned on the glass read turned upright (see [Skew]); off once it is. */
+             level: Boolean = true): PageReading {
+        // A scan or photo turned more than a little: read upright, and what was read put back on the page.
+        if (level && printed == null && look == null && onlyStaff == null) {
+            val deg = Skew.of(ink)
+            if (kotlin.math.abs(deg) >= Skew.LEAST) {
+                val upright = read(Skew.turn(ink, deg), page, firstNumber, carry, null, grey?.let { Skew.turnGrey(it, ink.width, ink.height, deg) }, net, level = false)
+                return Skew.back(upright, deg, ink.width, ink.height)
+            }
+        }
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
         val clock = Clock()
         val staves = staves(ink, t, space)

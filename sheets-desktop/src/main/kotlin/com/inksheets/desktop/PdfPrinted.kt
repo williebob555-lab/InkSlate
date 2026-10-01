@@ -43,9 +43,9 @@ object PdfPrinted {
     fun read(doc: PDDocument, index: Int): Printed? {
         if (index >= doc.numberOfPages) return null
         val page = doc.getPage(index)
-        if (page.rotation != 0) return null
-        val box = page.cropBox
-        val b = Printed.Builder(box.width, box.height)
+        // The page as shown - turned, where it says so (the text stripper's places are as shown already).
+        val space = PageSpace(page)
+        val b = Printed.Builder(space.width, space.height)
         // Characters: where the text stripper puts them (from the page's top left, in points).
         // A character's outline, once per font and code: in ems, y down, from its origin.
         val outlines = HashMap<Pair<String, Int>, List<FloatArray>?>()
@@ -80,12 +80,11 @@ object PdfPrinted {
             }
         }.apply { startPage = index + 1; endPage = index + 1; sortByPosition = false }.getText(doc)
         // Lines and shapes: stems and beams.
-        val left = box.lowerLeftX; val top = box.upperRightY
         object : PDFGraphicsStreamEngine(page) {
             val path = ArrayList<ArrayList<Point2D.Float>>()
             val curved = HashSet<Int>()
             var at = Point2D.Float()
-            fun pt(x: Float, y: Float) = Point2D.Float(x - left, top - y)
+            fun pt(x: Float, y: Float) = Point2D.Float(space.x(x, y), space.y(x, y))
             override fun appendRectangle(p0: Point2D, p1: Point2D, p2: Point2D, p3: Point2D) {
                 path += arrayListOf(pt(p0.x.toFloat(), p0.y.toFloat()), pt(p1.x.toFloat(), p1.y.toFloat()), pt(p2.x.toFloat(), p2.y.toFloat()), pt(p3.x.toFloat(), p3.y.toFloat()))
             }

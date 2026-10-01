@@ -25,9 +25,14 @@ object AndroidPrinted {
     fun read(doc: PDDocument, index: Int): Printed? {
         if (index >= doc.numberOfPages) return null
         val page = doc.getPage(index)
-        if (page.rotation != 0) return null
+        // The page as shown - turned, where it says so (a Mac's print to PDF stores a page sideways,
+        // turned 270 to show it): the text stripper's places are as shown already, drawn lines are not.
         val box = page.cropBox
-        val b = Printed.Builder(box.width, box.height)
+        val rotation = ((page.rotation % 360) + 360) % 360
+        val sideways = rotation == 90 || rotation == 270
+        fun shownX(x: Float, y: Float): Float { val u = x - box.lowerLeftX; val v = y - box.lowerLeftY; return when (rotation) { 90 -> v; 180 -> box.width - u; 270 -> box.height - v; else -> u } }
+        fun shownY(x: Float, y: Float): Float { val u = x - box.lowerLeftX; val v = y - box.lowerLeftY; return when (rotation) { 90 -> u; 180 -> v; 270 -> box.width - u; else -> box.height - v } }
+        val b = Printed.Builder(if (sideways) box.height else box.width, if (sideways) box.width else box.height)
         // A character's outline, once per font and code: in ems, y down, from its origin.
         val outlines = HashMap<Pair<String, Int>, List<FloatArray>?>()
         fun outline(font: com.tom_roush.pdfbox.pdmodel.font.PDFont, code: Int): List<FloatArray>? = outlines.getOrPut((font.name ?: "") to code) {
@@ -78,12 +83,11 @@ object AndroidPrinted {
                 }
             }
         }.apply { startPage = index + 1; endPage = index + 1; sortByPosition = false }.getText(doc)
-        val left = box.lowerLeftX; val top = box.upperRightY
         object : PDFGraphicsStreamEngine(page) {
             val path = ArrayList<ArrayList<PointF>>()
             val curved = HashSet<Int>()
             var at = PointF()
-            fun pt(x: Float, y: Float) = PointF(x - left, top - y)
+            fun pt(x: Float, y: Float) = PointF(shownX(x, y), shownY(x, y))
             override fun appendRectangle(p0: PointF, p1: PointF, p2: PointF, p3: PointF) {
                 path += arrayListOf(pt(p0.x, p0.y), pt(p1.x, p1.y), pt(p2.x, p2.y), pt(p3.x, p3.y))
             }

@@ -32,7 +32,8 @@ object VectorKey {
     fun read(file: File, index: Int, dpi: Float): Page? = runCatching {
         Loader.loadPDF(file).use { doc ->
             val page = doc.getPage(index)
-            val h = page.mediaBox.height
+            // As the page is shown: turned, where it says it is.
+            val space = PageSpace(page)
             val k = dpi / 72f
             val stems = ArrayList<Stem>(); val beams = ArrayList<Beam>(); val dots = ArrayList<Dot>()
             val engine = object : PDFGraphicsStreamEngine(page) {
@@ -40,7 +41,7 @@ object VectorKey {
                 // Which of the path's pieces have curves in them.
                 val curved = HashSet<Int>()
                 var at = Point2D.Float()
-                fun pt(x: Float, y: Float) = Point2D.Float(x * k, (h - y) * k)
+                fun pt(x: Float, y: Float) = Point2D.Float(space.x(x, y) * k, space.y(x, y) * k)
                 override fun appendRectangle(p0: Point2D, p1: Point2D, p2: Point2D, p3: Point2D) {
                     path += arrayListOf(pt(p0.x.toFloat(), p0.y.toFloat()), pt(p1.x.toFloat(), p1.y.toFloat()), pt(p2.x.toFloat(), p2.y.toFloat()), pt(p3.x.toFloat(), p3.y.toFloat()))
                 }

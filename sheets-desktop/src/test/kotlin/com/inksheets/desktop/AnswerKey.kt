@@ -55,9 +55,12 @@ object AnswerKey {
      */
     fun read(file: File, index: Int, dpi: Float): List<Symbol>? = runCatching {
         Loader.loadPDF(file).use { doc ->
-            if (index >= doc.numberOfPages || doc.getPage(index).rotation != 0) return null
+            // A page turned to be shown (rotation set) is read as shown: the stripper's places are.
+            if (index >= doc.numberOfPages) return null
             val out = ArrayList<Symbol>()
             val codesToText = HashMap<String, HashMap<Int, String>>()
+            // Each symbol's font and code, by its place in [out]: to name it by its outline if the font's map proves broken.
+            val glyphOf = HashMap<Int, Triple<String, org.apache.pdfbox.pdmodel.font.PDFont, Int>>()
             val k = dpi / 72f
             object : PDFTextStripper() {
                 // Every glyph as drawn, each once: the stripper's own grouping takes a glyph that looks like an
@@ -101,13 +104,16 @@ object AnswerKey {
                         // A music-font character not known here is kept as OTHER: where something
                         // the key cannot name is printed (a flag in another code, an ornament).
                         val kind = kinds[uni.codePointAt(0)] ?: p.characterCodes?.firstOrNull()?.let { byOutline(p.font, it, fname) } ?: Kind.OTHER
+                        p.characterCodes?.firstOrNull()?.let { glyphOf[out.size] = Triple(fname, p.font, it) }
                         out += Symbol(kind, p.xDirAdj * k, p.yDirAdj * k, p.widthDirAdj * k, uni, p.textMatrix.scalingFactorX * k)
                     }
                 }
             }.apply { startPage = index + 1; endPage = index + 1; sortByPosition = false }.getText(doc)
-            // A font whose different characters all read the same has no usable map.
-            val broken = codesToText.values.any { m -> m.size >= 4 && m.values.toSet().size <= m.size / 2 }
-            if (broken || out.count { it.kind == Kind.HEAD_BLACK || it.kind == Kind.HEAD_HALF || it.kind == Kind.HEAD_WHOLE } < 8) null else out
+            // A font whose different characters all read the same has no usable map: its characters
+            // named by their outlines instead.
+            val broken = codesToText.filterValues { m -> m.size >= 4 && m.values.toSet().size <= m.size / 2 }.keys
+            if (broken.isNotEmpty()) for ((i, g) in glyphOf) if (g.first in broken) out[i] = out[i].copy(kind = byOutline(g.second, g.third, g.first) ?: Kind.OTHER, text = "#${g.third}")
+            if (out.count { it.kind == Kind.HEAD_BLACK || it.kind == Kind.HEAD_HALF || it.kind == Kind.HEAD_WHOLE } < 8) null else out
         }
     }.getOrNull()
 }

@@ -64,10 +64,13 @@ class Strips(torch.utils.data.Dataset):
         # Size and place jitter: the staff tracing is never exact, nor a page's space.
         scale = rng.uniform(0.87, 1.15) if self.scan else 1.0
         dy = rng.uniform(-3, 3) if self.scan else 0.0
+        # Squeezed sideways only, now and then: a book's page curling into its spine on the glass
+        # (heads and spacing narrow, the staff's height as it was).
+        sx = rng.uniform(0.55, 0.95) if self.scan and rng.random() < 0.25 else 1.0
         t = torch.from_numpy(img)[None, None]
-        if scale != 1.0 or dy != 0.0:
+        if scale != 1.0 or dy != 0.0 or sx != 1.0:
             h, w = img.shape
-            t = F.interpolate(t, size=(max(8, int(round(h * scale))), max(16, int(round(w * scale)))), mode="bilinear", align_corners=False)
+            t = F.interpolate(t, size=(max(8, int(round(h * scale))), max(16, int(round(w * scale * sx)))), mode="bilinear", align_corners=False)
             # The top line kept at row 52, give or take dy: the picture placed oy rows down.
             oy = int(round(52 + dy - 52 * scale))
             canvas = torch.ones(1, 1, H, t.shape[-1])
@@ -77,9 +80,9 @@ class Strips(torch.utils.data.Dataset):
                 canvas[..., d0:d0 + n, :] = t[..., s0:s0 + n, :]
             t = canvas
             for o in objs:
-                o[1] = o[1] * scale
+                o[1] = o[1] * scale * sx
                 # A span in doubt is two columns; everything else a column and a row.
-                o[2] = o[2] * scale if o[0] == -3 else o[2] * scale + oy
+                o[2] = o[2] * scale * sx if o[0] == -3 else o[2] * scale + oy
         img = t[0, 0]
         w = img.shape[1]
         # A window of the strip.

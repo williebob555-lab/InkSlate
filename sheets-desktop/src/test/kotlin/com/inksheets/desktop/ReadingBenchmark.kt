@@ -144,12 +144,14 @@ class ReadingBenchmark {
                 v.dots.map { d -> VectorKey.Dot(tx(d.x, d.y), ty(d.x, d.y), d.size) })
         } ?: return null
         // As the app reads a PDF that states its notes: with them (clean pages only - a scan has none).
-        val reading = Recognizer().read(ink, printed = if (usePrinted && !scan) PdfPrinted.read(f, page) else null, grey = greyPage, net = net)
+        // -Dinksheets.bench.nolevel=1: a turned page read as it is, not turned upright first (to measure what that gives).
+        val reading = Recognizer().read(ink, printed = if (usePrinted && !scan) PdfPrinted.read(f, page) else null, grey = greyPage, net = net,
+            level = System.getProperty("inksheets.bench.nolevel") == null)
         if (reading.staves.isEmpty()) return null
         val sp = reading.space
         // Some fonts' heads sit a little off their origin: the key moved by however far most heads sit off a line or space.
         val fracs = turned.filter { it.kind in heads }.mapNotNull { h ->
-            val s = reading.staves.firstOrNull { h.y > it.top - it.space && h.y < it.bottom + it.space && h.x >= it.left && h.x <= it.right } ?: return@mapNotNull null
+            val s = reading.staves.firstOrNull { h.x >= it.left && h.x <= it.right && h.y > it.lineY(0, h.x.toInt()) - it.space && h.y < it.lineY(4, h.x.toInt()) + it.space } ?: return@mapNotNull null
             val exact = (h.y - s.lineY(0, h.x.toInt())) / ((s.lineY(4, h.x.toInt()) - s.lineY(0, h.x.toInt())) / 8f)
             exact - Math.round(exact)
         }.sorted()
@@ -178,7 +180,7 @@ class ReadingBenchmark {
         val keyHeads = key.filter { it.kind in heads }
         // Cue and grace notes - set smaller - take no time in the bar and are left out.
         val normal = keyHeads.map { it.size }.sorted().let { it[it.size / 2] }
-        val printedHeads = keyHeads.filter { it.size >= normal * 0.85f && reading.staves.any { s -> it.x >= s.left - sp && it.x <= s.right && it.y > s.top - sp * 6 && it.y < s.bottom + sp * 6 } }
+        val printedHeads = keyHeads.filter { it.size >= normal * 0.85f && reading.staves.any { s -> it.x >= s.left - sp && it.x <= s.right && it.y > s.lineY(0, it.x.toInt()) - sp * 6 && it.y < s.lineY(4, it.x.toInt()) + sp * 6 } }
         val accidentalOf = HashMap<AnswerKey.Symbol, Int>()
         for (acc in key.filter { it.kind == Kind.FLAT || it.kind == Kind.SHARP || it.kind == Kind.NATURAL }) {
             val h = printedHeads.filter { h -> h.x - acc.x in sp * 0.3f..sp * 3f && abs(h.y - acc.y) <= sp * 0.3f && h !in accidentalOf }.minByOrNull { it.x - acc.x } ?: continue
@@ -238,10 +240,11 @@ class ReadingBenchmark {
         }
         read.indices.filter { !taken[it] }.forEach { cause(read[it].bar, "invented head") }
         // Rests.
-        val printedRests = key.filter { it.kind in rests && reading.staves.any { s -> it.y > s.top - sp * 2 && it.y < s.bottom + sp * 2 && it.x >= s.left } }
+        // (A staff's height where the rest is: a page turned has its staves aslant.)
+        val printedRests = key.filter { it.kind in rests && reading.staves.any { s -> it.x >= s.left && it.y > s.lineY(0, it.x.toInt()) - sp * 2 && it.y < s.lineY(4, it.x.toInt()) + sp * 2 } }
         val restTaken = BooleanArray(readRests.size)
         for (r in printedRests) {
-            val i = readRests.indices.filter { !restTaken[it] && abs(readRests[it].first.x - r.x) <= sp * 1.5f && reading.staves[readRests[it].second].let { s -> r.y > s.top - sp * 3 && r.y < s.bottom + sp * 3 } }
+            val i = readRests.indices.filter { !restTaken[it] && abs(readRests[it].first.x - r.x) <= sp * 1.5f && reading.staves[readRests[it].second].let { s -> r.y > s.lineY(0, r.x.toInt()) - sp * 3 && r.y < s.lineY(4, r.x.toInt()) + sp * 3 } }
                 .minByOrNull { abs(readRests[it].first.x - r.x) }
             if (i == null) {
                 val b = barAt(r.x, r.y)
