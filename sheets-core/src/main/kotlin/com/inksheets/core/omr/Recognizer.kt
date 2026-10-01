@@ -2335,30 +2335,51 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /**
-     * Whether staff [s] between [from] and [to] holds a bar-repeat sign: a slash a couple of spaces
-     * tall, rising to the right across the staff's middle, near the bar's middle - with a dot beside
-     * it (some engravers' dots touch the slash).
+     * Whether staff [s] between [from] and [to] holds a bar-repeat sign: one slash (or two side by
+     * side, for two bars - across the barline between them) a couple of spaces tall, rising to the
+     * right across the staff's middle, its dots beside it.
      */
     private fun barRepeat(clean: Ink, s: Staff, from: Int, to: Int): Boolean {
         val sp = s.space
         val mid = (from + to) / 2
         val top = s.lineY(0, mid).roundToInt(); val bottom = s.lineY(4, mid).roundToInt()
-        val region = Outline.Region(max(0, from), max(0, top - sp.toInt()), max(1, to - from), bottom - top + 2 * sp.toInt())
-        for (y in top..bottom) for (x in (mid - sp * 2.5f).toInt()..(mid + sp * 2.5f).toInt()) {
+        // In the bar's middle (one bar's sign), or across either barline (a two-bar sign, half in each).
+        val x0 = max(0, from - (sp * 3f).toInt()); val x1 = to + (sp * 3f).toInt()
+        val region = Outline.Region(x0, max(0, top - sp.toInt()), max(1, x1 - x0), bottom - top + 2 * sp.toInt())
+        for (y in top..bottom) for (x in x0 until x1) {
             if (!clean[x, y] || !region.inside(x, y) || region.seen[region.index(x, y)]) continue
-            val px = Outline.component(clean, x, y, region, 20_000)
+            val all = Outline.component(clean, x, y, region, 20_000)
+            // A barline it straddles set aside: columns of it standing the staff's height.
+            val tallCols = HashSet<Int>()
+            run {
+                val byCol = HashMap<Int, Int>()
+                for (i in all.indices step 2) byCol.merge(all[i], 1, Int::plus)
+                for ((c, n) in byCol) if (n >= sp * 3.2f) tallCols += c
+            }
+            val px = ArrayList<Int>()
+            for (i in all.indices step 2) if (all[i] !in tallCols && all[i] - 1 !in tallCols && all[i] + 1 !in tallCols) { px += all[i]; px += all[i + 1] }
+            if (px.size < 2 * (sp * sp * 0.3f).toInt()) continue
             var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
             for (i in px.indices step 2) { l = min(l, px[i]); r = max(r, px[i]); t = min(t, px[i + 1]); b = max(b, px[i + 1]) }
             val w = r - l + 1; val h = b - t + 1
-            if (w < sp * 0.9f || w > sp * 4f || h < sp * 1.4f || h > sp * 4.2f) continue
-            // Its ink along the line from its bottom left to its top right: a slash.
+            val cx = (l + r) / 2
+            // Its middle in this bar's middle, or near one of its barlines.
+            val placed = cx in (mid - sp * 2.5f).toInt()..(mid + sp * 2.5f).toInt() || abs(cx - from) <= sp * 2f || abs(cx - to) <= sp * 2f
+            if (!placed || w < sp * 0.9f || w > sp * 5f || h < sp * 1.4f || h > sp * 4.2f) continue
+            // Slashes rising to the right: its ink across the slant falls in one band or two (one
+            // slash, or two side by side), a fifth of a space each, with its dots outside them.
             val len = kotlin.math.sqrt((w * w + h * h).toFloat())
-            var on = 0
+            val bins = IntArray(64)
             for (i in px.indices step 2) {
-                val d = abs((px[i] - l) * h.toFloat() + (px[i + 1] - b) * w.toFloat()) / len
-                if (d <= sp * 0.45f) on++
+                val d = ((px[i] - l) * h.toFloat() + (px[i + 1] - b) * w.toFloat()) / len   // across the slant, from the corner's line
+                val k = ((d / (sp * 0.2f)) + 32).toInt().coerceIn(0, 63)
+                bins[k]++
             }
-            if (on >= px.size / 2 * 0.7f) return true
+            val n = px.size / 2
+            val peaks = bins.indices.sortedByDescending { bins[it] }.take(2)
+            fun around(k: Int) = (k - 1..k + 1).sumOf { j -> bins.getOrElse(j) { 0 } }
+            val inBands = if (abs(peaks[0] - peaks[1]) <= 2) around(peaks[0]) else around(peaks[0]) + around(peaks[1])
+            if (inBands >= n * 0.6f) return true
         }
         return false
     }
