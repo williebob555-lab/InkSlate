@@ -1085,19 +1085,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     // ---- reading a page ----------------------------------------------------------------------
 
     /** Everything on a page, as measures numbered from [firstNumber]. */
-    fun read(ink: Ink, page: Int = 0, firstNumber: Int = 1, carry: Carry = Carry(), printed: Printed? = null): PageReading {
+    fun read(ink: Ink, page: Int = 0, firstNumber: Int = 1, carry: Carry = Carry(), printed: Printed? = null,
+             /** The page in grey (0-255, as [ink]'s size) and the trained reader: its symbols read with it, where no PDF states them. */
+             grey: IntArray? = null, net: Net? = null): PageReading {
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
         val staves = staves(ink, t, space)
         // What the PDF says is printed, where it says it: heads, rests, accidentals, dots, flags,
         // stems and beams taken as stated rather than found. Staves, barlines, clefs and keys are
         // still read from the picture.
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
+            ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves, net) else null
         this.staves = staves
         symbolOf.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
         val clean = withoutLines(ink, staves, t)
         lineThickness = t
-        solid = if (adapt && staves.isNotEmpty()) clean.opened(max(1, (staves.first().space * 0.11f).roundToInt())) else null
-        if (adapt) fitHeads(clean, staves, ink) else fitted = null
+        // Heads found by their shapes need these; symbols given (a PDF's, the trained reader's) do not.
+        solid = if (adapt && staves.isNotEmpty() && this.printed == null) clean.opened(max(1, (staves.first().space * 0.11f).roundToInt())) else null
+        if (adapt && this.printed == null) fitHeads(clean, staves, ink) else fitted = null
         val measures = ArrayList<Measure>()
         val bars = ArrayList<List<Int>>()
         var number = firstNumber
@@ -1106,7 +1110,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val headsOf = if (this.printed != null) printedHeads(staves) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
         if (this.printed == null) fitStemMin(clean, staves, headsOf, t)
-        for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") { if (this.printed != null) printedStem(staves[si], h) else stem(clean, staves[si], h, t) }
+        // A PDF that states its notes: key, time, barlines and marks from it too; one the trained reader read: from the picture.
+        val stated = this.printed?.learned == false
+        for ((si, hs) in headsOf.withIndex()) for (h in hs) if (h.kind != "noteheadWhole") {
+            if (this.printed != null) printedStem(staves[si], h) else stem(clean, staves[si], h, t)
+            // The trained reader says what the stem carries; where the stem itself stands is looked
+            // for on the page (a barline is told from a stem by it, and a chord's heads share it).
+            if (this.printed?.learned == true) {
+                val g = Head(h.x, h.step, h.y, h.kind, h.score)
+                stem(clean, staves[si], g, t)
+                if (g.stemX >= 0) { h.stemX = g.stemX; h.up = g.up; h.stemEnd = g.stemEnd }
+            }
+        }
         // Which staff each head was found on: those let go are still the bar's maybes.
         val staffOf = HashMap<Head, Int>()
         headsOf.forEachIndexed { si, hs -> hs.forEach { staffOf[it] = si } }
@@ -1149,23 +1164,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val clef = clefAt(clean, s, x, t)
             var showsClef = false
             if (clef != null) { carry.clef = clef.first; x = clef.second; showsClef = true }
-            val key = if (this.printed != null) printedKey(s, x) else keyAt(clean, s, x, carry.clef)
+            val key = if (stated) printedKey(s, x) else keyAt(clean, s, x, carry.clef)
             var showsKey = false
             if (key != null) { carry.key = key.first; x = key.second; showsKey = true }
-            val time = if (this.printed != null) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0)
+            val time = if (stated) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0)
             var showsTime = false
             if (time != null) { carry.time = time.first; x = time.second; showsTime = true }
             // A part's first staff has a time signature: one in a font not read here is stepped
             // over (taken as the time carried, and said so), not read as notes.
             var timeUnread = false
-            if (time == null && page == 0 && si == 0 && this.printed == null) unreadTime(clean, s, x)?.let { x = it; timeUnread = true }
+            if (time == null && page == 0 && si == 0 && !stated) unreadTime(clean, s, x)?.let { x = it; timeUnread = true }
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
             val allHeads = kept[si].filter { it.x >= x }
             kept[si].filter { it.x < x }.forEach { dropped += it to "before the staff's start (clef, key, time end at $x)" }
             // Nothing fits between a staff's start and a line under three spaces on: that is a time
             // signature in another font, not a barline.
-            val b = ((if (this.printed != null) printedBarlines(s) else null) ?: barlines(ink, clean, s, t, allHeads.filter { it.stemX >= 0 }.map { it.stemX }, allHeads)).filter { it > x + s.space * 3f }
+            val b = ((if (stated) printedBarlines(s) else null) ?: barlines(ink, clean, s, t, allHeads.filter { it.stemX >= 0 }.map { it.stemX }, allHeads)).filter { it > x + s.space * 3f }
             bars += b
             val edges = (listOf(s.left) + b).distinct().sorted()
             val spans = edges.zipWithNext().filter { (a, c) -> c - a > s.space * 2 } +
@@ -1179,7 +1194,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
                 // A change of time at a bar's start: read, and in force from here.
                 var timeHere = false
-                if (i > 0) (if (this.printed != null) printedTime(s, from) else timeAt(clean, s, from))?.let { (sig, end) -> if (end < span.second - s.space) { carry.time = sig; from = end; timeHere = true } }
+                if (i > 0) (if (stated) printedTime(s, from) else timeAt(clean, s, from))?.let { (sig, end) -> if (end < span.second - s.space) { carry.time = sig; from = end; timeHere = true } }
                 inSpan += allHeads.filter { it.x >= from - 2 && it.x < span.second - (s.space * 0.2f).toInt() }
                 val to = span.second - (s.space * 0.2f).toInt()
                 val box = Box(span.first, s.top, span.second, s.bottom)
@@ -1207,7 +1222,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (!inVoices && events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) events = withoutLoops(events, carry.time.quarters)
                 // A piece may start with a short bar - a pickup - when what is in it is certain.
                 val pickup = page == 0 && measures.isEmpty() && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
-                    (this.printed != null || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
+                    (stated || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
                 // What was seen here and let go: another reading of the bar may want it back.
                 val maybe = dropped.filter { (h, why) -> staffOf[h] == si && h.x >= from - 2 && h.x < to && !why.startsWith("the other staff") }
                     .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> maybeNote(clean, s, h, carry) }
@@ -1226,11 +1241,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (i == 0 && timeUnread) doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
                 // Another engraver's heads match these a little less well and are read right: only
                 // a weak match is a doubt.
-                events.filterIsInstance<Note>().filter { it.confidence < 0.75f }.takeIf { it.isNotEmpty() }?.let { doubts += "${it.size} unclear note${if (it.size > 1) "s" else ""}" }
+                events.filterIsInstance<Note>().filter { it.confidence < (if (this.printed?.learned == true) Learned.SURE else 0.75f) }.takeIf { it.isNotEmpty() }?.let { doubts += "${it.size} unclear note${if (it.size > 1) "s" else ""}" }
                 // A repeat starting at a line's start sits just after the clef and key.
                 val starts = (span.first in b && dotsAfter(span.first)) || (i == 0 && dotsAt(x - (s.space * 0.5f).toInt(), x + (s.space * 2.5f).toInt()))
                 val ends = span.second in b && dotsBefore(span.second)
-                measures += m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = if (printed != null) printedDirections(s, span.first, span.second) else emptyList())
+                measures += m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = if (stated) printedDirections(s, span.first, span.second) else emptyList())
                 }
             }
             allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
@@ -1678,8 +1693,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val exact = (h.y - s.lineY(0, x)) / ((s.lineY(4, x) - s.lineY(0, x)) / 8f)
             exact - Math.round(exact)
         }.sorted()
+        if (p.learned) return p
         val shift = fracs.getOrNull(fracs.size / 2)?.takeIf { abs(it) > 0.1f }?.let { it * sp / 2 } ?: return p
-        return Printed(p.width, p.height, p.symbols.map { if (it.kind in headKinds || it.kind == Printed.Kind.DOT) it.copy(y = it.y - shift) else it }, p.stems, p.beams)
+        return Printed(p.width, p.height, p.symbols.map { if (it.kind in headKinds || it.kind == Printed.Kind.DOT) it.copy(y = it.y - shift) else it }, p.stems, p.beams, p.arcs, p.lines)
     }
 
     /** The printed heads, each on the staff it is nearest the middle of; cue and grace notes (small) left out, as they take no time in the bar. */
@@ -1698,7 +1714,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val x = sym.x.roundToInt()
             val step = ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
-            val h = Head(x, step, s.y(step, x).roundToInt(), kind, 1f)
+            val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.confidence)
             symbolOf[h] = sym
             out[si] += h
         }
@@ -1721,6 +1737,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun printedStem(s: Staff, h: Head) {
         val p = printed ?: return
         val sym = symbolOf[h] ?: return
+        if (p.learned) {
+            // The trained reader says how many beams or flags; a stem is taken as there (a chord's
+            // heads share it, at their middle) for every filled or half head.
+            h.stemX = (sym.x + sym.width / 2).roundToInt()
+            h.stemEnd = sym.y.roundToInt()
+            h.flags = sym.beams.coerceIn(0, 3)
+            return
+        }
         val sp = s.space
         val x = sym.x; val y = sym.y; val w = sym.width
         // A character's advance runs a little past its head's right edge: the stem may stand inside it.
@@ -1749,6 +1773,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun printedDots(s: Staff, h: Head) {
         val p = printed ?: return
         val sym = symbolOf[h] ?: return
+        if (p.learned) { h.dots = sym.dots.coerceIn(0, 2); return }
         val sp = s.space
         val heads = p.heads
         h.dots = p.symbols.filter { d -> d.kind == Printed.Kind.DOT && d.x > sym.x + sym.width * 0.8f && d.x < sym.x + sym.width + sp * 2.2f &&
@@ -2021,7 +2046,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val alter = written[d] ?: carry.key.alterOf(d.mod(7))
                 Pitch.fromDiatonic(d, alter)
             }
-            val (marks, tied) = if (printed != null) printedMarks(s, c) else emptyList<String>() to false
+            val (marks, tied) = if (printed?.learned == false) printedMarks(s, c) else emptyList<String>() to false
             events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { h.stemX >= 0 }, c.minOf { it.score }, marks, tied)
         }
         // Rests, where no note is.

@@ -71,7 +71,7 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                 OutlinedButton(onClick = { said = exportMidi(state, file, score) }) { Text("Save as MIDI") }
-                TextButton(onClick = { Transcriber.read(state, file, pages = score.readPages?.toSet()) { } }, enabled = Transcriber.busy == null) { Text("Read again") }
+                TextButton(onClick = { Transcriber.read(state, file, again = true, pages = score.readPages?.toSet()) { } }, enabled = Transcriber.busy == null) { Text("Read again") }
             }
             said?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

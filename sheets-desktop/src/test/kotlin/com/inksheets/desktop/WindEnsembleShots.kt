@@ -24,6 +24,8 @@ import javax.imageio.ImageIO
 class WindEnsembleShots {
     private val music = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets/MobileSheets")
 
+    private val net by lazy { System.getProperty("inksheets.bench.net")?.let { File(it).inputStream().use { s -> com.inksheets.core.omr.Net.load(s) } } }
+
     @Test
     fun `the wind ensemble's set as read`() {
         assumeTrue(System.getProperty("inksheets.omr") == "wind")
@@ -37,8 +39,14 @@ class WindEnsembleShots {
             val carry = Recognizer.Carry(); var number = 1
             val measures = ArrayList<com.inksheets.core.omr.Measure>(); val widths = ArrayList<Int>()
             for (p in 0 until pages) {
-                val (ink, _) = OmrRealPagesTest().renderAt(file, p) ?: continue
-                val r = Recognizer().read(ink, p, number, carry)
+                val (ink, dpi) = OmrRealPagesTest().renderAt(file, p) ?: continue
+                // With the trained reader (-Dinksheets.bench.net=weights): given the page in grey.
+                val grey = if (net == null) null else Loader.loadPDF(file).use { d ->
+                    val img = PDFRenderer(d).renderImageWithDPI(p, dpi, ImageType.RGB)
+                    val px = IntArray(img.width * img.height); img.getRGB(0, 0, img.width, img.height, px, 0, img.width)
+                    com.inksheets.core.omr.Strips.grey(px)
+                }
+                val r = Recognizer().read(ink, p, number, carry, grey = grey, net = net)
                 measures += r.measures; widths += ink.width
                 r.measures.lastOrNull()?.let { number = it.number + it.bars }
                 bars += r.measures.size; sure += r.measures.count { it.sure }

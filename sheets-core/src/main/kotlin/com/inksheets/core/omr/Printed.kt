@@ -17,7 +17,13 @@ import kotlin.math.min
  * Android), which hands each character and path here to be told what it is.
  */
 class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, val stems: List<Stem>, val beams: List<Beam>,
-              val arcs: List<Arc> = emptyList(), val lines: List<Line> = emptyList()) {
+              val arcs: List<Arc> = emptyList(), val lines: List<Line> = emptyList(),
+              /**
+               * Found by the trained reader on a picture, not stated by a PDF: heads, rests, dots and
+               * accidentals only, each with how sure it is - the rest (clefs, keys, time, barlines,
+               * marks) still read from the picture.
+               */
+              val learned: Boolean = false) {
     enum class Kind {
         HEAD_BLACK, HEAD_HALF, HEAD_WHOLE,
         REST_1, REST_2, REST_4, REST_8, REST_16, REST_32,
@@ -44,7 +50,9 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
      * One character: [x] its left edge, [y] its origin (a head's middle), [width] its advance, [size]
      * the size it is set at (a cue or grace note's is smaller), [digit] the number it is, if one.
      */
-    data class Symbol(val kind: Kind, val x: Float, val y: Float, val width: Float, val size: Float = 0f, val digit: Int = -1, val name: String = "")
+    data class Symbol(val kind: Kind, val x: Float, val y: Float, val width: Float, val size: Float = 0f, val digit: Int = -1, val name: String = "",
+                      /** Learned: a head's beams or flags (0-3), its dots, and how likely it is there at all. */
+                      val beams: Int = -1, val dots: Int = -1, val confidence: Float = 1f)
     /** A stem: upright at [x], from [y0] (top) to [y1]. */
     data class Stem(val x: Float, val y0: Float, val y1: Float)
     /** A beam: a filled slab across [x0]..[x1], its middle at [y0] and [y1] at each end, [thick] thick. */
@@ -68,7 +76,7 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
             stems.map { Stem(it.x * k, it.y0 * k, it.y1 * k) },
             beams.map { Beam(it.x0 * k, it.y0 * k, it.x1 * k, it.y1 * k, it.thick * k) },
             arcs.map { Arc(it.x0 * k, it.y0 * k, it.x1 * k, it.y1 * k, it.bulge * k) },
-            lines.map { Line(it.x0 * k, it.y0 * k, it.x1 * k, it.y1 * k) })
+            lines.map { Line(it.x0 * k, it.y0 * k, it.x1 * k, it.y1 * k) }, learned)
     }
 
     val heads get() = symbols.filter { it.kind == Kind.HEAD_BLACK || it.kind == Kind.HEAD_HALF || it.kind == Kind.HEAD_WHOLE }

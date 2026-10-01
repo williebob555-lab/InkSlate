@@ -43,7 +43,7 @@ class ReadingBenchmark {
     // ---- the corpus ---------------------------------------------------------------------------
 
     /** Which song a part belongs to: its folder under a band's Music, or its name before " - ". */
-    private fun song(f: File): String {
+    internal fun song(f: File): String {
         val parts = f.relativeTo(music).path.replace('\\', '/').split('/')
         val i = parts.indexOf("Music")
         val name = if (i >= 0 && i + 2 < parts.size) parts[i + 1] else f.nameWithoutExtension.substringBefore(" - ").substringBefore("- ")
@@ -53,10 +53,10 @@ class ReadingBenchmark {
     private fun crc(s: String) = CRC32().apply { update(s.toByteArray()) }.value
 
     /** Dev: a third of the songs, fixed by name. */
-    private fun isDev(f: File) = crc(song(f)) % 3 == 0L
+    internal fun isDev(f: File) = crc(song(f)) % 3 == 0L
 
     /** Every part the PDF says the notes of, one copy of each, in a fixed order. Cached by file. */
-    private fun corpus(): List<File> {
+    internal fun corpus(): List<File> {
         val cache = File("build/bench-corpus.tsv")
         val known = if (cache.isFile) cache.readLines().associate { l -> l.substringBefore('\t') to l.substringAfter('\t') } else emptyMap()
         val lines = ArrayList<String>()
@@ -118,7 +118,14 @@ class ReadingBenchmark {
         val (printed, dpi) = OmrRealPagesTest().renderAt(f, page) ?: return null
         val keyRaw = AnswerKey.read(f, page, dpi) ?: return null
         val turn = if (scan) 0.6 else 0.0
-        val ink = if (!scan) printed else scanned(printed, turn, (f.name + page).hashCode().toLong())
+        val greyScan = if (scan) scannedGrey(printed, turn, (f.name + page).hashCode().toLong()) else null
+        val ink = if (greyScan == null) printed else Ink.fromGrey(printed.width, printed.height, greyScan)
+        // The trained reader, given the page in grey: the scan's, or the print drawn again.
+        val greyPage = if (net == null) null else greyScan ?: org.apache.pdfbox.Loader.loadPDF(f).use { d ->
+            val img = org.apache.pdfbox.rendering.PDFRenderer(d).renderImageWithDPI(page, dpi, org.apache.pdfbox.rendering.ImageType.RGB)
+            val px = IntArray(img.width * img.height); img.getRGB(0, 0, img.width, img.height, px, 0, img.width)
+            com.inksheets.core.omr.Strips.grey(px)
+        }
         val a = Math.toRadians(-turn); val cx = printed.width / 2.0; val cy = printed.height / 2.0
         fun tx(x: Float, y: Float) = (Math.cos(a) * (x - cx) + Math.sin(a) * (y - cy) + cx).toFloat()
         fun ty(x: Float, y: Float) = (-Math.sin(a) * (x - cx) + Math.cos(a) * (y - cy) + cy).toFloat()
@@ -130,7 +137,7 @@ class ReadingBenchmark {
                 v.dots.map { d -> VectorKey.Dot(tx(d.x, d.y), ty(d.x, d.y), d.size) })
         } ?: return null
         // As the app reads a PDF that states its notes: with them (clean pages only - a scan has none).
-        val reading = Recognizer().read(ink, printed = if (usePrinted && !scan) PdfPrinted.read(f, page) else null)
+        val reading = Recognizer().read(ink, printed = if (usePrinted && !scan) PdfPrinted.read(f, page) else null, grey = greyPage, net = net)
         if (reading.staves.isEmpty()) return null
         val sp = reading.space
         // Some fonts' heads sit a little off their origin: the key moved by however far most heads sit off a line or space.
@@ -347,7 +354,9 @@ class ReadingBenchmark {
         val shotsDir = System.getProperty("inksheets.bench.shots")
         val started = System.currentTimeMillis()
         val only = System.getProperty("inksheets.bench.only")
-        val parts = corpus().filter { isDev(it) == (set == "dev") }.take(n).filter { only == null || it.name.contains(only, true) }
+        // -Dinksheets.bench.held=1: the trained reader's held-out songs (train/held.txt), whichever set they are in.
+        val heldSongs = if (System.getProperty("inksheets.bench.held") != null) File("../train/held.txt").readLines().map { it.trim() }.filter { it.isNotEmpty() }.toSet() else null
+        val parts = (if (heldSongs != null) corpus().filter { song(it) in heldSongs } else corpus().filter { isDev(it) == (set == "dev") }).take(n).filter { only == null || it.name.contains(only, true) }
         val pool = Executors.newFixedThreadPool(4)
         val futures = parts.map { f ->
             pool.submit<Pair<PartResult, List<BufferedImage>>> {
@@ -411,7 +420,12 @@ class ReadingBenchmark {
     // ---- helpers ------------------------------------------------------------------------------
 
     /** [ink] as a photocopy scanned: turned [degrees], its ink spread, blurred, lit unevenly, with noise. */
-    private fun scanned(ink: Ink, degrees: Double, seed: Long): Ink {
+    /** The trained reader's weights (-Dinksheets.bench.net=path), or none. */
+    private val net: com.inksheets.core.omr.Net? by lazy { System.getProperty("inksheets.bench.net")?.let { File(it).inputStream().use { s -> com.inksheets.core.omr.Net.load(s) } } }
+
+    private fun scanned(ink: Ink, degrees: Double, seed: Long): Ink = Ink.fromGrey(ink.width, ink.height, scannedGrey(ink, degrees, seed))
+
+    private fun scannedGrey(ink: Ink, degrees: Double, seed: Long): IntArray {
         val r = java.util.Random(seed)
         val a = Math.toRadians(degrees)
         val cos = Math.cos(a); val sin = Math.sin(a)
@@ -427,7 +441,7 @@ class ReadingBenchmark {
             val paper = 220 + (x * 25 / ink.width) - (y * 10 / ink.height)
             grey[y * ink.width + x] = (paper - dark.coerceAtMost(1.0) * 210 + r.nextGaussian() * 14).toInt().coerceIn(0, 255)
         }
-        return Ink.fromGrey(ink.width, ink.height, grey)
+        return grey
     }
 
     private fun crop(ink: Ink, x: Float, y: Float, sp: Float, caption: String): BufferedImage {

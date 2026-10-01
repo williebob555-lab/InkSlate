@@ -31,3 +31,10 @@ keystore.properties
 # OS
 Thumbs.db
 .DS_Store
+
+# Trained reader: data made from the library (large, remade any time)
+train/data/
+train/runs/
+train/.venv*/
+train/*.log
+train/__pycache__/

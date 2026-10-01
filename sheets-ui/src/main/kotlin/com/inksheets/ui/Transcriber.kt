@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inksheets.core.omr.Ink
 import com.inksheets.core.omr.Measure
+import com.inksheets.core.omr.Net
 import com.inksheets.core.omr.Recognizer
 import com.inksheets.core.omr.Score
 import com.inksheets.core.omr.Scores
@@ -23,19 +24,55 @@ internal object Transcriber {
     /** The part read last, for the notes panel. */
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
-    private val cache = HashMap<String, Score>()
-
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 4
+    private const val READER = 5
 
-    private fun key(file: File) = "${file.absolutePath}|${file.length()}|${file.lastModified()}|r$READER"
-    private fun stored(state: SheetsState, file: File) =
-        File(File(state.platform.localFolder, "scores"), Integer.toHexString(key(file).hashCode()) + ".json")
+    /**
+     * Where [file]'s reading is kept: a page to a file, in the library's own `.inksheets/readings`
+     * (so it travels to the other devices with the library, and two devices reading different pages
+     * of one part add up), in a folder named by the file's contents (the same file is the same
+     * wherever it sits). Off the library: this device's own folder.
+     */
+    private fun folder(state: SheetsState, file: File): File {
+        val root = state.root?.takeIf { file.absolutePath.startsWith(it.absolutePath) }
+        val base = if (root != null) File(root, ".inksheets/readings") else File(state.platform.localFolder, "readings")
+        return File(base, "r$READER-${idOf(file)}")
+    }
 
-    /** [file]'s notes if they have been read on this device (and the file is unchanged since). */
-    fun cached(state: SheetsState, file: File): Score? = synchronized(cache) {
-        cache[key(file)] ?: runCatching { stored(state, file).takeIf { it.isFile }?.readText()?.let(Scores::decode) }.getOrNull()
-            ?.also { cache[key(file)] = it }
+    private val ids = HashMap<String, String>()
+
+    /** [file]'s contents in a word: its size and a checksum of every byte. */
+    private fun idOf(file: File): String = synchronized(ids) {
+        ids.getOrPut("${file.absolutePath}|${file.length()}|${file.lastModified()}") {
+            val crc = java.util.zip.CRC32()
+            runCatching { file.inputStream().buffered().use { input -> val buf = ByteArray(1 shl 16); while (true) { val n = input.read(buf); if (n < 0) break; crc.update(buf, 0, n) } } }
+            "${java.lang.Long.toHexString(file.length())}-${java.lang.Long.toHexString(crc.value)}"
+        }
+    }
+
+    private fun pageFile(dir: File, page: Int) = File(dir, "p${page + 1}.json")
+
+    /** What was read and when it was looked for: the folder looked at again only every few seconds (another device may add pages). */
+    private class Known(val score: Score?, val at: Long, val signature: String)
+    private val known = HashMap<String, Known>()
+
+    /** [file]'s notes as far as they have been read - here or on another device; null if none of it has. */
+    fun cached(state: SheetsState, file: File): Score? {
+        val dir = folder(state, file)
+        val now = System.currentTimeMillis()
+        synchronized(known) { known[dir.path]?.let { if (now - it.at < 3000) return it.score } }
+        val pages = dir.listFiles { f -> f.name.startsWith("p") && f.name.endsWith(".json") }.orEmpty()
+        val signature = pages.sortedBy { it.name }.joinToString { "${it.name}:${it.length()}:${it.lastModified()}" }
+        synchronized(known) { known[dir.path]?.takeIf { it.signature == signature }?.let { known[dir.path] = Known(it.score, now, signature); return it.score } }
+        val parts = pages.mapNotNull { f -> runCatching { Scores.decode(f.readText()) }.getOrNull() }
+        val score = if (parts.isEmpty()) null else {
+            val count = parts.maxOf { it.pages }
+            val read = parts.flatMap { it.readPages.orEmpty() }.distinct().sorted()
+            val widths = List(count) { i -> parts.firstNotNullOfOrNull { it.pageWidths.getOrNull(i)?.takeIf { w -> w > 0 } } ?: 0 }
+            Score(parts.flatMap { it.measures }.sortedWith(compareBy({ it.page }, { it.staff }, { it.box.left })), count, widths, read.takeIf { it.size < count })
+        }
+        synchronized(known) { known[dir.path] = Known(score, now, signature) }
+        return score
     }
 
     /**
@@ -57,7 +94,11 @@ internal object Transcriber {
      */
     fun read(state: SheetsState, file: File, again: Boolean = false, pages: Set<Int>? = null, onDone: (Score?) -> Unit) {
         if (busy != null) return
-        if (again) synchronized(cache) { cache.remove(key(file)); stored(state, file).delete() }
+        if (again) {
+            val dir = folder(state, file)
+            if (pages == null) dir.listFiles().orEmpty().forEach { it.delete() } else pages.forEach { pageFile(dir, it).delete() }
+            synchronized(known) { known.remove(dir.path) }
+        }
         busy = "Getting ready..."
         Thread({
             val score = runCatching { readNow(state, file, pages) }
@@ -73,9 +114,10 @@ internal object Transcriber {
     private fun readNow(state: SheetsState, file: File, only: Set<Int>? = null): Score? {
         val peek = state.platform.peek(file) ?: return null
         peek.use {
-            // What of the file was read before, kept - unless the whole of it is being read now.
-            val before = if (only == null) null else cached(state, file)
-            val todo = (only ?: (0 until peek.pageCount).toSet()).filter { it in 0 until peek.pageCount }.sorted()
+            val dir = folder(state, file)
+            // What was read before (here or elsewhere): a whole read carries on where it left off.
+            val before = cached(state, file)
+            val todo = (only ?: (0 until peek.pageCount).filter { before == null || !before.hasRead(it) }.toSet()).filter { it in 0 until peek.pageCount }.sorted()
             val carry = Recognizer.Carry()
             val measures = ArrayList<Measure>()
             // One width a page, whether read or not: a bar's box is on its page's scale.
@@ -94,32 +136,37 @@ internal object Transcriber {
                     else number = 1
                 }
                 last = p
-                val first = inkOf(peek, p, 1600) ?: continue
+                val first = inkOf(peek, p, 1600)?.second ?: continue
                 val space = Recognizer().metrics(first)?.second
                 val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
-                val ink = if (width == 1600) first else inkOf(peek, p, width) ?: continue
-                // A PDF that states its notes is read from them, exactly; a scan from its picture.
+                val (grey, ink) = inkOf(peek, p, width) ?: continue
+                // A PDF that states its notes is read from them, exactly; a scan by the trained reader.
                 val printed = runCatching { peek.printed(p) }.getOrNull()
-                val reading = Recognizer().read(ink, p, number, carry, printed)
+                val reading = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) Net.shipped else null)
                 measures += reading.measures
                 widths[p] = width
                 reading.measures.lastOrNull()?.let { number = it.number + it.bars }
+                // Kept as soon as read: a reading stopped part way carries on from here, and the
+                // pages read so far reach the other devices.
+                runCatching {
+                    dir.mkdirs()
+                    val one = Score(reading.measures, peek.pageCount, List(peek.pageCount) { if (it == p) width else 0 }, listOf(p))
+                    val tmp = File(dir, "p${p + 1}.json.tmp"); tmp.writeText(Scores.encode(one))
+                    val dest = pageFile(dir, p); dest.delete(); tmp.renameTo(dest)
+                }
+                synchronized(known) { known.remove(dir.path) }
             }
-            val read = if (only == null) null else ((before?.readPages ?: if (before != null) (0 until peek.pageCount).toList() else emptyList()) + todo).distinct().sorted()
-            val kept = before?.measures?.filter { it.page !in todo }.orEmpty()
-            val all = (kept + measures).sortedWith(compareBy({ it.page }, { it.staff }, { it.box.left }))
-            val score = Score(all, peek.pageCount, widths, read?.takeIf { it.size < peek.pageCount })
+            val score = cached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
             state.platform.log("Read ${file.name}${if (only != null) " pages ${todo.map { it + 1 }}" else ""}: ${measures.size} bars, ${measures.count { it.sure }} sure, in ${(System.currentTimeMillis() - t0) / 1000}s")
-            synchronized(cache) { cache[key(file)] = score }
-            runCatching { stored(state, file).apply { parentFile.mkdirs() }.writeText(Scores.encode(score)) }
             return score
         }
     }
 
-    private fun inkOf(peek: PagePeek, page: Int, width: Int): Ink? {
+    /** Page [page] drawn [width] wide: its grey levels, and in black and white. */
+    private fun inkOf(peek: PagePeek, page: Int, width: Int): Pair<IntArray, Ink>? {
         val img = peek.render(page, width) ?: return null
         val px = IntArray(img.width * img.height)
         img.readPixels(px)
-        return Ink.fromArgb(img.width, img.height, px)
+        return com.inksheets.core.omr.Strips.grey(px) to Ink.fromArgb(img.width, img.height, px)
     }
 }
