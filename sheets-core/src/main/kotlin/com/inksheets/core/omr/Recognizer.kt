@@ -1302,7 +1302,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val doubts = ArrayList<String>()
                 val q = m.quarters
                 if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty() && !inVoices && !pickup) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
-                if (events.isEmpty()) doubts += "nothing read"
+                // A bar with nothing in it but a bar-repeat sign is as sure as the bar it repeats.
+                val repeatsBar = events.isEmpty() && barRepeat(clean, s, from, to)
+                if (events.isEmpty() && !repeatsBar) doubts += "nothing read"
                 if (guessedTuplets) doubts += "triplets taken to make the bar add up, no 3 seen"
                 if (i == 0 && timeUnread) doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
                 // Another engraver's heads match these a little less well and are read right: only
@@ -1317,7 +1319,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val directions = if (!stated) emptyList() else printedDirections(s, span.first, span.second).filterNot { d ->
                     d.kind == "slur" && (d.x2 - d.x < s.space * 3f || tiedAt.any { abs(it - d.x) < s.space * 1.5f })
                 }
-                val done = m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = directions)
+                val done = m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = directions, repeatsBar = repeatsBar)
                 measures += done
                 }
             }
@@ -1359,6 +1361,28 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         measures[k] = m.copy(time = time, doubts = doubts)
                     }
                 }
+            }
+        }
+        // A signature hardly ever written (one beat to the bar: a 3 or a 4 taken for a 1) is
+        // overruled by its own bars - from it to the next signature - as soon as two of them agree.
+        run {
+            val starts = measures.indices.filter { measures[it].showsTime && measures[it].time.beats == 1 }
+            for (k in starts) {
+                val end = (k + 1 until measures.size).firstOrNull { measures[it].showsTime && measures[it].time != measures[k].time } ?: measures.size
+                val signed = measures[k].time
+                val totals = (k until end).map { measures[it] }.filter { it.bars == 1 && it.events.any { e -> e is Note } }.map { Math.round(it.quarters * 4) / 4.0 }
+                val common = totals.groupingBy { it }.eachCount().maxByOrNull { it.value } ?: continue
+                if (totals.size < 2 || common.value < 2 || common.value < totals.size * 0.6 || common.key !in 1.0..12.0) continue
+                val beats = Math.round(common.key * signed.beatType / 4.0).toInt()
+                val time = TimeSig(beats, signed.beatType)
+                if (abs(time.quarters - common.key) > 1e-6) continue
+                for (j in k until end) {
+                    val m = measures[j]
+                    val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
+                    if (m.bars == 1 && m.events.isNotEmpty() && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
+                    measures[j] = m.copy(time = time, doubts = doubts)
+                }
+                if (end == measures.size) carry.time = time
             }
         }
         if (alone) {
@@ -2192,6 +2216,35 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         // Rests, accidentals and dots are shapes of their own (see keptIn): nothing to cut from another.
         return Coverage(boxes, bands)
+    }
+
+    /**
+     * Whether staff [s] between [from] and [to] holds a bar-repeat sign: a slash a couple of spaces
+     * tall, rising to the right across the staff's middle, near the bar's middle - with a dot beside
+     * it (some engravers' dots touch the slash).
+     */
+    private fun barRepeat(clean: Ink, s: Staff, from: Int, to: Int): Boolean {
+        val sp = s.space
+        val mid = (from + to) / 2
+        val top = s.lineY(0, mid).roundToInt(); val bottom = s.lineY(4, mid).roundToInt()
+        val region = Outline.Region(max(0, from), max(0, top - sp.toInt()), max(1, to - from), bottom - top + 2 * sp.toInt())
+        for (y in top..bottom) for (x in (mid - sp * 2.5f).toInt()..(mid + sp * 2.5f).toInt()) {
+            if (!clean[x, y] || !region.inside(x, y) || region.seen[region.index(x, y)]) continue
+            val px = Outline.component(clean, x, y, region, 20_000)
+            var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+            for (i in px.indices step 2) { l = min(l, px[i]); r = max(r, px[i]); t = min(t, px[i + 1]); b = max(b, px[i + 1]) }
+            val w = r - l + 1; val h = b - t + 1
+            if (w < sp * 0.9f || w > sp * 4f || h < sp * 1.4f || h > sp * 4.2f) continue
+            // Its ink along the line from its bottom left to its top right: a slash.
+            val len = kotlin.math.sqrt((w * w + h * h).toFloat())
+            var on = 0
+            for (i in px.indices step 2) {
+                val d = abs((px[i] - l) * h.toFloat() + (px[i + 1] - b) * w.toFloat()) / len
+                if (d <= sp * 0.45f) on++
+            }
+            if (on >= px.size / 2 * 0.7f) return true
+        }
+        return false
     }
 
     private fun keptIn(clean: Ink, s: Staff, m: Measure, staffBars: List<Measure>): Pair<List<IntArray>, List<Int>> {

@@ -174,6 +174,8 @@ data class Measure(
     val coda: Boolean = false,
     /** How many bars it stands for: more than one for a multi-bar rest ("rest 4 bars"). */
     val bars: Int = 1,
+    /** A bar-repeat sign (a slash between two dots): played as the bar before it, drawn as printed. */
+    val repeatsBar: Boolean = false,
     /**
      * Where its staff's five lines are, as printed, just outside its left edge and its right (the
      * five at the left, top first, then the five at the right): a scan's staff runs a little
