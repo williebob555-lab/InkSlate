@@ -85,27 +85,16 @@ object Digits {
     }
 
     fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0): Pair<Int, Int>? {
-        val seen = HashSet<Long>()
+        // Each shape in the band, followed no further than a figure's height outside it.
+        val rx0 = max(0, x0 - maxH); val ry0 = max(0, y0 - maxH)
+        val region = Outline.Region(rx0, ry0, min(ink.width, x1 + maxH + 1) - rx0, min(ink.height, y1 + maxH + 1) - ry0)
         val figures = ArrayList<Triple<Int, Int, Int>>()   // digit, middle x, bottom
         for (y in y0..y1) for (x in x0..x1) {
-            if (!ink[x, y]) continue
-            val key = x.toLong() shl 32 or (y.toLong() and 0xffffffffL)
-            if (key in seen) continue
-            // This shape: its extent, eight ways connected, not far outside the band.
-            val stack = ArrayDeque<Long>(); stack += key
-            var l = x; var r = x; var t = y; var b = y; var n = 0
-            while (stack.isNotEmpty() && n < 20_000) {
-                val k = stack.removeLast()
-                if (!seen.add(k)) continue
-                val px = (k shr 32).toInt(); val py = k.toInt()
-                if (!ink[px, py]) continue
-                n++; l = min(l, px); r = max(r, px); t = min(t, py); b = max(b, py)
-                for (dy in -1..1) for (dx in -1..1) if (dx != 0 || dy != 0) {
-                    val nx = px + dx; val ny = py + dy
-                    if (nx < x0 - maxH || nx > x1 + maxH || ny < y0 - maxH || ny > y1 + maxH) continue
-                    stack += nx.toLong() shl 32 or (ny.toLong() and 0xffffffffL)
-                }
-            }
+            if (!ink[x, y] || !region.inside(x, y) || region.seen[region.index(x, y)]) continue
+            val px = Outline.component(ink, x, y, region, 20_000)
+            if (px.isEmpty()) continue
+            var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+            for (i in px.indices step 2) { l = min(l, px[i]); r = max(r, px[i]); t = min(t, px[i + 1]); b = max(b, px[i + 1]) }
             val h = b - t + 1; val w = r - l + 1
             // A number in a box (a rehearsal number), its figures touching the box on a scan: the
             // box's sides taken away and what is inside read.

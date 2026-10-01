@@ -119,6 +119,8 @@ tasks.register<JavaExec>("runSandbox") {
 tasks.withType<Test>().configureEach {
     // Whole pages drawn large, read and compared, many in one run.
     maxHeapSize = "5g"
+    // -Dinksheets.jfr=<file>: a flight recording of the run, for finding what is slow (jfr print).
+    System.getProperty("inksheets.jfr")?.let { jvmArgs("-XX:StartFlightRecording=filename=$it,settings=profile") }
     // Never the real app's settings folder: see desktop/build.gradle.kts.
     val sandbox = layout.buildDirectory.dir("test-appdata").get().asFile
     doFirst { sandbox.deleteRecursively(); sandbox.mkdirs() }

@@ -6,11 +6,11 @@ import org.junit.Test
 /** A shape's outline, filled again, is the shape: pixel for pixel, holes and corner-touching pixels too. */
 class OutlineTest {
     private fun roundTrip(ink: Ink): Int {
-        val seen = HashSet<Long>()
+        val region = Outline.Region(0, 0, ink.width, ink.height)
         val back = Ink(ink.width, ink.height)
         for (y in 0 until ink.height) for (x in 0 until ink.width) {
-            if (!ink[x, y] || (x.toLong() shl 32 or (y.toLong() and 0xffffffffL)) in seen) continue
-            val loops = Outline.loops(Outline.component(ink, x, y, seen))
+            if (!ink[x, y] || region.seen[region.index(x, y)]) continue
+            val loops = Outline.loops(Outline.component(ink, x, y, region))
             // A loop round pixel (x, y) runs x..x+1 (the page picture's own grid); Fill samples across at pixel middles, down at its top edge.
             Fill.polygons(back, loops.map { l -> FloatArray(l.size) { if (it % 2 == 0) l[it] - 0.5f else l[it] } })
         }

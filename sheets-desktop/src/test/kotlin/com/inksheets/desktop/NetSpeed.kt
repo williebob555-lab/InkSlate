@@ -42,10 +42,11 @@ class NetSpeed {
             val t2 = System.nanoTime()
             val p = Learned.symbols(grey, img.width, img.height, staves, net)
             val t3 = System.nanoTime()
-            val r = Recognizer().read(ink, 0, grey = grey, net = net)
+            val rec2 = Recognizer()
+            val r = rec2.read(ink, 0, grey = grey, net = net)
             val t4 = System.nanoTime()
             println("SPEED round $round: ${img.width}x${img.height}, ${staves.size} staves, strip columns $cols; staves ${(t1 - t0) / 1_000_000} ms, " +
-                "cut ${cut / 1_000_000} ms, net ${run / 1_000_000} ms, symbols ${(t3 - t2) / 1_000_000} ms (${p.symbols.size}), whole read ${(t4 - t3) / 1_000_000} ms (${r.measures.size} bars, ${r.measures.count { it.sure }} sure)")
+                "cut ${cut / 1_000_000} ms, net ${run / 1_000_000} ms, symbols ${(t3 - t2) / 1_000_000} ms (${p.symbols.size}), whole read ${(t4 - t3) / 1_000_000} ms (${r.measures.size} bars, ${r.measures.count { it.sure }} sure): ${rec2.timings}")
         }
     }
 }
