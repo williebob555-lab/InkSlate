@@ -128,7 +128,9 @@ object Digits {
         return out
     }
 
-    fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0, space: Float = 0f): Pair<Int, Int>? {
+    fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0, space: Float = 0f,
+               /** Set in the music font, as a time signature's digits are (a multi-bar rest's count): read as those. */
+               musicFont: Boolean = false): Pair<Int, Int>? {
         // Each shape in the band, followed no further than a figure's height outside it.
         val rx0 = max(0, x0 - maxH); val ry0 = max(0, y0 - maxH)
         val region = Outline.Region(rx0, ry0, min(ink.width, x1 + maxH + 1) - rx0, min(ink.height, y1 + maxH + 1) - ry0)
@@ -143,13 +145,16 @@ object Digits {
             // A number in a box (a rehearsal number), its figures touching the box on a scan: the
             // box's sides taken away and what is inside read.
             if (h in minH..maxH * 2 && w in minH..maxH * 5 && (l + r) / 2 in x0..x1) framed(ink, l, t, r, b)?.let { inside ->
-                number(inside, l, r, t, b, minH * 2 / 3, maxH, space = space)?.let { return it }
+                number(inside, l, r, t, b, minH * 2 / 3, maxH, space = space, musicFont = musicFont)?.let { return it }
             }
             // A figure: a digit's height, over the place asked about, ending near enough the line asked.
             if (h < minH || h > maxH || w > h * 1.3f || (l + r) / 2 !in x0..x1 || b < bottomFrom) continue
             val m = mask(ink, l, t, r, b) ?: continue
             // Read by the trained reader where the staff's size is known; else by the masks.
-            val (d, _) = (if (space > 0f && hasTrained) readTrained(m, h / space, w.toFloat() / h) else read(m)) ?: continue
+            // (Over a multi-bar rest a number is all but sure to be there: where the trained reader sees
+            // none in a figure, the masks are asked too.)
+            val (d, _) = (if (space > 0f && hasTrained) readTrained(m, h / space, w.toFloat() / h, inStaff = musicFont) ?: (if (musicFont) read(m) else null)
+                else read(m)) ?: continue
             figures += Triple(d, (l + r) / 2, b)
         }
         if (figures.isEmpty()) return null
