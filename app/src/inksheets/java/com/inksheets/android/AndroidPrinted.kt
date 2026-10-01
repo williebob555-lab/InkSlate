@@ -50,6 +50,15 @@ object AndroidPrinted {
             }.getOrNull()
         }
         object : PDFTextStripper() {
+            // Every glyph as drawn, each once: the stripper's own grouping takes a glyph that looks like an
+            // accent (a half head, "˙") for one and merges it into the character before it - an accent
+            // mark over a half note lost the note.
+            private val glyphs = ArrayList<TextPosition>()
+            private val seen = HashSet<String>()
+            override fun processTextPosition(text: TextPosition) {
+                if (seen.add("${text.font?.name}|${text.characterCodes?.firstOrNull()}|${Math.round(text.xDirAdj * 2)}|${Math.round(text.yDirAdj * 2)}")) glyphs += text
+            }
+            override fun writePage() = writeString("", glyphs)
             override fun writeString(text: String?, positions: MutableList<TextPosition>?) {
                 for (p in positions.orEmpty()) {
                     val font = p.font ?: continue

@@ -309,6 +309,31 @@ class ReadingBenchmark {
         // -Dinksheets.bench.looks=1: the page read again a few more ways (each staff a little larger,
         // smaller, higher, lower), for how often one of them reads a bar asked about right.
         val looking = System.getProperty("inksheets.bench.looks") != null && net != null && greyPage != null
+        // -Dinksheets.bench.features=<file>: each bar checked, what the reader knew of it and whether it was right (for fitting how sure to be).
+        System.getProperty("inksheets.bench.features")?.let { out ->
+            // With -Dinksheets.bench.featurelooks=1: the page read again four other ways, and how many of them read each bar the same.
+            val others = if (System.getProperty("inksheets.bench.featurelooks") != null && net != null && greyPage != null)
+                listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f).map { (k, d) -> Recognizer().read(ink, grey = greyPage, net = net, look = k to d).measures } else emptyList()
+            fun sameAs(a: List<com.inksheets.core.omr.Event>, b: List<com.inksheets.core.omr.Event>) = a.size == b.size && a.indices.all { i ->
+                a[i]::class == b[i]::class && a[i].duration == b[i].duration && ((a[i] as? Note)?.steps == (b[i] as? Note)?.steps) }
+            val lines = ArrayList<String>()
+            for ((mi, m) in reading.measures.withIndex()) {
+                if (m.bars > 1) continue
+                val right = barRight(mi, m.events) ?: continue
+                val notes = m.events.filterIsInstance<Note>()
+                val odds = notes.map { it.odds }.filter { it.size == 8 }
+                fun minOr1(f: (List<Float>) -> Float) = odds.minOfOrNull(f) ?: 1f
+                fun meanOr1(f: (List<Float>) -> Float) = if (odds.isEmpty()) 1f else odds.map(f).average().toFloat()
+                val adds = abs(m.quarters - m.time.quarters) < 1e-6
+                lines += listOf(if (right) 1 else 0, if (m.sure) 1 else 0, if (adds) 1 else 0, notes.size, m.events.size - notes.size,
+                    minOr1 { it[7] }, meanOr1 { it[7] }, minOr1 { it.subList(0, 4).max() }, meanOr1 { it.subList(0, 4).max() },
+                    minOr1 { it.subList(4, 7).max() }, m.maybe.size, m.doubts.size, if (m.repeatsBar) 1 else 0,
+                    notes.count { it.duration.tuplet }, notes.count { it.steps.size > 1 }, m.events.count { it.duration.dots > 0 },
+                    others.count { o -> o.any { it.staff == m.staff && it.bars == 1 && abs(it.box.left - m.box.left) <= sp * 0.6f && abs(it.box.right - m.box.right) <= sp * 0.6f && sameAs(it.events, m.events) } }
+                ).joinToString("\t") + "\t" + f.nameWithoutExtension.replace('\t', ' ') + "\t" + m.number
+            }
+            synchronized(ReadingBenchmark::class.java) { File(out).appendText(lines.joinToString("\n", postfix = if (lines.isEmpty()) "" else "\n")) }
+        }
         // The bars asked about: the three readings offered, and three more when those are turned down.
         val choices = IntArray(5)
         val calibrate = System.getProperty("inksheets.bench.calibrate") != null

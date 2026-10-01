@@ -41,6 +41,9 @@ import kotlinx.coroutines.flow.debounce
  */
 fun main() {
     LinuxDisplay.prepare()
+    // Java registers every font on Windows the first time any font is touched - a second of the
+    // first frame, on the UI thread. Touched here instead, alongside the rest of starting.
+    if (AppDirs.isWindows) Thread({ runCatching { java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 12).family } }, "fonts").apply { isDaemon = true; start() }
     EventLog.installCrashHandler()
     EventLog.info("app", "${AppFlavor.name} ${DesktopUpdates.installedVersion()} started")
     DesktopUpdates.repairLinuxLauncher(AppFlavor.name)

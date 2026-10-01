@@ -12,8 +12,11 @@ import java.io.File
 /**
  * What the InkSheets screens share: the open library, the instrument being played, and a counter
  * that moves whenever the library changes so the screens know to look again.
+ *
+ * [openLater]: the library last used is read in off the UI thread, Home showing it is on its way
+ * (the desktop app, whose first frame waited on it); otherwise read in as this is made.
  */
-class SheetsState(val platform: SheetsPlatform) {
+class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     /** The thread watching the library; declared first, as [open] runs during construction. */
     @Volatile private var watcher: Thread? = null
@@ -22,6 +25,10 @@ class SheetsState(val platform: SheetsPlatform) {
         private set
 
     var library by mutableStateOf<Library?>(null)
+        private set
+
+    /** The library being read in at start, before Home has it to show (see [openInBackground]). */
+    var opening by mutableStateOf(false)
         private set
 
     /** Bumped on every change, from this device or from another through the synced folder. */
@@ -327,7 +334,7 @@ class SheetsState(val platform: SheetsPlatform) {
         platform.setEdgeTaps(edgeTapsState)
         platform.setTurnStyle(turnStyleState)
         platform.setStripSide(stripOnLeftState)
-        platform.pref(K_LIBRARY)?.let(::File)?.takeIf { it.isDirectory }?.let(::open)
+        platform.pref(K_LIBRARY)?.let(::File)?.takeIf { it.isDirectory }?.let { if (openLater) openInBackground(it) else open(it) }
         // Song turns and the metronome from a pedal, whatever screen is in front.
         com.inkslate.core.Perform.app = { action ->
             when (action) {
@@ -673,6 +680,25 @@ class SheetsState(val platform: SheetsPlatform) {
 
     fun open(folder: File) {
         val lib = runCatching { Library(LibraryLog(folder, platform.deviceId)) }.getOrNull() ?: return
+        adopt(folder, lib)
+    }
+
+    /**
+     * The library last used, read in off the UI thread: its log is megabytes, half a second and
+     * more on a laptop, and the first frame waited on it.
+     */
+    private fun openInBackground(folder: File) {
+        opening = true
+        Thread({
+            val lib = runCatching { Library(LibraryLog(folder, platform.deviceId)).also { it.songs; it.instruments() } }.getOrNull()
+            platform.onMain {
+                opening = false
+                if (lib != null && library == null) adopt(folder, lib)
+            }
+        }, "library-open").apply { isDaemon = true; start() }
+    }
+
+    private fun adopt(folder: File, lib: Library) {
         root = folder
         library = lib
         platform.setPref(K_LIBRARY, folder.absolutePath)

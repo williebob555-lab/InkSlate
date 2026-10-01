@@ -40,9 +40,11 @@ object WindowsFileDialog {
 
     private val shell by lazy { Native.load("shell32", Shell::class.java) }
 
-    private val CLSID_FILE_OPEN = Guid.GUID("{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}")
-    private val IID_FILE_OPEN = Guid.GUID("{d57c7288-d4ad-4768-be02-9d969532d960}")
-    private val IID_SHELL_ITEM = Guid.GUID("{43826d1e-e718-42ee-bc55-a1e261c37bfe}")
+    // Made when a picker is first shown: JNA's GUIDs seed a secure random, which reads every
+    // network adapter - half a second of the program's start, before anything showed.
+    private val CLSID_FILE_OPEN by lazy { Guid.GUID("{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}") }
+    private val IID_FILE_OPEN by lazy { Guid.GUID("{d57c7288-d4ad-4768-be02-9d969532d960}") }
+    private val IID_SHELL_ITEM by lazy { Guid.GUID("{43826d1e-e718-42ee-bc55-a1e261c37bfe}") }
 
     private const val FOS_PICKFOLDERS = 0x20
     private const val FOS_FORCEFILESYSTEM = 0x40

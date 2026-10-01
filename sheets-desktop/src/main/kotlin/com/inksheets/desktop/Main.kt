@@ -24,7 +24,8 @@ fun installInkSheets(prepare: (DesktopSheetsPlatform) -> Unit = {}): () -> Sheet
     // A music stand, not a window among windows: the whole screen, Home too. Quit is in the menu.
     AppFlavor.alwaysFullscreen = true
     var openFile: ((File) -> Unit)? = null
-    val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }.also(prepare)) }
+    // The library read in off the UI thread: its log is megabytes, and the first frame waited on it.
+    val state by lazy { SheetsState(DesktopSheetsPlatform { f -> openFile?.invoke(f) }.also(prepare), openLater = true) }
     AppFlavor.home = { open, openSettings ->
         openFile = open
         SheetsHome(state, onOpenSettings = openSettings)

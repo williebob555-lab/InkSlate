@@ -219,7 +219,11 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
         )
 
         FollowBanner(state)
-        if (state.library == null) {
+        if (state.library == null && state.opening) {
+            Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                Text("Opening your library...", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else if (state.library == null) {
             Welcome(onChoose = { chooseFolder = true })
         } else {
             reading?.let { (done, of) ->

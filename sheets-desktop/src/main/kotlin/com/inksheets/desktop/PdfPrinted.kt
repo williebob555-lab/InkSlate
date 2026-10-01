@@ -22,6 +22,24 @@ object PdfPrinted {
 
     fun read(file: File, index: Int): Printed? = runCatching { Loader.loadPDF(file).use { read(it, index) } }.getOrNull()
 
+    /** A character's outline: in ems, y down, from its origin; null when the font has none to give. */
+    internal fun contours(font: org.apache.pdfbox.pdmodel.font.PDFont, code: Int): List<FloatArray>? =
+        runCatching {
+            val path = (font as? PDVectorFont)?.getNormalizedPath(code) ?: return@runCatching null
+            val it = path.getPathIterator(java.awt.geom.AffineTransform(0.001, 0.0, 0.0, -0.001, 0.0, 0.0), 0.0005)
+            val out = ArrayList<FloatArray>(); var cur = ArrayList<Float>(); val c = DoubleArray(6)
+            while (!it.isDone) {
+                when (it.currentSegment(c)) {
+                    java.awt.geom.PathIterator.SEG_MOVETO -> { if (cur.size >= 6) out += cur.toFloatArray(); cur = arrayListOf(c[0].toFloat(), c[1].toFloat()) }
+                    java.awt.geom.PathIterator.SEG_LINETO -> { cur += c[0].toFloat(); cur += c[1].toFloat() }
+                    java.awt.geom.PathIterator.SEG_CLOSE -> { if (cur.size >= 6) out += cur.toFloatArray(); cur = ArrayList() }
+                }
+                it.next()
+            }
+            if (cur.size >= 6) out += cur.toFloatArray()
+            out.takeIf { it.isNotEmpty() }
+        }.getOrNull()
+
     fun read(doc: PDDocument, index: Int): Printed? {
         if (index >= doc.numberOfPages) return null
         val page = doc.getPage(index)
@@ -31,24 +49,17 @@ object PdfPrinted {
         // Characters: where the text stripper puts them (from the page's top left, in points).
         // A character's outline, once per font and code: in ems, y down, from its origin.
         val outlines = HashMap<Pair<String, Int>, List<FloatArray>?>()
-        fun outline(font: org.apache.pdfbox.pdmodel.font.PDFont, code: Int): List<FloatArray>? = outlines.getOrPut((font.name ?: "") to code) {
-            runCatching {
-                val path = (font as? PDVectorFont)?.getNormalizedPath(code) ?: return@runCatching null
-                val it = path.getPathIterator(java.awt.geom.AffineTransform(0.001, 0.0, 0.0, -0.001, 0.0, 0.0), 0.0005)
-                val out = ArrayList<FloatArray>(); var cur = ArrayList<Float>(); val c = DoubleArray(6)
-                while (!it.isDone) {
-                    when (it.currentSegment(c)) {
-                        java.awt.geom.PathIterator.SEG_MOVETO -> { if (cur.size >= 6) out += cur.toFloatArray(); cur = arrayListOf(c[0].toFloat(), c[1].toFloat()) }
-                        java.awt.geom.PathIterator.SEG_LINETO -> { cur += c[0].toFloat(); cur += c[1].toFloat() }
-                        java.awt.geom.PathIterator.SEG_CLOSE -> { if (cur.size >= 6) out += cur.toFloatArray(); cur = ArrayList() }
-                    }
-                    it.next()
-                }
-                if (cur.size >= 6) out += cur.toFloatArray()
-                out.takeIf { it.isNotEmpty() }
-            }.getOrNull()
-        }
+        fun outline(font: org.apache.pdfbox.pdmodel.font.PDFont, code: Int): List<FloatArray>? = outlines.getOrPut((font.name ?: "") to code) { contours(font, code) }
         object : PDFTextStripper() {
+            // Every glyph as drawn, each once: the stripper's own grouping takes a glyph that looks like an
+            // accent (a half head, "˙") for one and merges it into the character before it - an accent
+            // mark over a half note lost the note.
+            private val glyphs = ArrayList<TextPosition>()
+            private val seen = HashSet<String>()
+            override fun processTextPosition(text: TextPosition) {
+                if (seen.add("${text.font?.name}|${text.characterCodes?.firstOrNull()}|${Math.round(text.xDirAdj * 2)}|${Math.round(text.yDirAdj * 2)}")) glyphs += text
+            }
+            override fun writePage() = writeString("", glyphs)
             override fun writeString(text: String?, positions: MutableList<TextPosition>?) {
                 for (p in positions.orEmpty()) {
                     val font = p.font ?: continue

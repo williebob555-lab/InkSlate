@@ -31,6 +31,19 @@ object AnswerKey {
         0xE260 to Kind.FLAT, 0xE262 to Kind.SHARP, 0xE261 to Kind.NATURAL, 0xE1E7 to Kind.DOT
     )
 
+    /**
+     * A music-font character its code does not name - a subset that renumbered its characters (a
+     * second copy of Maestro whose "!" is a whole rest) - by its outline, as the app tells them
+     * ([com.inksheets.core.omr.GlyphShapes]); null when it is none of the symbols the key names.
+     */
+    private fun byOutline(font: org.apache.pdfbox.pdmodel.font.PDFont, code: Int, name: String): Kind? {
+        val contours = PdfPrinted.contours(font, code)?.map { c -> FloatArray(c.size) { c[it] * 4f } } ?: return null
+        val family = com.inksheets.core.omr.Printed.familyOf(name)
+        val m = family?.let { com.inksheets.core.omr.GlyphShapes.identify(it, contours) }?.let { (known, m) -> if (known) m ?: return null else null }
+            ?: com.inksheets.core.omr.GlyphShapes.classify(contours) ?: return null
+        return runCatching { Kind.valueOf(m.kind.name) }.getOrNull()
+    }
+
     private fun special(name: String) = name.contains("special", true) && listOf("opus", "helsinki", "inkpen", "reprise").any { name.contains(it, true) }
 
     private fun musical(name: String) = listOf("opus", "helsinki", "leland", "bravura", "petrucci", "maestro", "sebastian", "gonville")
@@ -47,6 +60,15 @@ object AnswerKey {
             val codesToText = HashMap<String, HashMap<Int, String>>()
             val k = dpi / 72f
             object : PDFTextStripper() {
+                // Every glyph as drawn, each once: the stripper's own grouping takes a glyph that looks like an
+                // accent (a half head, "˙") for one and merges it into the character before it - an accent
+                // mark over a half note lost the note.
+                private val glyphs = ArrayList<TextPosition>()
+                private val seen = HashSet<String>()
+                override fun processTextPosition(text: TextPosition) {
+                    if (seen.add("${text.font?.name}|${text.characterCodes?.firstOrNull()}|${Math.round(text.xDirAdj * 2)}|${Math.round(text.yDirAdj * 2)}")) glyphs += text
+                }
+                override fun writePage() = writeString("", glyphs)
                 override fun writeString(text: String?, positions: MutableList<TextPosition>?) {
                     for (p in positions.orEmpty()) {
                         val fname = p.font?.name?.substringAfter('+') ?: continue
@@ -70,7 +92,7 @@ object AnswerKey {
                         if (uni.codePointCount(0, uni.length) != 1) continue
                         // A music-font character not known here is kept as OTHER: where something
                         // the key cannot name is printed (a flag in another code, an ornament).
-                        val kind = kinds[uni.codePointAt(0)] ?: Kind.OTHER
+                        val kind = kinds[uni.codePointAt(0)] ?: p.characterCodes?.firstOrNull()?.let { byOutline(p.font, it, fname) } ?: Kind.OTHER
                         out += Symbol(kind, p.xDirAdj * k, p.yDirAdj * k, p.widthDirAdj * k, uni, p.textMatrix.scalingFactorX * k)
                     }
                 }

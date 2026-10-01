@@ -14,7 +14,13 @@ class LibraryCostTest {
         assumeTrue(lib != null && lib.isDirectory)
         val work = File(System.getProperty("java.io.tmpdir"), "inksheets-cost").apply { deleteRecursively(); mkdirs() }
         File(lib!!, ".inksheets/log").copyRecursively(File(work, ".inksheets/log"))
-        val library = Library(LibraryLog(work, "cost"))
+        // What opening the app costs: the log read in, the first song list, profiles, the first scan.
+        fun once(name: String, block: () -> Unit) { val t = System.nanoTime(); block(); println("COST start $name: ${(System.nanoTime() - t) / 1_000_000.0} ms") }
+        lateinit var library: Library
+        once("read the log") { library = Library(LibraryLog(work, "cost")) }
+        once("first song list") { library.songs }
+        once("profiles") { library.profiles() }
+        println("COST log: ${File(work, ".inksheets/log").walkTopDown().filter { it.isFile }.count()} files, ${File(work, ".inksheets/log").walkTopDown().filter { it.isFile }.sumOf { it.length() } / 1024} KB, ${library.songs.size} songs")
         repeat(3) { library.songs }
         fun time(name: String, n: Int, block: () -> Unit) {
             val t = System.nanoTime(); repeat(n) { block() }
@@ -23,7 +29,8 @@ class LibraryCostTest {
         time("listMusic (walk the real folder)", 3) { com.inksheets.core.LibraryScan.listMusic(lib) }
         val scan = com.inksheets.core.LibraryScan(lib, library, File(work, "memory.json"))
         // Real folder, but the library is a copy and deletions need a memory this device lacks: read-only in effect.
-        scan.run(); scan.run()
+        once("first scan") { scan.run() }
+        scan.run()
         time("no-op scan", 3) { scan.run() }
         // Where a scan that finds nothing spends its time: its thread sampled every few ms.
         val worker = Thread { repeat(15) { scan.run() } }
