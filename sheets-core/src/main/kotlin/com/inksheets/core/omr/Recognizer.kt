@@ -1405,7 +1405,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val doubts = ArrayList<String>()
                 val q = m.quarters
                 // A whole rest alone in a bar rests the whole bar, whatever the time (12/8's, 3/4's).
-                val wholeBarRest = events.size == 1 && events[0].let { it is Rest && it.duration.base == 1 && it.duration.dots == 0 }
+                val wholeBarRest = restsWholeBar(events)
                 if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty() && !inVoices && !pickup && !wholeBarRest) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
                 // A bar with nothing in it but a bar-repeat sign is as sure as the bar it repeats.
                 val repeatsBar = events.isEmpty() && barRepeat(clean, s, from, to)
@@ -1472,7 +1472,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         val m = measures[k]
                         if (m.time != signed || (carried && k >= firstSigned)) continue
                         val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
-                        if (m.bars == 1 && m.events.isNotEmpty() && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
+                        if (m.bars == 1 && m.events.isNotEmpty() && !restsWholeBar(m) && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
                         measures[k] = m.copy(time = time, doubts = doubts)
                     }
                 }
@@ -1480,21 +1480,26 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         // A signature hardly ever written (one beat to the bar: a 3 or a 4 taken for a 1) is
         // overruled by its own bars - from it to the next signature - as soon as two of them agree.
+        // Any other signature, a figure off by one (a 4 taken for a 3) - from it to the next signature,
+        // four bars or more, three in four agreeing on the length a beat more or less.
         run {
-            val starts = measures.indices.filter { measures[it].showsTime && measures[it].time.beats == 1 }
+            val starts = measures.indices.filter { measures[it].showsTime }
             for (k in starts) {
                 val end = (k + 1 until measures.size).firstOrNull { measures[it].showsTime && measures[it].time != measures[k].time } ?: measures.size
                 val signed = measures[k].time
+                val one = signed.beats == 1
                 val totals = (k until end).map { measures[it] }.filter { it.bars == 1 && it.events.any { e -> e is Note } }.map { Math.round(it.quarters * 4) / 4.0 }
                 val common = totals.groupingBy { it }.eachCount().maxByOrNull { it.value } ?: continue
-                if (totals.size < 2 || common.value < 2 || common.value < totals.size * 0.6 || common.key !in 1.0..12.0) continue
+                if (one && (totals.size < 2 || common.value < 2 || common.value < totals.size * 0.6)) continue
+                if (!one && (common.value < 4 || common.value < totals.size * 0.75)) continue
+                if (common.key !in 1.0..12.0 || abs(common.key - signed.quarters) < 1e-6) continue
                 val beats = Math.round(common.key * signed.beatType / 4.0).toInt()
                 val time = TimeSig(beats, signed.beatType)
-                if (abs(time.quarters - common.key) > 1e-6) continue
+                if (abs(time.quarters - common.key) > 1e-6 || (!one && abs(beats - signed.beats) != 1)) continue
                 for (j in k until end) {
                     val m = measures[j]
                     val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
-                    if (m.bars == 1 && m.events.isNotEmpty() && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
+                    if (m.bars == 1 && m.events.isNotEmpty() && !restsWholeBar(m) && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
                     measures[j] = m.copy(time = time, doubts = doubts)
                 }
                 if (end == measures.size) carry.time = time
@@ -1960,6 +1965,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         return null
     }
+
+    /** A whole rest alone: the whole bar rested, whatever its time. */
+    private fun restsWholeBar(events: List<Event>) = events.size == 1 && events[0].let { it is Rest && it.duration.base == 1 && it.duration.dots == 0 }
+    private fun restsWholeBar(m: Measure) = restsWholeBar(m.events)
 
     private fun timeAt(clean: Ink, s: Staff, x0: Int, opening: Boolean = false): Pair<TimeSig, Int>? {
         val sp = s.space
