@@ -81,6 +81,8 @@ class ReadingBenchmark {
     private var whyShown = 0
     /** Kinds of change the right readings needed (see -Dinksheets.bench.calibrate). */
     private val calibration = HashMap<String, Int>()
+    /** How often another look at a page reads a bar asked about right (see -Dinksheets.bench.looks). */
+    private val looks = HashMap<String, Int>()
     private val barShots = java.util.Collections.synchronizedList(ArrayList<BufferedImage>())
     private val barsFrom = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
@@ -304,6 +306,9 @@ class ReadingBenchmark {
             if (usedR.any { !it }) return false
             return if (plain) true else null
         }
+        // -Dinksheets.bench.looks=1: the page read again a few more ways (each staff a little larger,
+        // smaller, higher, lower), for how often one of them reads a bar asked about right.
+        val looking = System.getProperty("inksheets.bench.looks") != null && net != null && greyPage != null
         // The bars asked about: the three readings offered, and three more when those are turned down.
         val choices = IntArray(5)
         val calibrate = System.getProperty("inksheets.bench.calibrate") != null
@@ -319,11 +324,24 @@ class ReadingBenchmark {
                     else right.kinds.forEach { calibration.merge(it, 1, Int::plus) }
                 }
             }
-            val offered = com.inksheets.core.omr.BarChoices.of(m, 3)
+            val t0 = System.nanoTime()
+            val again = if (looking) Recognizer().lookAgain(ink, greyPage!!, net!!, m) else emptyList()
+            if (looking) synchronized(looks) { looks.merge("ms looking", ((System.nanoTime() - t0) / 1_000_000).toInt(), Int::plus); looks.merge("bars looked at", 1, Int::plus) }
+            val offered = com.inksheets.core.omr.BarChoices.of(m, 3, looked = again)
+            if (!now && looking) {
+                val rightIn = again.map { barRight(mi, it.events) == true }
+                synchronized(looks) {
+                    looks.merge("wrong", 1, Int::plus)
+                    if (rightIn.any { it }) looks.merge("right in a look", 1, Int::plus)
+                    if (again.any { it.sure && barRight(mi, it.events) == true }) looks.merge("right and sure in a look", 1, Int::plus)
+                    rightIn.forEachIndexed { i, ok -> if (ok) looks.merge("look $i", 1, Int::plus) }
+                    if (rightIn.any { it } || offered.any { barRight(mi, it.events) == true }) looks.merge("right in a look or the 3 offered", 1, Int::plus)
+                }
+            }
             if (!now) {
                 choices[0]++
                 if (offered.any { barRight(mi, it.events) == true }) choices[1]++
-                else if (com.inksheets.core.omr.BarChoices.of(m, 3, rejected = offered.map { it.events }, deeper = true).any { barRight(mi, it.events) == true }) choices[2]++
+                else if (com.inksheets.core.omr.BarChoices.of(m, 3, rejected = offered.map { it.events }, deeper = true, looked = if (looking) Recognizer().lookAgain(ink, greyPage!!, net!!, m, deeper = true) + again else emptyList()).any { barRight(mi, it.events) == true }) choices[2]++
             } else {
                 choices[3]++
                 if (offered.firstOrNull()?.changes?.isEmpty() == true) choices[4]++
@@ -396,6 +414,7 @@ class ReadingBenchmark {
             println("CALIBRATION: $bars bars read wrong; ${bars - none} have their right reading a change or two away; kinds needed: $kinds")
             println("COSTS: " + com.inksheets.core.omr.BarChoices.costsFrom(kinds, bars - none).entries.sortedBy { it.value }.joinToString { "\"${it.key}\" to ${"%.2f".format(java.util.Locale.ROOT, it.value)}f" })
         }
+        if (looks.isNotEmpty()) println("LOOKS: " + looks.entries.sortedBy { it.key }.joinToString { "${it.key} ${it.value}" })
         println("WRONG BARS BY CAUSE: " + causes.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
         // Against the baseline, part by part.
         results.mkdirs()

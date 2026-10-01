@@ -163,6 +163,29 @@ internal object ScoreTools {
     /** Looked deeper for this bar already (the first readings turned down). */
     var askedAgain by mutableStateOf(false)
         private set
+    /** The bar up is being looked at again (other looks at its staff), its readings to join those offered. */
+    var looking by mutableStateOf(false)
+        private set
+    /** What the other looks at the bar up saw. */
+    private var looked: List<com.inksheets.core.omr.Measure> = emptyList()
+
+    /** The bar up looked at again in the background; the readings offered made again with what was seen, if it is still up. */
+    private fun lookAt(s: SheetsState, m: com.inksheets.core.omr.Measure, deeper: Boolean) {
+        val path = s.currentPath ?: return
+        val width = scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 } ?: return
+        val number = m.number
+        looking = true
+        Transcriber.lookAgain(s, File(path), m, width, deeper) { seen ->
+            if (!checking || barUp(s)?.number != number) return@lookAgain
+            looking = false
+            looked = looked + seen
+            val now = barUp(s) ?: return@lookAgain
+            offered = com.inksheets.core.omr.BarChoices.of(now, 3, rejected = rejected, deeper = deeper, looked = looked)
+            // Nothing left to offer, even looked at further: left in doubt, on to the next.
+            if (offered.isEmpty()) { said = "No other reading of bar $number - left in doubt"; next(s); return@lookAgain }
+            changed()
+        }
+    }
 
     /** The bar up now. */
     fun barUp(s: SheetsState): com.inksheets.core.omr.Measure? {
@@ -182,9 +205,10 @@ internal object ScoreTools {
     }
 
     private fun showBar(s: SheetsState) {
-        rejected = ArrayList(); askedAgain = false
+        rejected = ArrayList(); askedAgain = false; looked = emptyList(); looking = false
         val m = barUp(s) ?: run { endCheck(); return }
         offered = com.inksheets.core.omr.BarChoices.of(m, 3)
+        lookAt(s, m, deeper = false)
         goTo(s, m.number)
         selection = m.number..m.number
         changed()
@@ -202,9 +226,11 @@ internal object ScoreTools {
     fun noneOfThese(s: SheetsState) {
         val m = barUp(s) ?: return
         rejected += offered.map { it.events }
-        val more = com.inksheets.core.omr.BarChoices.of(m, 3, rejected = rejected, deeper = true)
+        val more = com.inksheets.core.omr.BarChoices.of(m, 3, rejected = rejected, deeper = true, looked = looked)
         askedAgain = true
-        if (more.isEmpty()) { said = "No other reading of bar ${m.number} - left in doubt"; next(s); return }
+        // Looked at further still, whatever is offered meanwhile: what that sees joins in.
+        lookAt(s, m, deeper = true)
+        if (more.isEmpty() && !looking) { said = "No other reading of bar ${m.number} - left in doubt"; next(s); return }
         offered = more
         changed()
     }
@@ -218,6 +244,7 @@ internal object ScoreTools {
 
     fun endCheck() {
         checking = false
+        looking = false
         offered = emptyList()
         selection = null
         changed()

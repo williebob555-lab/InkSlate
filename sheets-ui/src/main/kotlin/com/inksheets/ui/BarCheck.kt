@@ -49,8 +49,11 @@ fun BoxScope.BarCheck(state: SheetsState) {
     ) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Bar ${m.number}  (${ScoreTools.checkAt + 1} of ${ScoreTools.checkBars.size} in doubt)", style = MaterialTheme.typography.titleSmall)
-            Text(if (ScoreTools.askedAgain) "Looked further: is it one of these?" else "Which is it? Tap the one that matches the page.",
-                style = MaterialTheme.typography.bodySmall)
+            Text(when {
+                    ScoreTools.looking -> "Looking at the bar again more closely..."
+                    ScoreTools.askedAgain -> "Looked further: is it one of these?"
+                    else -> "Which is it? Tap the one that matches the page."
+                }, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 for ((i, c) in ScoreTools.offered.withIndex()) {
                     Column(

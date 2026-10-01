@@ -91,6 +91,13 @@ class BarCheckTest {
             val first = ScoreTools.checkBars.first()
             println("offered for bar $first: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
             assertTrue("readings offered", ScoreTools.offered.isNotEmpty())
+            // The bar looked at again in the background: its readings join those offered.
+            println("looking again: ${ScoreTools.looking}")
+            val lookEnd = System.currentTimeMillis() + 90_000
+            while (ScoreTools.looking && System.currentTimeMillis() < lookEnd) settle(10)
+            shot("looked-again")
+            println("after looking again at bar $first: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
+            assertTrue("done looking", !ScoreTools.looking)
             // Pick the first: kept, the bar no longer in doubt, on to the next.
             // The first reading's card, by its label.
             tapText(ScoreTools.offered.first().changes.joinToString("; ").ifEmpty { "As read" })

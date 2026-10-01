@@ -175,10 +175,18 @@ object BarChoices {
      * matching any of [rejected]. [deeper]: three changes at once, not two. [pool]: how many of the
      * cheapest single changes are combined.
      */
-    fun of(m: Measure, count: Int = 3, rejected: List<List<Event>> = emptyList(), deeper: Boolean = false, pool: Int = if (deeper) 60 else 40): List<Choice> {
+    fun of(m: Measure, count: Int = 3, rejected: List<List<Event>> = emptyList(), deeper: Boolean = false, pool: Int = if (deeper) 60 else 40,
+           /** The bar as read on other looks at its staff (a little larger, smaller, higher, lower - see Recognizer.lookAgain). */
+           looked: List<Measure> = emptyList()): List<Choice> {
         val beats = m.time.quarters
         val all = ArrayList<Choice>()
         all += Choice(m.events, emptyList(), 0f)
+        // What another look saw: as likely as the more of them saw it, and the surer they were.
+        for ((events, saw) in looked.groupBy { o -> o.events.joinToString("|") { e -> "${e::class.simpleName}${e.duration}${(e as? Note)?.steps}" } }.values.map { it.first().events to it }) {
+            if (same(events, m.events)) continue
+            val sure = saw.any { it.sure }
+            all += Choice(events, listOf(if (saw.size > 1) "As read on ${saw.size} other looks" else "As read on another look"), (if (sure) 0.4f else 1.0f) - 0.15f * (saw.size - 1), listOf("look"))
+        }
         val single = edits(m).take(pool)
         for (a in single.indices) {
             apply(m, listOf(single[a]))?.let { all += Choice(it, listOf(single[a].say), single[a].cost, listOf(single[a].kind)) }

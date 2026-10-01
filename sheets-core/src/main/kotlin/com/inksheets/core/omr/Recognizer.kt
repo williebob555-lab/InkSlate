@@ -29,6 +29,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         val top: Int get() = lines[0].average().roundToInt()
         val bottom: Int get() = lines[4].average().roundToInt()
+
+        /** This staff seen [scale] times as large about its middle line and [shift] spaces lower: a second look at the same print. */
+        fun looked(scale: Float, shift: Float): Staff = Staff(left, right, Array(5) { l ->
+            FloatArray(lines[l].size) { i -> val mid = lines[2][i]; mid + (lines[l][i] - mid) * scale + shift * space }
+        }, space * scale)
     }
 
     /** What was found on a page, for drawing over it: staves, barlines, heads. */
@@ -926,6 +931,19 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     var stemMin = 2.2f
         private set
 
+    /**
+     * Bar [m] read again on the page it is on ([ink], [grey]), its staff only, a few other ways - the
+     * staff seen a little larger, smaller, higher, lower; [deeper]: further still (when the readings
+     * offered first were all turned down). Each look's reading of the bar, where it found the bar.
+     */
+    fun lookAgain(ink: Ink, grey: IntArray, net: Net, m: Measure, deeper: Boolean = false): List<Measure> {
+        val looks = if (deeper) listOf(1.15f to 0f, 0.87f to 0f, 1.08f to 0.25f, 0.93f to -0.25f) else listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f)
+        return looks.mapNotNull { look ->
+            val r = Recognizer().read(ink, m.page, m.number, Carry(m.clef, m.key, m.time), grey = grey, net = net, look = look, onlyStaff = m.staff)
+            r.measures.firstOrNull { o -> o.staff == m.staff && o.bars == 1 && abs(o.box.left - m.box.left) <= m.space * 0.6f && abs(o.box.right - m.box.right) <= m.space * 0.6f }
+        }
+    }
+
     /** Say why each bar was or was not taken for a multi-bar rest (for finding out). */
     var traceRests = false
 
@@ -1122,7 +1140,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     /** Everything on a page, as measures numbered from [firstNumber]. */
     fun read(ink: Ink, page: Int = 0, firstNumber: Int = 1, carry: Carry = Carry(), printed: Printed? = null,
              /** The page in grey (0-255, as [ink]'s size) and the trained reader: its symbols read with it, where no PDF states them. */
-             grey: IntArray? = null, net: Net? = null): PageReading {
+             grey: IntArray? = null, net: Net? = null,
+             /** A second look: each staff as the trained reader sees it, a little larger or smaller, higher or lower (see [Staff.looked]). */
+             look: Pair<Float, Float>? = null,
+             /** Only this staff read (a second look at one bar): the rest of the page left alone. */
+             onlyStaff: Int? = null): PageReading {
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
         val clock = Clock()
         val staves = staves(ink, t, space)
@@ -1133,7 +1155,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         pageGrey = grey?.takeIf { it.size == ink.width * ink.height }
         pageInk = ink
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
-            ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves, net) else null
+            ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves.filterIndexed { i, _ -> onlyStaff == null || i == onlyStaff }.map { if (look == null) it else it.looked(look.first, look.second) }, net) else null
         this.staves = staves
         symbolOf.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
         val clean = withoutLines(ink, staves, t)
@@ -1224,6 +1246,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         clock.mark("keys")
         for ((si, s) in staves.withIndex()) {
+            if (onlyStaff != null && si != onlyStaff) continue
             // The bar number printed over the line's start, where it reads clearly, is believed over
             // the count - a pickup bar numbered 0, a bar missed or found twice before - if it is later
             // than the last and near the count (a digit missed would put it far off).
@@ -1418,6 +1441,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // (a tie, a slur, a hairpin, a word): what was taken out with the line is put back where
         // there is ink just above and just below it - one shape, not pieces either side.
         clock.mark("bars")
+        // A second look at one bar wants its notes only: what a cleaned bar keeps is not worked out.
+        if (onlyStaff != null) { timings = clock.toString(); return PageReading(staves, bars, measures, t, space, dropped) }
         val healed = clean.copy()
         // Only what was taken out with the lines can need putting back: each erased run once, from its top.
         val w = ink.width

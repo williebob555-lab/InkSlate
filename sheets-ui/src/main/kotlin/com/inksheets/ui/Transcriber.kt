@@ -164,6 +164,26 @@ internal object Transcriber {
         }
     }
 
+    /**
+     * Bar [m] of [file] looked at again - its staff only, a little larger, smaller, higher and lower
+     * ([deeper]: further still) - by the trained reader, off the UI thread: [onDone] on the UI thread
+     * with each look's reading of the bar (none for a PDF that states its notes: read exactly already).
+     */
+    fun lookAgain(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, deeper: Boolean, onDone: (List<com.inksheets.core.omr.Measure>) -> Unit) {
+        Thread({
+            val found = runCatching {
+                val peek = state.platform.peek(file) ?: return@runCatching emptyList()
+                peek.use {
+                    val net = Net.shipped
+                    if (net == null || runCatching { peek.printed(m.page) }.getOrNull() != null) return@use emptyList()
+                    val (grey, ink) = inkOf(peek, m.page, width) ?: return@use emptyList()
+                    Recognizer().lookAgain(ink, grey, net, m, deeper)
+                }
+            }.onFailure { state.platform.log("Looking again at bar ${m.number} of ${file.name} failed: ${it.message}") }.getOrNull().orEmpty()
+            state.platform.onMain { onDone(found) }
+        }, "look-again").apply { isDaemon = true; start() }
+    }
+
     /** Page [page] drawn [width] wide: its grey levels, and in black and white. */
     private fun inkOf(peek: PagePeek, page: Int, width: Int): Pair<IntArray, Ink>? {
         val img = peek.render(page, width) ?: return null
