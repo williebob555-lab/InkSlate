@@ -943,6 +943,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         override fun toString() = parts.joinToString(", ") + " ms" + if (sums.isEmpty()) "" else " (of which " + sums.entries.joinToString { "${it.key} ${it.value / 1_000_000}" } + ")"
     }
 
+    /** The page being read as printed (staff lines and all). */
+    private var pageInk: Ink? = null
+
     /** The page in grey being read, where given: how dark what a cleaned bar keeps is printed. */
     private var pageGrey: IntArray? = null
 
@@ -1128,6 +1131,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // stems and beams taken as stated rather than found. Staves, barlines, clefs and keys are
         // still read from the picture.
         pageGrey = grey?.takeIf { it.size == ink.width * ink.height }
+        pageInk = ink
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
             ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves, net) else null
         this.staves = staves
@@ -2196,10 +2200,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * its heads, stems (where a stem's way is not seen, both ways) and flags, and bands along its
      * beams - a page point is covered if it is in any of them (see [Coverage.covers]).
      */
-    private class Coverage(val boxes: List<FloatArray>, val bands: List<FloatArray>) {
-        /** A box is l, t, r, b; a band runs from x0 to x1 between y0a..y0b at x0 and y1a..y1b at x1. */
-        fun covers(x: Float, y: Float): Boolean {
+    private class Coverage(val boxes: List<FloatArray>, val bands: List<FloatArray>, val stems: List<FloatArray> = emptyList()) {
+        /**
+         * A box is l, t, r, b; a band runs from x0 to x1 between y0a..y0b at x0 and y1a..y1b at x1;
+         * a stem column (l, t, r, b) covers only what stands tall in it ([upright]: a stem, either way
+         * from its head - not an accent or a dot over or under it).
+         */
+        fun covers(x: Float, y: Float, upright: Boolean = false): Boolean {
             for (bx in boxes) if (x >= bx[0] && x <= bx[2] && y >= bx[1] && y <= bx[3]) return true
+            if (upright) for (bx in stems) if (x >= bx[0] && x <= bx[2] && y >= bx[1] && y <= bx[3]) return true
             for (b in bands) if (x >= b[0] && x <= b[1]) {
                 val f = if (b[1] - b[0] > 1f) (x - b[0]) / (b[1] - b[0]) else 0f
                 if (y >= b[2] + (b[4] - b[2]) * f && y <= b[3] + (b[5] - b[3]) * f) return true
@@ -2210,7 +2219,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
 
     private fun coverage(m: Measure, s: Staff): Coverage {
         val sp = s.space
-        val boxes = ArrayList<FloatArray>(); val bands = ArrayList<FloatArray>()
+        val boxes = ArrayList<FloatArray>(); val bands = ArrayList<FloatArray>(); val stems = ArrayList<FloatArray>()
         val notes = m.events.filterIsInstance<Note>()
         for ((i, n) in notes.withIndex()) {
             val headW = sp * (if (n.duration.base == 1) 1.6f else 1.18f)
@@ -2219,6 +2228,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             for (y in ys) boxes += floatArrayOf(n.x - sp * 0.2f, y - sp * 0.65f, n.x + headW + sp * 0.2f, y + sp * 0.65f)
             if (n.duration.base < 2) continue
             val left = n.x - sp * 0.3f; val right = n.x + headW + sp * 0.3f
+            // Whichever way the print's stem went (it may not be the way redrawn): what stands tall
+            // in the head's column, up or down a stem's length.
+            stems += floatArrayOf(n.x - sp * 0.55f, ys.min() - sp * 4.1f, n.x + headW + sp * 0.55f, ys.max() + sp * 4.1f)
             val known = n.stemUp
             if (known == null) {
                 // The stem's way not seen: anywhere a stem of it could run, up or down.
@@ -2252,7 +2264,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         // Rests, accidentals and dots are shapes of their own (see keptIn): nothing to cut from another.
-        return Coverage(boxes, bands)
+        return Coverage(boxes, bands, stems)
     }
 
     /**
@@ -2351,7 +2363,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // a flag, a beam); what is left of it is kept as printed.
             val rest = ArrayList<Int>()
             val covering = near.map { o -> coverages.getOrPut(o) { coverage(o, s) } }
-            for (i in px.indices step 2) if (covering.none { c -> c.covers(px[i].toFloat(), px[i + 1].toFloat()) }) { rest += px[i]; rest += px[i + 1] }
+            // Which of its pixels stand in a tall upright run on the page as printed (a stem, unbroken
+            // by the lines it crosses - not an accent or a dot).
+            val page = pageInk ?: clean
+            for (i in px.indices step 2) {
+                val qx = px[i]; val qy = px[i + 1]
+                var a = qy; while (page[qx, a - 1] && qy - a < sp * 2) a--
+                var e = qy; while (page[qx, e + 1] && e - qy < sp * 2) e++
+                val upright = e - a + 1 >= sp * 1.4f
+                if (covering.none { c -> c.covers(px[i].toFloat(), px[i + 1].toFloat(), upright) }) { rest += px[i]; rest += px[i + 1] }
+            }
             if (rest.size < px.size) {
                 if (rest.size < 8) continue
                 // What is left, piece by piece: each kept if it is more than a sliver.
