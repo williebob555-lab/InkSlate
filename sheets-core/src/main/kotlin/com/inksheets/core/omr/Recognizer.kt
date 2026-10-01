@@ -1387,7 +1387,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 )
                 val doubts = ArrayList<String>()
                 val q = m.quarters
-                if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty() && !inVoices && !pickup) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
+                // A whole rest alone in a bar rests the whole bar, whatever the time (12/8's, 3/4's).
+                val wholeBarRest = events.size == 1 && events[0].let { it is Rest && it.duration.base == 1 && it.duration.dots == 0 }
+                if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty() && !inVoices && !pickup && !wholeBarRest) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
                 // A bar with nothing in it but a bar-repeat sign is as sure as the bar it repeats.
                 val repeatsBar = events.isEmpty() && barRepeat(clean, s, from, to)
                 if (events.isEmpty() && !repeatsBar) doubts += "nothing read"
@@ -1480,9 +1482,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             while (k < measures.size) {
                 val m = measures[k]
                 val len = Math.round(m.quarters * 4) / 4.0
-                if (m.bars != 1 || m.events.isEmpty() || abs(len - m.time.quarters) < 1e-6 || len !in 1.0..12.0) { k++; continue }
+                // (Bars of notes only: a whole rest rests a whole bar, whatever its time.)
+                if (m.bars != 1 || m.events.none { it is Note } || abs(len - m.time.quarters) < 1e-6 || len !in 1.0..12.0) { k++; continue }
                 var end = k + 1
-                while (end < measures.size && measures[end].staff == m.staff && measures[end].page == m.page && measures[end].bars == 1 &&
+                while (end < measures.size && measures[end].staff == m.staff && measures[end].page == m.page && measures[end].bars == 1 && measures[end].events.any { it is Note } &&
                     measures[end].time == m.time && abs(Math.round(measures[end].quarters * 4) / 4.0 - len) < 1e-6) end++
                 val s = staves[m.staff]
                 val firstX = m.events.minOf { it.x }.roundToInt()
