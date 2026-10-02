@@ -96,7 +96,45 @@ internal object ScoreTools {
 
     /** A part's notes as read - with the bars put right by hand in place of their readings. */
     private fun scoreOf(path: String): Score? =
-        (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { com.inksheets.core.omr.Scores.withFixes(it, fixesOf(path)) }
+        (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { read ->
+            // Bars you said are wrong, though read as sure: in doubt, until fixed.
+            val wrong = wrongOf(path)
+            val marked = if (wrong.isEmpty()) read else read.copy(measures = read.measures.map { m ->
+                if (m.bars == 1 && m.number in wrong && WRONG !in m.doubts) m.copy(doubts = m.doubts + WRONG) else m })
+            com.inksheets.core.omr.Scores.withFixes(marked, fixesOf(path))
+        }
+
+    /** The doubt a bar you marked wrong carries. */
+    private const val WRONG = "you marked it wrong"
+
+    private val wrong = HashMap<String, MutableSet<Int>>()
+    private fun wrongKey(path: String) = "sheets_wrong:" + (state?.relative(File(path)) ?: path)
+    private fun wrongOf(path: String): MutableSet<Int> = wrong.getOrPut(path) {
+        state?.platform?.pref(wrongKey(path))?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.toMutableSet() ?: HashSet()
+    }
+    private fun saveWrong(path: String) = state?.platform?.setPref(wrongKey(path), wrongOf(path).sorted().joinToString(",").ifEmpty { null })
+
+    /**
+     * Bars [bars] of the part in front are wrong, though read as sure (or fixed before): put in
+     * doubt - any fix of them set aside - and gone through at once, the first of them first.
+     */
+    fun markWrong(s: SheetsState, bars: IntRange) {
+        val path = s.currentPath ?: return
+        val w = wrongOf(path)
+        val f = fixesOf(path)
+        for (n in bars) { w += n; f.remove(n) }
+        saveWrong(path)
+        state?.platform?.setPref(fixKey(path), com.inksheets.core.omr.Scores.encodeFixes(f))
+        changed()
+        if (startCheck(s)) {
+            checkAt = checkBars.indexOf(bars.first).coerceAtLeast(0)
+            showBar(s)
+        }
+    }
+
+    /** Whether any of [bars] reads as sure: something to say is wrong. */
+    fun anySure(s: SheetsState, bars: IntRange): Boolean =
+        scoreHere(s)?.measures?.any { it.bars == 1 && it.number in bars && it.sure } == true
 
     fun scoreHere(s: SheetsState): Score? = s.currentPath?.let { scoreOf(it) }
 
@@ -112,7 +150,7 @@ internal object ScoreTools {
     fun clearSelection() { selection = null; changed() }
 
     /** Choose bars [range] (a test, or going to a passage). */
-    internal fun select(range: IntRange?) { selection = range; changed() }
+    fun select(range: IntRange?) { selection = range; changed() }
 
     /** Show bars [numbers] of [path] cleaned up (a test). */
     internal fun cleanUp(path: String, numbers: Collection<Int>) { cleanedIn(path) += numbers; changed() }
@@ -144,6 +182,8 @@ internal object ScoreTools {
         val f = fixesOf(path)
         f[number] = events
         state?.platform?.setPref(fixKey(path), com.inksheets.core.omr.Scores.encodeFixes(f))
+        // Put right: no longer the bar you said was wrong.
+        if (wrongOf(path).remove(number)) saveWrong(path)
         changed()
     }
 

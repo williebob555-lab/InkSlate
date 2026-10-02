@@ -25,7 +25,7 @@ internal object Transcriber {
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 11
+    private const val READER = 12
 
     /**
      * Where [file]'s reading is kept: a page to a file, in the library's own `.inksheets/readings`

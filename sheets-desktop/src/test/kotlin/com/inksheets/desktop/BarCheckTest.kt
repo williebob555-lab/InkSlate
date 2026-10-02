@@ -116,4 +116,50 @@ class BarCheckTest {
             assertTrue("done", !ScoreTools.checking)
         }
     }
+
+    @Test
+    fun `a bar read as sure said to be wrong is fixed there and then`() {
+        val src = File(music, "MobileSheets/Chester.pdf")
+        assumeTrue(src.isFile)
+        val lib = File("build/wrong-library").apply { deleteRecursively(); mkdirs() }
+        val part = File(lib, src.name).also { src.copyTo(it) }
+        val (ink, _) = OmrRealPagesTest().renderAt(part, 0)!!
+        val reading = Recognizer().read(ink, 0)
+        val score = Score(reading.measures, 1, listOf(ink.width))
+        val sure = score.measures.first { it.sure && it.bars == 1 }.number
+        ScoreTools.scoreSource = { if (it == part.absolutePath) score else null }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+        val home = AppFlavor.home!!
+        var openFile: ((File) -> Unit)? = null
+        AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }
+        runDesktopComposeUiTest(width = 1600, height = 1000) {
+            mainClock.autoAdvance = false
+            setContent { InkSlateTheme { AppRoot(Shortcuts(), NavigationHooks()) } }
+            settle(30)
+            runOnIdle { openFile!!(part) }
+            val until = System.currentTimeMillis() + 30_000
+            while (System.currentTimeMillis() < until && sheets().pageShown.second == 0) settle(4)
+            repeat(10) { settle() }
+            runOnIdle { ScoreTools.open = true; ScoreTools.select(sure..sure) }
+            repeat(10) { settle() }
+            SimulatedTouch.on = true
+            val root = onAllNodes(isRoot()).onFirst()
+            fun tapText(text: String) {
+                val c = onAllNodesWithText(text, substring = false, useUnmergedTree = true).onFirst().fetchSemanticsNode().boundsInRoot.center
+                SimulatedTouch.stamp(); root.performMouseInput { moveTo(c); press() }
+                settle(3); SimulatedTouch.stamp(); root.performMouseInput { release() }
+                settle(30)
+            }
+            tapText("Wrong")
+            ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "wrong-01-marked.png"))
+            assertTrue("going through the bars", ScoreTools.checking)
+            assertEquals("the bar said to be wrong is up first", sure, ScoreTools.barUp(sheets())?.number)
+            assertTrue("it is in doubt now", ScoreTools.scoreHere(sheets())!!.measures.first { it.number == sure }.doubts.any { it.contains("wrong") })
+            assertTrue("readings offered", ScoreTools.offered.isNotEmpty())
+            runOnIdle { ScoreTools.fix(part.absolutePath, sure, ScoreTools.offered.first().events) }
+            settle(10)
+            assertTrue("put right, sure again", ScoreTools.scoreHere(sheets())!!.measures.first { it.number == sure }.sure)
+            runOnIdle { ScoreTools.endCheck() }
+        }
+    }
 }

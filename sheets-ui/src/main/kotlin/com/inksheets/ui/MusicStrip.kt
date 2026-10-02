@@ -16,6 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.ReportProblem
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FastForward
@@ -136,6 +137,10 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                         Text(if (sel.first == sel.last) "Bar ${sel.first}" else "Bars ${sel.first}-${sel.last}",
                             style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center,
                             modifier = Modifier.clickable { ScoreTools.clearSelection() })
+                        // A bar read as sure that is not: say so, and fix it now.
+                        if (!ScoreTools.checking && ScoreTools.anySure(state, sel)) {
+                            StripButton(Icons.Default.ReportProblem, "Wrong", "These bars are read wrong: fix them", btn, named) { ScoreTools.markWrong(state, sel) }
+                        }
                     }
                     val playing = ScoreTools.playing
                     StripButton(if (playing != null) Icons.Default.Stop else Icons.Default.PlayArrow, if (playing != null) "Stop" else "Play",
