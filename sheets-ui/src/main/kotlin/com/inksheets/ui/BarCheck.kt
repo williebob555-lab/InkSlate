@@ -7,6 +7,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -64,12 +65,15 @@ fun BoxScope.BarCheck(state: SheetsState) {
     val paper = Color.White
     val printInk = Color(0xFF111111)
     val total = ScoreTools.checkBars.size
+    // A window over the music: between the strips where it fits, else they step aside (see Overlays).
+    Opened("Fix", 380.dp)
     Surface(
         shape = RoundedCornerShape(18.dp),
         tonalElevation = 4.dp,
         shadowElevation = 6.dp,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-        modifier = Modifier.align(if (barLow) Alignment.TopCenter else Alignment.BottomCenter).padding(12.dp).widthIn(max = 760.dp)
+        modifier = Modifier.align(if (barLow) Alignment.TopCenter else Alignment.BottomCenter)
+            .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp, top = 12.dp, bottom = 12.dp).widthIn(max = 760.dp)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             // Which bar, and how far through.
@@ -108,9 +112,14 @@ fun BoxScope.BarCheck(state: SheetsState) {
                             .clickable { ScoreTools.pick(state, c) }.padding(6.dp)
                     ) {
                         val drawing = remember(c) { Engraver.line(listOf(m.copy(events = c.events)), lineStart = false) }
-                        Canvas(Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(8.dp)).background(paper)) {
-                            val space = minOf(size.height / 10f, size.width / (drawing.width + 1f))
-                            drawMarks(drawing, space, Offset(space * 0.3f, (size.height - space * 4f) / 2f), printInk)
+                        Canvas(Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(8.dp)).background(paper)) {
+                            // The whole of it in the picture - notes high over the staff or low under it with their
+                            // ledger lines, stems and beams - not just the staff: as large as that allows.
+                            val (top, bottom) = drawing.extent
+                            val tall = bottom - top + 0.6f
+                            val space = minOf(size.height / maxOf(tall, 8f), size.width / (drawing.width + 1f))
+                            val y0 = (size.height - (bottom - top) * space) / 2f - top * space
+                            drawMarks(drawing, space, Offset(space * 0.3f, y0), printInk)
                         }
                         Text(
                             if (c.changes.isEmpty()) "As read" else c.changes.joinToString("; "),
@@ -125,12 +134,19 @@ fun BoxScope.BarCheck(state: SheetsState) {
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("None of these") }
+            // Four in a row where there is room for their words; two by two where there is not.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val none: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = mod) { Text("None of these", maxLines = 1) } }
                 // The bright part of the picture is not one whole bar: a part of one, or two.
-                OutlinedButton(onClick = { ScoreTools.notOneBar(state) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Not one bar", maxLines = 1) }
-                OutlinedButton(onClick = { ScoreTools.next(state) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Skip") }
-                Button(onClick = { ScoreTools.endCheck() }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Done") }
+                val notOne: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.notOneBar(state) }, modifier = mod) { Text("Not one bar", maxLines = 1) } }
+                val skip: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.next(state) }, modifier = mod) { Text("Skip", maxLines = 1) } }
+                val done: @Composable (Modifier) -> Unit = { mod -> Button(onClick = { ScoreTools.endCheck() }, modifier = mod) { Text("Done", maxLines = 1) } }
+                if (maxWidth >= 520.dp) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    none(Modifier.weight(1f).height(48.dp)); notOne(Modifier.weight(1f).height(48.dp)); skip(Modifier.weight(1f).height(48.dp)); done(Modifier.weight(1f).height(48.dp))
+                } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { none(Modifier.weight(1f).height(44.dp)); notOne(Modifier.weight(1f).height(44.dp)) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { skip(Modifier.weight(1f).height(44.dp)); done(Modifier.weight(1f).height(44.dp)) }
+                }
             }
         }
     }
@@ -162,11 +178,13 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
                 }
             }
     ) {
-        val space = minOf(size.height / 10f, size.width / (drawing.width + 1f))
-        val origin = Offset(space * 0.3f, (size.height - space * 4f) / 2f)
+        // The whole of it, notes far over or under the staff too (see Engraver.Drawing.extent).
+        val (top, bottom) = drawing.extent
+        val space = minOf(size.height / maxOf(bottom - top + 0.6f, 8f), size.width / (drawing.width + 1f))
+        val origin = Offset(space * 0.3f, (size.height - (bottom - top) * space) / 2f - top * space)
         layout[0] = space; layout[1] = origin.x; layout[2] = origin.y
         drawing.events.firstOrNull()?.getOrNull(at)?.let { ex ->
-            drawRect(chosen, Offset(origin.x + (ex - 0.4f) * space, origin.y - space * 2.5f), Size(space * 2f, space * 9f))
+            drawRect(chosen, Offset(origin.x + (ex - 0.4f) * space, 0f), Size(space * 2f, size.height))
         }
         drawMarks(drawing, space, origin, printInk)
     }

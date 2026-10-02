@@ -69,6 +69,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
         state.platform.setMusicLane(open)
         Perform.recentre?.invoke()
     }
+    androidx.compose.runtime.SideEffect { if (!open) Overlays.musicOut = 0.dp }
     if (!open) return
     val file = state.currentPath?.let { File(it) }
     // Read again whenever what was read changes (a part just read).
@@ -82,12 +83,15 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     BoxWithConstraints(Modifier.matchParentSize()) {
         BarCheck(state)
         val btn = ((maxHeight - 150.dp) / 14 - 12.dp).coerceIn(26.dp, 40.dp)
-        Surface(
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        // A window over the music that does not fit beside it: the strip steps aside, a tab at its edge.
+        if (Overlays.stripsAside) StripTab(onLeft = !state.stripOnLeft, what = "the music tools") else Surface(
             shape = RoundedCornerShape(20.dp),
             tonalElevation = 3.dp,
             shadowElevation = 2.dp,
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
             modifier = Modifier.align(if (state.stripOnLeft) Alignment.CenterEnd else Alignment.CenterStart).padding(6.dp).width(60.dp)
+                .reportWidth { w -> Overlays.musicOut = with(density) { w.toDp() } + 12.dp }
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

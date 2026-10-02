@@ -34,7 +34,22 @@ object Engraver {
      * Measures laid out: the shapes, how wide, where each measure starts and ends, and where each of
      * its events stands (x in spaces, a measure's in its order) - what a tap on the drawing is on.
      */
-    class Drawing(val marks: List<Mark>, val width: Float, val measures: List<Pair<Float, Float>>, val events: List<List<Float>> = emptyList())
+    class Drawing(val marks: List<Mark>, val width: Float, val measures: List<Pair<Float, Float>>, val events: List<List<Float>> = emptyList()) {
+        /**
+         * How high and low it reaches, in spaces from the top line (0) down: the staff's 0 to 4 at
+         * least, and every note off it with its ledger lines, stems, beams and marks - for fitting
+         * the whole of it into a picture (a glyph reaches about a space either side of where it stands).
+         */
+        val extent: Pair<Float, Float> by lazy {
+            var top = 0f; var bottom = 4f
+            for (m in marks) when (m) {
+                is Symbol -> { top = minOf(top, m.y - 1.2f); bottom = maxOf(bottom, m.y + 1.2f) }
+                is Stroke -> { top = minOf(top, m.y1, m.y2); bottom = maxOf(bottom, m.y1, m.y2) }
+                is Slab -> for (i in 1 until m.points.size step 2) { top = minOf(top, m.points[i]); bottom = maxOf(bottom, m.points[i]) }
+            }
+            top to bottom
+        }
+    }
 
     const val LINE = 0.13f
     const val STEM = 0.12f

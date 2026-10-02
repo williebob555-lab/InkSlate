@@ -416,7 +416,8 @@ class RemoteScreensTest {
                 // The tab at the edge goes there too.
                 swipe(-260f, 0f)
                 waitUntil(timeoutMillis = 2000) { onAllNodesWithText("Change buttons").fetchSemanticsNodes().isNotEmpty() }
-                onNodeWithText("Reading").performClick()
+                // (On a phone the tab is its icon: found by what it says to a screen reader.)
+                onNode(androidx.compose.ui.test.hasContentDescription("Reading the music")).performClick()
                 onNodeWithText("Reading the music").assertExists()
                 phone.remote.disconnect()
             }

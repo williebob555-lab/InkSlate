@@ -846,9 +846,12 @@ private fun RemoteDeck(state: SheetsState, editingState: androidx.compose.runtim
         val tall = maxHeight
         Column(Modifier.fillMaxSize().padding(horizontal = 10.dp, vertical = 6.dp)) {
             if (!editing) {
-                // What the other device is on: short, so the buttons get the screen.
-                Surface(shape = RoundedCornerShape(14.dp), tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                // What the other device is on: short, so the buttons get the screen. The page tab
+                // over its top nests in a notch carved in it, its words below the notch.
+                val (placed, notched) = rememberNotched(14.dp)
+                val tabOver = Notches.tabs.containsKey(RemotePage.TOOLS.name)
+                Surface(shape = notched, tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth().then(placed)) {
+                    Column(Modifier.padding(start = 12.dp, end = 12.dp, top = if (tabOver) 22.dp else 8.dp, bottom = 8.dp)) {
                         val blockedAt = remote.blocked
                         if (!remote.connected && blockedAt != null) {
                             Text("This Wi-Fi is stopping the connection", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.error)
@@ -1246,12 +1249,15 @@ private fun DeckButton(
         b.kind == RemoteButton.LISTEN -> shown?.listenStatus
         else -> null
     }
+    // Carved round a page tab lying over it (see Notches): a notch the tab nests in.
+    val (placed, notched) = rememberNotched(18.dp)
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = notched,
         color = fill,
         contentColor = ink,
         modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
+            .then(placed)
+            .clip(notched)
             .clickable(onClick = onPress)
     ) {
         // Small cells (a phone, a big grid) drop the detail and shrink the icon, never the words.

@@ -68,6 +68,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -119,7 +120,9 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     // Other devices' changes and the folder itself are watched by the state, all the time -
     // see SheetsState.startWatching - not only while Home is on screen.
 
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    // Under the remote (a screen of its own over this one): out of reach - not read out, not focused.
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()
+        .then(if (state.remote.remoteOpen) Modifier.underCover() else Modifier)) {
     // On a phone the buttons need the whole bar; the name goes.
     val narrow = maxWidth < 520.dp
     Column(Modifier.fillMaxSize()) {
@@ -725,7 +728,7 @@ internal fun SheetDialog(
     content: @Composable () -> Unit
 ) {
     if (movable) {
-        FloatingPanel(title = title, onClose = onDismiss, width = if (wide) 440.dp else 360.dp, footer = buttons, content = content)
+        FloatingPanel(title = title, onClose = onDismiss, width = if (wide) 440.dp else 360.dp, footer = buttons, scroll = false, content = content)
         return
     }
     val footer: @Composable () -> Unit = buttons ?: { TextButton(onClick = onDismiss) { Text("Close") } }
@@ -788,4 +791,5 @@ internal enum class SongSort(val label: String) {
     AZ("A to Z"), OPENED("Recently opened"), ADDED("Recently added"), COMPOSER("Composer")
 }
 
-
+/** Not there for accessibility or focus: under a screen laid over it. */
+private fun Modifier.underCover(): Modifier = this.then(Modifier.clearAndSetSemantics { })

@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragIndicator
@@ -51,6 +53,8 @@ internal fun FloatingPanel(
     width: Dp = 300.dp,
     /** Buttons along the foot, wrapping onto a second line rather than squeezing. */
     footer: (@Composable () -> Unit)? = null,
+    /** Its content scrolls within it when the screen is too short for it ([false]: it scrolls itself). */
+    scroll: Boolean = true,
     content: @Composable () -> Unit
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -60,14 +64,21 @@ internal fun FloatingPanel(
         val panelWidth = minOf(width, maxWidth - 16.dp).coerceAtLeast(200.dp)
         val panelHeight = (maxHeight - 16.dp).coerceAtLeast(160.dp)
         val wide = with(density) { panelWidth.toPx() }
-        var at by remember { mutableStateOf(PanelSpots.at[title] ?: Offset(room.x - wide - with(density) { 88.dp.toPx() }, with(density) { 72.dp.toPx() })) }
-        // Kept on screen, however the window has changed since.
-        val shown = Offset(at.x.coerceIn(0f, (room.x - wide).coerceAtLeast(0f)), at.y.coerceIn(0f, (room.y - with(density) { 64.dp.toPx() }).coerceAtLeast(0f)))
+        // Open over the music: the strips at the sides make room for it, or step aside (see Overlays).
+        Opened(title, panelWidth)
+        val leftEdge = with(density) { (Overlays.left + 8.dp).toPx() }
+        val rightEdge = room.x - with(density) { (Overlays.right + 8.dp).toPx() }
+        var at by remember { mutableStateOf(PanelSpots.at[title] ?: Offset(rightEdge - wide, with(density) { (if (maxHeight < 500.dp) 8.dp else 72.dp).toPx() })) }
+        // Kept on screen, however the window has changed since - and clear of the strips, where there is room beside them.
+        val (lo, hi) = if (rightEdge - leftEdge >= wide) leftEdge to rightEdge - wide else 0f to (room.x - wide).coerceAtLeast(0f)
+        val shown = Offset(at.x.coerceIn(lo, hi), at.y.coerceIn(0f, (room.y - with(density) { 64.dp.toPx() }).coerceAtLeast(0f)))
         Surface(
             shape = MaterialTheme.shapes.large,
             tonalElevation = 6.dp,
             shadowElevation = 8.dp,
-            modifier = Modifier.offset { IntOffset(shown.x.roundToInt(), shown.y.roundToInt()) }.width(panelWidth).heightIn(max = panelHeight)
+            // No taller than the screen below where it stands: on a short screen it scrolls, never runs off the foot.
+            modifier = Modifier.offset { IntOffset(shown.x.roundToInt(), shown.y.roundToInt()) }.width(panelWidth)
+                .heightIn(max = minOf(panelHeight, with(density) { (room.y - shown.y).toDp() } - 8.dp).coerceAtLeast(120.dp))
         ) {
             Column {
                 Row(
@@ -86,7 +97,8 @@ internal fun FloatingPanel(
                     Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f).padding(start = 6.dp))
                     IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
                 }
-                Box(Modifier.weight(1f, fill = false).padding(start = 12.dp, end = 12.dp, bottom = if (footer == null) 12.dp else 0.dp)) { content() }
+                Box(Modifier.weight(1f, fill = false).then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
+                    .padding(start = 12.dp, end = 12.dp, bottom = if (footer == null) 12.dp else 0.dp)) { content() }
                 if (footer != null) {
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(

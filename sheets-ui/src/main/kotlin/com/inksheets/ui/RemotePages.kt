@@ -69,6 +69,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -190,26 +192,32 @@ internal fun RemotePager(state: SheetsState, enabled: Boolean, center: @Composab
 
 /** The four pages' tabs at the middle's edges, each in its page's colour: tap to go, or swipe that way. */
 @Composable
-private fun BoxScope.PageTabs(go: (RemotePage) -> Unit) {
+private fun BoxScope.PageTabs(go: (RemotePage) -> Unit) = androidx.compose.foundation.layout.BoxWithConstraints(Modifier.matchParentSize()) {
+    // A narrow screen: the tabs along the top and foot say what they are by their icon alone.
+    val narrow = maxWidth < 420.dp
     @Composable
     fun tab(p: RemotePage, align: Alignment, upright: Boolean) {
         val fg = if (p.color.luminance() > 0.5f) Color.Black else Color.White
+        // What is under it is carved round it (see Notches): the tab nests in its notch.
         Surface(
-            color = p.color.copy(alpha = 0.92f),
-            shape = RoundedCornerShape(14.dp),
-            shadowElevation = 3.dp,
-            modifier = Modifier.align(align).padding(2.dp).clip(RoundedCornerShape(14.dp)).clickable { go(p) }
+            color = p.color.copy(alpha = 0.95f),
+            shape = RoundedCornerShape(12.dp),
+            shadowElevation = 2.dp,
+            modifier = Modifier.align(align).padding(2.dp).notchTab(p.name, 12.dp).clip(RoundedCornerShape(12.dp)).clickable { go(p) }
+                .semantics { contentDescription = p.title }
         ) {
-            if (upright) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(30.dp).padding(vertical = 8.dp)) {
-                Icon(if (p.dx > 0) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack, null, tint = fg, modifier = Modifier.size(16.dp))
-                Icon(p.icon, p.title, tint = fg, modifier = Modifier.size(18.dp))
-                Text(p.tab.take(3).uppercase(), color = fg, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            if (upright) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(24.dp).padding(vertical = 8.dp)) {
+                Icon(if (p.dx > 0) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack, null, tint = fg, modifier = Modifier.size(14.dp))
+                Icon(p.icon, null, tint = fg, modifier = Modifier.size(16.dp))
+                Text(p.tab.take(3).uppercase(), color = fg, fontSize = 8.sp, fontWeight = FontWeight.Bold)
             } else Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)) {
                 Icon(if (p.dy < 0) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward, null, tint = fg, modifier = Modifier.size(14.dp))
                 Spacer(Modifier.width(4.dp))
                 Icon(p.icon, null, tint = fg, modifier = Modifier.size(14.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(p.tab, color = fg, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                if (!narrow) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(p.tab, color = fg, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
     }
@@ -383,17 +391,21 @@ private fun SetPage(state: SheetsState, onChosen: () -> Unit) {
                     style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        } else LazyVerticalGrid(
-            columns = GridCells.Fixed(columns), state = grid,
+        } else androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+        // A phone on its side: twice the columns, so the tiles stay short and rows of them fit.
+        val across = if (maxWidth > maxHeight * 1.2f) (columns * 2).coerceAtMost(8) else columns
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(across), state = grid,
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxSize().padding(top = 4.dp)
         ) {
             itemsIndexed(tiles) { _, t ->
-                SongTile(t.number, t.title, t.color, t.now, t.next, accent, big = columns <= 2) {
+                SongTile(t.number, t.title, t.color, t.now, t.next, accent, big = across <= 2) {
                     t.tap()
                     scope.launch { kotlinx.coroutines.delay(250); onChosen() }
                 }
             }
+        }
         }
     }
 }

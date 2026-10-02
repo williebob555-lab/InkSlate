@@ -244,10 +244,15 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
         // In the bottom corner, the fold button last - folded away, it is all there is, out of
         // the music's way. In playback mode, the recording's own column stands beside it, on the
-        // music's side.
-        Row(
+        // music's side. A window over the music that does not fit beside it: the strip steps
+        // aside, a tab at its edge (see Overlays).
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        val screenWide = maxWidth
+        androidx.compose.runtime.SideEffect { Overlays.screen = screenWide; Overlays.actionOnLeft = state.stripOnLeft }
+        if (Overlays.stripsAside) StripTab(onLeft = state.stripOnLeft, what = "the buttons") else Row(
             verticalAlignment = Alignment.Bottom,
             modifier = Modifier.align(if (state.stripOnLeft) Alignment.BottomStart else Alignment.BottomEnd).padding(6.dp)
+                .reportWidth { w -> Overlays.actionOut = with(density) { w.toDp() } + 12.dp }
         ) {
             val playback = Recording.session && !collapsed
             if (playback && !state.stripOnLeft) PlaybackColumn(state, btn, named, Modifier.padding(end = 6.dp))
