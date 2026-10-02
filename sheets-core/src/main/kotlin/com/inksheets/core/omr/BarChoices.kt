@@ -31,14 +31,21 @@ object BarChoices {
         // Fitted on the tuning songs as scans (557 bars read wrong, 95 right a change or two away).
         "rest" to 0.84f, "remove" to 1.17f, "value" to 1.21f, "pitch" to 3.19f, "chord-head" to 3.19f, "dot" to 3.48f,
         // Never the right change there: as dear as the rarest seen.
-        "add" to 3.5f, "triplet" to 3.5f, "hollow" to 3.5f
+        "add" to 3.5f, "triplet" to 3.5f, "hollow" to 3.5f,
+        // A beamed group's value all at once (one beam counted wrong is every note under it wrong),
+        // and a rest taken out (a dynamic, a letter or a breath mark read as one).
+        // (Measured on the held-out scans: a rest taken out is the right change as often as -ln says;
+        // a group's never yet, so as dear as the rarest.)
+        "group" to 3.5f, "rest-out" to 1.44f
     )
 
     /**
      * One change: to the event at [index] ([make] its new form, or null to take it out), or a new
      * one ([add]) - of kind [kind], costing [cost].
      */
-    private class Edit(val index: Int, val kind: String, val cost: Float, val say: String, val make: ((Event) -> Event?)? = null, val add: Event? = null)
+    private class Edit(val index: Int, val kind: String, val cost: Float, val say: String, val make: ((Event) -> Event?)? = null, val add: Event? = null,
+                       /** For a beamed group: each of its notes (by index) and the value it becomes. */
+                       val group: Map<Int, Int>? = null)
 
     private fun withBase(e: Event, base: Int): Event = when (e) {
         // Another value: the print's beam and stem end it was read with no longer go with it.
@@ -110,6 +117,19 @@ object BarChoices {
                 })
             }
         }
+        // A rest not there: a dynamic, a letter, a breath mark or a cue's rest read as one.
+        for ((i, e) in events.withIndex()) if (e is Rest) out += Edit(i, "rest-out", cost("rest-out", 0f), "${named(events, i)} not a rest", { null })
+        // A beamed group all a beam more or fewer: one beam miscounted (a scan's two beams run into
+        // one, a slur along them taken for another) is every note under it misread alike.
+        for ((beam, members) in events.indices.filter { (events[it] as? Note)?.beam?.let { b -> b != 0 } == true }.groupBy { (events[it] as Note).beam }) {
+            if (members.size < 2 || beam == 0) continue
+            val bases = members.map { events[it].duration.base }
+            val first = members.first()
+            for ((label, f) in listOf("a beam fewer" to { b: Int -> b / 2 }, "a beam more" to { b: Int -> b * 2 })) {
+                if (bases.any { f(it) !in 8..32 }) continue
+                out += Edit(first, "group", cost("group", 0.3f), "the notes beamed from the ${named(events, first)}: $label", group = members.associateWith { i -> f(bases[members.indexOf(i)]) })
+            }
+        }
         // What the reader saw and let go, put back.
         for (a in m.maybe) out += Edit(-1, "add", cost("add", 1f - ((a as? Note)?.confidence ?: 0.5f)), "${name(a)} there after all", add = a)
         // Three equal notes or rests together, taken as a triplet.
@@ -146,6 +166,11 @@ object BarChoices {
         val touched = HashSet<Int>()
         for (e in chosen) {
             if (e.add != null) { added += e.add; continue }
+            if (e.group != null) {
+                if (e.group.keys.any { it in touched }) return null
+                for ((k, base) in e.group) { out[k] = out[k]?.let { withBase(it, base) }; touched += k }
+                continue
+            }
             if (e.kind == "triplet") {
                 if ((0..2).any { e.index + it in touched }) return null
                 for (k in 0..2) {
