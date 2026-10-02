@@ -1,6 +1,7 @@
 package com.inksheets.core.omr
 
 import com.inksheets.core.Chroma
+import kotlin.math.abs
 import kotlin.math.ln
 import kotlin.math.sqrt
 
@@ -57,7 +58,7 @@ object BandAudio {
         val total = ((bars.lastOrNull()?.let { it.startMs + it.lengthMs } ?: 0L) / Chroma.FRAME_MS).toInt() + 1
         val energy = Array(total) { FloatArray(12) }
         val msPerQuarter = 60_000.0 / bpm
-        val voices = listOf(Voice(mine, myTranspose, myWeight)) + others
+        val voices = listOf(Voice(mine, myTranspose, myWeight)) + agreeing(mine, others)
         // Each part's bars by number, for laying them on the player's.
         val byNumber = voices.map { v ->
             HashMap<Int, Measure>().also { map -> for (m in v.score.measures) if (m.bars == 1) map.putIfAbsent(m.number, m) }
@@ -90,6 +91,17 @@ object BandAudio {
             if (norm > 1e-6f) for (k in 0 until 12) n[k] /= norm
             Chroma.Frame(n, if (norm > 1e-6f) 0.1f else 0f)
         }
+    }
+
+    /**
+     * The parts of [others] whose bars run as [mine]'s do: a part read with far more or fewer bars
+     * (a figure over a multi-bar rest misread, a page missed) would put its notes against the wrong
+     * bars of the player's, and the band heard would match nothing played.
+     */
+    fun agreeing(mine: Score, others: List<Voice>): List<Voice> {
+        fun last(s: Score) = s.measures.maxOfOrNull { it.number + it.bars - 1 } ?: 0
+        val n = last(mine)
+        return others.filter { v -> abs(last(v.score) - n) <= maxOf(2, n / 20) }
     }
 
     /** Where each change of page falls in [recording] (its frames), the band's music lined up with it: (ms in the recording, page). */

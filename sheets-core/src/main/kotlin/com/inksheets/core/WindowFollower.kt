@@ -52,7 +52,8 @@ class WindowFollower(
         heard += frame
         if (heard.size > heardFrames * 2) heard.subList(0, heard.size - heardFrames).clear()
         sinceLast++
-        if (++sinceAlign >= every && heard.size >= 20) {
+        // (Not before five seconds are heard: two of an intro sound like half the song.)
+        if (++sinceAlign >= every && heard.size >= 50) {
             sinceAlign = 0
             align()?.let { at = it; sinceLast = 0 }
         }
@@ -116,7 +117,8 @@ class WindowFollower(
             // goes back only when it starts again - and a passage a few parts carry alone (the rest
             // resting) sounds less like the band than an earlier tutti does, which must not pull it back.
             val off = lo + jj - predicted
-            val c = per + prior * (if (off < -20) -off * backCost else abs(off).toFloat())
+            // (The less heard, the less it says: the pull to where the band should be is the stronger.)
+            val c = per + prior * heardFrames / m * (if (off < -20) -off * backCost else abs(off).toFloat())
             if (c < bestCost) { bestCost = c; bestJ = jj }
         }
         if (bestJ < 0) return null
