@@ -2235,18 +2235,19 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * What [SymbolReader] makes of the trained reader's symbol [sym] on staff [s], where it is sure
      * (null where it is not, or cannot look: no page in grey, no network).
      */
-    private fun secondLook(sym: Printed.Symbol, s: Staff): String? {
+    private fun secondLook(sym: Printed.Symbol, s: Staff, sure: Float = SECOND_SURE): String? {
         val g = pageGrey ?: return null
         val ink = pageInk ?: return null
         if (!SymbolReader.available || System.getProperty("inksheets.omr.nosecond") != null) return null
         val cx = sym.x + sym.width / 2; val cy = sym.y
         val top = s.lineY(0, cx.roundToInt()); val half = (s.lineY(4, cx.roundToInt()) - top) / 8f
         val (label, p) = SymbolReader.read(g, ink.width, ink.height, cx, cy, s.space, (cy - top) / half, SymbolReader.labelOf(sym.kind.name)) ?: return null
-        return label.takeIf { p >= SECOND_SURE }
+        return label.takeIf { p >= sure }
     }
 
     /** How sure the second look must be to overrule the trained reader. */
     var SECOND_SURE = 0.9f
+    var HEAD_OUT_SURE = System.getProperty("inksheets.omr.headout")?.toFloatOrNull() ?: 0.98f
 
     /** The printed heads, each on the staff it is nearest the middle of; cue and grace notes (small) left out, as they take no time in the bar. */
     private fun printedHeads(staves: List<Staff>, lines: Ink? = null, clean: Ink? = null): List<MutableList<Head>> {
@@ -2257,16 +2258,22 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val small = Printed.small(all)
         for (sym in all) {
             if (sym in small) continue
-            // The trained reader's faint heads: not notes, but put back if a bar wants them (see read).
-            if (p.learned && Learned.faint(sym)) continue
             val si = staves.indices.filter { val s = staves[it]; sym.x >= s.left - s.space && sym.x <= s.right }
                 .minByOrNull { abs((staves[it].top + staves[it].bottom) / 2f - sym.y) } ?: continue
             val s = staves[si]
             if (abs((s.top + s.bottom) / 2f - sym.y) > s.space * 9) continue
+            // The second look at a head the trained reader found: a word's letter, a dynamic, a mark
+            // it is sure is none is left out; a faint one it is sure is a head is taken after all.
+            // (Faint ones not taken are not notes, but put back if a bar wants them - see read.)
+            val second = if (p.learned && System.getProperty("inksheets.omr.noheadlook") == null) secondLook(sym, s) else null
+            // (A head left out on a sterner word than anything else: a note lost is a bar wrong.)
+            if (second == "other" && secondLook(sym, s, HEAD_OUT_SURE) == "other") continue
+            if (p.learned && Learned.faint(sym) && second != "black" && second != "half" && second != "whole") continue
             val x = sym.x.roundToInt()
             val step = if (p.learned) learnedStep(sym, s, lines) else ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
-            val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.confidence)
+            // (A faint one taken after all is as sure as the reader's floor: no surer.)
+            val h = Head(x, step, s.y(step, x).roundToInt(), kind, if (Learned.faint(sym)) Learned.floor else sym.confidence)
             // The trained reader takes a word's letter off the staff for a head (legato's "o"): off
             // the staff, a head needs its ledger line - or, where a worn scan's ledger line is too
             // faint to see, its stem. (A PDF's own heads are its notes.)

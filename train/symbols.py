@@ -11,7 +11,7 @@ import numpy as np
 import torch
 
 W, H = 20, 40
-LABELS = ["other", "sharp", "flat", "natural", "block", "rest4", "rest8", "rest16"]
+LABELS = ["other", "sharp", "flat", "natural", "block", "rest4", "rest8", "rest16", "black", "half", "whole"]
 NETKINDS = LABELS  # what the reader took it for ("none": missed by it)
 
 

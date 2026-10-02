@@ -142,19 +142,31 @@ class ReadingBenchmark {
             out += "$label	$netKind	${"%.3f".format(java.util.Locale.ROOT, conf)}	${"%.2f".format(java.util.Locale.ROOT, step)}	$held	$song	" + px.joinToString("") { Integer.toHexString((it * 15f).toInt().coerceIn(0, 15)) }
         }
         val matched = HashSet<AnswerKey.Symbol>()
+        val pick = java.util.Random((f.name + h).hashCode().toLong())
         for (c in found) {
             val cx = c.x + c.width / 2; val cy = c.y
             val rest = c.kind.name.startsWith("REST")
-            val t = truth.filter { k -> k !in matched && kotlin.math.abs(k.x + k.width / 2 - cx) <= sp * 0.8f && kotlin.math.abs(k.y - cy) <= sp * (if (rest) 1.6f else 0.6f) &&
+            val head = c.kind.name.startsWith("HEAD")
+            if (head) {
+                // Heads by the thousand: every one that is nothing kept, a fifth of the rest.
+                val t = truth.filter { k -> k !in matched && k.kind.name.startsWith("HEAD") && kotlin.math.abs(k.x + k.width / 2 - cx) <= sp * 0.7f && kotlin.math.abs(k.y - cy) <= sp * 0.35f }
+                    .minByOrNull { k -> kotlin.math.abs(k.x + k.width / 2 - cx) + kotlin.math.abs(k.y - cy) }
+                if (t != null) matched += t
+                // (The reader's faint ones too - under its floor, what a bar's other readings may put back.)
+                if (t == null || pick.nextFloat() < 0.2f) sample(t?.let { com.inksheets.core.omr.SymbolReader.labelOf(it.kind.name) } ?: "other",
+                    com.inksheets.core.omr.SymbolReader.labelOf(c.kind.name), c.odds.getOrNull(7) ?: c.confidence, cx, cy)
+                continue
+            }
+            val t = truth.filter { k -> k !in matched && !k.kind.name.startsWith("HEAD") && kotlin.math.abs(k.x + k.width / 2 - cx) <= sp * 0.8f && kotlin.math.abs(k.y - cy) <= sp * (if (rest) 1.6f else 0.6f) &&
                 (k.kind.name.startsWith("REST")) == rest }.minByOrNull { k -> kotlin.math.abs(k.x + k.width / 2 - cx) + kotlin.math.abs(k.y - cy) }
             if (t != null) matched += t
             sample(t?.let { com.inksheets.core.omr.SymbolReader.labelOf(it.kind.name) } ?: "other", com.inksheets.core.omr.SymbolReader.labelOf(c.kind.name), c.confidence, cx, cy)
         }
-        for (t in truth) if (t !in matched) sample(com.inksheets.core.omr.SymbolReader.labelOf(t.kind.name), "none", 0f, t.x + t.width / 2, t.y)
+        for (t in truth) if (t !in matched && (!t.kind.name.startsWith("HEAD") || pick.nextFloat() < 0.2f)) sample(com.inksheets.core.omr.SymbolReader.labelOf(t.kind.name), "none", 0f, t.x + t.width / 2, t.y)
         return out
     }
 
-    private val symbolTruth = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16, Kind.FLAT, Kind.SHARP, Kind.NATURAL)
+    private val symbolTruth = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16, Kind.FLAT, Kind.SHARP, Kind.NATURAL, Kind.HEAD_BLACK, Kind.HEAD_HALF, Kind.HEAD_WHOLE)
     private val heldSet: Set<String> by lazy { File("../train/held.txt").takeIf { it.isFile }?.readLines()?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet() }
 
     fun markPage(f: File, page: Int, scan: Boolean, shots: Boolean, usePrinted: Boolean = false): PageResult? {

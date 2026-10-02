@@ -7,20 +7,19 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * The second look at one symbol: what a rest or an accidental the trained reader found really is
- * - which rest, which accidental, or none at all (a dynamic's letter, a breath mark, a hairpin's
- * end, a cue's rest read as one). Not the page: only the little picture round it, 2.6 staff spaces
+ * The second look at one symbol: what a head, a rest or an accidental the trained reader found
+ * really is - which, or none at all (a dynamic's letter, a word's, a breath mark, a hairpin's end). Not the page: only the little picture round it, 2.6 staff spaces
  * by 5, and how high on the staff it stands. A small network (resources omr/symnet.bin, made by
  * train/symbols.py from SymbolExport's samples) answers "what is this?", and the rules round it
  * decide what the bar is.
  */
 object SymbolReader {
     /** What it can say, in the network's order. */
-    val LABELS = listOf("other", "sharp", "flat", "natural", "block", "rest4", "rest8", "rest16")
+    val LABELS = listOf("other", "sharp", "flat", "natural", "block", "rest4", "rest8", "rest16", "black", "half", "whole")
 
     /** What the trained reader finds that this looks at again. */
     val KINDS = setOf(Printed.Kind.REST_1, Printed.Kind.REST_2, Printed.Kind.REST_4, Printed.Kind.REST_8, Printed.Kind.REST_16,
-        Printed.Kind.SHARP, Printed.Kind.FLAT, Printed.Kind.NATURAL)
+        Printed.Kind.SHARP, Printed.Kind.FLAT, Printed.Kind.NATURAL, Printed.Kind.HEAD_BLACK, Printed.Kind.HEAD_HALF, Printed.Kind.HEAD_WHOLE)
 
     const val W = 20
     const val H = 40
@@ -29,6 +28,7 @@ object SymbolReader {
     fun labelOf(kind: String): String = when (kind) {
         "SHARP" -> "sharp"; "FLAT" -> "flat"; "NATURAL" -> "natural"
         "REST_1", "REST_2" -> "block"; "REST_4" -> "rest4"; "REST_8" -> "rest8"; "REST_16", "REST_32" -> "rest16"
+        "HEAD_BLACK" -> "black"; "HEAD_HALF" -> "half"; "HEAD_WHOLE" -> "whole"
         else -> "other"
     }
 
