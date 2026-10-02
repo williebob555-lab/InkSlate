@@ -223,6 +223,8 @@ data class Measure(
     val lines: List<Float> = emptyList(),
     /** How thick its staff's lines are printed, in pixels (0 when not known). */
     val lineWidth: Float = 0f,
+    /** Where its music starts, after the clef, key and time printed at its start (0 when not known). */
+    val start: Int = 0,
     /** Dynamics, hairpins, slurs and words over or under it. */
     val directions: List<Direction> = emptyList(),
     /**

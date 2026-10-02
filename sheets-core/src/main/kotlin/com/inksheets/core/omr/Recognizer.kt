@@ -1213,7 +1213,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
             ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves.filterIndexed { i, _ -> onlyStaff == null || i == onlyStaff }.map { if (look == null) it else it.looked(look.first, look.second) }, net) else null
         this.staves = staves
-        symbolOf.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
+        symbolOf.clear(); fullSize.clear(); cueAt.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
         val clean = withoutLines(ink, staves, t)
         clock.mark("lines out")
         lineThickness = t
@@ -1221,6 +1221,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         solid = if (adapt && staves.isNotEmpty() && this.printed == null) clean.opened(max(1, (staves.first().space * 0.11f).roundToInt())) else null
         if (adapt && this.printed == null) fitHeads(clean, staves, ink) else fitted = null
         val measures = ArrayList<Measure>()
+        // Which of [measures] are multi-bar rests: their counts may be put right by the next line's number.
+        val multiAt = ArrayList<Int>()
         val bars = ArrayList<List<Int>>()
         var number = firstNumber
         // Every staff's heads first: a note high over one staff is also low under the one above,
@@ -1313,13 +1315,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt(), space = s.space) }?.first?.let { p ->
                 if (alone) offsets += p - number
                 else {
-                    // A multi-bar rest of unknown length on the line before: the bars it is short by are its.
-                    val unknown = measures.filter { it.page == page && it.staff == si - 1 && "rest of how many bars?" in it.doubts }
+                    // A multi-bar rest on the line before, of unknown length or misread (a scan's 14 read
+                    // as 9): the bars the count is out by are its - where it is the line's only one.
+                    val rests = multiAt.filter { measures[it].page == page && measures[it].staff == si - 1 }
                     val delta = p - number
+                    // (Two or more: the longest, a count of two figures - read wrong far oftener than one.)
+                    val k = rests.singleOrNull() ?: rests.filter { measures[it].bars >= 10 || "rest of how many bars?" in measures[it].doubts }.singleOrNull()
                     // (A long rest, but not a misread figure's worth: 12 read as 112 is no 100-bar rest.)
-                    if (p > carry.printed && delta > 0 && delta <= 64 && unknown.size == 1) {
-                        val k = measures.indexOf(unknown[0])
-                        measures[k] = unknown[0].copy(bars = unknown[0].bars + delta, doubts = unknown[0].doubts - "rest of how many bars?")
+                    if (p > carry.printed && delta != 0 && k != null && measures[k].bars + delta in 2..64) {
+                        val m = measures[k]
+                        measures[k] = m.copy(bars = m.bars + delta, doubts = m.doubts - "rest of how many bars?")
                         for (j in k + 1 until measures.size) measures[j] = measures[j].copy(number = measures[j].number + delta)
                         number = p; carry.printed = p
                     } else if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
@@ -1374,12 +1379,33 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val rest = if (headsHere) null else multiRest(clean, s, from, to, ink)
                 if (rest != null) {
                     val (restBars, x) = rest
+                    multiAt += measures.size
                     measures += Measure(number, page, si, box, s.space, carry.clef, carry.key, carry.time,
                         listOf(Rest(Duration(1), x.toFloat())), showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey,
-                        showsTime = i == 0 && showsTime, doubts = if (restBars == 0) listOf("rest of how many bars?") else emptyList(), bars = max(1, restBars), lines = lines, lineWidth = t.toFloat())
+                        showsTime = (i == 0 && showsTime) || timeHere, doubts = if (restBars == 0) listOf("rest of how many bars?") else emptyList(), bars = max(1, restBars), lines = lines, lineWidth = t.toFloat(), start = from)
                     number += max(1, restBars)
                 } else {
-                var events = clock.sum("events") { eventsIn(clean, s, from, to, t, carry, allHeads.filter { it.x >= from - 2 && it.x < to }) }
+                // A cue - another instrument's line, printed small to come in by - over the part's rest:
+                // small heads found here and not one at the part's own size. Its notes are not the
+                // part's: none of its heads are read (they are kept as printed), and the bar is the
+                // part's rest, the whole of it. (A grace note before the part's own notes leaves those,
+                // full size, and the bar as read.)
+                // (Its small heads well outnumbering any of full size: one a little larger among a cue's
+                // is the scan's blur - one small among the part's own is a grace note.)
+                val smallHere = cueAt[si]?.count { it >= from - 2 && it < to } ?: 0
+                val fullHere = allHeads.count { it.x >= from - 2 && it.x < to && it in fullSize }
+                val maybeCue = this.printed?.learned == true && smallHere >= 1 && smallHere > fullHere * 2
+                // And the part's own rest printed under it, as a cue always is (a drum part's small
+                // heads have no rest beneath them): the bar read without its heads finds one.
+                val restsOnly = if (maybeCue) clock.sum("events") { eventsIn(clean, s, from, to, t, carry, emptyList()) } else emptyList()
+                // (Rests filling the bar on their own: a whole rest, or rests adding up to it - a drum
+                // part's scattered rests between its notes do not.)
+                val cueBar = maybeCue && restsOnly.isNotEmpty() && restsOnly.all { it is Rest } &&
+                    (restsWholeBar(restsOnly) || abs(restsOnly.sumOf { it.duration.quarters } - carry.time.quarters) < 1e-6)
+                var events = if (cueBar) restsOnly else clock.sum("events") { eventsIn(clean, s, from, to, t, carry, allHeads.filter { it.x >= from - 2 && it.x < to }) }
+                // The part's own rest, where read, is the one lowest on the staff (a cue sits over it):
+                // redrawn where it is printed, held for the whole bar.
+                if (cueBar) events = listOf(events.filterIsInstance<Rest>().maxByOrNull { it.step ?: 4 }?.copy(duration = Duration(1)) ?: Rest(Duration(1), from + s.space * 0.5f))
                 // Too long a bar: triplets read as plain notes, most often.
                 var guessedTuplets = false
                 // Two voices on the staff (stems up, stems down), each adding up: nothing to mend.
@@ -1400,7 +1426,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     carry.clef, carry.key, carry.time, events,
                     maybe = maybe,
                     showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey, showsTime = (i == 0 && showsTime) || timeHere,
-                    lines = lines, lineWidth = t.toFloat()
+                    lines = lines, lineWidth = t.toFloat(), start = from
                 )
                 val doubts = ArrayList<String>()
                 val q = m.quarters
@@ -2024,6 +2050,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private var staves: List<Staff> = emptyList()
     /** Each head taken from [printed], and the character it is. */
     private val symbolOf = HashMap<Head, Printed.Symbol>()
+    /** The trained reader's filled heads measured at the part's own size: not a cue's. */
+    private val fullSize = HashSet<Head>()
+    /** Where small heads (a cue's, a grace note's) were found and left out, by staff. */
+    private val cueAt = HashMap<Int, MutableList<Int>>()
     private val printedAccidental = HashMap<Head, Int>()
     /** The printed lines some head took as its stem: the rest that cross a staff are barlines. */
     private val usedStems = HashSet<Printed.Stem>()
@@ -2174,6 +2204,33 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return rightFoot - leftFoot > sp * 0.45f
     }
 
+    /**
+     * How big a filled head found by the trained reader is printed, in staff spaces: its ink's
+     * widest level run near its middle (the staff's lines out; a stem adds a line's width at
+     * most). A cue's or grace note's heads are set clearly smaller than the part's own. Null where
+     * the run is not a head's (joined to a beam, a slur, another head).
+     */
+    internal fun headSize(clean: Ink, sym: Printed.Symbol, sp: Float): Float? {
+        val cx = (sym.x + sym.width / 2).roundToInt(); val cy = sym.y.roundToInt()
+        var best = 0
+        for (dy in -(sp * 0.2f).toInt()..(sp * 0.2f).toInt()) {
+            val y = cy + dy
+            var x0 = cx; var x1 = cx
+            if (!clean[cx, y]) continue
+            while (clean[x0 - 1, y] && cx - x0 < sp * 1.2f) x0--
+            while (clean[x1 + 1, y] && x1 - cx < sp * 1.2f) x1++
+            // (A row a ledger line runs along, or a beam, is wider than any head: not the head's.)
+            if (x1 - x0 + 1 <= sp * 1.6f) best = max(best, x1 - x0 + 1)
+        }
+        if (best == 0) return null
+        // Solid, as a filled head is: an x or a slash (a drum part's) is mostly paper inside.
+        val hw = (best / 2f * 0.7f).toInt().coerceAtLeast(1); val hh = (sp * 0.3f).toInt().coerceAtLeast(1)
+        var inked = 0; var all = 0
+        for (y in cy - hh..cy + hh) for (x in cx - hw..cx + hw) { all++; if (clean[x, y]) inked++ }
+        if (inked < all * 0.6f) return null
+        return best / sp
+    }
+
     /** The printed heads, each on the staff it is nearest the middle of; cue and grace notes (small) left out, as they take no time in the bar. */
     private fun printedHeads(staves: List<Staff>, lines: Ink? = null, clean: Ink? = null): List<MutableList<Head>> {
         val p = printed!!
@@ -2199,6 +2256,43 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             if (p.learned && lines != null && !onLedger(h, s, lines) && !hasStem(h, s, lines)) continue
             symbolOf[h] = sym
             out[si] += h
+        }
+        // Cue notes in a scan: the trained reader finds them as heads like any other, but they are
+        // printed smaller - a cue's heads about five sixths of the part's own. Measured on the page.
+        // (-Dinksheets.omr.nocues=1: not looked for - for measuring what it changes.)
+        if (p.learned && clean != null && System.getProperty("inksheets.omr.nocues") == null) {
+            val sp = staves.first().space
+            val size = HashMap<Head, Float>()
+            for (hs in out) for (h in hs) if (h.kind == "noteheadBlack") symbolOf[h]?.let { sym -> headSize(clean, sym, sp)?.let { size[h] = it } }
+            val sizes = size.values.sorted()
+            val normal = sizes.getOrNull(sizes.size * 3 / 4) ?: 0f
+            // Only where the sizes fall plainly in two (a cue's and the part's, with a gap between):
+            // heads of every size in between (a drum part's x's and slashes, a blurred scan) say nothing.
+            val between = sizes.count { it > normal * 0.84f && it < normal * 0.95f }
+            // (Nor on a page whose filled heads are often not solid - a drum part's x's and slashes.)
+            val filled = out.sumOf { hs -> hs.count { it.kind == "noteheadBlack" } }
+            if (sizes.size >= 12 && between <= sizes.size / 10 && sizes.size >= filled * 0.6f) {
+                val cut = normal * 0.9f
+                fun smallHere(h: Head, hs: List<Head>): Boolean {
+                    size[h]?.let { return it < cut }
+                    // A hollow head (not measured): as the filled heads either side of it on its staff are -
+                    // a cue's whole note between a cue's crotchets is the cue's.
+                    val left = hs.filter { o -> size[o] != null && o.x < h.x }.maxByOrNull { it.x }
+                    val right = hs.filter { o -> size[o] != null && o.x > h.x }.minByOrNull { it.x }
+                    return when {
+                        left != null && right != null -> size[left]!! < cut && size[right]!! < cut
+                        else -> (left ?: right)?.let { o -> size[o]!! < cut && abs(o.x - h.x) < sp * 12 } ?: false
+                    }
+                }
+                for (hs in out) for (h in hs) if (size[h]?.let { it >= cut } == true) fullSize += h
+                if (System.getProperty("inksheets.omr.headsize") != null) for ((si, hs) in out.withIndex()) println("  SIZES staff $si cut ${"%.2f".format(cut)}: " +
+                    hs.joinToString(" ") { h -> "${h.x}${h.kind.removePrefix("notehead").take(1)}=${size[h]?.let { "%.2f".format(it) } ?: "-"}${if (smallHere(h, hs)) "s" else ""}" })
+                // Noted, not left out: a bar of them, with none of the part's own size, is a cue (see read).
+                for ((si, hs) in out.withIndex()) {
+                    val small = hs.filter { smallHere(it, hs) }
+                    if (small.isNotEmpty()) cueAt.getOrPut(si) { ArrayList() } += small.map { it.x }
+                }
+            }
         }
         // Each accidental to the head just right of it at its height (a chord's are staggered further left).
         val heads = out.flatten()
@@ -2693,13 +2787,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             fun redrawnBy(m: Measure, heads: Boolean): Boolean {
             val notes = m.events.filterIsInstance<Note>()
             val rests = m.events.filterIsInstance<Rest>()
-            val firstX = m.events.minOfOrNull { it.x } ?: m.box.right.toFloat()
+            // Where the clef, key and time end: where the bar's music was found to start, else its first symbol.
+            val firstX = if (m.start > 0) m.start.toFloat() + sp * 0.2f else m.events.minOfOrNull { it.x } ?: m.box.right.toFloat()
             // A head of a note read here (its stem and beams with it, where they touch).
             if (heads) return notes.any { n -> n.steps.any { st -> holds(n.x + headW / 2, s.y(st, n.x.roundToInt())) } }
             return (
                 // A rest read here.
                 rests.any { rr -> val ry = rr.step?.let { s.y(it, rr.x.roundToInt()) } ?: ((top + bottom) / 2)
                     l <= rr.x + sp * 1.2f && r >= rr.x - sp * 0.2f && t <= ry + sp * 1.6f && b >= ry - sp * 1.6f && w <= sp * 2.2f && h <= sp * 4f } ||
+                // A bar's one whole rest, wherever on the staff it is printed (a cue over it pushes it down).
+                (rests.size == 1 && notes.isEmpty() && rests[0].duration.base == 1 && rests[0].let { rr ->
+                    l <= rr.x + sp * 1.2f && r >= rr.x - sp * 0.6f && w <= sp * 2.2f && h <= sp && t >= top - sp * 2.5f && b <= bottom + sp * 2.5f }) ||
                 // A note's accidental, just left of its head.
                 notes.any { n -> n.accidentals.isNotEmpty() && r <= n.x + sp * 0.2f && l >= n.x - sp * 2.4f && w <= sp * 1.6f &&
                     n.steps.any { st -> val hy = s.y(st, n.x.roundToInt()); t <= hy + sp * 1.5f && b >= hy - sp * 1.5f } } ||
