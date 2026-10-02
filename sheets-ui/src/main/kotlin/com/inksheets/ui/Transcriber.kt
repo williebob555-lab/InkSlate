@@ -9,6 +9,7 @@ import com.inksheets.core.omr.Net
 import com.inksheets.core.omr.Recognizer
 import com.inksheets.core.omr.Score
 import com.inksheets.core.omr.Scores
+import com.inksheets.core.omr.Workers
 import java.io.File
 
 /**
@@ -148,7 +149,14 @@ internal object Transcriber {
             var number = 1
             var last = -2
             val t0 = System.currentTimeMillis()
-            for ((i, p) in todo.withIndex()) {
+            // The next page drawn while this one is read, on a device with the cores and memory for
+            // it (two pages held at once): the reading the same, only sooner.
+            var ahead: Pair<Int, java.util.concurrent.FutureTask<Pair<IntArray, Ink>?>>? = null
+            fun drawn(p: Int): Pair<IntArray, Ink>? {
+                ahead?.takeIf { it.first == p }?.let { ahead = null; return runCatching { it.second.get() }.getOrNull() ?: pageInk(peek, p) }
+                return pageInk(peek, p)
+            }
+            try { for ((i, p) in todo.withIndex()) {
                 state.platform.onMain { busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
                 // A page following one just read, or read before, carries on from it: its clef, key,
                 // time and bar numbers. One on its own takes its numbers from the print.
@@ -160,12 +168,17 @@ internal object Transcriber {
                 }
                 last = p
                 val pageStarted = System.currentTimeMillis()
-                val first = inkOf(peek, p, 1600)?.second ?: continue
-                val space = Recognizer().metrics(first)?.second
-                val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
-                val (grey, ink) = inkOf(peek, p, width) ?: continue
+                val (grey, ink) = drawn(p) ?: continue
+                todo.getOrNull(i + 1)?.let { next ->
+                    val rt = Runtime.getRuntime()
+                    if (Workers.roomy && rt.maxMemory() - (rt.totalMemory() - rt.freeMemory()) > (256L shl 20)) {
+                        val task = java.util.concurrent.FutureTask { pageInk(peek, next) }
+                        ahead = next to task
+                        Thread(task, "read-ahead").apply { isDaemon = true; start() }
+                    }
+                }
                 // A PDF that states its notes is read from them, exactly; a scan by the trained reader.
-                val printed = runCatching { peek.printed(p) }.getOrNull()
+                val printed = runCatching { synchronized(peek) { peek.printed(p) } }.getOrNull()
                 val reading = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) Net.shipped else null)
                 measures += reading.measures
                 // The width the page really came back at: a renderer may draw a small page narrower
@@ -182,6 +195,9 @@ internal object Transcriber {
                     val dest = pageFile(dir, p); dest.delete(); tmp.renameTo(dest)
                 }
                 synchronized(known) { known.remove(dir.path) }
+            } } finally {
+                // The page ahead finished drawing before the file is closed under it.
+                ahead?.second?.let { runCatching { it.get() } }
             }
             val score = cached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
             if (only == null) wholeMark(dir).delete()
@@ -320,8 +336,19 @@ internal object Transcriber {
     private val looker = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "look-again").apply { isDaemon = true } }
 
     /** Page [page] drawn [width] wide: its grey levels, and in black and white. */
+    /**
+     * [page] drawn for reading: first small, to measure its staff spaces, then at the size that
+     * makes a space 18 pixels. (Drawn one at a time: the page ahead may be drawn on another thread.)
+     */
+    private fun pageInk(peek: PagePeek, page: Int): Pair<IntArray, Ink>? {
+        val first = inkOf(peek, page, 1600)?.second ?: return null
+        val space = Recognizer().metrics(first)?.second
+        val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
+        return inkOf(peek, page, width)
+    }
+
     private fun inkOf(peek: PagePeek, page: Int, width: Int): Pair<IntArray, Ink>? {
-        val img = peek.render(page, width) ?: return null
+        val img = synchronized(peek) { peek.render(page, width) } ?: return null
         val px = IntArray(img.width * img.height)
         img.readPixels(px)
         return com.inksheets.core.omr.Strips.grey(px) to Ink.fromArgb(img.width, img.height, px)

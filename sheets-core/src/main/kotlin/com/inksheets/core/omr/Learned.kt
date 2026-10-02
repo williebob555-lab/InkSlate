@@ -30,11 +30,9 @@ object Learned {
     private class Found(val sym: Printed.Symbol, val fromMiddle: Float)
 
     fun symbols(grey: IntArray, w: Int, h: Int, staves: List<Recognizer.Staff>, net: Net): Printed {
+        // The staves through the network side by side, on a device with the cores for it.
         val all = ArrayList<Found>()
-        for (s in staves) {
-            val strip = Strips.cut(grey, w, h, s)
-            all += decode(strip, net.run(strip), s.space)
-        }
+        for (found in Workers.map(staves) { s -> val strip = Strips.cut(grey, w, h, s); decode(strip, net.run(strip), s.space) }) all += found
         // A symbol in two staves' strips (between staves close together): kept from the one it is nearer the middle of.
         all.sortBy { it.fromMiddle }
         val kept = ArrayList<Printed.Symbol>()

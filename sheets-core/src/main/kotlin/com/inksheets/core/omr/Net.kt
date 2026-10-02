@@ -4,7 +4,6 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.Callable
-import java.util.concurrent.Executors
 import kotlin.math.max
 import kotlin.math.min
 
@@ -47,7 +46,7 @@ class Net private constructor(private val layers: Map<String, Layer>) {
         val ow = (x.w + 2 * pad - l.dil * (l.k - 1) - 1) / l.stride + 1
         val out = Planes(l.cout, oh, ow)
         // Output channels shared out among the cores.
-        val per = max(1, (l.cout + threads - 1) / threads)
+        val per = max(1, (l.cout + Workers.threads - 1) / Workers.threads)
         val jobs = (0 until l.cout step per).map { c0 ->
             Callable {
                 for (co in c0 until min(l.cout, c0 + per)) {
@@ -78,14 +77,11 @@ class Net private constructor(private val layers: Map<String, Layer>) {
                 Unit
             }
         }
-        if (jobs.size == 1) jobs[0].call() else pool.invokeAll(jobs).forEach { it.get() }
+        Workers.map(jobs) { it.call() }
         return out
     }
 
     companion object {
-        private val threads = max(1, min(4, Runtime.getRuntime().availableProcessors() - 1))
-        private val pool by lazy { Executors.newFixedThreadPool(threads) { r -> Thread(r, "reader-net").apply { isDaemon = true } } }
-
         fun load(input: InputStream): Net {
             val bytes = input.readBytes()
             val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)

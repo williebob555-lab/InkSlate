@@ -1618,13 +1618,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         clock.mark("healed")
         // Ties, where nothing states them (a scan): seen in the ink between notes at one pitch.
         if (this.printed?.learned != false) findTies(healed, staves, measures)
-        for (i in measures.indices) {
-            val m = measures[i]
-            if (m.bars > 1) continue
-            val staffBars = measures.filter { it.staff == m.staff && it.bars == 1 }
-            val (kept, shades) = keptIn(healed, staves[m.staff], m, staffBars)
-            measures[i] = m.copy(kept = kept, keptShade = shades)
+        // Each bar's on its own (several at once where there are the cores): nothing one finds changes another's.
+        val keptNow = Workers.map(measures.toList()) { m ->
+            if (m.bars > 1) m else {
+                val staffBars = measures.filter { it.staff == m.staff && it.bars == 1 }
+                val (kept, shades) = keptIn(healed, staves[m.staff], m, staffBars)
+                m.copy(kept = kept, keptShade = shades)
+            }
         }
+        for (i in measures.indices) measures[i] = keptNow[i]
         clock.mark("kept")
         // What the kept marks are, for playing the music as marked (a picture states none of them).
         if (this.printed?.learned == true && MarkReader.available && System.getProperty("inksheets.omr.nomarks") == null) { readMarks(measures); clock.mark("marks") }
@@ -2675,6 +2677,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Every shape kept, with what it is taken for (however unsure), in the bar its middle is in.
         val all = ArrayList<Found>()
         val done = HashSet<String>()
+        val shapes = ArrayList<Triple<Int, Staff, IntArray>>()
         for ((mi, m) in measures.withIndex()) {
             if (m.bars > 1) continue
             val s = staves.getOrNull(m.staff) ?: continue
@@ -2683,12 +2686,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (!done.add(bx.joinToString(","))) continue
                 if (bx[2] - bx[0] > s.space * 20 || bx[3] - bx[1] > s.space * 6) continue
                 if (bx[2] - bx[0] + 1 < s.space * 0.22f && bx[3] - bx[1] + 1 < s.space * 0.22f) continue
-                val top = s.lineY(0, ((bx[0] + bx[2]) / 2).coerceIn(s.left, s.right))
-                val (label, p) = MarkReader.read(g, ink.width, ink.height, bx, s.space, top) ?: continue
-                val cx = (bx[0] + bx[2]) / 2
-                val home = measures.indices.firstOrNull { k -> measures[k].staff == m.staff && measures[k].page == m.page && cx >= measures[k].box.left && cx < measures[k].box.right } ?: mi
-                all += Found(home, label, p, bx)
+                shapes += Triple(mi, s, bx)
             }
+        }
+        // Each shape looked at on its own (several at once where there are the cores).
+        val seen = Workers.map(shapes) { (_, s, bx) -> MarkReader.read(g, ink.width, ink.height, bx, s.space, s.lineY(0, ((bx[0] + bx[2]) / 2).coerceIn(s.left, s.right))) }
+        for ((k, shape) in shapes.withIndex()) {
+            val (mi, _, bx) = shape
+            val (label, p) = seen[k] ?: continue
+            val m = measures[mi]
+            val cx = (bx[0] + bx[2]) / 2
+            val home = measures.indices.firstOrNull { k2 -> measures[k2].staff == m.staff && measures[k2].page == m.page && cx >= measures[k2].box.left && cx < measures[k2].box.right } ?: mi
+            all += Found(home, label, p, bx)
         }
         if (System.getProperty("inksheets.omr.shapes") != null) for (f in all) println("  SHAPE staff ${measures[f.mi].staff} bar ${measures[f.mi].number} ${f.box.toList()} ${f.label} %.2f".format(f.p))
         // Words first, by how they lie: small shapes off the staff, side by side along one line,
