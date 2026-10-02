@@ -1226,7 +1226,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Every staff's heads first: a note high over one staff is also low under the one above,
         // and belongs to whichever it is nearer the middle of.
         clock.mark("symbols")
-        val headsOf = if (this.printed != null) printedHeads(staves, ink) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
+        val headsOf = if (this.printed != null) printedHeads(staves, ink, clean) else staves.map { s -> heads(clean, s, s.left, s.right, ink).toMutableList() }
         clock.mark("heads")
         // Stems now, and a hollow "head" at another note's stem end is its flag's curl.
         if (this.printed == null) fitStemMin(clean, staves, headsOf, t)
@@ -2048,8 +2048,134 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return Printed(p.width, p.height, p.symbols.map { if (it.kind in headKinds || it.kind == Printed.Kind.DOT) it.copy(y = it.y - shift) else it }, p.stems, p.beams, p.arcs, p.lines)
     }
 
+    /**
+     * The line or space a trained reader's head [sym] sits on: its height measured against the
+     * staff's own lines where it stands (a scan's staff is not evenly spaced from end to end, and a
+     * head on the bottom line is eight half-spaces down, where a little off adds up), then settled
+     * by the ink round the line nearest it - the reader's guess at the height can be a fraction
+     * off, and a fraction is a line or a space.
+     */
+    private fun learnedStep(sym: Printed.Symbol, s: Staff, ink: Ink?): Int {
+        val cx = (sym.x + sym.width / 2).roundToInt()
+        val top = s.lineY(0, cx); val half = (s.lineY(4, cx) - top) / 8f
+        val e = (sym.y - top) / half
+        // Two looks at the ink, each fooled now and then by what touches a head (a tie's end, a
+        // stem, a dot): taken only where they agree.
+        val middle = if (ink != null && sym.kind == Printed.Kind.HEAD_BLACK) inkMiddle(ink, cx, sym.y, s.space)?.let { ((it - top) / half).roundToInt() } else null
+        val balance = if (ink != null) onLineOrBeside(ink, s, cx, e) else null
+        val step = if (middle != null && middle == balance && abs(middle - e) <= 1.2f) middle else e.roundToInt()
+        if (System.getProperty("inksheets.omr.steps") != null) println("  STEP x=$cx y=${sym.y.toInt()} net=${"%.2f".format(e)} middle=$middle balance=$balance -> $step")
+        return step
+    }
+
+    /**
+     * The middle of a filled head's ink about ([cx], [y]): down each column across the head's middle
+     * (clear of its stem), the ink's run through the head - which takes in a staff line the head
+     * sits on, or the two it sits between, either way evenly - and the median of their middles.
+     * Null where the runs are not a head's: a stem, a beam, a slur through it, nothing.
+     */
+    private fun inkMiddle(ink: Ink, cx: Int, y: Float, sp: Float): Float? {
+        val across = (sp * 0.28f).toInt().coerceAtLeast(1)
+        val reach = (sp * 0.4f).toInt().coerceAtLeast(1)
+        val mids = ArrayList<Float>()
+        for (x in cx - across..cx + across) {
+            val y0 = y.roundToInt()
+            val start = (0..reach).asSequence().flatMap { d -> sequenceOf(y0 + d, y0 - d) }.firstOrNull { ink[x, it] } ?: continue
+            var a = start; while (ink[x, a - 1] && start - a < sp * 1.5f) a--
+            var b = start; while (ink[x, b + 1] && b - start < sp * 1.5f) b++
+            val len = b - a + 1
+            if (len < sp * 0.6f || len > sp * 1.45f) continue
+            mids += (a + b) / 2f
+        }
+        if (mids.size < 3) return null
+        mids.sort()
+        return mids[mids.size / 2]
+    }
+
+    /**
+     * Whether a head at about [e] half-spaces down sits on the line nearest it or in the space
+     * beside: a head on a line has as much of its ink above the line as below, a head in a space
+     * all of it to one side. (Its middle measured outright moves with whatever touches it - a
+     * slur's end, a tie - where the balance across the line hardly does.) Off the staff the line is
+     * the ledger line found there, not the staff's spacing carried on. Null where the ink does not say.
+     */
+    private fun onLineOrBeside(ink: Ink, s: Staff, cx: Int, e: Float): Int? {
+        val sp = s.space
+        val line = Math.round(e / 2f) * 2
+        var ly = s.y(line, cx)
+        val t = max(1, lineThickness)
+        if (line < 0 || line > 8) {
+            // The ledger line itself: the row near where it should be whose ink runs on furthest past the head both ways.
+            val reach = (sp * 0.85f).toInt()
+            fun runAt(y: Int): Int {
+                if (!ink[cx - reach, y] || !ink[cx + reach, y]) return 0
+                var n = 0; for (x in cx - reach..cx + reach) if (ink[x, y]) n++; return n
+            }
+            val y0 = (ly - sp * 0.3f).roundToInt(); val y1 = (ly + sp * 0.3f).roundToInt()
+            val best = (y0..y1).maxByOrNull { y -> runAt(y) * 1000 - abs(y - ly).roundToInt() } ?: return null
+            if (runAt(best) < reach * 2 * 0.85f) return null
+            ly = best.toFloat()
+        }
+        val across = (sp * 0.3f).toInt().coerceAtLeast(1)
+        val near = (sp * 0.45f).roundToInt()
+        var above = 0; var below = 0
+        for (x in cx - across..cx + across) for (dy in t..near) {
+            if (ink[x, (ly - dy).roundToInt()]) above++
+            if (ink[x, (ly + dy).roundToInt()]) below++
+        }
+        val most = max(above, below)
+        if (most < (2 * across + 1) * (near - t + 1) * 0.25f) return null
+        val step = when {
+            // (A slur's end or a dot touching one side tips it a little, never to nothing on the other.)
+            min(above, below) >= most * 0.25f -> line
+            above > below -> line - 1
+            else -> line + 1
+        }
+        return step.takeIf { abs(it - e) <= 1.2f }
+    }
+
+    /**
+     * Whether accidental [a], taken for a flat or a natural, is a natural: followed as one stroke
+     * of ink (the staff's lines out), a natural's right-hand upright runs on well below where its
+     * left one stops, while a flat's bowl closes at its stem's foot. Null when the ink cannot say
+     * (nothing there, or more than an accidental's worth joined to it).
+     */
+    private fun looksNatural(clean: Ink, a: Printed.Symbol, sp: Float): Boolean? {
+        val cx = (a.x + a.width / 2).roundToInt(); val cy = a.y.roundToInt()
+        val x0 = (cx - sp * 0.8f).toInt(); val x1 = (cx + sp * 0.5f).toInt()
+        val y0 = (cy - sp * 2.6f).toInt(); val y1 = (cy + sp * 2.2f).toInt()
+        // The ink nearest the middle, and all joined to it inside the box.
+        val r = (sp * 0.5f).toInt()
+        var seed: Pair<Int, Int>? = null
+        loop@ for (d in 0..r) for (dy in -d..d) for (dx in -d..d) { if (clean[cx + dx, cy + dy]) { seed = cx + dx to cy + dy; break@loop } }
+        val start = seed ?: return null
+        val w = x1 - x0 + 1; val h = y1 - y0 + 1
+        val seen = BooleanArray(w * h)
+        val stack = ArrayDeque<Int>()
+        fun push(x: Int, y: Int) { if (x in x0..x1 && y in y0..y1 && clean[x, y]) { val k = (y - y0) * w + (x - x0); if (!seen[k]) { seen[k] = true; stack.addLast(k) } } }
+        push(start.first, start.second)
+        var count = 0
+        val low = IntArray(w) { Int.MIN_VALUE }
+        while (stack.isNotEmpty()) {
+            val k = stack.removeLast(); val x = k % w + x0; val y = k / w + y0
+            count++
+            if (y > low[x - x0]) low[x - x0] = y
+            push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1)
+        }
+        // More ink than an accidental's: run into a head, a beam, a slur - not to be judged.
+        if (count > sp * sp * 2.2f || count < sp * sp * 0.15f) return null
+        val cols = (0 until w).filter { low[it] != Int.MIN_VALUE }
+        if (cols.size < 3) return null
+        val a0 = cols.first(); val a1 = cols.last()
+        val third = max(1, (a1 - a0 + 1) / 3)
+        val leftFoot = (a0 until a0 + third).maxOf { low[it] }
+        val rightFoot = (a1 - third + 1..a1).maxOf { low[it] }
+        if (a1 - a0 < sp * 0.25f) return null
+        return rightFoot - leftFoot > sp * 0.45f
+    }
+
     /** The printed heads, each on the staff it is nearest the middle of; cue and grace notes (small) left out, as they take no time in the bar. */
-    private fun printedHeads(staves: List<Staff>, lines: Ink? = null): List<MutableList<Head>> {
+    private fun printedHeads(staves: List<Staff>, lines: Ink? = null, clean: Ink? = null): List<MutableList<Head>> {
         val p = printed!!
         val all = p.heads
         val out = staves.map { ArrayList<Head>() }
@@ -2064,7 +2190,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val s = staves[si]
             if (abs((s.top + s.bottom) / 2f - sym.y) > s.space * 9) continue
             val x = sym.x.roundToInt()
-            val step = ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
+            val step = if (p.learned) learnedStep(sym, s, lines) else ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
             val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.confidence)
             // The trained reader takes a word's letter off the staff for a head (legato's "o"): off
@@ -2077,8 +2203,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Each accidental to the head just right of it at its height (a chord's are staggered further left).
         val heads = out.flatten()
         for (a in p.symbols) {
-            val alter = when (a.kind) { Printed.Kind.FLAT -> -1; Printed.Kind.SHARP -> 1; Printed.Kind.NATURAL -> 0; Printed.Kind.DOUBLE_FLAT -> -2; Printed.Kind.DOUBLE_SHARP -> 2; else -> continue }
+            var alter = when (a.kind) { Printed.Kind.FLAT -> -1; Printed.Kind.SHARP -> 1; Printed.Kind.NATURAL -> 0; Printed.Kind.DOUBLE_FLAT -> -2; Printed.Kind.DOUBLE_SHARP -> 2; else -> continue }
             val sp = staves.first().space
+            // The trained reader takes a natural for a flat now and then: the strokes on the page say which.
+            if (p.learned && clean != null && (alter == -1 || alter == 0)) looksNatural(clean, a, sp)?.let { alter = if (it) 0 else -1 }
             val h = heads.filter { h -> val sym = symbolOf[h]!!; sym.x - a.x in sp * 0.3f..sp * 3f && abs(sym.y - a.y) <= sp * 0.3f && h !in printedAccidental }
                 .minByOrNull { symbolOf[it]!!.x - a.x } ?: continue
             printedAccidental[h] = alter
