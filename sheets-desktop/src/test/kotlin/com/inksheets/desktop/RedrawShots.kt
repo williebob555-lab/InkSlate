@@ -75,11 +75,14 @@ class RedrawShots {
             if (cleanAll) ScoreTools.cleanUp(path, measures.map { it.number }) else ScoreTools.showUnderlay(true)
             // -Dinksheets.omr.layers=1: what is kept as printed in red, the redraw in black.
             if (System.getProperty("inksheets.omr.layers") != null) ScoreTools.keptColor = 0xFFE02020.toInt()
+            // -Dinksheets.omr.audit=1: each staff as the print over its redraw, bar numbers on, for checking bar by bar.
+            val audit = System.getProperty("inksheets.omr.audit") != null
             for (p in (only?.toList() ?: (0 until minOf(pages, 2)).toList())) {
                 val (wPts, hPts) = source.pageDim(p).let { it.width to it.height }
                 val marks = ScoreTools.marks(path, p, wPts, hPts).orEmpty()
                 val k = (System.getProperty("inksheets.omr.zoom") ?: "2").toFloat()
                 val img = Loader.loadPDF(file).use { PDFRenderer(it).renderImageWithDPI(p, 72f * k, ImageType.RGB) }
+                val print = if (audit) java.awt.image.BufferedImage(img.width, img.height, img.type).also { it.data = img.data } else null
                 val g = img.createGraphics()
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g.scale(k.toDouble(), k.toDouble())
@@ -93,13 +96,51 @@ class RedrawShots {
                     }
                 }
                 g.dispose()
-                ImageIO.write(img, "png", File(shots, (if (cleanAll) "clean-" else "redraw-") + "${file.nameWithoutExtension.replace(Regex("[^A-Za-z0-9]+"), "-")}-p${p + 1}.png"))
+                if (print != null) auditStrips(print, img, measures.filter { it.page == p }, widths[p], shots, "${file.nameWithoutExtension.replace(Regex("[^A-Za-z0-9]+"), "-").take(24)}-p${p + 1}")
+                else ImageIO.write(img, "png", File(shots, (if (cleanAll) "clean-" else "redraw-") + "${file.nameWithoutExtension.replace(Regex("[^A-Za-z0-9]+"), "-")}-p${p + 1}.png"))
             }
         } finally {
             ScoreTools.scoreSource = null
             ScoreTools.showUnderlay(false)
             ScoreTools.undoAllClean(path)
             ScoreTools.keptColor = null
+        }
+    }
+
+    /**
+     * Each staff of [measures] (read from a page drawn [inkWidth] wide) as the [print] over the
+     * [clean] redraw, the same strip of page one above the other: bar numbers over the print, a bar
+     * in doubt boxed in orange, every bar's left edge ruled through both.
+     */
+    private fun auditStrips(print: java.awt.image.BufferedImage, clean: java.awt.image.BufferedImage, measures: List<Measure>, inkWidth: Int, dir: File, name: String) {
+        val f = print.width.toFloat() / inkWidth
+        for ((staff, bars) in measures.groupBy { it.staff }.toSortedMap()) {
+            val sp = (bars.first().box.bottom - bars.first().box.top) / 4f
+            val top = ((bars.minOf { it.box.top } - sp * 4) * f).toInt().coerceAtLeast(0)
+            val bottom = ((bars.maxOf { it.box.bottom } + sp * 4) * f).toInt().coerceAtMost(print.height)
+            val left = ((bars.minOf { it.box.left } - sp * 4) * f).toInt().coerceAtLeast(0)
+            val right = ((bars.maxOf { it.box.right } + sp) * f).toInt().coerceAtMost(print.width)
+            val h = bottom - top; val w = right - left
+            if (h <= 0 || w <= 0) continue
+            val label = 22
+            val out = java.awt.image.BufferedImage(w, label + h * 2 + 6, java.awt.image.BufferedImage.TYPE_INT_RGB)
+            val g = out.createGraphics()
+            g.color = Color.WHITE; g.fillRect(0, 0, out.width, out.height)
+            g.drawImage(print.getSubimage(left, top, w, h), 0, label, null)
+            g.color = Color(0x3060C0); g.fillRect(0, label + h, w, 6)
+            g.drawImage(clean.getSubimage(left, top, w, h), 0, label + h + 6, null)
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+            g.font = java.awt.Font("SansSerif", java.awt.Font.BOLD, 16)
+            for (m in bars) {
+                val x0 = (m.box.left * f).toInt() - left; val x1 = (m.box.right * f).toInt() - left
+                g.color = if (m.sure) Color(0x208020) else Color(0xE07000)
+                g.drawString("${m.number}${if (m.bars > 1) "x${m.bars}" else ""}${if (m.sure) "" else "?"}", x0 + 3, 17)
+                g.stroke = BasicStroke(if (m.sure) 1f else 3f)
+                if (!m.sure) g.drawRect(x0, label, x1 - x0, out.height - label - 1)
+                else { g.color = Color(0x80208020.toInt(), true); g.drawLine(x0, label, x0, out.height) }
+            }
+            g.dispose()
+            ImageIO.write(out, "png", File(dir, "audit-$name-s${staff + 1}.png"))
         }
     }
 }
