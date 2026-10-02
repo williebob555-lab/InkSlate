@@ -4,6 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Campaign
@@ -250,6 +255,8 @@ class RemoteControl(private val state: SheetsState) {
                     .also { setCache = Triple(state.version, id, it) }
         }.orEmpty()
         val companion = state.companion
+        // The music as read of the part in front (cached where it is read; cheap to ask often).
+        val score = if (song != null) runCatching { ScoreTools.scoreHere(state) }.getOrNull() else null
         h.show(RemoteLink.State(
             songId = song?.id,
             title = song?.title,
@@ -284,7 +291,20 @@ class RemoteControl(private val state: SheetsState) {
             profileId = state.profileId,
             windows = PerformAction.entries.filter { state.windowOpen(it) }.map { it.name },
             listening = Listener.active,
-            listenStatus = if (state.listenTurns) Listener.summary(state) else "Listen is off in Settings"
+            listenStatus = if (state.listenTurns) Listener.summary(state) else "Listen is off in Settings",
+            audioSeconds = Recording.player?.let { (it.positionMs / 1000).toInt() } ?: 0,
+            audioLength = Recording.player?.let { (it.durationMs / 1000).toInt() } ?: 0,
+            audioSpeed = Recording.player?.let { (it.speed * 100).roundToInt() } ?: 100,
+            audioVolume = Recording.player?.let { (it.volume * 100).roundToInt() } ?: 100,
+            readBusy = Transcriber.busy,
+            readBars = score?.measures?.size ?: 0,
+            readSure = score?.measures?.count { it.sure } ?: 0,
+            readThisPage = score?.hasRead(page) == true,
+            readAny = score != null,
+            cleanShown = ScoreTools.underlay,
+            fixing = ScoreTools.checking,
+            scorePlaying = ScoreTools.playing != null,
+            musicTools = ScoreTools.open
         ))
     }
 
@@ -353,6 +373,16 @@ class RemoteControl(private val state: SheetsState) {
             RemoteButton.HOME -> Perform.showHome?.invoke()
             RemoteButton.LEADER -> state.companion.goToLeader()
             RemoteButton.LEAD -> if (state.companion.leading) state.companion.stopLeading() else state.companion.lead()
+            // Reading the music: just what the music tools' own buttons do.
+            RemoteButton.READ_PAGE, RemoteButton.READ_PART -> state.currentPath?.let { path ->
+                ScoreTools.open = true
+                if (Transcriber.busy == null) Transcriber.read(state, java.io.File(path),
+                    pages = if (c.action == RemoteButton.READ_PAGE) setOf(state.pageShown.first) else null) { Perform.marksChanged() }
+            }
+            RemoteButton.CLEAN -> ScoreTools.showUnderlay(!ScoreTools.underlay)
+            RemoteButton.FIX -> if (ScoreTools.checking) ScoreTools.endCheck() else { ScoreTools.open = true; ScoreTools.startCheck(state) }
+            RemoteButton.SCORE_PLAY -> if (ScoreTools.playing != null) ScoreTools.stop(state) else if (ScoreTools.band) ScoreTools.playBand(state) else ScoreTools.play(state)
+            RemoteButton.MUSIC_TOOLS -> ScoreTools.open = !ScoreTools.open
             else -> PerformAction.entries.firstOrNull { it.name == c.action }?.let { Perform.run(it) }
         }
         publish()
@@ -561,7 +591,13 @@ internal fun RemoteScreen(state: SheetsState, onClose: () -> Unit) {
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close the remote") }
             }
-            if (remote.target != null) RemoteDeck(state) else RemoteSetup(state)
+            if (remote.target != null) {
+                // The player's buttons in the middle, four pages round them (see RemotePages); no
+                // swiping between them while the buttons are changed or the touchpad is out.
+                val editing = remember { mutableStateOf(false) }
+                val touchpad = remember { mutableStateOf(false) }
+                RemotePager(state, enabled = !editing.value && !touchpad.value) { RemoteDeck(state, editing, touchpad) }
+            } else RemoteSetup(state)
         }
     }
 }
@@ -723,14 +759,14 @@ internal fun HostSection(state: SheetsState) {
 
 /** Connected: what the other device shows, and the buttons. */
 @Composable
-private fun RemoteDeck(state: SheetsState) {
+private fun RemoteDeck(state: SheetsState, editingState: androidx.compose.runtime.MutableState<Boolean>, touchpadState: androidx.compose.runtime.MutableState<Boolean>) {
     val remote = state.remote
     val shown = remote.shown
-    var editing by remember { mutableStateOf(false) }
+    var editing by editingState
     var changing by remember { mutableStateOf<Int?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
     var typing by remember { mutableStateOf(false) }
-    var touchpad by remember { mutableStateOf(false) }
+    var touchpad by touchpadState
     val taps = remember { mutableStateListOf<Long>() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -1114,6 +1150,12 @@ private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLi
         RemoteButton.LEADER -> "Back to the leader"
         RemoteButton.LEAD -> if (shown?.leading == true) "Stop leading" else "Lead"
         RemoteButton.MACRO -> "${b.steps.size} steps"
+        RemoteButton.READ_PAGE -> "Read this page"
+        RemoteButton.READ_PART -> "Read the part"
+        RemoteButton.CLEAN -> if (shown?.cleanShown == true) "Hide clean view" else "Clean view"
+        RemoteButton.FIX -> if (shown?.fixing == true) "Stop fixing" else "Fix bars in doubt"
+        RemoteButton.SCORE_PLAY -> if (shown?.scorePlaying == true) "Stop the music" else "Play the music read"
+        RemoteButton.MUSIC_TOOLS -> if (shown?.musicTools == true) "Put music tools away" else "Music tools"
         else -> b.kind
     }
 }
@@ -1146,6 +1188,11 @@ private fun iconFor(b: RemoteButton, shown: RemoteLink.State?): ImageVector = wh
     RemoteButton.HOME -> Icons.Default.Home
     RemoteButton.LEADER, RemoteButton.LEAD -> Icons.Default.Groups
     RemoteButton.MACRO -> Icons.Default.AutoAwesome
+    RemoteButton.READ_PAGE, RemoteButton.READ_PART -> Icons.Default.DocumentScanner
+    RemoteButton.CLEAN -> Icons.Default.Visibility
+    RemoteButton.FIX -> Icons.Default.Build
+    RemoteButton.SCORE_PLAY -> if (shown?.scorePlaying == true) Icons.Default.Stop else Icons.Default.PlayArrow
+    RemoteButton.MUSIC_TOOLS -> Icons.Default.LibraryMusic
     else -> Icons.Default.MusicNote
 }
 
@@ -1481,6 +1528,7 @@ private fun offers(shown: RemoteLink.State?): List<Offer> {
     fun k(section: String, name: String, kind: String, value: Double? = null) = Offer(section, name, RemoteButton(kind, value = value))
     val pages = "Pages"; val songs = "Songs and sets"; val parts = "Parts"; val click = "Metronome and count-in"
     val rec = "Recordings"; val marks = "Marking"; val view = "The screen"; val band = "Playing together"; val more = "More than one thing"
+    val reading = "Reading the music"
     return listOf(
         a(pages, PerformAction.NEXT_PAGE), a(pages, PerformAction.PREVIOUS_PAGE),
         a(pages, PerformAction.HALF_PAGE_FORWARD), a(pages, PerformAction.HALF_PAGE_BACK),
@@ -1524,7 +1572,13 @@ private fun offers(shown: RemoteLink.State?): List<Offer> {
         k(band, "Back to the leader", RemoteButton.LEADER),
         k(band, "A message you write now", RemoteButton.MESSAGE),
         k(band, "Write a message each time...", RemoteButton.MESSAGE_TYPE),
-        a(band, PerformAction.PLAY_TOGETHER, "Open Play together there")
+        a(band, PerformAction.PLAY_TOGETHER, "Open Play together there"),
+        k(reading, "Read this page's music", RemoteButton.READ_PAGE),
+        k(reading, "Read the whole part's music", RemoteButton.READ_PART),
+        k(reading, "The clean view (show/hide)", RemoteButton.CLEAN),
+        k(reading, "Fix the bars in doubt (start/stop)", RemoteButton.FIX),
+        k(reading, "Play the music read (start/stop)", RemoteButton.SCORE_PLAY),
+        k(reading, "The music tools (show/hide)", RemoteButton.MUSIC_TOOLS)
     ) + shown?.presets.orEmpty().map { p ->
         Offer(band, "One-tap: ${p.text}", RemoteButton(RemoteButton.MESSAGE, text = p.text, urgent = p.urgent, color = p.color))
     } + Offer(more, "A sequence: several of these in one press", RemoteButton(RemoteButton.MACRO))

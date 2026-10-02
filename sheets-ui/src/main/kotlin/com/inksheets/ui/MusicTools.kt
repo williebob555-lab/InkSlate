@@ -170,6 +170,16 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
 
 @Composable
 internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
+    FloatingPanel(title = "Tuner", onClose = onClose) { TunerBody(state) }
+}
+
+/**
+ * The tuner itself, listening on this device's microphone while it is shown: the note heard, a
+ * needle, how far off - in the dialog, and on a remote's own page (the phone at the stand tuning).
+ * [large]: the note and needle bigger, for a phone held at arm's length.
+ */
+@Composable
+internal fun TunerBody(state: SheetsState, large: Boolean = false) {
     val mic = state.platform.microphone
     // Name notes as the chosen instrument reads them: a treble-clef baritone sees C, not B-flat.
     val instrument = state.profile?.instruments?.firstOrNull()?.let { Instruments.byId[com.inksheets.core.PartChoice.seat(it).first] }
@@ -217,12 +227,12 @@ internal fun TunerDialog(state: SheetsState, onClose: () -> Unit) {
     }
     val note = hz?.let { Tuner.note(it, if (transposed) instrument?.transpose ?: 0 else 0, a4) }
 
-    FloatingPanel(title = "Tuner", onClose = onClose) {
+    run {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
             val n = note
             Text(
                 n?.let { "${it.name}${it.octave}" } ?: "–",
-                fontSize = 48.sp, fontWeight = FontWeight.Light, textAlign = TextAlign.Center
+                fontSize = if (large) 72.sp else 48.sp, fontWeight = FontWeight.Light, textAlign = TextAlign.Center
             )
             if (n != null && transposed && instrument != null && instrument.transpose != 0) {
                 Text("concert ${n.concertName}", style = MaterialTheme.typography.labelMedium)

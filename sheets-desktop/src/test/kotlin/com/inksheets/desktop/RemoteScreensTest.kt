@@ -361,6 +361,71 @@ class RemoteScreensTest {
     }
 
     @Test
+    fun `the remote's pages round the buttons - the set as a grid, tuner and click, reading, recordings`() {
+        val root = tmp.newFolder("Music")
+        val stand = library(root)
+        // A pep band's set: eighteen songs.
+        val titles = listOf("Hey Baby", "Crab Rave", "September", "Sweet Caroline", "Tom Sawyer", "Groove Is in the Heart", "Hot Hot Hot",
+            "Boots on the Ground", "Seven Nation Army", "Uptown Funk", "Land of a Thousand Dances", "Shout", "Iron Man",
+            "Zombie Nation", "Mr. Brightside", "Hey Song", "24K Magic", "Fight Song")
+        lateinit var setId: String
+        stand.change {
+            val ids = titles.map { t -> songs.firstOrNull { it.title == t }?.id ?: ensureSong(t).id }
+            setId = addSetlist("Football - home").id
+            editSetlist(setId) { entries = ids.map { com.inksheets.core.SetlistEntry(songId = it) } }
+        }
+        val phone = SheetsState(FakePlatform(tmp.newFolder("PhoneMusic"), deviceName = "Phone"))
+        assertTrue(stand.remote.startHosting())
+        try {
+            val link = stand.remote.pairLink!!.replace(Regex("hosts=[^&]*"), "hosts=127.0.0.1")
+            stand.playSetlist(setId, 4)
+            phone.remote.remoteOpen = true
+            runDesktopComposeUiTest(width = 400, height = 860) {
+                setContent { MaterialTheme { Surface { SheetsHome(phone, onOpenSettings = {}) } } }
+                phone.remote.connect(com.inksheets.core.RemoteLink.parsePair(link)!!)
+                waitUntil(timeoutMillis = 5000) { phone.remote.shown?.set?.size == titles.size }
+                waitForIdle()
+                val root = onAllNodes(isRoot()).onFirst()
+                fun shot(name: String) { waitForIdle(); shoot(name, root.captureToImage().toAwtImage()) }
+                fun swipe(dx: Float, dy: Float) = root.performTouchInput { down(center); moveBy(androidx.compose.ui.geometry.Offset(dx / 2, dy / 2)); moveBy(androidx.compose.ui.geometry.Offset(dx / 2, dy / 2)); up() }
+                shot("remote-pages-center")
+                // A swipe left: the set, to the right.
+                swipe(-260f, 0f)
+                onNodeWithText("The set").assertExists()
+                shot("remote-pages-set")
+                // A song picked from the grid goes there, in the set, and the buttons come back.
+                onNodeWithText("Uptown Funk").performClick()
+                waitUntil(timeoutMillis = 3000) { stand.playing?.second == 9 }
+                waitUntil(timeoutMillis = 3000) { onAllNodesWithText("Change buttons").fetchSemanticsNodes().isNotEmpty() }
+                // Down: tuner and click above.
+                swipe(0f, 300f)
+                onNodeWithText("Tuner & click").assertExists()
+                shot("remote-pages-tools")
+                swipe(-260f, 0f)   // any way back
+                waitUntil(timeoutMillis = 2000) { onAllNodesWithText("Change buttons").fetchSemanticsNodes().isNotEmpty() }
+                // Up: reading below.
+                swipe(0f, -300f)
+                onNodeWithText("Reading the music").assertExists()
+                shot("remote-pages-reading")
+                swipe(0f, 300f)
+                waitUntil(timeoutMillis = 2000) { onAllNodesWithText("Change buttons").fetchSemanticsNodes().isNotEmpty() }
+                // Right: recordings to the left.
+                swipe(260f, 0f)
+                onNodeWithText("Recordings").assertExists()
+                shot("remote-pages-recording")
+                // The tab at the edge goes there too.
+                swipe(-260f, 0f)
+                waitUntil(timeoutMillis = 2000) { onAllNodesWithText("Change buttons").fetchSemanticsNodes().isNotEmpty() }
+                onNodeWithText("Reading").performClick()
+                onNodeWithText("Reading the music").assertExists()
+                phone.remote.disconnect()
+            }
+        } finally {
+            stand.remote.stopHosting()
+        }
+    }
+
+    @Test
     fun `a remote sets the tempo, counts in, and runs a sequence of steps in one press`() {
         val stand = library(tmp.newFolder("Music"), out = FakeOut())
         val phone = SheetsState(FakePlatform(tmp.newFolder("PhoneMusic"), deviceName = "Phone"))

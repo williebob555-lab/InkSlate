@@ -106,6 +106,14 @@ data class RemoteButton(
         /** Listen and turn the pages (experimental): on or off for this run of the song. */
         const val LISTEN = "listen"
         const val VIEW = "view"
+        // Reading the music (the music tools): this page, the whole part, the clean view, going through
+        // the bars in doubt, playing what was read, the tools themselves.
+        const val READ_PAGE = "read-page"
+        const val READ_PART = "read-part"
+        const val CLEAN = "clean"
+        const val FIX = "fix"
+        const val SCORE_PLAY = "score-play"
+        const val MUSIC_TOOLS = "music-tools"
 
         fun action(name: String) = RemoteButton(ACTION, name)
 
@@ -263,7 +271,24 @@ object RemoteLink {
         val windows: List<String> = emptyList(),
         /** Listen is on, and what it is doing in a few words (it hears nothing, when it turns). */
         val listening: Boolean = false,
-        val listenStatus: String? = null
+        val listenStatus: String? = null,
+        /** The recording playing: where it is and how long, in seconds; its speed and volume in percent. */
+        val audioSeconds: Int = 0,
+        val audioLength: Int = 0,
+        val audioSpeed: Int = 100,
+        val audioVolume: Int = 100,
+        /** Reading the music: what it is doing now ("Reading page 2 of 4..."), null when idle. */
+        val readBusy: String? = null,
+        /** The part's music as read so far: bars, and how many of them sure; whether the page in front is read. */
+        val readBars: Int = 0,
+        val readSure: Int = 0,
+        val readThisPage: Boolean = false,
+        val readAny: Boolean = false,
+        /** The clean view shown, the bars in doubt being gone through, the music read being played, the music tools out. */
+        val cleanShown: Boolean = false,
+        val fixing: Boolean = false,
+        val scorePlaying: Boolean = false,
+        val musicTools: Boolean = false
     )
 
     /** The library to pick a song or setlist from; sent on joining and when it changes. */
