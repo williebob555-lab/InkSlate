@@ -1376,6 +1376,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // (A head far over the staff is a tempo marking's note, not one played here.)
                 val headsHere = allHeads.any { it.x >= from - 2 && it.x < to && it.step in -6..14 }
                 if (traceRests) println("  bar ${span.first}..${span.second} heads here: ${allHeads.filter { it.x >= from - 2 && it.x < to }.map { "${it.kind} ${it.step}" }}")
+                // A time signature after a line's last barline, nothing else: the change ahead shown
+                // at the line's end (the next line starts with it) - no bar of its own.
+                if (i == spans.lastIndex && i > 0 && !headsHere && span.second - span.first < s.space * 5f &&
+                    (if (stated) printedTime(s, span.first) else timeAt(clean, s, span.first + (s.space * 0.3f).toInt())) != null) continue
                 val rest = if (headsHere) null else multiRest(clean, s, from, to, ink)
                 if (rest != null) {
                     val (restBars, x) = rest
