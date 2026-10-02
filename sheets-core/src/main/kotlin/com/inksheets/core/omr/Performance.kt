@@ -32,7 +32,7 @@ object Performance {
         }
     }
 
-    private class Held(val midi: Int, val start: Long, var end: Long, val velocity: Float)
+    private class Held(val midi: Int, val start: Long, var end: Long, val velocity: Float, val accent: Float = 0f)
 
     /**
      * [bars] (in the order played) at [bpm] quarter notes a minute, [rate] samples a second, as
@@ -50,7 +50,7 @@ object Performance {
         val hairpinsDone = HashSet<String>()
         val gap = rate / 60L      // a hair between notes, so repeated ones are heard apart
 
-        fun flush(midi: Int) { open.remove(midi)?.let { h -> tones += Synth.Tone(h.midi, h.start, max(1L, h.end - h.start), h.velocity, patch) } }
+        fun flush(midi: Int) { open.remove(midi)?.let { h -> tones += Synth.Tone(h.midi, h.start, max(1L, h.end - h.start), h.velocity, patch, h.accent) } }
         fun flushAll() { for (k in open.keys.toList()) flush(k) }
 
         for (m in bars) {
@@ -100,16 +100,19 @@ object Performance {
                         v += (if (h.kind == "cresc") 0.18f else -0.18f) * f
                     }
                     val a = e.articulations
+                    // Accents leant on hard: louder, and struck (see Synth.Tone.accent).
+                    var accent = 0f
                     when {
-                        struck != null -> { v = max(v + 0.3f, 0.95f); if (struck!!.endsWith("p")) level = LEVELS.getValue("p"); struck = null }
-                        "marcato" in a -> v += 0.3f
-                        "accent" in a -> v += 0.22f
+                        struck != null -> { v = max(v + 0.4f, 1.0f); accent = 1f; if (struck!!.endsWith("p")) level = LEVELS.getValue("p"); struck = null }
+                        "marcato" in a -> { v += 0.45f; accent = 1f }
+                        "accent" in a -> { v += 0.35f; accent = 0.85f }
                     }
                     val slurred = slurs.any { s -> e.x >= s.x - sp * 0.5f && e.x < s.x2 - sp * 0.8f }
                     val sounding = when {
                         "staccatissimo" in a -> beats * 0.3
                         "staccato" in a -> beats * 0.5
-                        "marcato" in a -> beats * 0.8
+                        "marcato" in a -> beats * 0.75
+                        "accent" in a -> beats * 0.88
                         "tenuto" in a || slurred -> beats
                         else -> beats - gap
                     }
@@ -117,13 +120,16 @@ object Performance {
                     val hold = if ("fermata" in a) beats * 0.9 + rate * 0.15 else 0.0
                     val start = t.toLong()
                     val end = (t + sounding + hold).toLong()
-                    val velocity = (v.coerceIn(0.1f, 1.15f) * 1.15f)
+                    val velocity = (v.coerceIn(0.1f, 1.5f) * 1.15f)
                     val pitches = e.pitches.map { (it.midi - transpose).coerceIn(12, 115) }
                     // Tied notes no longer sounding go; one tied into this note sounds on through it.
                     for (k in open.keys.toList()) if (k !in pitches) flush(k)
                     for (p in pitches) {
                         val h = open[p]
-                        if (h != null) h.end = end else open[p] = Held(p, start, end, velocity)
+                        // Tied into, it sounds on - not struck again. A staccato on the note tied into: the
+                        // sound stops on its beat, as a player lets go there.
+                        if (h != null) h.end = if ("staccato" in a || "staccatissimo" in a) start + gap * 3 else end
+                        else open[p] = Held(p, start, end, velocity, accent)
                         if (!e.tie) flush(p)
                     }
                     t += beats + hold

@@ -66,8 +66,11 @@ class Synth(val sampleRate: Int) {
         fun frequency(midi: Double) = 440.0 * 2.0.pow((midi - 69) / 12.0)
     }
 
-    /** One note to play: from sample [start] for [length] samples. */
-    class Tone(val midi: Int, val start: Long, val length: Long, val velocity: Float, val patch: Patch)
+    /**
+     * One note to play: from sample [start] for [length] samples. [accent] (0-1): struck harder - a
+     * quicker, brighter start that stands out from the notes round it and falls back at once.
+     */
+    class Tone(val midi: Int, val start: Long, val length: Long, val velocity: Float, val patch: Patch, val accent: Float = 0f)
 
     private class Voice(val tone: Tone, val freq: Double) {
         var phase = DoubleArray(tone.patch.harmonics.size)
@@ -94,9 +97,36 @@ class Synth(val sampleRate: Int) {
         pending.clear(); voices.clear(); position = to
     }
 
-    /** The next [buf].size samples, added into [buf]. */
+    /** What the voices make, before it is levelled and added in. */
+    private var mix = FloatArray(0)
+    /** The level the whole is turned down to now (1: as it is), and the gain per sample towards where it is going. */
+    private var level = 1f
+
+    /**
+     * The next [buf].size samples, added into [buf] - levelled: where many voices together would
+     * go past full scale (a whole band, a big chord), the whole is turned down at once, smoothly,
+     * and back up slowly after - never clipped, never pumping.
+     */
     @Synchronized
     fun fill(buf: FloatArray) {
+        val n = buf.size
+        if (mix.size != n) mix = FloatArray(n)
+        java.util.Arrays.fill(mix, 0f)
+        render(mix)
+        var peak = 0f
+        for (v in mix) peak = max(peak, kotlin.math.abs(v))
+        // Headroom: the loudest sample at nine tenths of full scale at most. Turned down at once
+        // when it would go over; back up towards as it is over about a second.
+        val want = if (peak > 0.9f) 0.9f / peak else 1f
+        val to = if (want < level) want else level + (want - level) * min(1f, n / sampleRate.toFloat())
+        for (i in 0 until n) {
+            val g = if (want < level) want else level + (to - level) * (i + 1) / n
+            buf[i] += mix[i] * g
+        }
+        level = to
+    }
+
+    private fun render(buf: FloatArray) {
         val n = buf.size
         val end = position + n
         // Notes starting in this block begin at their own sample.
@@ -116,7 +146,10 @@ class Synth(val sampleRate: Int) {
     private fun render(v: Voice, buf: FloatArray, from: Long): Boolean {
         val p = v.tone.patch
         val sr = sampleRate.toDouble()
-        val attack = p.attack * sr; val decay = p.decay * sr; val release = p.release * sr
+        val accent = v.tone.accent.toDouble()
+        // An accent speaks at once: its attack a fraction of the patch's own.
+        val attack = p.attack * sr * (1.0 - 0.75 * accent); val decay = p.decay * sr; val release = p.release * sr
+        val punch = 0.07 * sr
         val stop = v.tone.start + v.tone.length
         val nyquist = sr / 2 * 0.9
         for (i in buf.indices) {
@@ -131,6 +164,8 @@ class Synth(val sampleRate: Int) {
             }
             // Struck or plucked: up, then dying away, halving every [fade] seconds however long it is held.
             if (p.fade > 0 && t >= attack) env = exp(-(t - attack) / (p.fade * sr) * 0.693)
+            // The accent's front: half as loud again and more, falling back to the note within a tenth of a second.
+            if (accent > 0) env *= 1.0 + accent * 1.6 * exp(-t / punch)
             if (s >= stop) {
                 val r = (s - stop).toDouble()
                 if (r >= release) return true
@@ -140,7 +175,8 @@ class Synth(val sampleRate: Int) {
             val vib = if (p.vibratoHz > 0 && t > attack * 2) p.vibratoCents / 1200.0 * sin(2 * PI * p.vibratoHz * t / sr) * min(1.0, (t - attack * 2) / (0.3 * sr)) else 0.0
             val f = v.freq * (1.0 + vib * 0.693)
             // Brass blooms: its upper harmonics come in over the attack.
-            val bright = if (p.bloom > 0f) min(1.0, 0.3 + t / (attack * 3 + 1)) else 1.0
+            // (An accent is bright from its very start.)
+            val bright = if (p.bloom > 0f && accent < 0.5) min(1.0, 0.3 + t / (attack * 3 + 1)) else 1.0
             var x = 0.0
             for (h in p.harmonics.indices) {
                 val fh = f * (h + 1)

@@ -2588,46 +2588,70 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
     }
 
-    /** Whether a tie runs from [x1] (the first head's right edge) to [x2] (the second's left) at [step] on [s]. */
+    /**
+     * Whether a tie runs from [x1] (the first head's right edge) to [x2] (the second's left) at
+     * [step] on [s]: a thin curve over the heads or under them, followed from its middle out to
+     * both ends - a long one arching higher, past an accent or a dot by its ends - that comes back
+     * towards the heads at both ends (it bows away from them) and does not run on past the first
+     * (a slur over more notes does).
+     */
     private fun tieBetween(ink: Ink, s: Staff, x1: Float, x2: Float, step: Int, sp: Float): Boolean {
-        val from = (x1 + sp * 0.25f).roundToInt(); val to = (x2 - sp * 0.25f).roundToInt()
-        if (to - from < sp * 0.5f || to - from > sp * 12) return false
+        val from = (x1 + sp * 0.15f).roundToInt(); val to = (x2 - sp * 0.15f).roundToInt()
+        val span = to - from
+        if (span < sp * 0.5f || span > sp * 16) return false
+        // How far from the heads the curve may arch: higher the longer it is.
+        val reach = min(sp * 3.4f, sp * 1.1f + span * 0.14f)
+        val thin = max(2f, sp * 0.45f)
         for (side in listOf(1, -1)) {
-            val ys = ArrayList<Float>()
-            var missing = 0
-            for (x in from..to) {
+            // Every thin stroke across each column in the band beside the heads' line: its middle, as a distance from the line.
+            fun runs(x: Int): List<Float> {
                 val y = s.y(step, x)
-                // The ink in the band beside the head line on this side: thin runs only (not a beam, a stem).
-                var best: Float? = null
-                var yy = (y + side * sp * 0.3f).roundToInt()
-                val end = (y + side * sp * 1.5f).roundToInt()
+                val out = ArrayList<Float>()
+                var yy = (y + side * sp * 0.25f).roundToInt()
+                val end = (y + side * reach).roundToInt()
                 while (if (side > 0) yy <= end else yy >= end) {
                     if (ink[x, yy]) {
                         var a = yy; var b = yy
                         while (ink[x, a - 1] && b - a < sp) a--
                         while (ink[x, b + 1] && b - a < sp) b++
-                        if (b - a + 1 <= sp * 0.45f) { best = (a + b) / 2f - y; break }
+                        if (b - a + 1 <= thin) out += abs((a + b) / 2f - y)
                         yy = if (side > 0) b + 1 else a - 1
                         continue
                     }
                     yy += side
                 }
-                if (best == null) missing++ else ys += abs(best)
+                return out
             }
-            val n = to - from + 1
-            if (missing > n * 0.12f || ys.size < 3) continue
-            // Smooth: no leap from one column to the next.
-            if (ys.zipWithNext().any { (p, q) -> abs(p - q) > sp * 0.35f }) continue
-            // Bowing away from the heads: its ends nearer them than its middle.
-            val edge = max(1, ys.size / 6)
-            val ends = (ys.take(edge) + ys.takeLast(edge)).average()
-            val middle = ys.subList(ys.size / 2 - edge / 2, ys.size / 2 + edge / 2 + 1).average()
-            if (middle - ends < sp * 0.12f) continue
-            // Not running on past the first head (a slur over more notes does): nothing at its height just before it.
-            val y0 = s.y(step, from) + side * ys.first()
-            val before = (x1 - sp * 1.18f - sp * 0.4f).roundToInt()
-            if ((-1..1).any { d -> ink[before, (y0 + d).roundToInt()] } && (-1..1).any { d -> ink[before - 2, (y0 + d).roundToInt()] }) continue
-            return true
+            val mid = (from + to) / 2
+            val starts = (-2..2).flatMap { d -> runs(mid + d).map { it to mid + d } }
+            for ((d0, x0) in starts) {
+                // Followed out both ways, a column at a time, never leaping.
+                val path = HashMap<Int, Float>()
+                path[x0] = d0
+                var miss = 0
+                for (dir in listOf(-1, 1)) {
+                    var prev = d0; var gap = 0
+                    var x = x0 + dir
+                    while (x in from..to) {
+                        val next = runs(x).minByOrNull { abs(it - prev) }?.takeIf { abs(it - prev) <= sp * 0.4f + gap * sp * 0.08f }
+                        if (next != null) { path[x] = next; prev = next; gap = 0 } else { gap++; miss++; if (gap > max(4, (sp * 0.6f).toInt())) break }
+                        x += dir
+                    }
+                }
+                // Most of its middle followed, and it reaches well towards both heads.
+                val inner = (from + span * 0.15f).toInt()..(to - span * 0.15f).toInt()
+                if (inner.count { it in path } < (inner.last - inner.first + 1) * 0.8f) continue
+                val left = path.keys.min(); val right = path.keys.max()
+                if (left > from + span * 0.25f || right < to - span * 0.25f) continue
+                // Bowing away: its ends nearer the heads than its middle.
+                val ends = (path[left]!! + path[right]!!) / 2
+                if (path.values.max() - ends < sp * 0.12f) continue
+                // Not running on before the first head (a slur over more notes does).
+                val y0 = s.y(step, from) + side * path[left]!!
+                val before = (x1 - sp * 1.18f - sp * 0.4f).roundToInt()
+                if ((-1..1).any { d -> ink[before, (y0 + d).roundToInt()] } && (-1..1).any { d -> ink[before - 2, (y0 + d).roundToInt()] }) continue
+                return true
+            }
         }
         return false
     }
