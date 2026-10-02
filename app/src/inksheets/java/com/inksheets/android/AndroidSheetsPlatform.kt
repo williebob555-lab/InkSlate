@@ -197,6 +197,10 @@ class AndroidSheetsPlatform(
         if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH)) AndroidRemoteBluetooth { context } else null
     }
 
+    override val controllers: com.inksheets.core.ControllerInput? by lazy {
+        if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_MIDI)) AndroidMidiInput { context } else null
+    }
+
     override fun meshRadio(): com.inksheets.ui.MeshRadio? =
         if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH_LE)) mesh else null
 

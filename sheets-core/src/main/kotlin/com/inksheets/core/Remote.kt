@@ -114,6 +114,9 @@ data class RemoteButton(
         const val FIX = "fix"
         const val SCORE_PLAY = "score-play"
         const val MUSIC_TOOLS = "music-tools"
+        /** Set outright, as a fader or a pedal sweeps them: the recording's volume and speed, in percent. */
+        const val AUDIO_VOLUME_SET = "audio-volume-set"
+        const val AUDIO_SPEED_SET = "audio-speed-set"
 
         fun action(name: String) = RemoteButton(ACTION, name)
 

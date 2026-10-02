@@ -308,6 +308,9 @@ class RemoteControl(private val state: SheetsState) {
         ))
     }
 
+    /** A command made here - by a controller (a pedal, a fader) - done just as a remote's is. On the UI thread. */
+    internal fun performHere(c: RemoteLink.Command) = runCatching { perform(c) }.onFailure { state.platform.log("Controller: ${c.action} failed - ${it.message}") }
+
     /** A remote's command, on the UI thread: just what a button here would do. */
     private fun perform(c: RemoteLink.Command) {
         val lib = state.library
@@ -352,6 +355,8 @@ class RemoteControl(private val state: SheetsState) {
             RemoteButton.AUDIO_RESTART -> Recording.player?.seek(0L)
             RemoteButton.AUDIO_SPEED -> Recording.player?.let { p -> p.speed = ((p.speed * 100 + (c.value ?: 0.0)) / 100).coerceIn(0.5, 1.25) }
             RemoteButton.AUDIO_VOLUME -> Recording.player?.let { p -> p.volume = ((p.volume * 100 + (c.value ?: 0.0)) / 100).coerceIn(0.0, 1.0) }
+            RemoteButton.AUDIO_VOLUME_SET -> Recording.player?.let { p -> c.value?.let { p.volume = (it / 100).coerceIn(0.0, 1.0) } }
+            RemoteButton.AUDIO_SPEED_SET -> Recording.player?.let { p -> c.value?.let { p.speed = (it / 100).coerceIn(0.5, 1.25) } }
             RemoteButton.STRIP -> {
                 state.stripCollapsed = !state.stripCollapsed
                 if (state.stripCollapsed) Perform.recentre?.invoke()
@@ -1100,7 +1105,7 @@ private fun valueHint(kind: String): Pair<String, Double?>? = when (kind) {
 private fun num(v: Double?): String = v?.let { if (it == kotlin.math.floor(it)) it.toLong().toString() else it.toString() } ?: ""
 
 /** A button's own name, when the player has given it none. */
-private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLink.Library?): String {
+internal fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLink.Library?): String {
     val v = b.value
     return when (b.kind) {
         RemoteButton.ACTION -> PerformAction.entries.firstOrNull { it.name == b.id }?.let { a ->
@@ -1156,6 +1161,8 @@ private fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteLi
         RemoteButton.FIX -> if (shown?.fixing == true) "Stop fixing" else "Fix bars in doubt"
         RemoteButton.SCORE_PLAY -> if (shown?.scorePlaying == true) "Stop the music" else "Play the music read"
         RemoteButton.MUSIC_TOOLS -> if (shown?.musicTools == true) "Put music tools away" else "Music tools"
+        RemoteButton.AUDIO_VOLUME_SET -> "Recording volume"
+        RemoteButton.AUDIO_SPEED_SET -> "Recording speed"
         else -> b.kind
     }
 }
@@ -1521,9 +1528,9 @@ private fun PickRemoteItem(
 }
 
 /** One thing a remote button can do, as offered in Add a button. */
-private class Offer(val section: String, val name: String, val button: RemoteButton)
+internal class Offer(val section: String, val name: String, val button: RemoteButton)
 
-private fun offers(shown: RemoteLink.State?): List<Offer> {
+internal fun offers(shown: RemoteLink.State?): List<Offer> {
     fun a(section: String, action: PerformAction, name: String = action.label) = Offer(section, name, RemoteButton.action(action.name))
     fun k(section: String, name: String, kind: String, value: Double? = null) = Offer(section, name, RemoteButton(kind, value = value))
     val pages = "Pages"; val songs = "Songs and sets"; val parts = "Parts"; val click = "Metronome and count-in"

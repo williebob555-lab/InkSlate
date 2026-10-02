@@ -39,6 +39,7 @@ fun SheetsSettings(state: SheetsState) {
         modifier = Modifier.padding(horizontal = 12.dp)
     ) { Text("Import from MobileSheets...") }
     if (importing) MobileSheetsDialog(state, onClose = { importing = false })
+    ControllerSettings(state)
     if (state.library != null) LibraryHealth(state)
 }
 

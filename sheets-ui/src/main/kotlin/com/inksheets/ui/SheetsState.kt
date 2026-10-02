@@ -222,6 +222,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     /** Remotes: this device controlled by others, and this device as a remote for another. */
     val remote = RemoteControl(this)
+
+    /** Pedals, switches and faders plugged into this device, and what they do. */
+    val controllers = ControllerHub(this)
     var companionOpen by mutableStateOf(false)
 
     /** The recordings panel, for the song opened last. */
@@ -334,6 +337,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         platform.setEdgeTaps(edgeTapsState)
         platform.setTurnStyle(turnStyleState)
         platform.setStripSide(stripOnLeftState)
+        controllers.start()
         platform.pref(K_LIBRARY)?.let(::File)?.takeIf { it.isDirectory }?.let { if (openLater) openInBackground(it) else open(it) }
         // Song turns and the metronome from a pedal, whatever screen is in front.
         com.inkslate.core.Perform.app = { action ->
