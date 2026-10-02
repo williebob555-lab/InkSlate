@@ -8,12 +8,12 @@ import com.inkslate.core.PerformAction
 import com.inksheets.core.AudioTrack
 import com.inksheets.core.Chroma
 import com.inksheets.core.MusicPresence
-import com.inksheets.core.ScoreFollower
 import com.inksheets.core.TurnPlan
 
 /**
  * Turning pages by ear (experimental, in Settings): for one run of a song, the microphone is
- * followed along the song's recording ([ScoreFollower]) and the page turned as each turn in the
+ * followed along the song's recording - or the whole band's music as read off the parts - (a
+ * [com.inksheets.core.WindowFollower]) and the page turned as each turn in the
  * recording comes - a moment early, so the next page is up in time. It stops by itself when the
  * music does, when the song changes, or at the end of the recording.
  *
@@ -109,6 +109,11 @@ internal object Listener {
         status = "Getting ready..."
         val instrument = state.partShown()?.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }?.let { com.inksheets.core.Instruments.byId[it] }
         val bpm = song.tempo?.toDouble()?.takeIf { it > 0 } ?: SharedMetronome.bpm
+        val myTranspose = instrument?.transpose ?: 0
+        // The rest of the band, as read: what the room sounds like. Parts not read yet are read
+        // now, in the background, for next time.
+        val band = if (score != null && !practice) ScoreTools.bandVoices(state) else emptyList()
+        val bandToCome = score != null && !practice && ScoreTools.readBandLater(state)
         Thread({
             val recording = file?.let { f -> synchronized(cache) { cache[f.path] } ?: run {
                 val stream = ArrayList<Chroma.Frame>()
@@ -122,17 +127,25 @@ internal object Listener {
             if (run !== me) return@Thread
             // The music as it is played: repeats twice, the right ending each time.
             val played = score?.let { com.inksheets.core.omr.PlayOrder.unrolled(it) }
-            // What to follow: the recording where there is one, else the music as read.
-            val reference = recording ?: played?.let { com.inksheets.core.omr.ScoreAudio.frames(it, bpm, instrument?.transpose ?: 0) }
+            // What to follow: the recording where there is one, else the music as read - the whole
+            // band's, laid on this part's bars, where the band has been read (practising: this part alone).
+            val reference = recording ?: when {
+                score == null -> null
+                practice -> played?.let { com.inksheets.core.omr.ScoreAudio.frames(it, bpm, myTranspose) }
+                else -> com.inksheets.core.omr.BandAudio.frames(score, myTranspose, band, bpm)
+            }
             if (reference == null || reference.isEmpty()) { state.platform.onMain { stop(state, "Couldn't read the recording") }; return@Thread }
             val (page0, pages) = state.pageShown
             // Where the turns come from: learned by playing along; else from the music read (lined
             // up with the recording, or the music itself); else guessed.
             val learned = track?.turnsMs.orEmpty().takeIf { pages > 1 && it.size >= pages - 1 }
             // Every change of page from the music: with a repeat across a page break, some go back.
-            val changes = if (learned == null && played != null) runCatching {
-                if (recording != null) com.inksheets.core.omr.ScoreAudio.changesIn(played, recording, bpm, instrument?.transpose ?: 0)
-                else com.inksheets.core.omr.ScoreAudio.pageChanges(played, bpm)
+            val changes = if (learned == null && played != null && score != null) runCatching {
+                when {
+                    practice -> com.inksheets.core.omr.ScoreAudio.pageChanges(played, bpm)
+                    recording != null -> com.inksheets.core.omr.BandAudio.changesIn(score, myTranspose, band, recording, bpm)
+                    else -> com.inksheets.core.omr.BandAudio.pageChanges(score, bpm)
+                }
             }.getOrNull() else null
             val goesBack = changes != null && changes.zipWithNext().any { (a, b) -> b.second < a.second }
             val fromMusic = if (changes != null && !goesBack) changes.map { it.first }.takeIf { it.size >= pages - 1 } else null
@@ -140,7 +153,7 @@ internal object Listener {
             val plan = TurnPlan(learned ?: fromMusic ?: emptyList(), pages, reference.size * Chroma.FRAME_MS)
             val source = when { learned != null -> "learned"; fromMusic != null || goesBack -> "from the music"; else -> "guessed" }
             val startMs = if (page0 <= 0) 0L else plan.turnAt(page0 - 1) ?: 0L
-            val follower = ScoreFollower(reference, startMs)
+            val follower = com.inksheets.core.WindowFollower(reference, startMs)
             val presence = MusicPresence()
             val stream = Chroma.Stream(rate)
             // Learned turns were made when the player turned, already a little early; following
@@ -149,11 +162,11 @@ internal object Listener {
             // Following the changes themselves (repeats): the next one to make.
             var next = changes?.indexOfFirst { it.first > startMs }?.takeIf { it >= 0 } ?: 0
             // Following the music itself, the notes heard are checked against it too.
-            val check = if (recording == null && played != null) com.inksheets.core.omr.NoteCheck(played, bpm, instrument?.transpose ?: 0) else null
+            val check = if (recording == null && played != null && practice) com.inksheets.core.omr.NoteCheck(played, bpm, myTranspose) else null
             var turnedFrom = -1
             var turnedAt = 0L
             var shownAt = 0L
-            state.platform.log("Listen: following ${song.title} (${if (recording != null) "its recording" else "its music as read"}) from ${startMs / 1000}s, turns $source" +
+            state.platform.log("Listen: following ${song.title} (${if (recording != null) "its recording" else if (practice) "its music as read" else "the band's music as read, ${band.size} other parts${if (bandToCome) ", more being read" else ""}"}) from ${startMs / 1000}s, turns $source" +
                 (fromMusic?.let { t -> " at " + t.joinToString { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) } + "s" } ?: ""))
             state.platform.onMain { if (run === me) status = if (source == "guessed") "Listening - turns guessed" else "Listening - turns $source" }
             val opened = Ears.listen(state, WHO) { chunk ->

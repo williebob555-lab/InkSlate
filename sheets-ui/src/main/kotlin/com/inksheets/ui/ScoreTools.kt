@@ -656,6 +656,25 @@ internal object ScoreTools {
             .filter { (p, f) -> f.absolutePath != s.currentPath || (p.firstPage != null && p.firstPage != mine?.firstPage) }
     }
 
+    /**
+     * The band round this part, for following by ear: every other part of the song already read,
+     * with how far each is written above where it sounds - drums and the full score left out (no
+     * pitches to hear, or every part over again).
+     */
+    internal fun bandVoices(s: SheetsState): List<com.inksheets.core.omr.BandAudio.Voice> = otherParts(s).mapNotNull { (p, f) ->
+        val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
+        if (id == "drums" || id == "drumline" || (p.label ?: "").contains("drum", true) || f.name.contains("drum", true)) return@mapNotNull null
+        val sc = Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } ?: return@mapNotNull null
+        com.inksheets.core.omr.BandAudio.Voice(sc, id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0)
+    }
+
+    /** Whether some of the band's parts are not read yet; reads them, one after another, quietly. */
+    internal fun readBandLater(s: SheetsState): Boolean {
+        val todo = otherParts(s).any { Transcriber.cached(s, it.second) == null }
+        if (todo && bandReading == null) readBand(s) {}
+        return todo
+    }
+
     /** Read whichever of the band's parts are not read yet, one after another, then [then]. */
     private fun readBand(s: SheetsState, then: () -> Unit) {
         val todo = otherParts(s).filter { Transcriber.cached(s, it.second) == null }.distinctBy { it.second.absolutePath }
