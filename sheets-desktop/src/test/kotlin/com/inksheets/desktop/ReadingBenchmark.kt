@@ -116,6 +116,83 @@ class ReadingBenchmark {
     private val rests = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16)
     private val flags = setOf(Kind.FLAG_8, Kind.FLAG_16, Kind.FLAG_32)
 
+    /** Where samples for the mark reader go (MarkExport), when it wants them. */
+    var markSink: ((List<String>) -> Unit)? = null
+
+    /**
+     * Samples for the mark reader from one page: every shape the reading keeps as printed (see
+     * Measure.kept), labelled from what the PDF says is there - a dynamic's letter, an articulation,
+     * a curve, a hairpin's side, a word, a figure - or "other". One line each: label, held, song, then
+     * MarkReader.features as numbers to three places.
+     */
+    private fun markSamples(f: File, pp: com.inksheets.core.omr.Printed, at: (Float, Float) -> Pair<Float, Float>, reading: com.inksheets.core.omr.Recognizer.PageReading,
+                            grey: IntArray, w: Int, h: Int, sp: Float): List<String> {
+        val song = song(f); val held = song in heldSet
+        val heads = pp.heads.map { hd -> at(hd.x + hd.width / 2, hd.y) }
+        fun inside(cx: Float, cy: Float, x0: Float, y0: Float, x1: Float, y1: Float): Boolean {
+            val (ax, ay) = at(x0, y0); val (bx, by) = at(x1, y1)
+            return cx >= minOf(ax, bx) && cx <= maxOf(ax, bx) && cy >= minOf(ay, by) && cy <= maxOf(ay, by)
+        }
+        fun labelOf(box: IntArray): String {
+            val cx = (box[0] + box[2]) / 2f; val cy = (box[1] + box[3]) / 2f
+            val bw = box[2] - box[0] + 1f
+            for (d in pp.symbols) when (d.kind) {
+                com.inksheets.core.omr.Printed.Kind.DYNAMIC -> if (inside(cx, cy, d.x - 2, d.y - d.size * 0.75f, d.x + d.width + 2, d.y + d.size * 0.15f)) {
+                    val (x0, _) = at(d.x, d.y); val (x1, _) = at(d.x + d.width, d.y)
+                    val i = ((cx - x0) / maxOf(1f, x1 - x0) * d.name.length).toInt().coerceIn(0, d.name.length - 1)
+                    val c = d.name[i]
+                    return if (c in "pmfszr") "dyn_$c" else "other"
+                }
+                com.inksheets.core.omr.Printed.Kind.ARTICULATION -> {
+                    val (ax, ay) = at(d.x + d.width / 2, d.y)
+                    val name = d.name.split('+').first()
+                    if (kotlin.math.abs(cx - ax) < maxOf(d.width * 0.6f, sp * 0.5f) && kotlin.math.abs(cy - ay) < sp * (if (name == "fermata") 1.2f else 0.6f) && bw > sp * 0.25f &&
+                        name in setOf("accent", "staccato", "tenuto", "marcato", "fermata", "staccatissimo")) return if (name == "staccatissimo") "staccato" else name
+                }
+                com.inksheets.core.omr.Printed.Kind.DOT -> {
+                    val (ax, ay) = at(d.x + d.width / 2, d.y)
+                    // A dot over or under a head: a staccato.
+                    if (kotlin.math.abs(cx - ax) < sp * 0.4f && kotlin.math.abs(cy - ay) < sp * 0.4f && bw < sp * 0.8f &&
+                        heads.any { (hx, hy) -> kotlin.math.abs(hx - ax) < sp * 0.7f && kotlin.math.abs(hy - ay) in sp * 0.6f..sp * 3f }) return "staccato"
+                }
+                com.inksheets.core.omr.Printed.Kind.WORD -> if (inside(cx, cy, d.x - 2, d.y - d.size * 0.75f, d.x + d.width + 2, d.y + d.size * 0.2f)) return "word"
+                com.inksheets.core.omr.Printed.Kind.TEXT_DIGIT -> if (inside(cx, cy, d.x - 2, d.y - d.size * 0.75f, d.x + d.width + 2, d.y + d.size * 0.1f)) return "digit"
+                else -> {}
+            }
+            for (a in pp.arcs) {
+                val (ax0, ay0) = at(a.x0, a.y0); val (ax1, ay1) = at(a.x1, a.y1)
+                val span = ax1 - ax0
+                if (span > sp * 0.8f && box[0] >= ax0 - sp * 0.5f && box[2] <= ax1 + sp * 0.5f && bw >= span * 0.5f &&
+                    cy > minOf(ay0, ay1) - sp * 2f && cy < maxOf(ay0, ay1) + sp * 2f) return "curve"
+            }
+            for (l in pp.lines) {
+                val (lx0, ly0) = at(l.x0, l.y0); val (lx1, ly1) = at(l.x1, l.y1)
+                if (lx1 - lx0 > sp * 1.5f && cx > lx0 - sp * 0.3f && cx < lx1 + sp * 0.3f && cy > minOf(ly0, ly1) - sp && cy < maxOf(ly0, ly1) + sp && bw > (lx1 - lx0) * 0.5f) return "hairpin"
+            }
+            return "other"
+        }
+        val out = ArrayList<String>()
+        val seen = HashSet<String>()
+        for (m in reading.measures) {
+            if (m.bars > 1) continue
+            val st = reading.staves.getOrNull(m.staff) ?: continue
+            for (o in m.kept) {
+                val box = com.inksheets.core.omr.MarkReader.box(o)
+                if (!seen.add(box.joinToString(","))) continue
+                if (box[2] - box[0] > sp * 20 || box[3] - box[1] > sp * 6) continue
+                // (Specks - a scan's grain - are no marks: a staccato is the smallest, a third of a space.)
+                if (box[2] - box[0] + 1 < sp * 0.22f && box[3] - box[1] + 1 < sp * 0.22f) continue
+                val top = st.lineY(0, ((box[0] + box[2]) / 2).coerceIn(st.left, st.right))
+                val feats = com.inksheets.core.omr.MarkReader.features(grey, w, h, box, sp, top)
+                // The picture as four-bit grey, the rest as numbers to three places.
+                val n2 = com.inksheets.core.omr.MarkReader.N * com.inksheets.core.omr.MarkReader.N
+                out += "${labelOf(box)}	$held	$song	" + (0 until n2).joinToString("") { Integer.toHexString((feats[it] * 15f).toInt().coerceIn(0, 15)) } + "	" +
+                    (n2 until feats.size).joinToString(",") { "%.3f".format(java.util.Locale.ROOT, feats[it]) }
+            }
+        }
+        return out
+    }
+
     /** Where samples for the symbol reader go (SymbolExport), when it wants them. */
     var symbolSink: ((List<String>) -> Unit)? = null
 
@@ -211,6 +288,8 @@ class ReadingBenchmark {
         val shift = fracs.getOrNull(fracs.size / 2)?.takeIf { abs(it) > 0.1f }?.let { it * sp / 2 } ?: 0f
         val key = turned.map { if (it.kind in heads || it.kind == Kind.DOT) it.copy(y = it.y - shift) else it }
         symbolSink?.let { sink -> if (greyPage != null && net != null) sink(symbolSamples(f, ink.width, ink.height, greyPage, reading.staves, key, sp)) }
+        markSink?.let { sink -> if (greyPage != null) PdfPrinted.read(f, page)?.scaled(printed.width)?.let { pp ->
+            sink(markSamples(f, pp, { x, y -> tx(x, y) to ty(x, y) }, reading, greyPage, ink.width, ink.height, sp)) } }
 
         // What was read.
         val read = ArrayList<ReadHead>()

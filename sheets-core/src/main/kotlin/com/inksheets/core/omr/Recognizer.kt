@@ -1622,6 +1622,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             measures[i] = m.copy(kept = kept, keptShade = shades)
         }
         clock.mark("kept")
+        // What the kept marks are, for playing the music as marked (a picture states none of them).
+        if (this.printed?.learned == true && MarkReader.available && System.getProperty("inksheets.omr.nomarks") == null) { readMarks(measures); clock.mark("marks") }
         timings = clock.toString()
         return PageReading(staves, bars, measures, t, space, dropped)
     }
@@ -2629,6 +2631,94 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         return false
     }
+
+    /**
+     * The marks each bar keeps as printed, read ([MarkReader]): dynamics (their letters set together
+     * into one - "m" "f" is mf), accents, staccatos, tenutos, marcatos and fermatas (to the note they
+     * stand by), slurs (curves over more than one note, not ties) and hairpins (louder towards the
+     * open end) - each marked seen, so the clean view leaves the print's own in place.
+     */
+    private fun readMarks(measures: MutableList<Measure>) {
+        val g = pageGrey ?: return
+        val ink = pageInk ?: return
+        class Found(val mi: Int, val label: String, val box: IntArray)
+        val found = ArrayList<Found>()
+        val done = HashSet<String>()
+        for ((mi, m) in measures.withIndex()) {
+            if (m.bars > 1) continue
+            val s = staves.getOrNull(m.staff) ?: continue
+            for (o in m.kept) {
+                val bx = MarkReader.box(o)
+                if (!done.add(bx.joinToString(","))) continue
+                if (bx[2] - bx[0] > s.space * 20 || bx[3] - bx[1] > s.space * 6) continue
+                if (bx[2] - bx[0] + 1 < s.space * 0.22f && bx[3] - bx[1] + 1 < s.space * 0.22f) continue
+                val top = s.lineY(0, ((bx[0] + bx[2]) / 2).coerceIn(s.left, s.right))
+                val (label, p) = MarkReader.read(g, ink.width, ink.height, bx, s.space, top) ?: continue
+                if (p < (MARK_SURE[label] ?: 2f)) continue
+                // (A shape over two bars is the one its middle is in.)
+                val cx = (bx[0] + bx[2]) / 2
+                val home = measures.indices.firstOrNull { k -> measures[k].staff == m.staff && measures[k].page == m.page && cx >= measures[k].box.left && cx < measures[k].box.right } ?: mi
+                found += Found(home, label, bx)
+            }
+        }
+        val add = HashMap<Int, MutableList<Direction>>()
+        // Dynamics: letters side by side, one word; a word not a dynamic is left be.
+        val letters = found.filter { it.label.startsWith("dyn_") }.sortedWith(compareBy({ measures[it.mi].staff }, { it.box[0] }))
+        var i = 0
+        while (i < letters.size) {
+            var j = i
+            val sp = measures[letters[i].mi].space
+            while (j + 1 < letters.size && measures[letters[j + 1].mi].staff == measures[letters[i].mi].staff &&
+                letters[j + 1].box[0] - letters[j].box[2] < sp * 0.7f && abs((letters[j + 1].box[1] + letters[j + 1].box[3]) - (letters[i].box[1] + letters[i].box[3])) < sp * 1.6f) j++
+            val word = (i..j).joinToString("") { letters[it].label.removePrefix("dyn_") }
+            if (word in Performance.LEVELS || word in setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp")) {
+                val m = measures[letters[i].mi]
+                add.getOrPut(letters[i].mi) { ArrayList() } += Direction("dynamic", letters[i].box[0].toFloat(), letters[j].box[2].toFloat(), word,
+                    above = letters[i].box[3] < m.box.top, seen = true)
+            }
+            i = j + 1
+        }
+        // Slurs and hairpins: in each bar of the staff they run across.
+        for (f in found) {
+            if (f.label != "curve" && f.label != "hairpin") continue
+            val m0 = measures[f.mi]
+            val kind = if (f.label == "curve") "slur" else {
+                // Which end is open: the side where its two strokes are further apart.
+                val o = m0.kept.firstOrNull { MarkReader.box(it).contentEquals(f.box) } ?: continue
+                val w = f.box[2] - f.box[0]
+                fun spread(lo: Int, hi: Int): Int { var a = Int.MAX_VALUE; var b = Int.MIN_VALUE
+                    for (k in 0 until o.size - 1 step 2) if (o[k] in lo..hi) { a = min(a, o[k + 1]); b = max(b, o[k + 1]) }; return if (b >= a) b - a else 0 }
+                if (spread(f.box[2] - w / 5, f.box[2]) > spread(f.box[0], f.box[0] + w / 5)) "cresc" else "dim"
+            }
+            val d = Direction(kind, f.box[0].toFloat(), f.box[2].toFloat(), above = f.box[3] < m0.box.top, seen = true)
+            for (k in measures.indices) {
+                val m = measures[k]
+                if (m.staff == m0.staff && m.page == m0.page && m.box.right > f.box[0] && m.box.left < f.box[2]) add.getOrPut(k) { ArrayList() } += d
+            }
+        }
+        for ((k, ds) in add) measures[k] = measures[k].copy(directions = measures[k].directions + ds)
+        // Articulations: to the note standing over or under them.
+        for (f in found) {
+            val name = when (f.label) { "accent", "staccato", "tenuto", "marcato", "fermata" -> f.label; else -> continue }
+            val m = measures[f.mi]
+            val sp = m.space
+            val cx = (f.box[0] + f.box[2]) / 2f
+            val reach = if (name == "fermata") sp * 1.6f else sp * 1.0f
+            val target = m.events.withIndex().filter { (_, e) -> e is Note && abs(e.x + sp * 0.6f - cx) < reach }.minByOrNull { (_, e) -> abs(e.x + sp * 0.6f - cx) } ?: continue
+            val n = target.value as Note
+            if (name in n.articulations) continue
+            measures[f.mi] = m.copy(events = m.events.mapIndexed { idx, e -> if (idx == target.index) n.copy(articulations = n.articulations + name, marksSeen = true) else e })
+        }
+    }
+
+    /**
+     * How sure the mark reader must be, mark by mark, to have the music played by what it says -
+     * each where it is right about 92% of the time or more on the held-out scans (a hairpin 83%,
+     * its effect gentle; a dynamic's letters must also spell one). Not here, not taken: a fermata
+     * (too few seen to trust), words, figures.
+     */
+    val MARK_SURE = mapOf("curve" to 0.97f, "tenuto" to 0.97f, "accent" to 0.99f, "marcato" to 0.99f, "staccato" to 0.99f,
+        "dyn_p" to 0.97f, "dyn_f" to 0.99f, "dyn_m" to 0.99f, "dyn_s" to 0.99f, "dyn_z" to 0.99f, "dyn_r" to 0.99f, "hairpin" to 0.99f)
 
     /** An articulation claimed by one chord only (the nearest). */
     private val claimedMarks = HashSet<Printed.Symbol>()

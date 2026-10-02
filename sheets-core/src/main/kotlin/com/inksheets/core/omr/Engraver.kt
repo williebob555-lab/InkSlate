@@ -175,7 +175,8 @@ object Engraver {
      * curves, which the print's own shape follows truly and a drawn arc only roughly.
      */
     fun aligned(m0: Measure): Drawing {
-        val m = m0.copy(events = m0.events.map { if (it is Note && it.tie) it.copy(tie = false) else it }, directions = m0.directions.filter { it.kind != "slur" })
+        val m = m0.copy(events = m0.events.map { if (it is Note && (it.tie || it.marksSeen)) it.copy(tie = false, articulations = if (it.marksSeen) emptyList() else it.articulations) else it },
+            directions = m0.directions.filter { it.kind != "slur" && !it.seen })
         val marks = ArrayList<Mark>()
         val width = m.box.width / m.space
         for (i in 0..4) marks += Stroke(0f, i.toFloat(), width, i.toFloat(), LINE)

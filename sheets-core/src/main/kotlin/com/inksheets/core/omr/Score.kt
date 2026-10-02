@@ -145,7 +145,9 @@ data class Note(
     /** Where its stem ends as printed: spaces down from the top line (null where none was seen). */
     val stemTip: Float? = null,
     /** Notes of a bar with the same non-zero number share one beam, as printed. */
-    val beam: Int = 0
+    val beam: Int = 0,
+    /** Its [articulations] were seen on a picture of the page: kept there as printed, not drawn again. */
+    val marksSeen: Boolean = false
 ) : Event()
 
 /**
@@ -162,7 +164,9 @@ data class Direction(
     val text: String = "",
     val above: Boolean = false,
     val step: Int? = null,
-    val step2: Int? = null
+    val step2: Int? = null,
+    /** Seen on a picture of the page (for playing it): kept there as printed, not drawn again. */
+    val seen: Boolean = false
 )
 
 @Serializable
