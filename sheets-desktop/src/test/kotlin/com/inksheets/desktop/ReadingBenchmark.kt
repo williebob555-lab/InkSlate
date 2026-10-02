@@ -116,6 +116,9 @@ class ReadingBenchmark {
     private val rests = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16)
     private val flags = setOf(Kind.FLAG_8, Kind.FLAG_16, Kind.FLAG_32)
 
+    /** Where the printed words go, cut from the scan (WordExport), when wanted. */
+    var wordSink: ((List<String>) -> Unit)? = null
+
     /** Where samples for the mark reader go (MarkExport), when it wants them. */
     var markSink: ((List<String>) -> Unit)? = null
 
@@ -275,6 +278,9 @@ class ReadingBenchmark {
         } ?: return null
         // As the app reads a PDF that states its notes: with them (clean pages only - a scan has none).
         // -Dinksheets.bench.nolevel=1: a turned page read as it is, not turned upright first (to measure what that gives).
+        // The words the reading finds (WordExport): gathered as it finds them.
+        val wordsFound = ArrayList<IntArray>()
+        if (wordSink != null) com.inksheets.core.omr.WordReader.candidates.set { wordsFound += it.copyOf() }
         val reading = Recognizer().read(ink, printed = if (usePrinted && !scan) PdfPrinted.read(f, page) else null, grey = greyPage, net = net,
             level = System.getProperty("inksheets.bench.nolevel") == null)
         if (reading.staves.isEmpty()) return null
@@ -288,6 +294,31 @@ class ReadingBenchmark {
         val shift = fracs.getOrNull(fracs.size / 2)?.takeIf { abs(it) > 0.1f }?.let { it * sp / 2 } ?: 0f
         val key = turned.map { if (it.kind in heads || it.kind == Kind.DOT) it.copy(y = it.y - shift) else it }
         symbolSink?.let { sink -> if (greyPage != null && net != null) sink(symbolSamples(f, ink.width, ink.height, greyPage, reading.staves, key, sp)) }
+        wordSink?.let { sink -> com.inksheets.core.omr.WordReader.candidates.set(null); if (greyPage != null) PdfPrinted.read(f, page)?.scaled(printed.width)?.let { pp ->
+            val song = song(f); val held = song in heldSet
+            fun labelOf(name: String): String {
+                val w = name.filter { it.isLetter() }
+                return when {
+                    w.startsWith("rit") || w.startsWith("rall") || w.startsWith("allarg") || w.startsWith("slow") || w.startsWith("pocorit") || w.startsWith("pocorall") -> "rit"
+                    w == "atempo" || w == "intempo" || w.startsWith("tempoi") || w == "tempo" -> "atempo"
+                    w.startsWith("accel") || w.startsWith("string") || w.startsWith("pocostring") || w == "faster" -> "accel"
+                    else -> "other"
+                }
+            }
+            val words = pp.symbols.filter { it.kind == com.inksheets.core.omr.Printed.Kind.WORD }.map { d ->
+                val (x0, y0) = tx(d.x, d.y - d.size * 0.72f) to ty(d.x, d.y - d.size * 0.72f)
+                val (x1, y1) = tx(d.x + d.width, d.y + d.size * 0.22f) to ty(d.x + d.width, d.y + d.size * 0.22f)
+                floatArrayOf(minOf(x0, x1), minOf(y0, y1), maxOf(x0, x1), maxOf(y0, y1)) to d.name
+            }
+            sink(wordsFound.map { box ->
+                // What the PDF prints most of the candidate's box over: that word's kind, else none.
+                val cx = (box[0] + box[2]) / 2f; val cy = (box[1] + box[3]) / 2f
+                val hit = words.firstOrNull { (b, _) -> cx >= b[0] - sp * 0.5f && cx <= b[2] + sp * 0.5f && cy >= b[1] - sp * 0.6f && cy <= b[3] + sp * 0.6f }
+                val label = hit?.let { labelOf(it.second) } ?: "other"
+                val feats = com.inksheets.core.omr.WordReader.features(greyPage, ink.width, ink.height, box)
+                "$label	${hit?.second ?: "-"}	${if (held) "held" else "real"}	" + (0 until com.inksheets.core.omr.WordReader.W * com.inksheets.core.omr.WordReader.H).joinToString("") { Integer.toHexString((feats[it] * 15f).toInt().coerceIn(0, 15)) } +
+                    "	" + "%.3f".format(java.util.Locale.ROOT, feats.last())
+            }) } }
         markSink?.let { sink -> if (greyPage != null) PdfPrinted.read(f, page)?.scaled(printed.width)?.let { pp ->
             sink(markSamples(f, pp, { x, y -> tx(x, y) to ty(x, y) }, reading, greyPage, ink.width, ink.height, sp)) } }
 

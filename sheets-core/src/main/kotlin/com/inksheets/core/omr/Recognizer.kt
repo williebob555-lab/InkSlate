@@ -2641,8 +2641,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun readMarks(measures: MutableList<Measure>) {
         val g = pageGrey ?: return
         val ink = pageInk ?: return
-        class Found(val mi: Int, val label: String, val box: IntArray)
-        val found = ArrayList<Found>()
+        class Found(val mi: Int, val label: String, val p: Float, val box: IntArray) {
+            val sure get() = p >= (MARK_SURE[label] ?: 2f)
+        }
+        // Every shape kept, with what it is taken for (however unsure), in the bar its middle is in.
+        val all = ArrayList<Found>()
         val done = HashSet<String>()
         for ((mi, m) in measures.withIndex()) {
             if (m.bars > 1) continue
@@ -2654,15 +2657,72 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (bx[2] - bx[0] + 1 < s.space * 0.22f && bx[3] - bx[1] + 1 < s.space * 0.22f) continue
                 val top = s.lineY(0, ((bx[0] + bx[2]) / 2).coerceIn(s.left, s.right))
                 val (label, p) = MarkReader.read(g, ink.width, ink.height, bx, s.space, top) ?: continue
-                if (p < (MARK_SURE[label] ?: 2f)) continue
-                // (A shape over two bars is the one its middle is in.)
                 val cx = (bx[0] + bx[2]) / 2
                 val home = measures.indices.firstOrNull { k -> measures[k].staff == m.staff && measures[k].page == m.page && cx >= measures[k].box.left && cx < measures[k].box.right } ?: mi
-                found += Found(home, label, bx)
+                all += Found(home, label, p, bx)
             }
         }
+        if (System.getProperty("inksheets.omr.shapes") != null) for (f in all) println("  SHAPE staff ${measures[f.mi].staff} bar ${measures[f.mi].number} ${f.box.toList()} ${f.label} %.2f".format(f.p))
+        // Words first, by how they lie: small shapes off the staff, side by side along one line,
+        // three or more - whatever each letter alone was taken for (poco's "p" is no piano).
+        fun small(f: Found): Boolean {
+            val s = staves[measures[f.mi].staff]; val sp = s.space
+            val x = ((f.box[0] + f.box[2]) / 2).coerceIn(s.left, s.right)
+            val off = f.box[3] < s.lineY(0, x) - sp * 0.3f || f.box[1] > s.lineY(4, x) + sp * 0.3f
+            // (A scan's italic runs its letters together: a whole word one shape, a few spaces long.)
+            // (A tall letter - an l, a t - is two spaces high.)
+            return off && f.box[3] - f.box[1] <= sp * 2.4f && f.box[2] - f.box[0] <= sp * 9f && f.label != "curve"
+        }
+        // How much of a box is ink: a word's letters fill a good part of theirs, a hairpin's two thin strokes little of its.
+        fun density(b: IntArray): Float {
+            var n = 0; var all = 0
+            for (y in b[1]..b[3]) for (x in b[0]..b[2]) { all++; if (ink[x, y]) n++ }
+            return if (all == 0) 0f else n.toFloat() / all
+        }
+        val inWord = HashSet<Found>()
+        val wordBoxes = ArrayList<Pair<Int, IntArray>>()   // staff, box
         val add = HashMap<Int, MutableList<Direction>>()
-        // Dynamics: letters side by side, one word; a word not a dynamic is left be.
+        val cands = all.filter { small(it) }.sortedWith(compareBy({ measures[it.mi].page }, { measures[it.mi].staff }, { it.box[0] }))
+        var w = 0
+        while (w < cands.size) {
+            val first = cands[w]
+            val sp = measures[first.mi].space
+            val box = first.box.copyOf()
+            val group = arrayListOf(first)
+            var v = w + 1
+            while (v < cands.size) {
+                val c = cands[v]
+                if (measures[c.mi].staff != measures[first.mi].staff || measures[c.mi].page != measures[first.mi].page) break
+                if (c.box[0] - box[2] > sp * 1.6f) break
+                // On one line: their bottoms near (a letter's descender aside) or their middles.
+                if (abs(c.box[3] - box[3]) < sp * 0.9f || abs((c.box[1] + c.box[3]) - (box[1] + box[3])) < sp * 1.2f) {
+                    group += c
+                    box[0] = min(box[0], c.box[0]); box[1] = min(box[1], c.box[1]); box[2] = max(box[2], c.box[2]); box[3] = max(box[3], c.box[3])
+                }
+                v++
+            }
+            val dynamicOnly = group.all { it.label.startsWith("dyn_") }
+            // Three letters or more, or letters run together as one wide shape (a scan's italic) - and inked as letters are.
+            val isWord = !dynamicOnly && box[2] - box[0] >= sp * 2f && box[3] - box[1] <= sp * 2.6f && density(box) >= 0.12f
+            if (isWord) {
+                WordReader.candidates.get()?.invoke(box)
+                inWord += group
+                wordBoxes += measures[first.mi].staff to box
+                // A word that changes the tempo: played by.
+                if (WordReader.available) WordReader.read(g, ink.width, ink.height, box)?.let { (label, p) ->
+                    if (System.getProperty("inksheets.omr.words") != null) println("  WORD staff ${measures[first.mi].staff} bar ${measures[first.mi].number} box ${box.toList()} parts ${group.size} ${group.map { it.label }}: $label %.3f".format(p))
+                    val text = WordReader.TEXT[label]
+                    if (text != null && p >= WORD_SURE) {
+                        val m = measures[first.mi]
+                        val k = measures.indices.firstOrNull { measures[it].staff == m.staff && measures[it].page == m.page && box[0] + sp >= measures[it].box.left && box[0] + sp < measures[it].box.right } ?: first.mi
+                        add.getOrPut(k) { ArrayList() } += Direction("text", box[0].toFloat(), box[2].toFloat(), text, above = box[3] < m.box.top, seen = true)
+                    }
+                }
+            }
+            w = if (isWord) v else w + 1
+        }
+        val found = all.filter { it !in inWord && it.sure && it.label != "other" && it.label != "word" && it.label != "digit" }
+        // Dynamics: letters side by side, one word; letters run on into other letters are a word, not a dynamic.
         val letters = found.filter { it.label.startsWith("dyn_") }.sortedWith(compareBy({ measures[it.mi].staff }, { it.box[0] }))
         var i = 0
         while (i < letters.size) {
@@ -2671,24 +2731,27 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             while (j + 1 < letters.size && measures[letters[j + 1].mi].staff == measures[letters[i].mi].staff &&
                 letters[j + 1].box[0] - letters[j].box[2] < sp * 0.7f && abs((letters[j + 1].box[1] + letters[j + 1].box[3]) - (letters[i].box[1] + letters[i].box[3])) < sp * 1.6f) j++
             val word = (i..j).joinToString("") { letters[it].label.removePrefix("dyn_") }
-            if (word in Performance.LEVELS || word in setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp")) {
+            val x0 = letters[i].box[0]; val x1 = letters[j].box[2]
+            val touchesOther = all.any { o -> o !in letters.subList(i, j + 1) && small(o) && measures[o.mi].staff == measures[letters[i].mi].staff &&
+                o.box[2] >= x0 - sp * 0.6f && o.box[0] <= x1 + sp * 0.6f && abs((o.box[1] + o.box[3]) - (letters[i].box[1] + letters[i].box[3])) < sp * 1.4f }
+            if (!touchesOther && (word in Performance.LEVELS || word in setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp"))) {
                 val m = measures[letters[i].mi]
-                add.getOrPut(letters[i].mi) { ArrayList() } += Direction("dynamic", letters[i].box[0].toFloat(), letters[j].box[2].toFloat(), word,
-                    above = letters[i].box[3] < m.box.top, seen = true)
+                add.getOrPut(letters[i].mi) { ArrayList() } += Direction("dynamic", x0.toFloat(), x1.toFloat(), word, above = letters[i].box[3] < m.box.top, seen = true)
             }
             i = j + 1
         }
-        // Slurs and hairpins: in each bar of the staff they run across.
+        // Slurs and hairpins: in each bar of the staff they run across (a hairpin over a word is the word's letters).
         for (f in found) {
             if (f.label != "curve" && f.label != "hairpin") continue
             val m0 = measures[f.mi]
+            if (f.label == "hairpin" && (density(f.box) > 0.14f || wordBoxes.any { (st, b) -> st == m0.staff && b[0] <= f.box[2] && b[2] >= f.box[0] && b[1] <= f.box[3] + m0.space && b[3] >= f.box[1] - m0.space })) continue
             val kind = if (f.label == "curve") "slur" else {
                 // Which end is open: the side where its two strokes are further apart.
                 val o = m0.kept.firstOrNull { MarkReader.box(it).contentEquals(f.box) } ?: continue
-                val w = f.box[2] - f.box[0]
+                val wd = f.box[2] - f.box[0]
                 fun spread(lo: Int, hi: Int): Int { var a = Int.MAX_VALUE; var b = Int.MIN_VALUE
                     for (k in 0 until o.size - 1 step 2) if (o[k] in lo..hi) { a = min(a, o[k + 1]); b = max(b, o[k + 1]) }; return if (b >= a) b - a else 0 }
-                if (spread(f.box[2] - w / 5, f.box[2]) > spread(f.box[0], f.box[0] + w / 5)) "cresc" else "dim"
+                if (spread(f.box[2] - wd / 5, f.box[2]) > spread(f.box[0], f.box[0] + wd / 5)) "cresc" else "dim"
             }
             val d = Direction(kind, f.box[0].toFloat(), f.box[2].toFloat(), above = f.box[3] < m0.box.top, seen = true)
             for (k in measures.indices) {
@@ -2712,12 +2775,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /**
-     * How sure the mark reader must be, mark by mark, to have the music played by what it says -
-     * each where it is right about 92% of the time or more on the held-out scans (a hairpin 83%,
-     * its effect gentle; a dynamic's letters must also spell one). Not here, not taken: a fermata
-     * (too few seen to trust), words, figures.
+     * How sure the word reader must be that a word changes the tempo (a wrong one would slow the
+     * music). Off for now (over 1): on real scans with pencil and handwriting it takes scribbles
+     * and hairpins for tempo words, sure of them - not yet to be played by. Words are still found,
+     * so their letters are not taken for dynamics or hairpins. -Dinksheets.omr.wordsure=0.95 to try.
      */
-    val MARK_SURE = mapOf("curve" to 0.97f, "tenuto" to 0.97f, "accent" to 0.99f, "marcato" to 0.99f, "staccato" to 0.99f,
+    var WORD_SURE = System.getProperty("inksheets.omr.wordsure")?.toFloatOrNull() ?: 1.01f
+
+    val MARK_SURE = mapOf("curve" to 0.97f, "tenuto" to 0.97f, "accent" to 0.97f, "marcato" to 0.97f, "staccato" to 0.99f,
         "dyn_p" to 0.97f, "dyn_f" to 0.99f, "dyn_m" to 0.99f, "dyn_s" to 0.99f, "dyn_z" to 0.99f, "dyn_r" to 0.99f, "hairpin" to 0.99f)
 
     /** An articulation claimed by one chord only (the nearest). */
