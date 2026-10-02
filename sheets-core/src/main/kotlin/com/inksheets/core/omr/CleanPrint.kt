@@ -84,7 +84,7 @@ object CleanPrint {
             is Engraver.Symbol -> {
                 // Not the rests standing in for a multi-bar rest's room.
                 if (mark.name == "restWhole" && multi.any { (a, b) -> mark.x in a..b }) continue
-                fill(p, MusicGlyphs[mark.name].polygons(SPACE, sx(mark.x), sy(mark.y)))
+                fill(p, MusicGlyphs[mark.name].polygons(SPACE * mark.scale, sx(mark.x), sy(mark.y)))
             }
             is Engraver.Slab -> fill(p, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) sx(mark.points[i]) else sy(mark.points[i]) }))
         }

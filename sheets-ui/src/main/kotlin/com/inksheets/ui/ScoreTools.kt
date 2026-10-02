@@ -572,7 +572,7 @@ internal object ScoreTools {
                 val w = if (staffLine && m.lineWidth > 0f) m.lineWidth * k * 0.85f else (mark.w * spAt(mark.x1)).coerceAtLeast(0.4f)
                 out += PageMark.line(px(mark.x1), py(mark.x1, mark.y1), px(mark.x2), py(mark.x2, mark.y2), w, if (staffLine) STAFF else color)
             }
-            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(spAt(mark.x), px(mark.x), py(mark.x, mark.y)), color)
+            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(spAt(mark.x) * mark.scale, px(mark.x), py(mark.x, mark.y)), color)
             is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) px(mark.points[i]) else py(mark.points[i - 1], mark.points[i]) }), color)
         }
         return out
@@ -839,7 +839,7 @@ internal object ScoreTools {
         val out = ArrayList<PageMark>()
         for (mark in d.marks) when (mark) {
             is Engraver.Stroke -> out += PageMark.line(left + mark.x1 * cs, cueTop + mark.y1 * cs, left + mark.x2 * cs, cueTop + mark.y2 * cs, (mark.w * cs).coerceAtLeast(0.3f), CUE)
-            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(cs, left + mark.x * cs, cueTop + mark.y * cs), CUE)
+            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(cs * mark.scale, left + mark.x * cs, cueTop + mark.y * cs), CUE)
             is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) left + mark.points[i] * cs else cueTop + mark.points[i] * cs }), CUE)
         }
         return out

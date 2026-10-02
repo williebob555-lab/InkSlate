@@ -48,8 +48,10 @@ object BarChoices {
                        val group: Map<Int, Int>? = null)
 
     private fun withBase(e: Event, base: Int): Event = when (e) {
-        // Another value: the print's beam and stem end it was read with no longer go with it.
-        is Note -> e.copy(duration = e.duration.copy(base = base), beam = if (base == e.duration.base) e.beam else 0, stemTip = if (base == e.duration.base) e.stemTip else null)
+        // Another value: still under the print's beam, with its stem's end, if it is still short
+        // enough for one (so the choice is drawn grouped as printed); a flag's or a longer note's no longer.
+        is Note -> if (base == e.duration.base || (base >= 8 && e.beam > 0)) e.copy(duration = e.duration.copy(base = base))
+            else e.copy(duration = e.duration.copy(base = base), beam = 0, stemTip = null)
         is Rest -> e.copy(duration = e.duration.copy(base = base))
     }
 

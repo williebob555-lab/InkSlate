@@ -11,7 +11,8 @@ import kotlin.math.min
 object Engraver {
     sealed class Mark
     /** A music symbol, its origin at ([x], [y]). */
-    data class Symbol(val name: String, val x: Float, val y: Float) : Mark()
+    /** A glyph of the music font, its origin at ([x], [y]), drawn [scale] times its size (a tuplet's figure is small). */
+    data class Symbol(val name: String, val x: Float, val y: Float, val scale: Float = 1f) : Mark()
     /** A straight stroke [w] thick. */
     data class Stroke(val x1: Float, val y1: Float, val x2: Float, val y2: Float, val w: Float) : Mark()
     /** A filled shape through [points] (x, y in turn): a beam's four corners, a tie's or slur's curve. */
@@ -343,6 +344,11 @@ object Engraver {
         }
         if (run.isNotEmpty()) groups += run
         val beamed = groups.filter { it.size > 1 }.flatMap { g -> g.map { it.first } }.toSet()
+        val tuplets = tupletsOf(placed)
+        // Where each event starts in the bar, in quarters: a lone sixteenth's short beam points
+        // the way the print's does by where it falls.
+        val onset = HashMap<Event, Double>()
+        run { var t = 0.0; for ((e, _) in placed) { onset[e] = t; t += e.duration.quarters } }
 
         for ((e, x) in placed) {
             when (e) {
@@ -424,14 +430,70 @@ object Engraver {
                     if (g[i].first.duration.beams <= level) { i++; continue }
                     var j = i
                     while (j + 1 < g.size && g[j + 1].first.duration.beams > level) j++
-                    val xa = xs[i] - STEM / 2; val xb = if (j > i) xs[j] + STEM / 2 else xs[i] + 1.2f * (if (i == g.size - 1) -1 else 1)
+                    // A note alone at this level: its short beam towards the note it shares its
+                    // part of the beat with - forward from one on the beat's division (a sixteenth
+                    // then a dotted eighth), back from one after it (a dotted eighth then a sixteenth).
+                    val stubBack = if (j > i) false else if (i == 0) false else if (i == g.size - 1) true else {
+                        val unit = 1.0 / (1 shl level)
+                        val t = onset[g[i].first] ?: 0.0
+                        val r = t / unit - Math.floor(t / unit + 1e-6)
+                        r > 1e-3 && r < 1 - 1e-3
+                    }
+                    val xa = xs[i] - STEM / 2; val xb = if (j > i) xs[j] + STEM / 2 else xs[i] + 1.2f * (if (stubBack) -1 else 1)
                     val ya = beamY(xa) + off; val yb = beamY(xb) + off
                     val t = BEAM * (if (up) 1 else -1)
                     marks += Slab(floatArrayOf(xa, ya, xb, yb, xb, yb + t, xa, ya + t))
                     i = j + 1
                 }
             }
+            // A tuplet beamed alone: its figure beyond the beam's middle.
+            tuplets.firstOrNull { c -> c.size == g.size && c.indices.all { c[it].first === g[it].first } }?.let { c ->
+                tuplets.remove(c)
+                val mid = (xs.first() + xs.last()) / 2
+                // (The beam's line is its outer edge; more beams stack in towards the heads.)
+                drawTupletFigure(marks, c.first().first.duration.actual, mid, beamY(mid) + if (up) -0.85f else 0.85f)
+            }
         }
+        // Any other tuplet: its figure in a bracket over it.
+        for (c in tuplets) {
+            val notes = c.mapNotNull { it.first as? Note }
+            val high = notes.minOfOrNull { n -> if (stemUp(n)) (n.stemTip ?: (n.steps.min() * 0.5f - STEM_LENGTH)) else n.steps.min() * 0.5f } ?: 0f
+            val y = min(-1f, high - 0.9f)
+            val x0 = c.first().second; val x1 = c.last().second + MusicGlyphs["noteheadBlack"].advance
+            val mid = (x0 + x1) / 2
+            val half = 0.55f
+            marks += Stroke(x0, y + 0.45f, x0, y, LINE * 1.3f); marks += Stroke(x0, y, mid - half, y, LINE * 1.3f)
+            marks += Stroke(mid + half, y, x1, y, LINE * 1.3f); marks += Stroke(x1, y, x1, y + 0.45f, LINE * 1.3f)
+            drawTupletFigure(marks, c.first().first.duration.actual, mid, y)
+        }
+    }
+
+    /** A tuplet's figure ([n]: 3 for a triplet), small, centred on ([x], [y]). */
+    private fun drawTupletFigure(marks: MutableList<Mark>, n: Int, x: Float, y: Float) {
+        val digits = n.toString()
+        val scale = 0.55f
+        val w = digits.sumOf { MusicGlyphs["timeSig$it"].advance.toDouble() }.toFloat() * scale
+        var at = x - w / 2
+        for (d in digits) { marks += Symbol("timeSig$d", at, y, scale); at += MusicGlyphs["timeSig$d"].advance * scale }
+    }
+
+    /**
+     * The tuplets among [placed], each the run of its events that fills the time it is counted in
+     * (three eighths in a quarter's; a quarter and an eighth in it too; three quarters in a half's).
+     */
+    private fun tupletsOf(placed: List<Pair<Event, Float>>): MutableList<List<Pair<Event, Float>>> {
+        val out = ArrayList<List<Pair<Event, Float>>>()
+        var run = ArrayList<Pair<Event, Float>>()
+        var length = 0.0
+        for (p in placed) {
+            val d = p.first.duration
+            if (!d.tuplet || (run.isNotEmpty() && run.first().first.duration.let { it.actual != d.actual || it.normal != d.normal })) { run = ArrayList(); length = 0.0 }
+            if (!d.tuplet) continue
+            run += p; length += d.quarters
+            val shortest = run.maxOf { it.first.duration.base }
+            if (length >= d.normal * 4.0 / shortest - 1e-6) { out += run; run = ArrayList(); length = 0.0 }
+        }
+        return out
     }
 
     /** Stems go up from notes low on the staff, down from high ones. */
@@ -441,7 +503,7 @@ object Engraver {
     fun paint(ink: Ink, drawing: Drawing, space: Float, x: Float, y: Float) {
         for (mark in drawing.marks) when (mark) {
             is Stroke -> Fill.line(ink, x + mark.x1 * space, y + mark.y1 * space, x + mark.x2 * space, y + mark.y2 * space, (mark.w * space).coerceAtLeast(1f))
-            is Symbol -> Fill.polygons(ink, MusicGlyphs[mark.name].polygons(space, x + mark.x * space, y + mark.y * space))
+            is Symbol -> Fill.polygons(ink, MusicGlyphs[mark.name].polygons(space * mark.scale, x + mark.x * space, y + mark.y * space))
             is Slab -> Fill.polygons(ink, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) x + mark.points[i] * space else y + mark.points[i] * space }))
         }
     }

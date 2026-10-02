@@ -154,7 +154,7 @@ internal fun DrawScope.drawMarks(drawing: Engraver.Drawing, space: Float, origin
         is Engraver.Stroke -> drawLine(ink, p(mark.x1, mark.y1), p(mark.x2, mark.y2), strokeWidth = max(1f, mark.w * space))
         is Engraver.Symbol -> {
             val path = Path()
-            for (poly in MusicGlyphs[mark.name].polygons(space, origin.x + mark.x * space, origin.y + mark.y * space)) {
+            for (poly in MusicGlyphs[mark.name].polygons(space * mark.scale, origin.x + mark.x * space, origin.y + mark.y * space)) {
                 path.moveTo(poly[0], poly[1])
                 for (i in 2 until poly.size step 2) path.lineTo(poly[i], poly[i + 1])
                 path.close()

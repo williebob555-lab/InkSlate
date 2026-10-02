@@ -25,7 +25,7 @@ object Overlay {
         val ox = 0f; val oy = m.box.top - y0.toFloat()
         val polys = ArrayList<FloatArray>()
         for (mark in drawing.marks) when (mark) {
-            is Engraver.Symbol -> polys += MusicGlyphs[mark.name].polygons(sp, ox + mark.x * sp, oy + mark.y * sp)
+            is Engraver.Symbol -> polys += MusicGlyphs[mark.name].polygons(sp * mark.scale, ox + mark.x * sp, oy + mark.y * sp)
             is Engraver.Slab -> polys += FloatArray(mark.points.size) { i -> if (i % 2 == 0) ox + mark.points[i] * sp else oy + mark.points[i] * sp }
             is Engraver.Stroke -> {
                 // A stroke as the thin box it is.
