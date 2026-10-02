@@ -2231,6 +2231,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return best / sp
     }
 
+    /**
+     * What [SymbolReader] makes of the trained reader's symbol [sym] on staff [s], where it is sure
+     * (null where it is not, or cannot look: no page in grey, no network).
+     */
+    private fun secondLook(sym: Printed.Symbol, s: Staff): String? {
+        val g = pageGrey ?: return null
+        val ink = pageInk ?: return null
+        if (!SymbolReader.available || System.getProperty("inksheets.omr.nosecond") != null) return null
+        val cx = sym.x + sym.width / 2; val cy = sym.y
+        val top = s.lineY(0, cx.roundToInt()); val half = (s.lineY(4, cx.roundToInt()) - top) / 8f
+        val (label, p) = SymbolReader.read(g, ink.width, ink.height, cx, cy, s.space, (cy - top) / half, SymbolReader.labelOf(sym.kind.name)) ?: return null
+        return label.takeIf { p >= SECOND_SURE }
+    }
+
+    /** How sure the second look must be to overrule the trained reader. */
+    var SECOND_SURE = 0.9f
+
     /** The printed heads, each on the staff it is nearest the middle of; cue and grace notes (small) left out, as they take no time in the bar. */
     private fun printedHeads(staves: List<Staff>, lines: Ink? = null, clean: Ink? = null): List<MutableList<Head>> {
         val p = printed!!
@@ -2299,8 +2316,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         for (a in p.symbols) {
             var alter = when (a.kind) { Printed.Kind.FLAT -> -1; Printed.Kind.SHARP -> 1; Printed.Kind.NATURAL -> 0; Printed.Kind.DOUBLE_FLAT -> -2; Printed.Kind.DOUBLE_SHARP -> 2; else -> continue }
             val sp = staves.first().space
-            // The trained reader takes a natural for a flat now and then: the strokes on the page say which.
-            if (p.learned && clean != null && (alter == -1 || alter == 0)) looksNatural(clean, a, sp)?.let { alter = if (it) 0 else -1 }
+            // The trained reader's accidental looked at again on its own; else (no second look, or
+            // not sure) a natural told from a flat by its strokes on the page.
+            val second = if (p.learned && (alter in -1..1)) staves.minByOrNull { st -> abs((st.top + st.bottom) / 2f - a.y) }?.let { st -> secondLook(a, st) } else null
+            when (second) {
+                "other" -> continue
+                "sharp" -> alter = 1
+                "flat" -> alter = -1
+                "natural" -> alter = 0
+                else -> if (p.learned && clean != null && (alter == -1 || alter == 0)) looksNatural(clean, a, sp)?.let { alter = if (it) 0 else -1 }
+            }
             val h = heads.filter { h -> val sym = symbolOf[h]!!; sym.x - a.x in sp * 0.3f..sp * 3f && abs(sym.y - a.y) <= sp * 0.3f && h !in printedAccidental }
                 .minByOrNull { symbolOf[it]!!.x - a.x } ?: continue
             printedAccidental[h] = alter
@@ -2585,8 +2610,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val sp = s.space
         val mid = (s.top + s.bottom) / 2f
         return p.symbols.mapNotNull { r ->
-            val base = when (r.kind) { Printed.Kind.REST_1 -> 1; Printed.Kind.REST_2 -> 2; Printed.Kind.REST_4 -> 4; Printed.Kind.REST_8 -> 8; Printed.Kind.REST_16 -> 16; Printed.Kind.REST_32 -> 32; else -> return@mapNotNull null }
+            var base = when (r.kind) { Printed.Kind.REST_1 -> 1; Printed.Kind.REST_2 -> 2; Printed.Kind.REST_4 -> 4; Printed.Kind.REST_8 -> 8; Printed.Kind.REST_16 -> 16; Printed.Kind.REST_32 -> 32; else -> return@mapNotNull null }
             if (r.x < from - 2 || r.x >= to || abs(r.y - mid) > sp * 5) return@mapNotNull null
+            // The trained reader's rest looked at again on its own: a letter, a dynamic, a breath mark
+            // taken for one is turned down; one taken for another rest put right.
+            if (p.learned) secondLook(r, s)?.let { label ->
+                base = when (label) { "other" -> return@mapNotNull null; "block" -> if (base <= 2) base else return@mapNotNull null
+                    "rest4" -> 4; "rest8" -> 8; "rest16" -> if (base >= 16) base else 16; else -> base }
+            }
             if (staves.any { o -> o !== s && abs((o.top + o.bottom) / 2f - r.y) < abs(mid - r.y) && r.x >= o.left && r.x <= o.right }) return@mapNotNull null
             val dotted = p.symbols.any { d -> d.kind == Printed.Kind.DOT && d.x > r.x + r.width * 0.8f && d.x < r.x + r.width + sp * 1.2f && abs(d.y - r.y) < sp * 1.5f }
             Rest(Duration(base, if (dotted) 1 else 0), r.x, ((r.y - s.lineY(0, r.x.roundToInt())) / (sp / 2)).roundToInt()) to 1f

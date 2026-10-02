@@ -116,6 +116,47 @@ class ReadingBenchmark {
     private val rests = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16)
     private val flags = setOf(Kind.FLAG_8, Kind.FLAG_16, Kind.FLAG_32)
 
+    /** Where samples for the symbol reader go (SymbolExport), when it wants them. */
+    var symbolSink: ((List<String>) -> Unit)? = null
+
+    /**
+     * Samples for the symbol reader from one page: every rest and accidental the trained reader
+     * finds, labelled with what is printed there (or nothing: a dynamic, a letter, a mark read as
+     * one), and every one printed that it does not find. One line each: label, what the reader
+     * took it for, how sure, its height on the staff, held, song, then the picture round it (20 by
+     * 40, 2.6 spaces by 5, four-bit grey).
+     */
+    private fun symbolSamples(f: File, w: Int, h: Int, grey: IntArray, staves: List<com.inksheets.core.omr.Recognizer.Staff>, key: List<AnswerKey.Symbol>, sp: Float): List<String> {
+        val found = com.inksheets.core.omr.Learned.symbols(grey, w, h, staves, net!!).symbols.filter { it.kind in com.inksheets.core.omr.SymbolReader.KINDS }
+        val truth = key.filter { it.kind in symbolTruth }
+        val song = song(f)
+        val held = song in heldSet
+        val out = ArrayList<String>()
+        fun staffOf(y: Float, x: Float) = staves.minByOrNull { s -> kotlin.math.abs((s.lineY(0, x.toInt()) + s.lineY(4, x.toInt())) / 2 - y) }
+        fun sample(label: String, netKind: String, conf: Float, cx: Float, cy: Float) {
+            val s = staffOf(cy, cx) ?: return
+            val top = s.lineY(0, cx.toInt()); val half = (s.lineY(4, cx.toInt()) - top) / 8f
+            val step = (cy - top) / half
+            if (step < -10 || step > 18) return
+            val px = com.inksheets.core.omr.SymbolReader.crop(grey, w, h, cx, cy, sp)
+            out += "$label	$netKind	${"%.3f".format(java.util.Locale.ROOT, conf)}	${"%.2f".format(java.util.Locale.ROOT, step)}	$held	$song	" + px.joinToString("") { Integer.toHexString((it * 15f).toInt().coerceIn(0, 15)) }
+        }
+        val matched = HashSet<AnswerKey.Symbol>()
+        for (c in found) {
+            val cx = c.x + c.width / 2; val cy = c.y
+            val rest = c.kind.name.startsWith("REST")
+            val t = truth.filter { k -> k !in matched && kotlin.math.abs(k.x + k.width / 2 - cx) <= sp * 0.8f && kotlin.math.abs(k.y - cy) <= sp * (if (rest) 1.6f else 0.6f) &&
+                (k.kind.name.startsWith("REST")) == rest }.minByOrNull { k -> kotlin.math.abs(k.x + k.width / 2 - cx) + kotlin.math.abs(k.y - cy) }
+            if (t != null) matched += t
+            sample(t?.let { com.inksheets.core.omr.SymbolReader.labelOf(it.kind.name) } ?: "other", com.inksheets.core.omr.SymbolReader.labelOf(c.kind.name), c.confidence, cx, cy)
+        }
+        for (t in truth) if (t !in matched) sample(com.inksheets.core.omr.SymbolReader.labelOf(t.kind.name), "none", 0f, t.x + t.width / 2, t.y)
+        return out
+    }
+
+    private val symbolTruth = setOf(Kind.REST_1, Kind.REST_2, Kind.REST_4, Kind.REST_8, Kind.REST_16, Kind.FLAT, Kind.SHARP, Kind.NATURAL)
+    private val heldSet: Set<String> by lazy { File("../train/held.txt").takeIf { it.isFile }?.readLines()?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet() }
+
     fun markPage(f: File, page: Int, scan: Boolean, shots: Boolean, usePrinted: Boolean = false): PageResult? {
         val (printed, dpi) = OmrRealPagesTest().renderAt(f, page) ?: return null
         val keyRaw = AnswerKey.read(f, page, dpi) ?: return null
@@ -157,6 +198,7 @@ class ReadingBenchmark {
         }.sorted()
         val shift = fracs.getOrNull(fracs.size / 2)?.takeIf { abs(it) > 0.1f }?.let { it * sp / 2 } ?: 0f
         val key = turned.map { if (it.kind in heads || it.kind == Kind.DOT) it.copy(y = it.y - shift) else it }
+        symbolSink?.let { sink -> if (greyPage != null && net != null) sink(symbolSamples(f, ink.width, ink.height, greyPage, reading.staves, key, sp)) }
 
         // What was read.
         val read = ArrayList<ReadHead>()
