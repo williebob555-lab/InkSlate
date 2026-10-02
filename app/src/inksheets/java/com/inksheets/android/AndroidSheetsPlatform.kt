@@ -373,6 +373,8 @@ private class TrackOut : AudioOut {
         stop()
         running = true
         thread = Thread({
+            // The sound before anything else on the device: audio's own urgency.
+            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO) }
             runCatching {
                 val min = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT)
                 val track = AudioTrack.Builder()
@@ -389,7 +391,8 @@ private class TrackOut : AudioOut {
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build()
                     )
-                    .setBufferSizeInBytes(min)
+                    // 40 ms held ahead at least: the smallest the device allows breaks up at any pause.
+                    .setBufferSizeInBytes(maxOf(min, sampleRate / 25 * 4))
                     .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
                     .build()
                 track.play()

@@ -65,7 +65,8 @@ object Signatures {
                 val q = events.sumOf { it.duration.quarters }
                 if (m.bars == 1 && events.isNotEmpty() && abs(q - nt.quarters) > 1e-6 && m.number != s.measures.first().number)
                     doubts = doubts + "${fmt(q)} beats found, ${fmt(nt.quarters)} expected"
-                m.copy(clef = nc, key = nk, time = nt, events = events, doubts = doubts)
+                val graces = if (nc != m.clef || nk != m.key) repitch(m.graces, nc, nk).filterIsInstance<Note>() else m.graces
+                m.copy(clef = nc, key = nk, time = nt, events = events, doubts = doubts, graces = graces)
             }
         }
         return s.copy(measures = out)

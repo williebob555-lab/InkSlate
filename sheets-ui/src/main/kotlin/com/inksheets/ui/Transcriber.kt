@@ -53,6 +53,25 @@ internal object Transcriber {
     }
 
     private fun pageFile(dir: File, page: Int) = File(dir, "p${page + 1}.json")
+    private val PAGE_FILE = Regex("p\\d+\\.json")
+
+    /** What the second looks at a page's unsure bars saw, kept beside its reading (see [lookedFor]). */
+    private fun looksFile(dir: File, page: Int) = File(dir, "looks-p${page + 1}.json")
+
+    /** The second looks read lately, by folder and page. */
+    private val looksKnown = HashMap<String, Map<Int, List<Measure>>>()
+
+    /**
+     * What the second looks at bar [m] of [file] saw - taken as each page was read, so Fix has them
+     * at once - or nothing, where none were taken (a PDF that states its notes; a page read before).
+     */
+    fun lookedFor(state: SheetsState, file: File, m: Measure): List<Measure> {
+        val f = looksFile(folder(state, file), m.page)
+        val key = "${f.path}:${f.lastModified()}"
+        val byBar = synchronized(looksKnown) { looksKnown[key] } ?: (runCatching { Scores.decode(f.readText()) }.getOrNull()?.measures?.groupBy { it.number } ?: emptyMap())
+            .also { synchronized(looksKnown) { looksKnown[key] = it } }
+        return byBar[m.number].orEmpty()
+    }
 
     /** What was read and when it was looked for: the folder looked at again only every few seconds (another device may add pages). */
     private class Known(val score: Score?, val at: Long, val signature: String)
@@ -63,7 +82,11 @@ internal object Transcriber {
         val dir = folder(state, file)
         val now = System.currentTimeMillis()
         synchronized(known) { known[dir.path]?.let { if (now - it.at < 3000) return it.score } }
-        val pages = dir.listFiles { f -> f.name.startsWith("p") && f.name.endsWith(".json") }.orEmpty()
+        // Only the pages' own files: not a copy a syncing program kept of one two devices wrote at
+        // once (Syncthing's "p1.sync-conflict-....json") - every bar of it would be there twice. Those
+        // copies are let go.
+        val pages = dir.listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty()
+        dir.listFiles { f -> f.name.contains(".sync-conflict-") }?.forEach { runCatching { it.delete() } }
         val signature = pages.sortedBy { it.name }.joinToString { "${it.name}:${it.length()}:${it.lastModified()}" }
         synchronized(known) { known[dir.path]?.takeIf { it.signature == signature }?.let { known[dir.path] = Known(it.score, now, signature); return it.score } }
         val parts = pages.mapNotNull { f -> runCatching { Scores.decode(f.readText()) }.getOrNull() }
@@ -71,7 +94,8 @@ internal object Transcriber {
             val count = parts.maxOf { it.pages }
             val read = parts.flatMap { it.readPages.orEmpty() }.distinct().sorted()
             val widths = List(count) { i -> parts.firstNotNullOfOrNull { it.pageWidths.getOrNull(i)?.takeIf { w -> w > 0 } } ?: 0 }
-            Score(parts.flatMap { it.measures }.sortedWith(compareBy({ it.page }, { it.staff }, { it.box.left })), count, widths, read.takeIf { it.size < count })
+            // (Numbered so no bar number comes twice: see Scores.numberedOnce.)
+            Score(Scores.numberedOnce(parts.flatMap { it.measures }.sortedWith(compareBy({ it.page }, { it.staff }, { it.box.left }))), count, widths, read.takeIf { it.size < count })
         }
         synchronized(known) { known[dir.path] = Known(score, now, signature) }
         return score
@@ -103,6 +127,8 @@ internal object Transcriber {
         }
         busy = "Getting ready..."
         Thread({
+            // A reading gives way to everything else: the sound of the music most of all.
+            Thread.currentThread().priority = Thread.MIN_PRIORITY
             val score = runCatching { readNow(state, file, pages) }
                 .onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
             state.platform.onMain {
@@ -167,6 +193,8 @@ internal object Transcriber {
                     if (prev != null) { carry.clef = prev.clef; carry.key = prev.key; carry.time = prev.time; number = prev.number + prev.bars }
                     else number = 1
                 }
+                // Read on another device since this read began (the folder syncs): taken as it is.
+                if (only == null && pageFile(dir, p).isFile && before?.hasRead(p) != true) { last = -2; continue }
                 last = p
                 val pageStarted = System.currentTimeMillis()
                 val (grey, ink) = drawn(p) ?: continue
@@ -186,6 +214,20 @@ internal object Transcriber {
                 // than asked (a cap on how far it magnifies), and every bar is placed by it.
                 widths[p] = ink.width
                 reading.measures.lastOrNull()?.let { number = it.number + it.bars }
+                // Its unsure bars looked at again closely - now, with the page drawn already, before the
+                // next page - so Fix has what the looks saw the moment it is opened. Each staff with any
+                // read once a look, the staves side by side where there are the cores.
+                val net = if (printed == null) Net.shipped else null
+                val unsure = reading.measures.filter { !it.sure && it.bars == 1 }
+                if (net != null && unsure.isNotEmpty()) runCatching {
+                    state.platform.onMain { busy = "Looking again at ${unsure.size} unsure bar${if (unsure.size == 1) "" else "s"} on page ${p + 1}..." }
+                    val looked = Workers.map(unsure.groupBy { it.staff }.entries.toList()) { (staff, bars) ->
+                        val first = reading.measures.first { it.staff == staff }
+                        Recognizer().lookAgainStaff(ink, grey, net, bars, first)
+                    }.flatMap { it.values.flatten() }
+                    dir.mkdirs()
+                    looksFile(dir, p).writeText(Scores.encode(Score(looked, peek.pageCount, List(peek.pageCount) { if (it == p) ink.width else 0 }, listOf(p))))
+                }.onFailure { state.platform.log("Looking again at page ${p + 1} of ${file.name} failed: ${it.message}") }
                 pageTimes += System.currentTimeMillis() - pageStarted
                 // Kept as soon as read: a reading stopped part way carries on from here, and the
                 // pages read so far reach the other devices.
@@ -223,8 +265,9 @@ internal object Transcriber {
                 peek.use {
                     val net = Net.shipped
                     if (net == null || runCatching { peek.printed(m.page) }.getOrNull() != null) return@use emptyList()
-                    val (grey, ink) = inkOf(peek, m.page, width) ?: return@use emptyList()
-                    Recognizer().lookAgain(ink, grey, net, m, deeper)
+                    val img = drawnPage(state, file, m.page, width) ?: return@use emptyList()
+                    val px = IntArray(img.width * img.height).also { img.readPixels(it) }
+                    Recognizer().lookAgain(Ink.fromArgb(img.width, img.height, px), com.inksheets.core.omr.Strips.grey(px), net, m, deeper)
                 }
             }.onFailure { state.platform.log("Looking again at bar ${m.number} of ${file.name} failed: ${it.message}") }.getOrNull().orEmpty()
             state.platform.onMain { onDone(found) }
@@ -240,8 +283,8 @@ internal object Transcriber {
         looker.execute {
             if (!wanted()) return@execute
             val picture = runCatching {
-                state.platform.peek(file)?.use { peek ->
-                    val page = peek.render(m.page, width) ?: return@use null
+                run {
+                    val page = drawnPage(state, file, m.page, width) ?: return@run null
                     val sp = m.space
                     // A little of the bars either side, so a bar split or run together where it should not be shows as such.
                     val l = maxOf(0, (m.box.left - sp * 3).toInt()); val r = minOf(page.width, (m.box.right + sp * 3).toInt())
@@ -257,7 +300,7 @@ internal object Transcriber {
                     }
                     val t = maxOf(0, minOf(reach(m.box.top, -1), (m.box.top - sp * 2.5f).toInt()) - (sp * 0.6f).toInt())
                     val b = minOf(page.height, maxOf(reach(m.box.bottom, 1), (m.box.bottom + sp * 2.5f).toInt()) + (sp * 0.6f).toInt())
-                    if (r - l < 4 || b - t < 4) return@use null
+                    if (r - l < 4 || b - t < 4) return@run null
                     val out = androidx.compose.ui.graphics.ImageBitmap(r - l, b - t)
                     val canvas = androidx.compose.ui.graphics.Canvas(out)
                     canvas.drawImageRect(page,
@@ -383,6 +426,31 @@ internal object Transcriber {
                 File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
             }.onFailure { state.platform.log("Keeping a signature fix for teaching failed: ${it.message}") }
         }
+    }
+
+    /**
+     * Pages drawn lately, for Fix's pictures and looks: the bars it goes through are mostly on one
+     * page, and each wants it drawn whole and large - drawn once, not once a bar. (One page kept; two
+     * where there is the memory: the one ahead drawn while this one is looked at.)
+     */
+    private val drawn = LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+
+    private fun drawnPage(state: SheetsState, file: File, page: Int, width: Int): androidx.compose.ui.graphics.ImageBitmap? {
+        val key = "${file.absolutePath}|${file.lastModified()}|$page|$width"
+        synchronized(drawn) { drawn[key]?.let { return it } }
+        val img = state.platform.peek(file)?.use { it.render(page, width) } ?: return null
+        synchronized(drawn) {
+            drawn[key] = img
+            val keep = if (Workers.roomy) 2 else 1
+            while (drawn.size > keep) drawn.remove(drawn.keys.first())
+        }
+        return img
+    }
+
+    /** Page [page] of [file] drawn ahead (quietly, after whatever is being looked at), for the next bar in Fix. */
+    fun drawAhead(state: SheetsState, file: File, page: Int, width: Int) {
+        if (!Workers.roomy) return
+        looker.execute { runCatching { drawnPage(state, file, page, width) } }
     }
 
     /** How long each page read on this device lately took, in ms (the last few dozen): shown so how fast it is can be seen. */

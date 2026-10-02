@@ -150,8 +150,10 @@ class BarCheckTest {
                 settle(3); SimulatedTouch.stamp(); root.performMouseInput { release() }
                 settle(30)
             }
-            tapText("Wrong")
+            tapText("Fix chosen")
             ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "wrong-01-marked.png"))
+            // Just that bar to go through - not the part's every bar in doubt.
+            assertEquals("that bar alone", listOf(sure), ScoreTools.checkBars)
             assertTrue("going through the bars", ScoreTools.checking)
             assertEquals("the bar said to be wrong is up first", sure, ScoreTools.barUp(sheets())?.number)
             assertTrue("it is in doubt now", ScoreTools.scoreHere(sheets())!!.measures.first { it.number == sure }.doubts.any { it.contains("wrong") })

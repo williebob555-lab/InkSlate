@@ -84,7 +84,10 @@ object Engraver {
             x += 0.6f
             // Notes and rests, each its own room; beamed notes grouped a beat at a time.
             val placed = ArrayList<Pair<Event, Float>>()
+            val graces = m.gracesBefore()
             for (e in m.events) {
+                // Its grace notes first, small, each its own little room.
+                graces[e]?.forEach { g -> drawGrace(marks, g, x); x += 1.15f }
                 val acc = (e as? Note)?.accidentals?.isNotEmpty() == true
                 if (acc) x += 1.1f
                 placed += e to x
@@ -494,6 +497,26 @@ object Engraver {
             if (length >= d.normal * 4.0 / shortest - 1e-6) { out += run; run = ArrayList(); length = 0.0 }
         }
         return out
+    }
+
+    /** Grace note [g] at [x]: a small head, its stem up with a flag, struck through (an acciaccatura). */
+    private fun drawGrace(marks: MutableList<Mark>, g: Note, x: Float) {
+        val k = 0.62f
+        val headW = MusicGlyphs["noteheadBlack"].advance * k
+        for (st in g.steps) {
+            marks += Symbol("noteheadBlack", x, st * 0.5f, k)
+            g.accidentals[st]?.let { a -> marks += Symbol(when (a) { 1 -> "accidentalSharp"; -1 -> "accidentalFlat"; else -> "accidentalNatural" }, x - 0.75f, st * 0.5f, k) }
+        }
+        // Small ledger lines, over and under the staff.
+        var l = -2
+        while (l >= g.steps.min()) { marks += Stroke(x - 0.2f, l * 0.5f, x + headW + 0.2f, l * 0.5f, LINE); l -= 2 }
+        l = 10
+        while (l <= g.steps.max()) { marks += Stroke(x - 0.2f, l * 0.5f, x + headW + 0.2f, l * 0.5f, LINE); l += 2 }
+        val sx = x + headW - STEM * 0.4f
+        val top = g.steps.min() * 0.5f - 2.4f
+        marks += Stroke(sx, g.steps.max() * 0.5f, sx, top, STEM * 0.75f)
+        marks += Symbol("flag8thUp", sx - STEM * 0.35f, top, k)
+        marks += Stroke(sx - 0.5f, top + 1.45f, sx + 0.65f, top + 0.6f, 0.11f)
     }
 
     /** Stems go up from notes low on the staff, down from high ones. */

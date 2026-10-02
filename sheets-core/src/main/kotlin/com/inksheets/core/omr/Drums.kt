@@ -105,12 +105,12 @@ internal class DrumVoice(private val key: Int, private val start: Long, private 
                 35, 36 -> {
                     val f = (48.0 + 110.0 * exp(-t / 0.035)) * tune
                     phase += 2 * PI * f / sr
-                    sin(phase) * exp(-t / 0.16) * 1.2 + white() * exp(-t / 0.004) * 0.3
+                    Synth.sine(phase) * exp(-t / 0.16) * 1.2 + white() * exp(-t / 0.004) * 0.3
                 }
                 // Snare: a short skin's tone and the wires' rattle (noise, its lows taken out).
                 38, 40 -> {
                     phase += 2 * PI * 190.0 * tune / sr
-                    sin(phase) * exp(-t / 0.05) * 0.55 + highpass(white(), 0.7) * exp(-t / 0.11) * 0.75
+                    Synth.sine(phase) * exp(-t / 0.05) * 0.55 + highpass(white(), 0.7) * exp(-t / 0.11) * 0.75
                 }
                 // Hi-hat closed, its pedal, and open: bright noise, short or ringing.
                 42, 44, 46 -> highpass(white(), 0.92) * exp(-t / (if (key == 46) 0.18 else 0.03)) * 0.6
@@ -118,14 +118,14 @@ internal class DrumVoice(private val key: Int, private val start: Long, private 
                 49, 57 -> highpass(white(), 0.85) * exp(-t / 0.6) * 0.55 * (1 - exp(-t / 0.003))
                 51, 59 -> {
                     phase += 2 * PI * 520.0 / sr
-                    highpass(white(), 0.9) * exp(-t / 0.35) * 0.35 + sin(phase) * exp(-t / 0.4) * 0.12
+                    highpass(white(), 0.9) * exp(-t / 0.35) * 0.35 + Synth.sine(phase) * exp(-t / 0.4) * 0.12
                 }
                 // Toms (and tuned drums on them): a skin's pitch, falling a little, ringing.
                 else -> {
                     val base = when (key) { 41 -> 82.0; 43 -> 98.0; 45 -> 117.0; 47 -> 139.0; 48 -> 165.0; 50 -> 196.0; else -> 130.0 } * tune
                     val f = base * (1 + 0.45 * exp(-t / 0.04))
                     phase += 2 * PI * f / sr
-                    sin(phase) * exp(-t / 0.22) + white() * exp(-t / 0.006) * 0.25
+                    Synth.sine(phase) * exp(-t / 0.22) + white() * exp(-t / 0.006) * 0.25
                 }
             }
             buf[i] += (x * strike * gain).toFloat()

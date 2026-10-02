@@ -60,7 +60,7 @@ class UiAuditAppTest {
                 mainClock.autoAdvance = false
                 setContent { InkSlateTheme { AppRoot(Shortcuts(), NavigationHooks()) } }
                 settle(40)
-                fun look(scene: String) { settle(20); total += UiAudit.check(this, size, scene, w, h).size }
+                fun look(scene: String, vararg required: String) { settle(20); total += UiAudit.check(this, size, scene, w, h, required = required.toList()).size }
                 look("home")
                 runOnIdle { openFile!!(part) }
                 val until = System.currentTimeMillis() + 30_000
@@ -79,8 +79,17 @@ class UiAuditAppTest {
                 look("music-tools")
                 runOnIdle { ScoreTools.startCheck(s) }
                 settle(60)
-                look("fix")
-                runOnIdle { ScoreTools.endCheck(); ScoreTools.open = false }
+                look("fix", "Edit", "None of these", "Not one bar", "Skip", "Done", "Clef, key or time wrong?")
+                // The bar put right by hand, and its clef, key and time chosen anew: every control there.
+                runOnIdle { ScoreTools.offered.firstOrNull()?.let { ScoreTools.startEdit(it) } }
+                look("fix-editing", "Up", "Down", "♭", "♯", "Dot", "Quarter", "16th", "Triplet", "Remove", "Cancel", "Undo", "Use this")
+                runOnIdle { ScoreTools.cancelEdit(); ScoreTools.sigDraft = com.inksheets.core.omr.SigFix(com.inksheets.core.omr.Clef.TREBLE, 0, 4, 4) }
+                look("fix-signature", "Treble", "Tenor", "Key", "Beats", "4/16", "Cancel", "Use from bar")
+                runOnIdle { ScoreTools.sigDraft = null; ScoreTools.endCheck() }
+                // Playing: the bar along the foot that steers it.
+                runOnIdle { ScoreTools.play(s) }
+                look("playing", "Back a line", "Back a bar", "Pause", "On a bar", "On a line", "Slower", "Faster", "Stop")
+                runOnIdle { ScoreTools.stop(s); ScoreTools.open = false }
                 settle(10)
                 runOnIdle { openSettings?.invoke() }
                 look("settings")

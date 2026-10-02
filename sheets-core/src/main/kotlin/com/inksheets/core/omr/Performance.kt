@@ -75,6 +75,7 @@ object Performance {
             var q = 0.0
             var struck: String? = null
             val barStart = t
+            val graces = m.gracesBefore()
             for (e in m.events) {
                 if (q >= played - 1e-9) break
                 val len = min(e.duration.quarters, played - q)
@@ -125,6 +126,16 @@ object Performance {
                     val end = (t + sounding + hold).toLong()
                     val velocity = (v.coerceIn(0.1f, 1.5f) * 1.15f)
                     val pitches = drums?.keys(e) ?: e.pitches.map { (it.midi - transpose).coerceIn(12, 115) }
+                    // Its grace notes: quick, just before the beat - the note itself on it (a drum's
+                    // flam the same: a light stroke a moment ahead).
+                    graces[e]?.let { gs ->
+                        val each = min(rate * 0.06, beats / 3).toLong().coerceAtLeast(1L)
+                        for ((gi, g) in gs.withIndex()) {
+                            val gStart = max(at, start - each * (gs.size - gi))
+                            for (gp in drums?.keys(g) ?: g.pitches.map { (it.midi - transpose).coerceIn(12, 115) })
+                                tones += Synth.Tone(gp, gStart, each, velocity * 0.8f, sounds)
+                        }
+                    }
                     // Tied notes no longer sounding go; one tied into this note sounds on through it.
                     for (k in open.keys.toList()) if (k !in pitches) flush(k)
                     for (p in pitches) {

@@ -981,6 +981,22 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * staff seen a little larger, smaller, higher, lower; [deeper]: further still (when the readings
      * offered first were all turned down). Each look's reading of the bar, where it found the bar.
      */
+    /**
+     * Bars [bars] - all on one staff, [first] that staff's first bar as read - each looked at again
+     * as [lookAgain] looks at one, but the staff read once for each look rather than once a bar: what
+     * each look saw of each, by its number (numbered as read).
+     */
+    fun lookAgainStaff(ink: Ink, grey: IntArray, net: Net, bars: List<Measure>, first: Measure, deeper: Boolean = false): Map<Int, List<Measure>> {
+        val looks = if (deeper) listOf(1.15f to 0f, 0.87f to 0f, 1.08f to 0.25f, 0.93f to -0.25f) else listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f)
+        val out = HashMap<Int, MutableList<Measure>>()
+        for (look in looks) {
+            val r = Recognizer().read(ink, first.page, first.number, Carry(first.clef, first.key, first.time), grey = grey, net = net, look = look, onlyStaff = first.staff)
+            for (m in bars) r.measures.firstOrNull { o -> o.staff == m.staff && o.bars == 1 && abs(o.box.left - m.box.left) <= m.space * 0.6f && abs(o.box.right - m.box.right) <= m.space * 0.6f }
+                ?.let { out.getOrPut(m.number) { ArrayList() } += it.copy(number = m.number) }
+        }
+        return out
+    }
+
     fun lookAgain(ink: Ink, grey: IntArray, net: Net, m: Measure, deeper: Boolean = false): List<Measure> {
         val looks = if (deeper) listOf(1.15f to 0f, 0.87f to 0f, 1.08f to 0.25f, 0.93f to -0.25f) else listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f)
         return looks.mapNotNull { look ->
@@ -1213,7 +1229,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
             ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves.filterIndexed { i, _ -> onlyStaff == null || i == onlyStaff }.map { if (look == null) it else it.looked(look.first, look.second) }, net) else null
         this.staves = staves
-        symbolOf.clear(); fullSize.clear(); cueAt.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear()
+        symbolOf.clear(); fullSize.clear(); cueAt.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear(); graceAt.clear(); normalHead.clear()
         val clean = withoutLines(ink, staves, t)
         clock.mark("lines out")
         lineThickness = t
@@ -1327,7 +1343,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         measures[k] = m.copy(bars = m.bars + delta, doubts = m.doubts - "rest of how many bars?")
                         for (j in k + 1 until measures.size) measures[j] = measures[j].copy(number = measures[j].number + delta)
                         number = p; carry.printed = p
-                    } else if (p > carry.printed && abs(p - number) <= 8) { number = p; carry.printed = p }
+                    } else if (p > carry.printed && p >= number && p - number <= 8) { number = p; carry.printed = p }
+                    // (The count ahead of the print - a pickup counted, a bar taken for two: numbered on as
+                    // counted, never back, so no number comes twice.)
+                    else if (p > carry.printed && p < number && number - p <= 8) carry.printed = p
                 }
             }
             // The start of the staff: clef, key, time.
@@ -1420,7 +1439,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var graces = emptyList<Event>()
                 if (!inVoices && !cueBar && events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) {
                     val small = cueAt[si].orEmpty()
-                    fun isSmall(e: Event) = small.any { abs(it - e.x) <= 2f }
+                    fun isSmall(e: Event) = small.any { abs(it - e.x) <= 2f } || (e is Note && smallHead(clean, s, si, e, allHeads))
                     val grace = events.indices.filter { k ->
                         val e = events[k]
                         e is Note && isSmall(e) && (events.getOrNull(k + 1) as? Note)?.let { nx -> nx.x - e.x <= s.space * 3.5f && !isSmall(nx) } == true
@@ -1440,11 +1459,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     (stated || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
                 // What was seen here and let go: another reading of the bar may want it back.
                 val maybe = dropped.filter { (h, why) -> staffOf[h] == si && h.x >= from - 2 && h.x < to && !why.startsWith("the other staff") }
-                    .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> clock.sum("maybe") { maybeNote(clean, s, h, carry) } } + graces
+                    .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> clock.sum("maybe") { maybeNote(clean, s, h, carry) } }
+                // Its grace notes: a PDF's small heads just before its own notes; on a scan, the small
+                // heads let go above for making the bar too long.
+                val graceNotes = (graceNotes(si, from, to, events, carry) + graces.filterIsInstance<Note>().map { it.copy(duration = Duration(8)) }).let { found ->
+                    // A scan's: the trained reader leaves small heads be - looked for on the page, just before each note.
+                    if (this.printed?.learned == true && !cueBar && System.getProperty("inksheets.omr.nograces") == null)
+                        found + scanGraces(clean, s, events, carry, from).filter { g -> found.none { abs(it.x - g.x) < s.space } }
+                    else found
+                }
                 val m = Measure(
                     number++, page, si, box, s.space,
                     carry.clef, carry.key, carry.time, events,
                     maybe = maybe,
+                    graces = graceNotes.sortedBy { it.x },
                     showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey, showsTime = (i == 0 && showsTime) || timeHere,
                     lines = lines, lineWidth = t.toFloat(), start = from
                 )
@@ -2080,6 +2108,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private val fullSize = HashSet<Head>()
     /** Where small heads (a cue's, a grace note's) were found and left out, by staff. */
     private val cueAt = HashMap<Int, MutableList<Int>>()
+
+    /** A PDF's small heads, by staff: (x, step) - a grace note's where one of the part's own follows it closely. */
+    private val graceAt = HashMap<Int, MutableList<Pair<Int, Int>>>()
+
+    /** How wide the part's own filled heads print on each staff, in spaces (measured once a page). */
+    private val normalHead = HashMap<Int, Float>()
     private val printedAccidental = HashMap<Head, Int>()
     /** The printed lines some head took as its stem: the rest that cross a staff are barlines. */
     private val usedStems = HashSet<Printed.Stem>()
@@ -2271,6 +2305,116 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return label.takeIf { p >= sure }
     }
 
+    /**
+     * A PDF's grace notes in the bar from [from] to [to] on staff [si]: its small heads with one of
+     * [events]' notes just after (no other small head between) - a cue's run of small heads is none.
+     */
+    private fun graceNotes(si: Int, from: Int, to: Int, events: List<Event>, carry: Carry): List<Note> {
+        val small = graceAt[si]?.filter { it.first >= from - 2 && it.first < to } ?: return emptyList()
+        val sp = staves.getOrNull(si)?.space ?: return emptyList()
+        val notes = events.filterIsInstance<Note>()
+        return small.filter { (x, _) ->
+            val next = notes.filter { it.x > x }.minByOrNull { it.x } ?: return@filter false
+            next.x - x <= sp * 3.5f && small.none { (ox, _) -> ox > x + 2 && ox < next.x }
+        }.distinctBy { it.first / 3 to it.second }.groupBy { it.first / 3 }.map { (_, chord) ->
+            val steps = chord.map { it.second }.sorted()
+            Note(steps, steps.map { st -> val d = carry.clef.at(st); Pitch.fromDiatonic(d, carry.key.alterOf(d.mod(7))) }, Duration(8), chord.minOf { it.first }.toFloat())
+        }
+    }
+
+    /**
+     * A scan's grace notes in a bar of [events] on staff [s]: before each note (and after the one
+     * before it), a small solid head - narrower than a space, not as tall as one - with a stem
+     * rising from its right side, struck through or not. A dot is too small, a flat or a natural
+     * hollow, a sharp a lattice: none is a filled head with its stem up.
+     */
+    private fun scanGraces(clean: Ink, s: Staff, events: List<Event>, carry: Carry, musicStart: Int): List<Note> {
+        val sp = s.space
+        val out = ArrayList<Note>()
+        val notes = events.filterIsInstance<Note>()
+        for (n in notes) {
+            val before = events.filter { it.x < n.x - 1 }.maxOfOrNull { it.x }
+            // (Not before the bar's music starts: a clef, key or time printed there is none.)
+            val x0 = (if (before != null) before + sp * 1.6f else n.x - sp * 3.2f).coerceAtLeast(n.x - sp * 3.2f).coerceAtLeast(musicStart + sp * 0.3f).roundToInt()
+            // Clear of the note's own accidentals.
+            val x1 = (n.x - sp * (if (n.accidentals.isNotEmpty()) 1.6f else 0.45f)).roundToInt()
+            if (x1 - x0 < sp * 0.5f) continue
+            var best: Triple<Int, Int, Float>? = null
+            for (step in -6..14) {
+                val y = s.y(step, (x0 + x1) / 2).roundToInt()
+                var cx = x0
+                while (cx <= x1) {
+                    if (!clean[cx, y]) { cx++; continue }
+                    // Across it at its middle, and up and down through its middle.
+                    var a = cx; var b = cx
+                    while (clean[a - 1, y] && cx - a < sp) a--
+                    while (clean[b + 1, y] && b - cx < sp * 1.2f) b++
+                    val w = b - a + 1
+                    val mx = (a + b) / 2
+                    var top = y; var bot = y
+                    while (clean[mx, top - 1] && y - top < sp) top--
+                    while (clean[mx, bot + 1] && bot - y < sp) bot++
+                    val h = bot - top + 1
+                    cx = b + 1
+                    if (w < sp * 0.5f || w > sp * 0.95f || h < sp * 0.38f || h > sp * 0.8f) continue
+                    // Its middle row where the head's middle would be (a step's height out at most).
+                    if (abs((top + bot) / 2f - y) > sp * 0.2f) continue
+                    // Solid: an ellipse of ink, not a ring.
+                    var inked = 0; var all = 0
+                    for (yy in top..bot) for (xx in a..b) {
+                        val dx = (xx - mx) / (w / 2f); val dy = (yy - (top + bot) / 2f) / (h / 2f)
+                        if (dx * dx + dy * dy <= 0.7f) { all++; if (clean[xx, yy]) inked++ }
+                    }
+                    if (all == 0 || inked < all * 0.85f) continue
+                    // Rounded: its box's corners paper, as a head's are - a beam's short piece, a sharp's
+                    // lattice, a digit's stroke fill them.
+                    fun corner(cx: Int, cy: Int): Boolean {
+                        var k = 0; var c = 0
+                        for (yy in cy - 1..cy + 1) for (xx in cx - 1..cx + 1) { c++; if (clean[xx, yy]) k++ }
+                        return k * 2 > c
+                    }
+                    val cw = maxOf(1, (w * 0.12f).toInt()); val ch = maxOf(1, (h * 0.12f).toInt())
+                    val inkedCorners = listOf(corner(a + cw, top + ch), corner(b - cw, top + ch), corner(a + cw, bot - ch), corner(b - cw, bot - ch)).count { it }
+                    if (inkedCorners >= 3) continue
+                    // Its stem rises only: ink running on down from its right side is a beam's stem, or a note's.
+                    val down = (b - 2..b + 2).maxOf { sx -> var yy = bot; while (clean[sx, yy + 1] && yy - bot < sp) yy++; yy - bot }
+                    if (down > sp * 0.5f) continue
+                    // A stem up from its right side: ink in a column at its right edge, well up.
+                    val stem = (b - 2..b + 2).maxOf { sx ->
+                        var yy = y; var gap = 0
+                        while (y - yy < sp * 3.5f && gap <= 2) { yy--; if (clean[sx, yy]) gap = 0 else gap++ }
+                        y - yy - gap
+                    }
+                    if (stem < sp * 1.5f) continue
+                    val fill = inked.toFloat() / all
+                    if (best == null || fill > best.third) best = Triple(mx - w / 2, step, fill)
+                }
+            }
+            best?.let { (gx, step, _) ->
+                val d = carry.clef.at(step)
+                out += Note(listOf(step), listOf(Pitch.fromDiatonic(d, carry.key.alterOf(d.mod(7)))), Duration(8), gx.toFloat())
+            }
+        }
+        return out
+    }
+
+    /**
+     * Whether note [n] on staff [s] is printed small - a grace note's head, read by the trained
+     * reader as one of the part's own: its filled head plainly narrower than the staff's others.
+     */
+    private fun smallHead(clean: Ink, s: Staff, si: Int, n: Note, heads: List<Head>): Boolean {
+        if (n.duration.base < 4) return false
+        val sp = s.space
+        fun width(h: Head) = symbolOf[h]?.let { headSize(clean, it, sp) }
+        val normal = normalHead.getOrPut(si) {
+            heads.filter { it.kind == "noteheadBlack" }.mapNotNull { width(it) }.sorted().let { w -> if (w.size < 4) 0f else w[w.size / 2] }
+        }
+        if (normal <= 0f) return false
+        val h = heads.firstOrNull { it.x == n.x.roundToInt() && it.step in n.steps } ?: return false
+        val w = width(h) ?: return false
+        return w < normal * 0.8f
+    }
+
     /** How sure the second look must be to overrule the trained reader. */
     var SECOND_SURE = 0.9f
     var HEAD_OUT_SURE = System.getProperty("inksheets.omr.headout")?.toFloatOrNull() ?: 0.98f
@@ -2283,11 +2427,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         if (all.isEmpty() || staves.isEmpty()) return out
         val small = Printed.small(all)
         for (sym in all) {
-            if (sym in small) continue
             val si = staves.indices.filter { val s = staves[it]; sym.x >= s.left - s.space && sym.x <= s.right }
                 .minByOrNull { abs((staves[it].top + staves[it].bottom) / 2f - sym.y) } ?: continue
             val s = staves[si]
             if (abs((s.top + s.bottom) / 2f - sym.y) > s.space * 9) continue
+            // Small: a cue's or a grace note's - no time in the bar. Kept aside: a grace note is
+            // told by one of the part's own just after it (see graceNotes).
+            if (sym in small) {
+                val x = sym.x.roundToInt()
+                if (!p.learned) graceAt.getOrPut(si) { ArrayList() } += x to ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
+                continue
+            }
             // The second look at a head the trained reader found: a word's letter, a dynamic, a mark
             // it is sure is none is left out; a faint one it is sure is a head is taken after all.
             // (Faint ones not taken are not notes, but put back if a bar wants them - see read.)

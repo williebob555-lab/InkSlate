@@ -47,6 +47,10 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.unit.Dp
 
 /**
  * The bars in doubt, one at a time. At the top, the bar as it is printed (cut from the page, a
@@ -56,7 +60,7 @@ import androidx.compose.foundation.layout.PaddingValues
  * The panel sits in the half of the page away from the bar.
  */
 @Composable
-fun BoxScope.BarCheck(state: SheetsState) {
+fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     if (!ScoreTools.checking) return
     val m = ScoreTools.barUp(state) ?: return
     val score = ScoreTools.scoreHere(state)
@@ -66,107 +70,160 @@ fun BoxScope.BarCheck(state: SheetsState) {
     val paper = Color.White
     val printInk = Color(0xFF111111)
     val total = ScoreTools.checkBars.size
+    // A short screen (a phone or a small tablet on its side): everything smaller, and where it is
+    // wide too, the bar as printed beside its readings rather than over them.
+    // (Putting a bar right by hand, or choosing its clef, key and time, wants more room than picking.)
+    val short = room < when { ScoreTools.editing != null -> 1000.dp; ScoreTools.sigDraft != null -> 900.dp; else -> 700.dp }
+    ScoreTools.compact = short
     // A window over the music: between the strips where it fits, else they step aside (see Overlays).
-    Opened("Fix", 380.dp)
+    Opened("Fix", if (short) 700.dp else 380.dp)
     Surface(
         shape = RoundedCornerShape(18.dp),
         tonalElevation = 4.dp,
         shadowElevation = 6.dp,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
         modifier = Modifier.align(if (barLow) Alignment.TopCenter else Alignment.BottomCenter)
-            .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp, top = 12.dp, bottom = 12.dp).widthIn(max = 760.dp)
+            .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp, top = 8.dp, bottom = 8.dp).widthIn(max = 900.dp)
+            // Never taller than the screen: what does not fit scrolls (see below).
+            .heightIn(max = if (room == Dp.Infinity) Dp.Infinity else (room - 16.dp).coerceAtLeast(160.dp))
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Which bar, and how far through.
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Bar ${m.number} · page ${m.page + 1}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text("${ScoreTools.checkAt + 1} of $total to check", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        BoxWithConstraints {
+            // (Side by side only where each side still has room: the editor's five lengths want 300 or so.)
+            val wide = short && maxWidth >= (if (ScoreTools.editing != null) 560.dp else 520.dp)
+            val pad = if (short) 10.dp else 14.dp
+            val gap = if (short) 6.dp else 10.dp
+            val pictureHeight = if (short) 92.dp else 140.dp
+            val header: @Composable () -> Unit = {
+                // Which bar, and how far through.
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Bar ${m.number} · page ${m.page + 1}", style = if (short) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("${ScoreTools.checkAt + 1} of $total to check", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LinearProgressIndicator(progress = { (ScoreTools.checkAt + 1f) / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().height(3.dp))
             }
-            LinearProgressIndicator(progress = { (ScoreTools.checkAt + 1f) / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().height(3.dp))
-            // The bar as printed.
-            Text("On the page", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier.fillMaxWidth().height(140.dp).clip(RoundedCornerShape(10.dp)).background(paper)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-            ) {
-                val pic = ScoreTools.barPicture
-                if (pic != null) Image(pic, "Bar ${m.number} as printed", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(140.dp).padding(4.dp))
-                else Text("Getting the bar from the page...", style = MaterialTheme.typography.bodySmall, color = Color(0xFF777777))
+            val printed: @Composable () -> Unit = {
+                // The bar as printed.
+                if (!short) Text("On the page", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxWidth().height(pictureHeight).clip(RoundedCornerShape(10.dp)).background(paper)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                ) {
+                    val pic = ScoreTools.barPicture
+                    if (pic != null) Image(pic, "Bar ${m.number} as printed", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(pictureHeight).padding(4.dp))
+                    else Text("Getting the bar from the page...", style = MaterialTheme.typography.bodySmall, color = Color(0xFF777777))
+                }
+                // Why it is asked about, and how to read the marks on the picture - and the clef, key and
+                // time it was read in, put right here where they are wrong. (Not while a narrow screen
+                // is given to putting the bar right by hand: the editor wants the room.)
+                if (ScoreTools.editing == null) {
+                    Doubts(m)
+                    if (ScoreTools.sigDraft == null) SignatureRow(state, m)
+                }
             }
-            // Why it is asked about, and how to read the marks on the picture.
-            Doubts(m)
-            // The clef, key and time it was read in - put right here where they are wrong.
-            SignatureRow(state, m)
-            if (ScoreTools.sigDraft != null) return@Column
-            Text(when {
-                    ScoreTools.editing != null -> "Tap a note to choose it, then change it below."
-                    ScoreTools.looking && ScoreTools.askedAgain -> "Looking at it further..."
-                    ScoreTools.askedAgain -> "Looked further: is it one of these?"
-                    ScoreTools.looking -> "Which matches? Tap it. (Looking at it again more closely...)"
-                    else -> "Which matches? Tap it - or Edit the nearest."
-                }, style = MaterialTheme.typography.bodyMedium)
-            val editing = ScoreTools.editing
-            if (editing != null) { BarEditor(state, m, editing, paper, printInk); return@Column }
-            // The readings, drawn as the print is: black on white.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for ((i, c) in ScoreTools.offered.withIndex()) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
-                            .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                            .clickable { ScoreTools.pick(state, c) }.padding(6.dp)
-                    ) {
-                        val drawing = remember(c) { Engraver.line(listOf(m.copy(events = c.events)), lineStart = false) }
-                        Canvas(Modifier.fillMaxWidth().height(104.dp).clip(RoundedCornerShape(8.dp)).background(paper)) {
-                            // The whole of it in the picture - notes high over the staff or low under it with their
-                            // ledger lines, stems and beams - not just the staff: as large as that allows.
-                            val (top, bottom) = drawing.extent
-                            val tall = bottom - top + 0.6f
-                            val space = minOf(size.height / maxOf(tall, 8f), size.width / (drawing.width + 1f))
-                            val y0 = (size.height - (bottom - top) * space) / 2f - top * space
-                            // Behind each note: amber where it was read unclearly (as read), blue where
-                            // this reading changes it - what to look at first on the print.
-                            val xs = drawing.events.firstOrNull().orEmpty()
-                            for ((k, e) in c.events.withIndex()) {
-                                val x = xs.getOrNull(k) ?: continue
-                                val tint = when {
-                                    c.changes.isNotEmpty() && m.events.none { it == e } -> CHANGED
-                                    c.changes.isEmpty() && e is Note && com.inksheets.core.omr.Learned.unclear(e) -> UNCLEAR
-                                    else -> null
-                                } ?: continue
-                                drawRoundRect(tint, Offset(space * 0.3f + (x - 0.35f) * space, 0f), Size(space * 1.9f, size.height),
-                                    androidx.compose.ui.geometry.CornerRadius(space * 0.5f))
-                            }
-                            drawMarks(drawing, space, Offset(space * 0.3f, y0), printInk)
-                        }
-                        Text(
-                            if (c.changes.isEmpty()) "As read" else c.changes.joinToString("; "),
-                            style = MaterialTheme.typography.labelSmall, fontSize = 11.sp, lineHeight = 13.sp, textAlign = TextAlign.Center, maxLines = 2,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                        Text("${i + 1}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-                        // Nearly it: put right by hand from here.
-                        TextButton(onClick = { ScoreTools.startEdit(c) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
-                            Text("Edit", style = MaterialTheme.typography.labelMedium)
-                        }
+            val choosing: @Composable () -> Unit = {
+                if (ScoreTools.sigDraft != null) SignatureRow(state, m)
+                else {
+                    Text(when {
+                        ScoreTools.editing != null -> "Tap a note to choose it, then change it below."
+                        ScoreTools.looking && ScoreTools.askedAgain -> "Looking at it further..."
+                        ScoreTools.askedAgain -> "Looked further: is it one of these?"
+                        ScoreTools.looking -> "Which matches? Tap it. (Looking at it again more closely...)"
+                        else -> "Which matches? Tap it - or Edit the nearest."
+                    }, style = if (short) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, maxLines = 2)
+                    val editing = ScoreTools.editing
+                    if (editing != null) BarEditor(state, m, editing, paper, printInk, short)
+                    else {
+                        Readings(state, m, paper, printInk, if (short) 70.dp else 104.dp)
+                        CheckButtons(state, short)
                     }
                 }
             }
-            // Four in a row where there is room for their words; two by two where there is not.
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val none: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = mod) { Text("None of these", maxLines = 1) } }
-                // The bright part of the picture is not one whole bar: a part of one, or two.
-                val notOne: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.notOneBar(state) }, modifier = mod) { Text("Not one bar", maxLines = 1) } }
-                val skip: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.skip(state) }, modifier = mod) { Text("Skip", maxLines = 1) } }
-                val done: @Composable (Modifier) -> Unit = { mod -> Button(onClick = { ScoreTools.endCheck() }, modifier = mod) { Text("Done", maxLines = 1) } }
-                if (maxWidth >= 520.dp) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    none(Modifier.weight(1f).height(48.dp)); notOne(Modifier.weight(1f).height(48.dp)); skip(Modifier.weight(1f).height(48.dp)); done(Modifier.weight(1f).height(48.dp))
-                } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { none(Modifier.weight(1f).height(44.dp)); notOne(Modifier.weight(1f).height(44.dp)) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { skip(Modifier.weight(1f).height(44.dp)); done(Modifier.weight(1f).height(44.dp)) }
+            val editing = ScoreTools.editing
+            if (wide && editing != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(pad)) {
+                // Putting it right by hand: the print and the bar as it stands, one over the other, beside the buttons.
+                Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    header(); printed(); BarEditor(state, m, editing, paper, printInk, short, buttons = false)
+                }
+                Column(Modifier.weight(0.58f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    BarEditor(state, m, editing, paper, printInk, short, view = false)
+                }
+            } else if (wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(pad)) {
+                Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { header(); printed() }
+                Column(Modifier.weight(0.58f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { choosing() }
+            } else Column(Modifier.verticalScroll(rememberScrollState()).padding(pad), verticalArrangement = Arrangement.spacedBy(gap)) {
+                header(); printed(); choosing()
+            }
+        }
+    }
+}
+
+/** The readings offered for bar [m], drawn as the print is - black on white - [height] tall; a tap picks one. */
+@Composable
+private fun Readings(state: SheetsState, m: Measure, paper: Color, printInk: Color, height: Dp) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((i, c) in ScoreTools.offered.withIndex()) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f).clip(RoundedCornerShape(12.dp))
+                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                    .clickable { ScoreTools.pick(state, c) }.padding(6.dp)
+            ) {
+                val drawing = remember(c) { Engraver.line(listOf(m.copy(events = c.events)), lineStart = false) }
+                Canvas(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(8.dp)).background(paper)) {
+                    // The whole of it in the picture - notes high over the staff or low under it with their
+                    // ledger lines, stems and beams - not just the staff: as large as that allows.
+                    val (top, bottom) = drawing.extent
+                    val tall = bottom - top + 0.6f
+                    val space = minOf(size.height / maxOf(tall, 8f), size.width / (drawing.width + 1f))
+                    val y0 = (size.height - (bottom - top) * space) / 2f - top * space
+                    // Behind each note: amber where it was read unclearly (as read), blue where
+                    // this reading changes it - what to look at first on the print.
+                    val xs = drawing.events.firstOrNull().orEmpty()
+                    for ((k, e) in c.events.withIndex()) {
+                        val x = xs.getOrNull(k) ?: continue
+                        val tint = when {
+                            c.changes.isNotEmpty() && m.events.none { it == e } -> CHANGED
+                            c.changes.isEmpty() && e is Note && com.inksheets.core.omr.Learned.unclear(e) -> UNCLEAR
+                            else -> null
+                        } ?: continue
+                        drawRoundRect(tint, Offset(space * 0.3f + (x - 0.35f) * space, 0f), Size(space * 1.9f, size.height),
+                            androidx.compose.ui.geometry.CornerRadius(space * 0.5f))
+                    }
+                    drawMarks(drawing, space, Offset(space * 0.3f, y0), printInk)
+                }
+                Text(
+                    if (c.changes.isEmpty()) "As read" else c.changes.joinToString("; "),
+                    style = MaterialTheme.typography.labelSmall, fontSize = 11.sp, lineHeight = 13.sp, textAlign = TextAlign.Center, maxLines = 2,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${i + 1}", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    // Nearly it: put right by hand from here.
+                    TextButton(onClick = { ScoreTools.startEdit(c) }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp), modifier = Modifier.height(30.dp)) {
+                        Text("Edit", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
+        }
+    }
+}
+
+/** None of these, not one bar, skip, done: four in a row where there is room for their words; two by two where there is not. */
+@Composable
+private fun CheckButtons(state: SheetsState, short: Boolean) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val h = if (short) 40.dp else 48.dp
+        val none: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("None of these", maxLines = 1) } }
+        // The bright part of the picture is not one whole bar: a part of one, or two.
+        val notOne: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.notOneBar(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Not one bar", maxLines = 1) } }
+        val skip: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.skip(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Skip", maxLines = 1) } }
+        val done: @Composable (Modifier) -> Unit = { mod -> Button(onClick = { ScoreTools.endCheck() }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Done", maxLines = 1) } }
+        if (maxWidth >= 520.dp) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            none(Modifier.weight(1f).height(h)); notOne(Modifier.weight(1f).height(h)); skip(Modifier.weight(1f).height(h)); done(Modifier.weight(1f).height(h))
+        } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { none(Modifier.weight(1f).height(h)); notOne(Modifier.weight(1f).height(h)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { skip(Modifier.weight(1f).height(h)); done(Modifier.weight(1f).height(h)) }
         }
     }
 }
@@ -178,14 +235,16 @@ fun BoxScope.BarCheck(state: SheetsState) {
  * keeps it (and it is taught to the reader), "Cancel" goes back to the readings offered.
  */
 @Composable
-private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper: Color, printInk: Color) {
+private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper: Color, printInk: Color, short: Boolean = false,
+                      /** Which half: the bar itself (with what it comes to and which note is chosen), its buttons, or both. */
+                      view: Boolean = true, buttons: Boolean = true) {
     val at = ScoreTools.editAt
     val drawing = remember(events) { Engraver.line(listOf(m.copy(events = events)), lineStart = false) }
     val chosen = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
     // Where the drawing was last laid out: its space and the x and y of its top line - what a tap is measured by.
     val layout = androidx.compose.runtime.remember { FloatArray(3) }
-    Canvas(
-        Modifier.fillMaxWidth().height(130.dp).clip(RoundedCornerShape(10.dp)).background(paper)
+    if (view) Canvas(
+        Modifier.fillMaxWidth().height(if (short) 84.dp else 130.dp).clip(RoundedCornerShape(10.dp)).background(paper)
             .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
             .pointerInput(drawing) {
                 detectTapGestures { tap ->
@@ -230,18 +289,21 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
     val q = BarEdit.quarters(events)
     val adds = kotlin.math.abs(q - m.time.quarters) < 1e-6
     fun beats(v: Double) = if (v == Math.floor(v)) "${v.toInt()}" else if (v * 2 == Math.floor(v * 2)) "${Math.floor(v).toInt().takeIf { it > 0 } ?: ""}½" else "%.2f".format(v)
-    Text("Comes to ${beats(q)} of ${beats(m.time.quarters)} beats" + if (adds) " - adds up" else "",
-        style = MaterialTheme.typography.bodyMedium, color = if (adds) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error)
+    if (view) Text("Comes to ${beats(q)} of ${beats(m.time.quarters)} beats" + if (adds) " - adds up" else "",
+        style = if (short) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, color = if (adds) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error)
     val e = events.getOrNull(at)
+    // (Small screens: smaller words and less padding, so every label fits its button whole.)
+    val labels = if (short) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge
+    val inset = PaddingValues(horizontal = if (short) 2.dp else 6.dp)
     @Composable
     fun Btn(label: String, modifier: Modifier, enabled: Boolean = true, on: Boolean = false, onClick: () -> Unit) =
-        if (on) Button(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 6.dp), modifier = modifier.height(44.dp)) {
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
-        } else FilledTonalButton(onClick = onClick, enabled = enabled, contentPadding = PaddingValues(horizontal = 6.dp), modifier = modifier.height(44.dp)) {
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        if (on) Button(onClick = onClick, enabled = enabled, contentPadding = inset, modifier = modifier.height(if (short) 38.dp else 44.dp)) {
+            Text(label, style = labels, maxLines = 1)
+        } else FilledTonalButton(onClick = onClick, enabled = enabled, contentPadding = inset, modifier = modifier.height(if (short) 38.dp else 44.dp)) {
+            Text(label, style = labels, maxLines = 1)
         }
     // Which is chosen, and the way to the one before or after it without a tap on a small note.
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+    if (view) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Btn("◀", Modifier.widthIn(min = 48.dp), at > 0) { ScoreTools.editAt = at - 1 }
         Text(when (e) {
             is Note -> "Note ${at + 1} of ${events.size} - drag it up or down"
@@ -251,6 +313,7 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
         Btn("▶", Modifier.widthIn(min = 48.dp), at + 1 < events.size) { ScoreTools.editAt = at + 1 }
     }
     val isNote = e is Note
+    if (!buttons) return
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Btn("Up", Modifier.weight(1f), isNote) { ScoreTools.edit { BarEdit.step(m, it, at, -1) } }
         Btn("Down", Modifier.weight(1f), isNote) { ScoreTools.edit { BarEdit.step(m, it, at, 1) } }
@@ -265,8 +328,15 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
         Btn("Fill with rests", Modifier.weight(1.5f), !adds && q < m.time.quarters) { ScoreTools.edit { BarEdit.fillWithRests(m, it) } }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        // (Five to a row: their words a size smaller wherever that keeps "Quarter" whole.)
         for ((label, base) in listOf("Whole" to 1, "Half" to 2, "Quarter" to 4, "8th" to 8, "16th" to 16))
-            Btn(label, Modifier.weight(1f), e != null, on = e?.duration?.base == base) { ScoreTools.edit { BarEdit.length(it, at, base) } }
+            run {
+                val sel = e?.duration?.base == base
+                val mod = Modifier.weight(1f).height(if (short) 38.dp else 44.dp)
+                val pad = PaddingValues(horizontal = 2.dp)
+                if (sel) Button(onClick = { ScoreTools.edit { BarEdit.length(it, at, base) } }, enabled = e != null, contentPadding = pad, modifier = mod) { Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+                else FilledTonalButton(onClick = { ScoreTools.edit { BarEdit.length(it, at, base) } }, enabled = e != null, contentPadding = pad, modifier = mod) { Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+            }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Btn("Triplet", Modifier.weight(1f), at + 2 < events.size) { ScoreTools.edit { BarEdit.triplet(it, at) } }
@@ -274,9 +344,10 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
         Btn("Remove", Modifier.weight(1f), e != null) { ScoreTools.edit { BarEdit.delete(it, at) } }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-        OutlinedButton(onClick = { ScoreTools.cancelEdit() }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Cancel") }
-        OutlinedButton(onClick = { ScoreTools.undoEdit() }, enabled = ScoreTools.canUndoEdit, modifier = Modifier.weight(1f).height(48.dp)) { Text("Undo") }
-        Button(onClick = { ScoreTools.finishEdit(state) }, enabled = events.isNotEmpty(), modifier = Modifier.weight(1f).height(48.dp)) { Text("Use this") }
+        val h = if (short) 40.dp else 48.dp
+        OutlinedButton(onClick = { ScoreTools.cancelEdit() }, contentPadding = inset, modifier = Modifier.weight(1f).height(h)) { Text("Cancel", style = labels, maxLines = 1) }
+        OutlinedButton(onClick = { ScoreTools.undoEdit() }, enabled = ScoreTools.canUndoEdit, contentPadding = inset, modifier = Modifier.weight(1f).height(h)) { Text("Undo", style = labels, maxLines = 1) }
+        Button(onClick = { ScoreTools.finishEdit(state) }, enabled = events.isNotEmpty(), contentPadding = inset, modifier = Modifier.weight(1f).height(h)) { Text("Use this", style = labels, maxLines = 1) }
     }
 }
 
@@ -304,28 +375,38 @@ private fun SignatureRow(state: SheetsState, m: Measure) {
     val draft = ScoreTools.sigDraft
     val dim = MaterialTheme.colorScheme.onSurfaceVariant
     if (draft == null) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("Read as ${clefName(m.clef)} clef · ${keyName(m.key.fifths)} · ${m.time.beats}/${m.time.beatType}" +
-                if (ScoreTools.signatureAt(state, m.number) != null) " (put right here)" else "",
-                style = MaterialTheme.typography.bodySmall, color = dim, modifier = Modifier.weight(1f), maxLines = 2)
-            TextButton(onClick = { ScoreTools.sigDraft = com.inksheets.core.omr.SigFix(m.clef, m.key.fifths, m.time.beats, m.time.beatType) },
-                contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Clef, key or time wrong?", maxLines = 1) }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Narrow (a side of the panel on a small screen): what it was read as over the way to change it.
+            val stacked = maxWidth < 380.dp
+            val read = "Read as ${clefName(m.clef)} clef · ${keyName(m.key.fifths)} · ${m.time.beats}/${m.time.beatType}" +
+                if (ScoreTools.signatureAt(state, m.number) != null) " (put right here)" else ""
+            val change: @Composable () -> Unit = {
+                TextButton(onClick = { ScoreTools.sigDraft = com.inksheets.core.omr.SigFix(m.clef, m.key.fifths, m.time.beats, m.time.beatType) },
+                    contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Clef, key or time wrong?", maxLines = 1) }
+            }
+            if (stacked) Column(Modifier.fillMaxWidth()) {
+                Text(read, style = MaterialTheme.typography.bodySmall, color = dim, maxLines = 3)
+                change()
+            } else Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Text(read, style = MaterialTheme.typography.bodySmall, color = dim, modifier = Modifier.weight(1f), maxLines = 3)
+                change()
+            }
         }
         return
     }
     @Composable
     fun Choice(label: String, on: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) =
-        if (on) Button(onClick = onClick, contentPadding = PaddingValues(horizontal = 8.dp), modifier = modifier.height(40.dp)) { Text(label, maxLines = 1) }
-        else OutlinedButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 8.dp), modifier = modifier.height(40.dp)) { Text(label, maxLines = 1) }
+        if (on) Button(onClick = onClick, contentPadding = PaddingValues(horizontal = 2.dp), modifier = modifier.height(if (ScoreTools.compact) 36.dp else 40.dp)) { Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium) }
+        else OutlinedButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 2.dp), modifier = modifier.height(if (ScoreTools.compact) 36.dp else 40.dp)) { Text(label, maxLines = 1, style = MaterialTheme.typography.labelMedium) }
     @Composable
     fun Stepper(label: String, value: String, minus: () -> Unit, plus: () -> Unit) =
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
             Text(label, style = MaterialTheme.typography.labelLarge, modifier = Modifier.widthIn(min = 44.dp))
-            FilledTonalButton(onClick = minus, modifier = Modifier.height(40.dp), contentPadding = PaddingValues(horizontal = 14.dp)) { Text("−") }
+            FilledTonalButton(onClick = minus, modifier = Modifier.height(if (ScoreTools.compact) 36.dp else 40.dp), contentPadding = PaddingValues(horizontal = 14.dp)) { Text("−") }
             Text(value, style = MaterialTheme.typography.titleSmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
-            FilledTonalButton(onClick = plus, modifier = Modifier.height(40.dp), contentPadding = PaddingValues(horizontal = 14.dp)) { Text("+") }
+            FilledTonalButton(onClick = plus, modifier = Modifier.height(if (ScoreTools.compact) 36.dp else 40.dp), contentPadding = PaddingValues(horizontal = 14.dp)) { Text("+") }
         }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()
+    Column(verticalArrangement = Arrangement.spacedBy(if (ScoreTools.compact) 5.dp else 8.dp), modifier = Modifier.fillMaxWidth()
         .border(1.5.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp)).padding(10.dp)) {
         Text("What is printed from bar ${m.number} on", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -340,18 +421,18 @@ private fun SignatureRow(state: SheetsState, m: Measure) {
             Text("Beat", style = MaterialTheme.typography.labelLarge, modifier = Modifier.widthIn(min = 44.dp))
             for (t in listOf(2, 4, 8, 16)) Choice("$beats/$t", type == t, Modifier.weight(1f)) { ScoreTools.sigDraft = draft.copy(beatType = t) }
         }
-        Text("Kept until the print changes it again; the notes take their pitches from it.", style = MaterialTheme.typography.labelSmall, color = dim)
+        if (!ScoreTools.compact) Text("Kept until the print changes it again; the notes take their pitches from it.", style = MaterialTheme.typography.labelSmall, color = dim)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { ScoreTools.sigDraft = null }, modifier = Modifier.weight(1f).height(48.dp)) { Text("Cancel") }
+            OutlinedButton(onClick = { ScoreTools.sigDraft = null }, modifier = Modifier.weight(1f).height(if (ScoreTools.compact) 40.dp else 48.dp)) { Text("Cancel") }
             if (ScoreTools.signatureAt(state, m.number) != null)
-                OutlinedButton(onClick = { ScoreTools.setSignature(state, m.number, null) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("As read", maxLines = 1) }
+                OutlinedButton(onClick = { ScoreTools.setSignature(state, m.number, null) }, modifier = Modifier.weight(1f).height(if (ScoreTools.compact) 40.dp else 48.dp)) { Text("As read", maxLines = 1) }
             Button(onClick = {
                 // Only what differs from the reading is kept: the rest still follows the print.
                 ScoreTools.setSignature(state, m.number, com.inksheets.core.omr.SigFix(
                     clef = draft.clef?.takeIf { it != m.clef }, key = draft.key?.takeIf { it != m.key.fifths },
                     beats = if (draft.beats != m.time.beats || draft.beatType != m.time.beatType) draft.beats else null,
                     beatType = if (draft.beats != m.time.beats || draft.beatType != m.time.beatType) draft.beatType else null))
-            }, modifier = Modifier.weight(1.3f).height(48.dp)) { Text("Use from bar ${m.number}", maxLines = 1) }
+            }, modifier = Modifier.weight(1.3f).height(if (ScoreTools.compact) 40.dp else 48.dp)) { Text("Use from bar ${m.number}", maxLines = 1) }
         }
     }
 }

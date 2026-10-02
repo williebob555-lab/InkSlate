@@ -23,7 +23,8 @@ object Workers {
 
     private val inPool = ThreadLocal.withInitial { false }
     private val pool by lazy {
-        Executors.newFixedThreadPool(threads) { r -> Thread({ inPool.set(true); r.run() }, "reader").apply { isDaemon = true } }
+        // (Below everything else: the music playing, the page drawn, never kept waiting by a reading.)
+        Executors.newFixedThreadPool(threads) { r -> Thread({ inPool.set(true); r.run() }, "reader").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
     }
 
     /**

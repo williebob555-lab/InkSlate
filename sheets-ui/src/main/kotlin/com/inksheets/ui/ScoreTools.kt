@@ -32,7 +32,8 @@ import java.io.File
  * nothing is laid over the music but the reading itself and a light tint for a selection.
  */
 internal object ScoreTools {
-    enum class Tool { NONE, SELECT, CLEAN }
+    /** What a press on the page does: choose bars, clean them up, or say one is read wrong (and fix it there and then). */
+    enum class Tool { NONE, SELECT, CLEAN, WRONG }
 
     /** The tools' lane is out. */
     var open by mutableStateOf(false)
@@ -132,6 +133,9 @@ internal object ScoreTools {
         if (checking) showBar(s)
     }
 
+    /** Fix laid out small (a short screen): what can go, goes. */
+    var compact by mutableStateOf(false)
+
     /** A clef, key and time being chosen for the bar up (null when not). */
     var sigDraft by mutableStateOf<com.inksheets.core.omr.SigFix?>(null)
 
@@ -157,10 +161,19 @@ internal object ScoreTools {
         saveWrong(path)
         state?.platform?.setPref(fixKey(path), com.inksheets.core.omr.Scores.encodeFixes(f))
         changed()
-        if (startCheck(s)) {
-            checkAt = checkBars.indexOf(bars.first).coerceAtLeast(0)
-            showBar(s)
-        }
+        // Just these bars to go through - not every bar in doubt in the part: done with them, done.
+        startCheckOf(s, bars.toList())
+    }
+
+    /** Go through just bars [numbers] of the part in front (those said to be wrong), and no others. */
+    private fun startCheckOf(s: SheetsState, numbers: List<Int>) {
+        val score = scoreHere(s) ?: return
+        val here = numbers.filter { n -> score.measures.any { it.number == n && it.bars == 1 } }
+        if (here.isEmpty()) return
+        checkBars = here
+        checking = true
+        checkAt = 0
+        showBar(s)
     }
 
     /** Whether any of [bars] reads as sure: something to say is wrong. */
@@ -172,7 +185,11 @@ internal object ScoreTools {
     // ---- the tools -----------------------------------------------------------------------------
 
     fun choose(t: Tool) {
+        val was = tool
         tool = if (tool == t) Tool.NONE else t
+        // The select tool put away: what it chose let go with it (a choice left over, out of sight,
+        // would steer Play to bars far from the page in front).
+        if (was == Tool.SELECT && tool != Tool.SELECT) { selection = null; pressStart = null; pressed = null; changed() }
         syncTool()
     }
 
@@ -303,7 +320,10 @@ internal object ScoreTools {
         rejected = ArrayList(); noneCount = 0; askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
         barPicture = null; editing = null; sigDraft = null
         val m = barUp(s) ?: run { endCheck(); return }
-        offered = com.inksheets.core.omr.BarChoices.of(m, 3)
+        // The second looks taken as its page was read: ready at once, no waiting on a look now.
+        val ready = s.currentPath?.let { Transcriber.lookedFor(s, File(it), m) }.orEmpty()
+        looked = ready
+        offered = com.inksheets.core.omr.BarChoices.of(m, 3, looked = ready)
         // Its picture first (quick), then the looks again.
         val path = s.currentPath
         val width = scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }
@@ -311,7 +331,12 @@ internal object ScoreTools {
             val token = lookToken
             Transcriber.barPicture(s, File(path), m, width, wanted = { token == lookToken }) { pic -> if (token == lookToken) barPicture = pic }
         }
-        lookAt(s, m, deeper = false)
+        if (ready.isEmpty()) lookAt(s, m, deeper = false)
+        // The next bar's page drawn ahead, if it is another.
+        checkBars.getOrNull(checkAt + 1)?.let { n -> scoreHere(s)?.measures?.firstOrNull { it.number == n } }?.let { nx ->
+            val w = scoreHere(s)?.pageWidths?.getOrNull(nx.page)?.takeIf { it > 0 }
+            if (path != null && w != null && nx.page != m.page) Transcriber.drawAhead(s, File(path), nx.page, w)
+        }
         goTo(s, m.number)
         selection = m.number..m.number
         changed()
@@ -518,6 +543,14 @@ internal object ScoreTools {
                     selection = range
                 }
                 changed()
+            }
+            Tool.WRONG -> {
+                // A tap on a bar: it is wrong - fixed now, that bar alone; the tool put down.
+                if (!done) return
+                val bar = bars.firstOrNull() ?: return
+                tool = Tool.NONE
+                syncTool()
+                state?.let { markWrong(it, bar..bar) }
             }
             Tool.CLEAN -> {
                 val set = cleanedIn(path)
@@ -730,12 +763,14 @@ internal object ScoreTools {
         val (id, transpose) = instrumentOf(s)
         // A passage chosen (and, if from a bar, one in it): from there to its end, straight through,
         // for practising it. Else from the bar asked (or the page in front) on, repeats and all.
-        val sel = selection?.takeIf { from == null || from in it }
+        val sel = selection?.takeIf { from == null || from in it }?.takeIf { r -> onPageShown(s, score, r) }
         val last = score.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: 1
         val first = from ?: sel?.first ?: score.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
         val range = if (sel != null) first..sel.last else first..last
         val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(score, first) else null
         bandMode = false
+        s.platform.log("Play ${File(path).name}: from bar $first to ${range.last} (page ${s.pageShown.first + 1} in front; " +
+            "chosen ${selection ?: "none"}${if (selection != null && sel == null) ", not on this page: let be" else ""}; asked from ${from ?: "-"})")
         val tempo = SharedMetronome.bpm
         val start = if (ramp && loop) tempo * rampFrom / 100.0 else tempo
         val sounding = soundAs ?: id
@@ -842,7 +877,7 @@ internal object ScoreTools {
             if (voices.isEmpty()) { said = "No other parts of this song here to play"; return@readBand }
             val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
             // As for this part alone (see play): a passage chosen straight through, else from a bar on, repeats and all.
-            val sel = selection?.takeIf { from == null || from in it }?.let { (it.first - offset)..(it.last - offset) }
+            val sel = selection?.takeIf { from == null || from in it }?.takeIf { r -> onPageShown(s, whole, r) }?.let { (it.first - offset)..(it.last - offset) }
             val last = mine.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: 1
             val first = from?.minus(offset) ?: sel?.first ?: mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
             val range = if (sel != null) first..sel.last else first..last
@@ -958,6 +993,10 @@ internal object ScoreTools {
         player = null
         if (playing != null) { playing = null; changed() }
     }
+
+    /** Whether any of bars [range] of [score] is on the page in front. */
+    private fun onPageShown(s: SheetsState, score: Score, range: IntRange): Boolean =
+        score.measures.any { it.page == s.pageShown.first && it.number + it.bars - 1 >= range.first && it.number <= range.last }
 
     // ---- playing, steered as it goes ------------------------------------------------------------
 

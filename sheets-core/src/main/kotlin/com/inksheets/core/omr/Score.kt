@@ -237,6 +237,11 @@ data class Measure(
      */
     val maybe: List<Event> = emptyList(),
     /**
+     * Its grace notes: printed small just before a note of its own, taking no time in the bar -
+     * played quickly into the note after it, drawn small (each at its place on the page, [Note.x]).
+     */
+    val graces: List<Note> = emptyList(),
+    /**
      * Whatever is printed in and round the bar that its redrawing does not draw - a bar number, a
      * rehearsal box, words, a hairpin, a mark not read - each as its exact outline (pixel corners,
      * even-odd loops, in the reading's pixels): drawn back over a cleaned bar as printed, whole.
@@ -265,6 +270,14 @@ data class Measure(
 
     /** The bottom line's height at [x] across the bar, as printed. */
     fun bottomAt(x: Float): Float = lineAt(4, x)
+
+    /** Its grace notes by the note each leads into: the first of its notes after it (none after it: left out). */
+    fun gracesBefore(): Map<Event, List<Note>> {
+        if (graces.isEmpty()) return emptyMap()
+        val out = HashMap<Event, MutableList<Note>>()
+        for (g in graces.sortedBy { it.x }) events.filter { it is Note && it.x > g.x }.minByOrNull { it.x }?.let { out.getOrPut(it) { ArrayList() } += g }
+        return out
+    }
 
     /** Read well enough to trust: its notes fill the bar exactly, and nothing was in doubt. */
     val sure: Boolean get() = doubts.isEmpty()
@@ -325,6 +338,22 @@ object Scores {
     /** Bars put right by hand - bar number to what it is - as text to keep. */
     fun encodeFixes(fixes: Map<Int, List<Event>>): String = json.encodeToString(fixesSerializer, fixes)
     fun decodeFixes(text: String): Map<Int, List<Event>> = runCatching { json.decodeFromString(fixesSerializer, text) }.getOrDefault(emptyMap())
+
+    /**
+     * [measures] (in page order) numbered so no number comes twice: a page whose numbers start again
+     * at or before where the page before left off (read on its own, out of turn - a book read from the
+     * page in front - or by two devices at once) moved on past it, and every bar after it with it.
+     */
+    fun numberedOnce(measures: List<Measure>): List<Measure> {
+        var shift = 0
+        var next = Int.MIN_VALUE
+        return measures.map { m ->
+            var n = m.number + shift
+            if (n < next) { shift += next - n; n = next }
+            next = n + maxOf(1, m.bars)
+            if (n == m.number) m else m.copy(number = n)
+        }
+    }
 
     /** [s] with the bars in [fixes] as they were put right: what was picked, and no longer in doubt. */
     fun withFixes(s: Score, fixes: Map<Int, List<Event>>): Score =

@@ -43,6 +43,9 @@ fun BoxScope.PlaybackBar(state: SheetsState) {
     val paused = ScoreTools.paused
     if (playing == null && paused == null) return
     val bar = playing?.first ?: paused ?: return
+    // A window over the music like any other: where the strips leave it too little room (a small
+    // phone stood up), they step aside to their tabs while it plays.
+    Opened("Playing", 300.dp)
     Surface(
         shape = RoundedCornerShape(26.dp),
         tonalElevation = 4.dp,
@@ -52,10 +55,12 @@ fun BoxScope.PlaybackBar(state: SheetsState) {
             .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp, bottom = 14.dp).widthIn(max = 720.dp)
     ) {
         BoxWithConstraints {
+            // A phone stood up, the strips out either side: smaller buttons, all of them still there.
+            val narrow = maxWidth < 300.dp
             @Composable
             fun Btn(icon: ImageVector, what: String, main: Boolean = false, onClick: () -> Unit) =
-                if (main) FilledIconButton(onClick = onClick, modifier = Modifier.size(48.dp)) { Icon(icon, what) }
-                else FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(42.dp)) { Icon(icon, what) }
+                if (main) FilledIconButton(onClick = onClick, modifier = Modifier.size(if (narrow) 40.dp else 48.dp)) { Icon(icon, what) }
+                else FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(if (narrow) 34.dp else 42.dp)) { Icon(icon, what) }
             val moves: @Composable () -> Unit = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Btn(Icons.Default.SkipPrevious, "Back a line") { ScoreTools.stepLines(state, -1) }

@@ -72,6 +72,20 @@ class Synth(val sampleRate: Int) {
         }
 
         fun frequency(midi: Double) = 440.0 * 2.0.pow((midi - 69) / 12.0)
+
+        /** A sine wave looked up rather than worked out: every harmonic of every voice wants one a sample. */
+        private const val TABLE = 4096
+        private val SINE = FloatArray(TABLE + 1) { kotlin.math.sin(2 * PI * it / TABLE).toFloat() }
+        private const val PER_RADIAN = TABLE / (2 * PI)
+
+        /** sin([phase]) for a phase in 0..2π (a little past either way is fine), to a part in ten thousand. */
+        fun sine(phase: Double): Double {
+            var p = phase * PER_RADIAN
+            if (p < 0) p += TABLE
+            val i = p.toInt().coerceIn(0, TABLE - 1)
+            val f = p - i
+            return SINE[i] + (SINE[i + 1] - SINE[i]) * f
+        }
     }
 
     /**
@@ -197,7 +211,7 @@ class Synth(val sampleRate: Int) {
                 val amp = p.harmonics[h] * (if (h == 0) 1.0 else bright.pow(1.0 + h * p.bloom))
                 v.phase[h] += 2 * PI * fh / sr
                 if (v.phase[h] > 2 * PI) v.phase[h] -= 2 * PI
-                x += amp * sin(v.phase[h])
+                x += amp * sine(v.phase[h])
             }
             if (p.breath > 0f) {
                 noise = noise * 6364136223846793005L + 1442695040888963407L
@@ -321,8 +335,19 @@ class EnsemblePlayer(
         fun lay(v: Voice, m: Measure, at: Long, velocity: Float) {
             if (m.bars > 1) return
             var q = 0.0
+            val graces = m.gracesBefore()
             for (e in m.events) {
                 if (e is Note && q < m.time.quarters) {
+                    // Grace notes: quick, just before the beat.
+                    graces[e]?.let { gs ->
+                        val each = min(synth.sampleRate * 0.06, samples(e.duration.quarters) / 3.0).toLong().coerceAtLeast(1L)
+                        for ((gi, g) in gs.withIndex()) {
+                            val gStart = max(0L, at + samples(q) - each * (gs.size - gi))
+                            val drums = v.drums
+                            if (drums != null) for (k in drums.keys(g)) tones += Synth.Tone(k, gStart, each, velocity * 0.8f, drums.patch)
+                            else for (p in g.pitches) tones += Synth.Tone((p.midi - v.transpose).coerceIn(12, 115), gStart, each, velocity * 0.8f, v.patch)
+                        }
+                    }
                     val len = max(1L, samples(min(e.duration.quarters, m.time.quarters - q)) - synth.sampleRate / 60)
                     val drums = v.drums
                     if (drums != null) for (k in drums.keys(e)) tones += Synth.Tone(k, at + samples(q), len, velocity, drums.patch,

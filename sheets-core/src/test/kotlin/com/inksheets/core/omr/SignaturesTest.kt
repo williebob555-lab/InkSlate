@@ -44,4 +44,14 @@ class SignaturesTest {
         val bass = Signatures.apply(Score(bars, 1, listOf(100)), mapOf(1 to SigFix(clef = Clef.BASS)))
         assertEquals(Clef.BASS.at(4), (bass.measures[0].events[0] as Note).pitches[0].let { it.octave * 7 + it.step })
     }
+
+    @Test
+    fun `no bar number comes twice - a page numbered from 1 again moved on past the one before`() {
+        fun b(n: Int, page: Int, bars: Int = 1) = bar(n, 0).copy(page = page, bars = bars)
+        // Pages 1-2 read as bars 1-5 (a rest of two bars among them); page 3 read on its own, from 1 again.
+        val out = Scores.numberedOnce(listOf(b(1, 0), b(2, 0), b(3, 0, 2), b(5, 1), b(1, 2), b(2, 2), b(3, 2)))
+        assertEquals(listOf(1, 2, 3, 5, 6, 7, 8), out.map { it.number })
+        // Numbers already in order: left as they are (a pickup's 0, a gap the print has).
+        assertEquals(listOf(0, 1, 2, 9), Scores.numberedOnce(listOf(b(0, 0), b(1, 0), b(2, 0), b(9, 1))).map { it.number })
+    }
 }

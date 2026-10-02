@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -257,8 +258,9 @@ private fun SidePage(state: SheetsState, page: RemotePage, onBack: () -> Unit, c
                 Spacer(Modifier.width(10.dp))
                 Icon(page.icon, null, tint = fg)
                 Spacer(Modifier.width(6.dp))
-                Text(page.title, color = fg, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                // (Its name whole: on two lines, a size smaller, where the header is narrow.)
+                Text(page.title, color = fg, style = if (page.title.length > 12) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold, maxLines = 2, modifier = Modifier.weight(1f))
                 PageMap(page, fg)
             }
         }
@@ -393,7 +395,8 @@ private fun SetPage(state: SheetsState, onChosen: () -> Unit) {
             }
         } else androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         // A phone on its side: twice the columns, so the tiles stay short and rows of them fit.
-        val across = if (maxWidth > maxHeight * 1.2f) (columns * 2).coerceAtMost(8) else columns
+        // (Never so many that a tile is too narrow for a song's name: 120 or so each at least.)
+        val across = if (maxWidth > maxHeight * 1.2f) (columns * 2).coerceAtMost(8).coerceAtMost(maxOf(columns, (maxWidth / 120.dp).toInt())) else columns
         LazyVerticalGrid(
             columns = GridCells.Fixed(across), state = grid,
             horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -416,12 +419,13 @@ private fun SongTile(number: Int, title: String, color: Int?, now: Boolean, next
     val bg = if (now) accent else MaterialTheme.colorScheme.surfaceContainerHigh
     val fg = if (now) Color.White else MaterialTheme.colorScheme.onSurface
     Row(
-        Modifier.fillMaxWidth().aspectRatio(if (big) 2.2f else 1.25f).clip(RoundedCornerShape(14.dp)).background(bg)
+        // As tall as its name needs (a long one wraps whole, never cut short), and no shorter than a tile.
+        Modifier.fillMaxWidth().then(if (big) Modifier.aspectRatio(2.2f) else Modifier.heightIn(min = 76.dp)).clip(RoundedCornerShape(14.dp)).background(bg)
             .then(if (next) Modifier.border(2.dp, accent, RoundedCornerShape(14.dp)) else Modifier)
             .clickable(onClick = onTap)
     ) {
         Box(Modifier.width(7.dp).fillMaxHeight().background(color?.let { Color(it) } ?: Color.Transparent))
-        Column(Modifier.padding(8.dp).fillMaxSize()) {
+        Column(Modifier.padding(8.dp).then(if (big) Modifier.fillMaxSize() else Modifier.fillMaxWidth())) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (number > 0) Text("$number", color = if (now) fg else accent, fontSize = if (big) 26.sp else 20.sp, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.weight(1f))
@@ -429,7 +433,7 @@ private fun SongTile(number: Int, title: String, color: Int?, now: Boolean, next
                 else if (next) Text("NEXT", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
             }
             Text(title, color = fg, style = if (big) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                fontWeight = FontWeight.SemiBold)
         }
     }
 }

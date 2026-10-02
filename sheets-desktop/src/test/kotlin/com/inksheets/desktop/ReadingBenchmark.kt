@@ -448,9 +448,37 @@ class ReadingBenchmark {
             }
         }
         // Bars with a grace note printed in them: a small head with one of the part's own just after it.
-        val graceBars = keyHeads.filter { it !in printedHeads }.filter { g -> printedHeads.any { h -> h.x - g.x in sp * 0.5f..sp * 3.5f && abs(h.y - g.y) < sp * 4 } }
-            .map { barAt(it.x, it.y) }.filter { it >= 0 }.toSet()
+        val graceHeads = keyHeads.filter { it !in printedHeads }.filter { g -> printedHeads.any { h -> h.x - g.x in sp * 0.5f..sp * 3.5f && abs(h.y - g.y) < sp * 4 } }
+        val graceBars = graceHeads.map { barAt(it.x, it.y) }.filter { it >= 0 }.toSet()
+        // Grace notes found as grace notes: printed, read (in the bars that have them), and read where none is printed.
+        synchronized(grace) {
+            grace.merge("graces printed", graceHeads.count { barAt(it.x, it.y) >= 0 }, Int::plus)
+            grace.merge("graces read", reading.measures.withIndex().filter { it.index in graceBars }.sumOf { it.value.graces.sumOf { g -> g.steps.size } }, Int::plus)
+            grace.merge("graces invented", reading.measures.withIndex().filter { it.index !in graceBars }.sumOf { it.value.graces.sumOf { g -> g.steps.size } }, Int::plus)
+        }
         val bars = reading.measures.withIndex().filter { it.value.bars <= 1 }.map { (mi, m) -> Bar(m.sure, mi !in unverifiable, causes[mi] ?: emptySet(), m.doubts, mi in graceBars) }
+        // -Dinksheets.bench.falsegraces=<dir>: each grace note read where none is printed, cut from the page into <dir>.
+        System.getProperty("inksheets.bench.falsegraces")?.takeIf { it.length > 1 }?.let { dir -> File(dir).mkdirs()
+            for ((mi, m) in reading.measures.withIndex()) if (mi !in graceBars) for (g in m.graces) {
+                val st = reading.staves.getOrNull(m.staff) ?: continue
+                val sp = st.space; val gx = g.x.toInt(); val gy = st.y(g.steps.first(), gx).toInt()
+                val x0 = (gx - sp * 4).toInt().coerceAtLeast(0); val x1 = (gx + sp * 4).toInt().coerceAtMost(ink.width - 1)
+                val y0 = (gy - sp * 5).toInt().coerceAtLeast(0); val y1 = (gy + sp * 5).toInt().coerceAtMost(ink.height - 1)
+                if (x1 <= x0 || y1 <= y0) continue
+                val out = BufferedImage(x1 - x0, y1 - y0, BufferedImage.TYPE_INT_RGB)
+                for (y in y0 until y1) for (x in x0 until x1) out.setRGB(x - x0, y - y0, if (ink[x, y]) 0 else 0xFFFFFF)
+                // The grace note's place, marked.
+                for (d in -2..2) runCatching { out.setRGB(gx - x0 + d, gy - y0 + (sp * 1.2f).toInt(), 0xFF0000) }
+                javax.imageio.ImageIO.write(out, "png", File(dir, "${f.nameWithoutExtension.replace(Regex("[^A-Za-z0-9]+"), "-")}-p$page-b${m.number}-${gx}.png"))
+            }
+        }
+        if (System.getProperty("inksheets.bench.falsegraces") != null) for ((mi, m) in reading.measures.withIndex()) if (mi !in graceBars && m.graces.isNotEmpty())
+            println("FALSEGRACE ${f.name} p$page bar ${m.number} staff ${m.staff} graces " + m.graces.joinToString(" ") { g -> "${g.pitches.joinToString("+")}@${g.x.toInt()}" } +
+                " | notes " + m.events.joinToString(" ") { e -> if (e is Note) "${e.pitches.joinToString("+")}/${e.duration.base}@${e.x.toInt()}" else "r${e.duration.base}@${e.x.toInt()}" })
+        if (System.getProperty("inksheets.bench.gracebars") != null) for (mi in graceBars) reading.measures.getOrNull(mi)?.let { m ->
+            println("GRACEBAR ${f.name} p$page bar ${m.number} staff ${m.staff} x ${m.box.left}-${m.box.right} sure ${m.sure} ${causes[mi].orEmpty()} read: " +
+                m.events.joinToString(" ") { e -> if (e is Note) "${e.pitches.joinToString("+")}/${e.duration.base}${".".repeat(e.duration.dots)}@${e.x.toInt()}" else "r${e.duration.base}" })
+        }
 
         /**
          * Whether bar [mi] read as [events] is what is printed: true, false - or null where the PDF
@@ -582,7 +610,10 @@ class ReadingBenchmark {
         val only = System.getProperty("inksheets.bench.only")
         // -Dinksheets.bench.held=1: the trained reader's held-out songs (train/held.txt), whichever set they are in.
         val heldSongs = if (System.getProperty("inksheets.bench.held") != null) File("../train/held.txt").readLines().map { it.trim() }.filter { it.isNotEmpty() }.toSet() else null
-        val parts = (if (heldSongs != null) corpus().filter { song(it) in heldSongs } else corpus().filter { isDev(it) == (set == "dev") }).take(n).filter { only == null || it.name.contains(only, true) }
+        // -Dinksheets.bench.files=a|b|c: just the parts whose names hold one of those, whichever set they are in.
+        val files = System.getProperty("inksheets.bench.files")?.split('|')?.map { it.trim() }?.filter { it.isNotEmpty() }
+        val parts = if (files != null) corpus().filter { f -> files.any { f.name.contains(it, true) } }
+            else (if (heldSongs != null) corpus().filter { song(it) in heldSongs } else corpus().filter { isDev(it) == (set == "dev") }).take(n).filter { only == null || it.name.contains(only, true) }
         val pool = Executors.newFixedThreadPool(4)
         val futures = parts.map { f ->
             pool.submit<Pair<PartResult, List<BufferedImage>>> {
@@ -634,6 +665,7 @@ class ReadingBenchmark {
         println("WRONG BARS BY CAUSE: " + causes.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
         println("GRACE: ${grace["bars"] ?: 0} bars with grace notes; correct ${pct(grace["correct"] ?: 0, grace["verifiable"] ?: 0)} (${grace["correct"] ?: 0}/${grace["verifiable"] ?: 0}); " +
             "sure ${grace["sure"] ?: 0}, trust ${pct(grace["sure correct"] ?: 0, grace["sure verifiable"] ?: 0)}; " +
+            "grace notes printed ${grace["graces printed"] ?: 0}, read as such ${grace["graces read"] ?: 0}, read where none is ${grace["graces invented"] ?: 0}; " +
             grace.filterKeys { it.startsWith("wrong: ") }.entries.sortedByDescending { it.value }.joinToString { "${it.key.removePrefix("wrong: ")} ${it.value}" })
         // Against the baseline, part by part.
         results.mkdirs()

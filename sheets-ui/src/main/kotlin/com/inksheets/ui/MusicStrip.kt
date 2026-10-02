@@ -81,7 +81,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     var printingFor by remember { mutableStateOf(false) }
     val named = true
     BoxWithConstraints(Modifier.matchParentSize()) {
-        BarCheck(state)
+        BarCheck(state, maxHeight)
         if (!ScoreTools.checking) PlaybackBar(state)
         val btn = ((maxHeight - 150.dp) / 14 - 12.dp).coerceIn(26.dp, 40.dp)
         val density = androidx.compose.ui.platform.LocalDensity.current
@@ -138,13 +138,17 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     StripButton(Icons.Default.SelectAll, "Select", "Select bars: press and drag across them", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.SELECT) {
                         ScoreTools.choose(ScoreTools.Tool.SELECT)
                     }
+                    // A bar read wrong, though sure: this, then a tap on the bar - and it is put right there and then.
+                    StripButton(Icons.Default.ReportProblem, "Wrong", "Tap a bar read wrong to fix it", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.WRONG) {
+                        ScoreTools.choose(ScoreTools.Tool.WRONG)
+                    }
                     ScoreTools.selection?.let { sel ->
                         Text(if (sel.first == sel.last) "Bar ${sel.first}" else "Bars ${sel.first}-${sel.last}",
                             style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center,
                             modifier = Modifier.clickable { ScoreTools.clearSelection() })
                         // A bar read as sure that is not: say so, and fix it now.
                         if (!ScoreTools.checking && ScoreTools.anySure(state, sel)) {
-                            StripButton(Icons.Default.ReportProblem, "Wrong", "These bars are read wrong: fix them", btn, named) { ScoreTools.markWrong(state, sel) }
+                            StripButton(Icons.Default.ReportProblem, "Fix chosen", "These bars are read wrong: fix them", btn, named) { ScoreTools.markWrong(state, sel) }
                         }
                     }
                     val playing = ScoreTools.playing
