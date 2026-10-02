@@ -266,6 +266,17 @@ data class Measure(
     val sure: Boolean get() = doubts.isEmpty()
 
     val quarters: Double get() = events.sumOf { it.duration.quarters }
+
+    /**
+     * How long it is played, in quarters: as long as its time says - every bar of it, for a
+     * multi-bar rest - but a bar read clearly short of its time (a pickup, a piece's last bar,
+     * nothing in doubt) only as long as its notes. A bar misread long or short is still a bar long.
+     */
+    val playedQuarters: Double get() {
+        if (bars > 1) return time.quarters * bars
+        val q = quarters
+        return if (events.isNotEmpty() && q > 1e-6 && q < time.quarters - 1e-6 && doubts.none { it.contains("beats found") }) q else time.quarters
+    }
 }
 
 /** A part read off its pages. */
@@ -292,8 +303,7 @@ data class Score(
         var t = 0.0
         return measures.map { m ->
             val start = t
-            val q = if (m.bars > 1) m.time.quarters * m.bars else m.quarters.takeIf { it > 0 } ?: m.time.quarters
-            t += q * 60_000.0 / bpm
+            t += m.playedQuarters * 60_000.0 / bpm
             m to start.toLong()
         }
     }

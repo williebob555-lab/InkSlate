@@ -42,6 +42,8 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
         BAR_REPEAT,
         /** A digit in a text font - a tuplet's number, among others (bar numbers, tempos). */
         TEXT_DIGIT,
+        /** An italic word not a dynamic ([Symbol.name], lower case): "rit.", "a tempo", "cresc.", "legato". */
+        WORD,
         /** A music-font character not named here: an articulation, an ornament, a flag in another code. */
         OTHER
     }
@@ -337,6 +339,7 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
                     byLine[j + 1].x - (byLine[j].x + byLine[j].width) < byLine[i].size * 0.35f && byLine[j + 1].x >= byLine[j].x) j++
                 val word = (i..j).joinToString("") { byLine[it].name }
                 if (word in DYNAMICS) symbols += Symbol(Kind.DYNAMIC, byLine[i].x, byLine[i].y, byLine[j].x + byLine[j].width - byLine[i].x, byLine[i].size, name = word)
+                else if (word.length >= 2) symbols += Symbol(Kind.WORD, byLine[i].x, byLine[i].y, byLine[j].x + byLine[j].width - byLine[i].x, byLine[i].size, name = word.lowercase())
                 i = j + 1
             }
             // A curve drawn twice (filled, then its outline stroked) is one curve.

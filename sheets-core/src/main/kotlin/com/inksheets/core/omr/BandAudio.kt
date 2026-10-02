@@ -30,7 +30,8 @@ object BandAudio {
         var t = 0.0
         val msPerQuarter = 60_000.0 / bpm
         for (m in PlayOrder.unrolled(mine).measures) for (k in 0 until m.bars) {
-            val len = m.time.quarters * msPerQuarter
+            // (A pickup as long as its notes.)
+            val len = (if (m.bars > 1) m.time.quarters else m.playedQuarters) * msPerQuarter
             out += Bar(m.number + k, t.toLong(), len.toLong(), m.page)
             t += len
         }

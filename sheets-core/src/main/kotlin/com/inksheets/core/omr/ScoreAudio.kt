@@ -48,7 +48,7 @@ object ScoreAudio {
     fun length(score: Score, bpm: Double): Long {
         val t = score.timeline(bpm).lastOrNull() ?: return 0
         val m = t.first
-        return t.second + ((if (m.bars > 1) m.time.quarters * m.bars else m.time.quarters) * 60_000.0 / bpm).toLong()
+        return t.second + (m.playedQuarters * 60_000.0 / bpm).toLong()
     }
 
     /**
@@ -64,7 +64,7 @@ object ScoreAudio {
         for ((i, m) in score.measures.withIndex()) {
             if (m.bars > 1) continue
             var t = starts[i].toDouble()
-            val barEnd = t + m.time.quarters * msPerQuarter
+            val barEnd = t + m.playedQuarters * msPerQuarter
             for (e in m.events) {
                 val len = e.duration.quarters * msPerQuarter
                 if (t >= barEnd) break

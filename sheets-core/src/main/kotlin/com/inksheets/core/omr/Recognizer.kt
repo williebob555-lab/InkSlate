@@ -1612,6 +1612,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 for (xx in x..xb) for (dy in -t..t) if (erasedAt(xx, y + dy)) healed.bits[(y + dy) * w + xx] = true
         }
         clock.mark("healed")
+        // Ties, where nothing states them (a scan): seen in the ink between notes at one pitch.
+        if (this.printed?.learned != false) findTies(healed, staves, measures)
         for (i in measures.indices) {
             val m = measures[i]
             if (m.bars > 1) continue
@@ -2557,6 +2559,77 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return out.distinct() to tied
     }
 
+    /**
+     * Ties on a picture: between two notes one after the other on a staff (in a bar, or over its
+     * barline) sharing a pitch, a thin curve hugging their heads - from just past the first head to
+     * just before the second, under them or over, its ends nearer the heads than its middle (it bows
+     * away), and not running on past either (a slur does). Each first note found so is marked tied.
+     */
+    private fun findTies(ink: Ink, staves: List<Staff>, measures: MutableList<Measure>) {
+        for ((si, s) in staves.withIndex()) {
+            val sp = s.space
+            val headW = sp * 1.18f
+            // The staff's notes and rests in order, with where each is (measure, event).
+            val seq = ArrayList<Triple<Int, Int, Event>>()
+            for ((mi, m) in measures.withIndex()) if (m.staff == si && m.bars == 1) m.events.forEachIndexed { ei, e -> seq += Triple(mi, ei, e) }
+            for (k in 0 until seq.size - 1) {
+                val a = seq[k].third as? Note ?: continue
+                val b = seq[k + 1].third as? Note ?: continue
+                val shared = a.steps.filter { it in b.steps }
+                if (shared.isEmpty()) continue
+                if (shared.any { st -> tieBetween(ink, s, a.x + headW, b.x, st, sp) }) {
+                    val (mi, ei, _) = seq[k]
+                    val m = measures[mi]
+                    measures[mi] = m.copy(events = m.events.mapIndexed { i, e -> if (i == ei && e is Note) e.copy(tie = true) else e })
+                }
+            }
+        }
+    }
+
+    /** Whether a tie runs from [x1] (the first head's right edge) to [x2] (the second's left) at [step] on [s]. */
+    private fun tieBetween(ink: Ink, s: Staff, x1: Float, x2: Float, step: Int, sp: Float): Boolean {
+        val from = (x1 + sp * 0.25f).roundToInt(); val to = (x2 - sp * 0.25f).roundToInt()
+        if (to - from < sp * 0.5f || to - from > sp * 12) return false
+        for (side in listOf(1, -1)) {
+            val ys = ArrayList<Float>()
+            var missing = 0
+            for (x in from..to) {
+                val y = s.y(step, x)
+                // The ink in the band beside the head line on this side: thin runs only (not a beam, a stem).
+                var best: Float? = null
+                var yy = (y + side * sp * 0.3f).roundToInt()
+                val end = (y + side * sp * 1.5f).roundToInt()
+                while (if (side > 0) yy <= end else yy >= end) {
+                    if (ink[x, yy]) {
+                        var a = yy; var b = yy
+                        while (ink[x, a - 1] && b - a < sp) a--
+                        while (ink[x, b + 1] && b - a < sp) b++
+                        if (b - a + 1 <= sp * 0.45f) { best = (a + b) / 2f - y; break }
+                        yy = if (side > 0) b + 1 else a - 1
+                        continue
+                    }
+                    yy += side
+                }
+                if (best == null) missing++ else ys += abs(best)
+            }
+            val n = to - from + 1
+            if (missing > n * 0.12f || ys.size < 3) continue
+            // Smooth: no leap from one column to the next.
+            if (ys.zipWithNext().any { (p, q) -> abs(p - q) > sp * 0.35f }) continue
+            // Bowing away from the heads: its ends nearer them than its middle.
+            val edge = max(1, ys.size / 6)
+            val ends = (ys.take(edge) + ys.takeLast(edge)).average()
+            val middle = ys.subList(ys.size / 2 - edge / 2, ys.size / 2 + edge / 2 + 1).average()
+            if (middle - ends < sp * 0.12f) continue
+            // Not running on past the first head (a slur over more notes does): nothing at its height just before it.
+            val y0 = s.y(step, from) + side * ys.first()
+            val before = (x1 - sp * 1.18f - sp * 0.4f).roundToInt()
+            if ((-1..1).any { d -> ink[before, (y0 + d).roundToInt()] } && (-1..1).any { d -> ink[before - 2, (y0 + d).roundToInt()] }) continue
+            return true
+        }
+        return false
+    }
+
     /** An articulation claimed by one chord only (the nearest). */
     private val claimedMarks = HashSet<Printed.Symbol>()
     private fun unclaimed(m: Printed.Symbol): Set<Printed.Symbol> = if (claimedMarks.add(m)) setOf(m) else emptySet()
@@ -2594,6 +2667,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // Its whole length, not just this bar's piece: each bar it crosses draws its slice of the one wedge.
             out += Direction(if (cresc) "cresc" else "dim", a.x0, a.x1, above = (a.y0 + a.y1) / 2 < s.top)
         }
+        // Words: how to play it ("rit.", "a tempo", "cresc.", "legato"), at the word's place - a
+        // word over the bar's start may stand just before it.
+        for (w in p.symbols) if (w.kind == Printed.Kind.WORD && w.x >= from - sp && w.x < to - sp && near(w.y)) out += Direction("text", w.x, w.x + w.width, w.name, above = w.y < s.top)
         // Slurs: every curve that is not a note's tie, in each bar it crosses.
         for (a in p.arcs) {
             if (a.x1 < from || a.x0 >= to || !near((a.y0 + a.y1) / 2)) continue
@@ -2848,7 +2924,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 (stated && (
                     notes.any { n -> n.articulations.isNotEmpty() && w <= sp * 1.6f && h <= sp * 1.6f && l <= n.x + headW && r >= n.x &&
                         n.steps.any { st -> val hy = s.y(st, n.x.roundToInt()); abs((t + b) / 2f - hy) in sp * 0.6f..sp * 4f } } ||
-                    m.directions.any { d -> d.kind != "slur" && l <= d.x2 + sp && r >= d.x - sp && (if (d.above) b < top else t > bottom) }
+                    m.directions.any { d -> d.kind != "slur" && d.kind != "text" && l <= d.x2 + sp && r >= d.x - sp && (if (d.above) b < top else t > bottom) }
                 )))
             }
             // Redrawn by any bar it reaches into, this one or a neighbour: then only the parts the

@@ -200,34 +200,13 @@ class ScorePlayer(
 
     init { schedule(0L) }
 
-    private fun samples(quarters: Double) = (quarters * 60.0 / bpm * synth.sampleRate).toLong()
-
-    /** One pass through the bars, from sample [at]. */
+    /** One pass through the bars, from sample [at]: played as a player would ([Performance]). */
     private fun schedule(at: Long) {
         passStart = at
-        val tones = ArrayList<Synth.Tone>()
-        val s = ArrayList<Long>(); val n = ArrayList<Int>()
-        var t = at
-        for (m in bars) {
-            s += t - at; n += m.number
-            val bar = samples(m.time.quarters)
-            if (m.bars > 1 || m.events.all { it is Rest }) { t += bar * m.bars; continue }
-            var q = 0.0
-            for (e in m.events) {
-                val len = e.duration.quarters
-                if (e is Note && q < m.time.quarters) {
-                    val start = t + samples(q)
-                    // A hair short, so repeated notes are heard apart.
-                    val length = max(1L, samples(min(len, m.time.quarters - q)) - synth.sampleRate / 60)
-                    for (p in e.pitches) tones += Synth.Tone((p.midi - transpose).coerceIn(12, 115), start, length, 0.85f, patch)
-                }
-                q += len
-            }
-            t += bar
-        }
-        starts = s.toLongArray(); numbers = n.toIntArray()
-        passLength = t - at
-        synth.add(tones)
+        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at)
+        starts = played.barStarts; numbers = played.barNumbers
+        passLength = played.length
+        synth.add(played.tones)
     }
 
     /** The next samples into [buf]; keeps [bar] up to date and goes round again when looping. */
@@ -297,7 +276,7 @@ class EnsemblePlayer(
             for (k in 0 until mm.bars) {
                 val number = mm.number + k
                 s += t; n += number
-                val barLen = samples(mm.time.quarters)
+                val barLen = samples(if (mm.bars > 1) mm.time.quarters else mm.playedQuarters)
                 for (v in others) v.score.measures.firstOrNull { number >= it.number && number < it.number + it.bars }?.let { lay(v, it, t, loud) }
                 guide?.let { (v, g) -> if (g > 0f && k == 0) lay(v, mm, t, g) }
                 t += barLen
