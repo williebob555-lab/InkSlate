@@ -101,8 +101,39 @@ internal object ScoreTools {
             val wrong = wrongOf(path)
             val marked = if (wrong.isEmpty()) read else read.copy(measures = read.measures.map { m ->
                 if (m.bars == 1 && m.number in wrong && WRONG !in m.doubts) m.copy(doubts = m.doubts + WRONG) else m })
-            com.inksheets.core.omr.Scores.withFixes(marked, fixesOf(path))
+            // A clef, key or time put right laid over all (bars put right too: their pitches from it).
+            com.inksheets.core.omr.Signatures.apply(com.inksheets.core.omr.Scores.withFixes(marked, fixesOf(path)), sigsOf(path))
         }
+
+    /** Clefs, keys and times put right, by part: the bar each starts at to what it is. Kept with the part's settings. */
+    private val sigs = HashMap<String, MutableMap<Int, com.inksheets.core.omr.SigFix>>()
+    private fun sigKey(path: String) = "sheets_sig:" + (state?.relative(File(path)) ?: path)
+    private fun sigsOf(path: String): MutableMap<Int, com.inksheets.core.omr.SigFix> = sigs.getOrPut(path) {
+        com.inksheets.core.omr.Signatures.decode(state?.platform?.pref(sigKey(path))).toMutableMap()
+    }
+
+    /** The clef, key or time put right from bar [number] of the part in front, if any. */
+    fun signatureAt(s: SheetsState, number: Int): com.inksheets.core.omr.SigFix? = s.currentPath?.let { sigsOf(it)[number] }
+
+    /**
+     * The clef, key and time are [fix] from bar [number] of the part in front on (until the print
+     * changes them), or as read again (null): kept, written down for teaching, and the bar up shown
+     * again with its readings made anew.
+     */
+    fun setSignature(s: SheetsState, number: Int, fix: com.inksheets.core.omr.SigFix?) {
+        val path = s.currentPath ?: return
+        val f = sigsOf(path)
+        if (fix == null || fix == com.inksheets.core.omr.SigFix()) f.remove(number) else f[number] = fix
+        state?.platform?.setPref(sigKey(path), com.inksheets.core.omr.Signatures.encode(f))
+        sigDraft = null
+        val m = scoreHere(s)?.measures?.firstOrNull { it.number == number }
+        if (fix != null && m != null) scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w -> Transcriber.recordSignature(s, File(path), m, w, fix) }
+        changed()
+        if (checking) showBar(s)
+    }
+
+    /** A clef, key and time being chosen for the bar up (null when not). */
+    var sigDraft by mutableStateOf<com.inksheets.core.omr.SigFix?>(null)
 
     /** The doubt a bar you marked wrong carries. */
     private const val WRONG = "you marked it wrong"
@@ -142,8 +173,14 @@ internal object ScoreTools {
 
     fun choose(t: Tool) {
         tool = if (tool == t) Tool.NONE else t
-        Perform.musicTool = tool != Tool.NONE
+        syncTool()
     }
+
+    /**
+     * Presses on the page are the music tools' while one is in hand - and while the music plays (or
+     * waits, paused) with the tools out: a tap on a bar plays from it.
+     */
+    private fun syncTool() { Perform.musicTool = tool != Tool.NONE || (open && (playing != null || paused != null)) }
 
     fun showUnderlay(on: Boolean) { underlay = on; changed() }
 
@@ -162,7 +199,7 @@ internal object ScoreTools {
         stop(s)
         open = false
         tool = Tool.NONE
-        Perform.musicTool = false
+        syncTool()
         underlay = false
         selection = null
         changed()
@@ -200,6 +237,8 @@ internal object ScoreTools {
     var offered by mutableStateOf<List<com.inksheets.core.omr.BarChoices.Choice>>(emptyList())
         private set
     private var rejected = ArrayList<List<com.inksheets.core.omr.Event>>()
+    /** How many times "None of these" was pressed for the bar up. */
+    private var noneCount = 0
     /** Looked deeper for this bar already (the first readings turned down). */
     var askedAgain by mutableStateOf(false)
         private set
@@ -261,8 +300,8 @@ internal object ScoreTools {
     }
 
     private fun showBar(s: SheetsState) {
-        rejected = ArrayList(); askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
-        barPicture = null; editing = null
+        rejected = ArrayList(); noneCount = 0; askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
+        barPicture = null; editing = null; sigDraft = null
         val m = barUp(s) ?: run { endCheck(); return }
         offered = com.inksheets.core.omr.BarChoices.of(m, 3)
         // Its picture first (quick), then the looks again.
@@ -279,14 +318,14 @@ internal object ScoreTools {
     }
 
     /** [choice] is what bar up is: kept, and on to the next. */
-    fun pick(s: SheetsState, choice: com.inksheets.core.omr.BarChoices.Choice) {
+    fun pick(s: SheetsState, choice: com.inksheets.core.omr.BarChoices.Choice, how: String = "pick") {
         val path = s.currentPath ?: return
         val m = barUp(s) ?: return
         fix(path, m.number, choice.events)
         // What it really is, kept for teaching the reader (the bar as it was read: its place on the page).
         scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
             val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
-            Transcriber.recordFix(s, File(path), read, w, choice.events)
+            Transcriber.recordFix(s, File(path), read, w, choice.events, how, noneCount)
         }
         next(s)
     }
@@ -298,28 +337,46 @@ internal object ScoreTools {
     var editAt by mutableStateOf(0)
 
     /** Put bar up right by hand, starting from [choice] - the reading nearest what is printed. */
-    fun startEdit(choice: com.inksheets.core.omr.BarChoices.Choice) { editing = choice.events; editAt = 0 }
+    fun startEdit(choice: com.inksheets.core.omr.BarChoices.Choice) { editing = choice.events; editAt = 0; editBack.clear() }
+
+    /** What the bar was before each change by hand, the last last: for taking changes back. */
+    private val editBack = ArrayList<List<com.inksheets.core.omr.Event>>()
+    val canUndoEdit: Boolean get() = editing != null && editBack.isNotEmpty() && editSerial >= 0
+    /** Counts the changes (so what shows whether one can be taken back looks again). */
+    private var editSerial by mutableIntStateOf(0)
 
     /** One change made by hand: [change] gives the events anew; the event chosen kept in range. */
     fun edit(change: (List<com.inksheets.core.omr.Event>) -> List<com.inksheets.core.omr.Event>) {
         val now = editing ?: return
         val next = change(now)
+        if (next == now) return
+        editBack += now
+        editSerial++
         editing = next
         editAt = editAt.coerceIn(0, maxOf(0, next.size - 1))
     }
 
-    fun cancelEdit() { editing = null }
+    /** The last change by hand taken back. */
+    fun undoEdit() {
+        val back = editBack.removeLastOrNull() ?: return
+        editSerial++
+        editing = back
+        editAt = editAt.coerceIn(0, maxOf(0, back.size - 1))
+    }
+
+    fun cancelEdit() { editing = null; editBack.clear() }
 
     /** The bar as put right by hand is what it is: kept (and taught), and on to the next. */
     fun finishEdit(s: SheetsState) {
         val events = editing ?: return
         editing = null
-        pick(s, com.inksheets.core.omr.BarChoices.Choice(events, listOf("Put right by hand"), 0f))
+        pick(s, com.inksheets.core.omr.BarChoices.Choice(events, listOf("Put right by hand"), 0f), how = "hand")
     }
 
     /** None of those: others, looked for further; when there are none left, on to the next bar. */
     fun noneOfThese(s: SheetsState) {
         val m = barUp(s) ?: return
+        noneCount++
         rejected += offered.map { it.events }
         val more = com.inksheets.core.omr.BarChoices.of(m, 3, rejected = rejected, deeper = true, looked = looked)
         askedAgain = true
@@ -342,16 +399,34 @@ internal object ScoreTools {
         next(s)
     }
 
-    /** Leave bar up as it is, and on to the next. */
+    /**
+     * Leave bar up as it is, and on to the next - written down (with what was turned down for it)
+     * for finding what the readings offered miss.
+     */
+    fun skip(s: SheetsState) {
+        val path = s.currentPath
+        val m = barUp(s)
+        if (path != null && m != null) scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
+            val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
+            Transcriber.recordSkip(s, File(path), read, w, rejected + offered.map { it.events }, noneCount)
+        }
+        next(s)
+    }
+
+    /** On to the next bar still in doubt (one a clef, key or time put right made sure is passed). */
     fun next(s: SheetsState) {
-        if (checkAt + 1 >= checkBars.size) { endCheck(); said = "All the bars in doubt gone through"; return }
-        checkAt++
+        val bars = scoreHere(s)?.measures.orEmpty()
+        var i = checkAt + 1
+        while (i < checkBars.size && bars.firstOrNull { it.number == checkBars[i] }?.sure == true) i++
+        if (i >= checkBars.size) { endCheck(); said = "All the bars in doubt gone through"; return }
+        checkAt = i
         showBar(s)
     }
 
     fun endCheck() {
         checking = false
         editing = null
+        sigDraft = null
         looking = false
         barPicture = null
         lookToken++
@@ -417,6 +492,17 @@ internal object ScoreTools {
         val score = scoreOf(path) ?: run { said = "Read the music first"; return }
         val k = scaleOf(score, page, pageWidth[path to page] ?: return) ?: return
         val bars = (0 until pts.size / 2).mapNotNull { i -> barAt(score, page, pts[2 * i], pts[2 * i + 1], k)?.number }
+        // No tool in hand, the music playing or paused: a tap on a bar plays from it (a drag is let be).
+        if (tool == Tool.NONE) {
+            val s = state ?: return
+            if (!done || (playing == null && paused == null) || pts.size < 2) return
+            val moved = kotlin.math.hypot(pts[pts.size - 2] - pts[0], pts[pts.size - 1] - pts[1]) / k
+            val bar = bars.firstOrNull() ?: return
+            val m = score.measures.firstOrNull { it.number == bar } ?: return
+            if (moved > m.space * 2f) return
+            playFromBar(s, bar)
+            return
+        }
         when (tool) {
             Tool.SELECT -> {
                 if (pressStart == null) pressStart = bars.firstOrNull()
@@ -636,25 +722,32 @@ internal object ScoreTools {
      * Play the bars chosen - or, with none, from the page in front to the end - at the metronome's
      * tempo, as the part's instrument sounds (or [soundAs]).
      */
-    fun play(s: SheetsState) {
+    fun play(s: SheetsState, from: Int? = null) {
         stop(s)
         val path = s.currentPath ?: return
         val score = scoreOf(path) ?: run { said = "Read the music first"; return }
         val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return }
         val (id, transpose) = instrumentOf(s)
-        val range = selection ?: run {
-            val first = score.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
-            first..(score.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: first)
-        }
+        // A passage chosen (and, if from a bar, one in it): from there to its end, straight through,
+        // for practising it. Else from the bar asked (or the page in front) on, repeats and all.
+        val sel = selection?.takeIf { from == null || from in it }
+        val last = score.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: 1
+        val first = from ?: sel?.first ?: score.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
+        val range = if (sel != null) first..sel.last else first..last
+        val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(score, first) else null
+        bandMode = false
         val tempo = SharedMetronome.bpm
         val start = if (ramp && loop) tempo * rampFrom / 100.0 else tempo
         val sounding = soundAs ?: id
-        // From the page on: as it is played, repeats and all. A passage chosen: straight through, for practising it.
-        val source = if (selection == null) com.inksheets.core.omr.PlayOrder.unrolled(score) else score
+        val source = score
+        // A drum part on the drums (unless asked to sound as something else).
+        val shown = s.partShown()
+        val drums = if (soundAs != null) null else com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(shown?.label, shown?.instrument, File(path).nameWithoutExtension).joinToString(" "))
         val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, Synth.patchFor(Midi.program(sounding)),
-            loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble())
+            loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, order = order)
         player = p
         playing = Triple(range.first, start.toInt(), 0)
+        syncTool()
         Sound.play(s, WHO) { buf -> p.fill(buf) }
         var lastBar = -1
         watcher = java.util.Timer("score-play", true).apply {
@@ -729,30 +822,36 @@ internal object ScoreTools {
     }
 
     /** The band - every other part read - from the bars chosen or the page in front, without this part. */
-    fun playBand(s: SheetsState) {
+    fun playBand(s: SheetsState, from: Int? = null) {
         stop(s)
         val path = s.currentPath ?: return
         val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
         // This part's own bars, numbered as the band's are - and back again for showing.
         val (mine, offset) = Transcriber.partOf(whole, s.partShown())
+        bandMode = true
         readBand(s) {
             val voices = otherParts(s).mapNotNull { (p, f) ->
                 // A part in a band pack: its own pages of the pack's reading.
                 val sc = Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } ?: return@mapNotNull null
                 val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
                 val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
-                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, tr, Synth.patchFor(Midi.program(id)))
+                // A drum part on the drums: which drum each note is, from the part and where the note sits.
+                val drums = com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" "))
+                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, Synth.patchFor(Midi.program(id)), drums)
             }
             if (voices.isEmpty()) { said = "No other parts of this song here to play"; return@readBand }
             val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
-            val range = selection?.let { (it.first - offset)..(it.last - offset) } ?: run {
-                val first = mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
-                first..(mine.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: first)
-            }
-            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm)
+            // As for this part alone (see play): a passage chosen straight through, else from a bar on, repeats and all.
+            val sel = selection?.takeIf { from == null || from in it }?.let { (it.first - offset)..(it.last - offset) }
+            val last = mine.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: 1
+            val first = from?.minus(offset) ?: sel?.first ?: mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
+            val range = if (sel != null) first..sel.last else first..last
+            val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(mine, first) else null
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, order = order)
             said = "The band: ${voices.size} parts"
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
+            syncTool()
             Sound.play(s, WHO) { buf -> p.fill(buf) }
             var lastBar = -1
             watcher = java.util.Timer("band-play", true).apply {
@@ -846,10 +945,87 @@ internal object ScoreTools {
     }
 
     fun stop(s: SheetsState) {
+        halt()
+        paused = null
+        syncTool()
+    }
+
+    /** The sound stopped, where it was kept or not. */
+    private fun halt() {
         ensemble?.let { ensemble = null; Sound.stop(WHO) }
         watcher?.cancel(); watcher = null
         if (player != null) Sound.stop(WHO)
         player = null
         if (playing != null) { playing = null; changed() }
+    }
+
+    // ---- playing, steered as it goes ------------------------------------------------------------
+
+    /** Stopped part way, to go on from: the bar it stopped in (null when not paused). */
+    var paused by mutableStateOf<Int?>(null)
+        private set
+
+    /** Whether what plays (or played last) is the band rather than this part alone. */
+    var bandMode by mutableStateOf(false)
+        private set
+
+    /** The bar playing now, or paused at. */
+    fun barNow(): Int? = playing?.first ?: paused
+
+    /** Stop where it is, to go on from there. */
+    fun pause(s: SheetsState) {
+        val bar = playing?.first ?: return
+        halt()
+        paused = bar
+        syncTool()
+        changed()
+    }
+
+    /** Go on from where it was paused. */
+    fun resume(s: SheetsState) { paused?.let { playFromBar(s, it) } }
+
+    /** Play from bar [bar] (as numbered on this part's page) - the band or this part alone, as before. */
+    fun playFromBar(s: SheetsState, bar: Int) {
+        val wasPaused = paused != null && playing == null
+        if (wasPaused && paused != bar) {
+            // Paused: the place moved, still paused - shown, ready to go on from.
+            paused = bar; goTo(s, bar); changed(); return
+        }
+        if (bandMode) playBand(s, bar) else play(s, bar)
+    }
+
+    /** [by] bars on (back, negative) from where it is. */
+    fun stepBars(s: SheetsState, by: Int) {
+        val now = barNow() ?: return
+        val bars = scoreHere(s)?.measures?.filter { it.bars >= 1 }.orEmpty()
+        val i = bars.indexOfFirst { now >= it.number && now < it.number + it.bars }.takeIf { it >= 0 } ?: return
+        val to = bars[(i + by).coerceIn(0, bars.size - 1)].number
+        playFromBar(s, to)
+    }
+
+    /**
+     * To the start of the next line ([by] 1), or back - to the start of this line, or of the line
+     * before when already at (or just past) its start.
+     */
+    fun stepLines(s: SheetsState, by: Int) {
+        val now = barNow() ?: return
+        val bars = scoreHere(s)?.measures.orEmpty()
+        val m = bars.firstOrNull { now >= it.number && now < it.number + it.bars } ?: return
+        val lines = bars.map { it.page to it.staff }.distinct()
+        val li = lines.indexOf(m.page to m.staff)
+        val starts = lines.map { l -> bars.first { (it.page to it.staff) == l }.number }
+        val target = if (by > 0) starts.getOrNull(li + 1) ?: return
+            else if (now - starts[li] >= 2) starts[li] else starts.getOrNull(li - 1) ?: starts[li]
+        playFromBar(s, target)
+    }
+
+    /** The tempo [by] beats a minute faster (slower, negative): at once, from the bar it is in. */
+    fun nudgeTempo(s: SheetsState, by: Int) {
+        SharedMetronome.bpm = (SharedMetronome.bpm + by).coerceIn(20.0, 320.0)
+        // The metronome's own tempo with it, so the two never disagree.
+        SharedMetronome.engine?.let { it.settings = it.settings.copy(bpm = SharedMetronome.bpm) }
+        val now = playing?.first
+        if (now != null) { if (bandMode) playBand(s, now) else play(s, now) }
+        changed()
     }
 }

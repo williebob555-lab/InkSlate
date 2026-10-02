@@ -38,7 +38,9 @@ object Performance {
      * [bars] (in the order played) at [bpm] quarter notes a minute, [rate] samples a second, as
      * [patch] sounds them ([transpose] semitones written above sounding), from sample [at].
      */
-    fun play(bars: List<Measure>, bpm: Double, rate: Int, transpose: Int, patch: Synth.Patch, at: Long = 0L): Played {
+    fun play(bars: List<Measure>, bpm: Double, rate: Int, transpose: Int, patch: Synth.Patch, at: Long = 0L,
+             /** Drums: the drums each note is, in place of its pitches (see [DrumKind]). */
+             drums: DrumKind? = null): Played {
         val tones = ArrayList<Synth.Tone>()
         val starts = ArrayList<Long>(); val numbers = ArrayList<Int>()
         val perQuarter = rate * 60.0 / bpm
@@ -50,7 +52,8 @@ object Performance {
         val hairpinsDone = HashSet<String>()
         val gap = rate / 60L      // a hair between notes, so repeated ones are heard apart
 
-        fun flush(midi: Int) { open.remove(midi)?.let { h -> tones += Synth.Tone(h.midi, h.start, max(1L, h.end - h.start), h.velocity, patch, h.accent) } }
+        val sounds = drums?.patch ?: patch
+        fun flush(midi: Int) { open.remove(midi)?.let { h -> tones += Synth.Tone(h.midi, h.start, max(1L, h.end - h.start), h.velocity, sounds, h.accent) } }
         fun flushAll() { for (k in open.keys.toList()) flush(k) }
 
         for (m in bars) {
@@ -121,7 +124,7 @@ object Performance {
                     val start = t.toLong()
                     val end = (t + sounding + hold).toLong()
                     val velocity = (v.coerceIn(0.1f, 1.5f) * 1.15f)
-                    val pitches = e.pitches.map { (it.midi - transpose).coerceIn(12, 115) }
+                    val pitches = drums?.keys(e) ?: e.pitches.map { (it.midi - transpose).coerceIn(12, 115) }
                     // Tied notes no longer sounding go; one tied into this note sounds on through it.
                     for (k in open.keys.toList()) if (k !in pitches) flush(k)
                     for (p in pitches) {

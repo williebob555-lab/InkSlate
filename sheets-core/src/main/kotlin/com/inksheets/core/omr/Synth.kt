@@ -28,7 +28,10 @@ class Synth(val sampleRate: Int) {
         val breath: Float = 0f,
         /** How much duller the upper harmonics start, brightening over the attack (brass). */
         val bloom: Float = 0f,
-        val gain: Float = 0.22f
+        val gain: Float = 0.22f,
+        /** Drums: each tone's number a General MIDI drum (see [DrumKind]), struck and left to ring; tuned by [tune]. */
+        val drum: Boolean = false,
+        val tune: Double = 1.0
     )
 
     companion object {
@@ -44,6 +47,11 @@ class Synth(val sampleRate: Int) {
         val PIANO = Patch(floatArrayOf(1f, 0.55f, 0.3f, 0.2f, 0.12f, 0.08f, 0.05f), 0.004, 0.3, 0.2f, 0.2, fade = 0.8)
         val BASS = Patch(floatArrayOf(1f, 0.6f, 0.3f, 0.15f, 0.08f), 0.006, 0.25, 0.3f, 0.08, fade = 0.9, gain = 0.3f)
         val VOICE = Patch(floatArrayOf(1f, 0.5f, 0.25f, 0.1f, 0.05f), 0.08, 0.1, 0.85f, 0.12, vibratoHz = 5.5, vibratoCents = 15.0)
+        val DRUMS = Patch(floatArrayOf(1f), 0.001, 0.0, 0f, 0.0, gain = 0.32f, drum = true)
+        /** A drum line's bass drums: toms' sound tuned well down. */
+        val BASS_DRUMS = Patch(floatArrayOf(1f), 0.001, 0.0, 0f, 0.0, gain = 0.4f, drum = true, tune = 0.5)
+        /** Tenors: toms' sound tuned up, tight. */
+        val TENORS = Patch(floatArrayOf(1f), 0.001, 0.0, 0f, 0.0, gain = 0.3f, drum = true, tune = 1.45)
 
         /** The patch for a General MIDI program (see [Midi.program]). */
         fun patchFor(program: Int): Patch = when (program) {
@@ -75,6 +83,8 @@ class Synth(val sampleRate: Int) {
     private class Voice(val tone: Tone, val freq: Double) {
         var phase = DoubleArray(tone.patch.harmonics.size)
         var released = -1L
+        /** A drum's own sound, where the tone is one. */
+        var drum: DrumVoice? = null
     }
 
     private val pending = ArrayList<Tone>()
@@ -132,7 +142,9 @@ class Synth(val sampleRate: Int) {
         // Notes starting in this block begin at their own sample.
         while (pending.isNotEmpty() && pending.first().start < end) {
             val t = pending.removeAt(0)
-            voices += Voice(t, frequency(t.midi.toDouble()))
+            voices += Voice(t, frequency(t.midi.toDouble())).apply {
+                if (t.patch.drum) drum = DrumVoice(t.midi, t.start, t.velocity, t.accent, t.patch.gain, t.patch.tune, t.start * 31 + t.midi)
+            }
         }
         val it = voices.iterator()
         while (it.hasNext()) {
@@ -144,6 +156,7 @@ class Synth(val sampleRate: Int) {
 
     /** One voice into [buf] from [from]; true when it has finished. */
     private fun render(v: Voice, buf: FloatArray, from: Long): Boolean {
+        v.drum?.let { return it.render(buf, from, sampleRate) }
         val p = v.tone.patch
         val sr = sampleRate.toDouble()
         val accent = v.tone.accent.toDouble()
@@ -212,7 +225,11 @@ class ScorePlayer(
     private val patch: Synth.Patch,
     val loop: Boolean = false,
     private val rampTo: Double? = null,
-    private val rampStep: Double = 0.0
+    private val rampStep: Double = 0.0,
+    /** A drum part: played on the drums (see [DrumKind]). */
+    private val drums: DrumKind? = null,
+    /** The bars to play, in order, where given (from a bar on, repeats and all: [PlayOrder.from]) - else those numbered [from] to [to]. */
+    order: List<Measure>? = null
 ) {
     /** The tempo now: goes up round each loop when ramping. */
     @Volatile var bpm: Double = bpm
@@ -232,14 +249,14 @@ class ScorePlayer(
     private var passStart = 0L
     private var passLength = 0L
 
-    private val bars = score.measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
+    private val bars = order ?: score.measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
 
     init { schedule(0L) }
 
     /** One pass through the bars, from sample [at]: played as a player would ([Performance]). */
     private fun schedule(at: Long) {
         passStart = at
-        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at)
+        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at, drums)
         starts = played.barStarts; numbers = played.barNumbers
         passLength = played.length
         synth.add(played.tones)
@@ -276,10 +293,14 @@ class EnsemblePlayer(
     val to: Int,
     val bpm: Double,
     /** Your own part, quietly, to play along with: its loudness (0 for none). */
-    guide: Pair<Voice, Float>? = null
+    guide: Pair<Voice, Float>? = null,
+    /** [mine]'s bars to play, in order, where given (see [PlayOrder.from]) - else those numbered [from] to [to]. */
+    order: List<Measure>? = null
 ) {
     /** One part: its notes, how far it is written above where it sounds, how it sounds. */
-    class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch)
+    class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch,
+                /** Drums: the drums each note is (see [DrumKind]), in place of its pitches. */
+                val drums: DrumKind? = null)
 
     @Volatile var bar: Int = from
         private set
@@ -291,7 +312,7 @@ class EnsemblePlayer(
     private val length: Long
 
     init {
-        val order = PlayOrder.unrolled(mine).measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
+        val order = order ?: PlayOrder.unrolled(mine).measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
         val loud = 0.75f / kotlin.math.sqrt(others.size.coerceAtLeast(1).toFloat())
         val tones = ArrayList<Synth.Tone>()
         val s = ArrayList<Long>(); val n = ArrayList<Int>()
@@ -303,7 +324,10 @@ class EnsemblePlayer(
             for (e in m.events) {
                 if (e is Note && q < m.time.quarters) {
                     val len = max(1L, samples(min(e.duration.quarters, m.time.quarters - q)) - synth.sampleRate / 60)
-                    for (p in e.pitches) tones += Synth.Tone((p.midi - v.transpose).coerceIn(12, 115), at + samples(q), len, velocity, v.patch)
+                    val drums = v.drums
+                    if (drums != null) for (k in drums.keys(e)) tones += Synth.Tone(k, at + samples(q), len, velocity, drums.patch,
+                        if ("accent" in e.articulations || "marcato" in e.articulations) 0.8f else 0f)
+                    else for (p in e.pitches) tones += Synth.Tone((p.midi - v.transpose).coerceIn(12, 115), at + samples(q), len, velocity, v.patch)
                 }
                 q += e.duration.quarters
             }

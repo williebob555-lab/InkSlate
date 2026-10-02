@@ -82,6 +82,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     val named = true
     BoxWithConstraints(Modifier.matchParentSize()) {
         BarCheck(state)
+        if (!ScoreTools.checking) PlaybackBar(state)
         val btn = ((maxHeight - 150.dp) / 14 - 12.dp).coerceIn(26.dp, 40.dp)
         val density = androidx.compose.ui.platform.LocalDensity.current
         // A window over the music that does not fit beside it: the strip steps aside, a tab at its edge.
@@ -286,7 +287,13 @@ private fun GoToBar(state: SheetsState, onDone: () -> Unit) {
                 ScoreTools.said?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
         },
-        confirmButton = { TextButton(onClick = { go() }) { Text("Go") } },
+        confirmButton = {
+            Row {
+                // Or straight to playing from it - the band or the part, as last played.
+                TextButton(onClick = { text.trim().toIntOrNull()?.let { n -> if (ScoreTools.goTo(state, n)) { onDone(); if (ScoreTools.bandMode || ScoreTools.band) ScoreTools.playBand(state, n) else ScoreTools.play(state, n) } } }) { Text("Play from it") }
+                TextButton(onClick = { go() }) { Text("Go") }
+            }
+        },
         dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } }
     )
 }

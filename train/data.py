@@ -66,7 +66,7 @@ class Strips(torch.utils.data.Dataset):
         dy = rng.uniform(-3, 3) if self.scan else 0.0
         # Squeezed sideways only, now and then: a book's page curling into its spine on the glass
         # (heads and spacing narrow, the staff's height as it was).
-        sx = rng.uniform(0.55, 0.95) if self.scan and rng.random() < 0.25 else 1.0
+        sx = rng.uniform(0.55, 0.95) if self.scan and rng.random() < float(os.environ.get("SQUEEZE", "0.25")) else 1.0
         t = torch.from_numpy(img)[None, None]
         if scale != 1.0 or dy != 0.0 or sx != 1.0:
             h, w = img.shape
@@ -81,8 +81,8 @@ class Strips(torch.utils.data.Dataset):
             t = canvas
             for o in objs:
                 o[1] = o[1] * scale * sx
-                # A span in doubt is two columns; everything else a column and a row.
-                o[2] = o[2] * scale * sx if o[0] == -3 else o[2] * scale + oy
+                # A span (in doubt, or taught at a weight) is two columns; everything else a column and a row.
+                o[2] = o[2] * scale * sx if o[0] in (-3, -4) else o[2] * scale + oy
         img = t[0, 0]
         w = img.shape[1]
         # A window of the strip.
@@ -93,9 +93,9 @@ class Strips(torch.utils.data.Dataset):
             x0 = 0
             img = F.pad(img, (0, self.width - w), value=1.0)
         # A real scan (learned from the reader's own sure readings) is damaged already: only sometimes more.
-        if self.scan and (not it.get("pseudo") or rng.random() < 0.5):
+        if self.scan and (not (it.get("pseudo") or it.get("fix")) or rng.random() < 0.5):
             img = degrade(img, rng)
-        heat, off, beams, dots, mask = targets([(o[0], o[1] - x0, o[2] - x0 if o[0] == -3 else o[2]) + tuple(o[3:]) for o in objs], self.width)
+        heat, off, beams, dots, mask = targets([(o[0], o[1] - x0, o[2] - x0 if o[0] in (-3, -4) else o[2]) + tuple(o[3:]) for o in objs], self.width)
         return img[None], heat, off, beams, dots, mask
 
 
@@ -196,6 +196,12 @@ def targets(objs, width):
             a, b = max(0, int(o[1] / STRIDE)), min(gw, int(o[2] / STRIDE) + 1)
             if b > a:
                 mask[:, :, a:b] = 0
+            continue
+        if int(o[0]) == -4:
+            # A span taught at a weight (a bar put right by the player, who may be wrong too: half).
+            a, b = max(0, int(o[1] / STRIDE)), min(gw, int(o[2] / STRIDE) + 1)
+            if b > a:
+                mask[:, :, a:b] *= float(o[3])
             continue
         c, x, y = int(o[0]), o[1] / STRIDE, o[2] / STRIDE
         if not (0 <= x < gw and 0 <= y < gh):

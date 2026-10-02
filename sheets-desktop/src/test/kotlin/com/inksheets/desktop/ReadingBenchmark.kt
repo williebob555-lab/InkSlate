@@ -98,7 +98,12 @@ class ReadingBenchmark {
         return img
     }
 
-    class Bar(val sure: Boolean, val verifiable: Boolean, val causes: Set<String>, val doubts: List<String> = emptyList()) {
+    /** Bars with grace notes, tallied across the parts (see [Bar.grace]). */
+    private val grace = HashMap<String, Int>()
+
+    class Bar(val sure: Boolean, val verifiable: Boolean, val causes: Set<String>, val doubts: List<String> = emptyList(),
+              /** A grace note printed in it: a small head just before one of the part's own. */
+              val grace: Boolean = false) {
         val correct get() = verifiable && causes.isEmpty()
     }
 
@@ -442,7 +447,10 @@ class ReadingBenchmark {
                     m.events.joinToString(" ") { e -> when (e) { is Note -> "n" + e.duration.base + ".".repeat(e.duration.dots) + (if (e.steps.size > 1) "c" + e.steps else ""); is Rest -> "r" + e.duration.base + ".".repeat(e.duration.dots) } } + " | other: " + other)
             }
         }
-        val bars = reading.measures.withIndex().filter { it.value.bars <= 1 }.map { (mi, m) -> Bar(m.sure, mi !in unverifiable, causes[mi] ?: emptySet(), m.doubts) }
+        // Bars with a grace note printed in them: a small head with one of the part's own just after it.
+        val graceBars = keyHeads.filter { it !in printedHeads }.filter { g -> printedHeads.any { h -> h.x - g.x in sp * 0.5f..sp * 3.5f && abs(h.y - g.y) < sp * 4 } }
+            .map { barAt(it.x, it.y) }.filter { it >= 0 }.toSet()
+        val bars = reading.measures.withIndex().filter { it.value.bars <= 1 }.map { (mi, m) -> Bar(m.sure, mi !in unverifiable, causes[mi] ?: emptySet(), m.doubts, mi in graceBars) }
 
         /**
          * Whether bar [mi] read as [events] is what is printed: true, false - or null where the PDF
@@ -588,6 +596,14 @@ class ReadingBenchmark {
                 bars.filter { !it.sure && it.correct }.forEach { b -> causes.merge("FLAGGED BUT RIGHT: " + b.doubts.joinToString("; ") { it.replace(Regex("[0-9.]+"), "#") }, 1, Int::plus) }
                 bars.filter { !it.sure && !it.verifiable }.forEach { b -> causes.merge("FLAGGED, UNVERIFIABLE: " + b.doubts.joinToString("; ") { it.replace(Regex("[0-9.]+"), "#") }, 1, Int::plus) }
                 bars.filter { it.verifiable && !it.correct }.forEach { b -> causes.merge(if (b.causes.size == 1) b.causes.first() else "several: " + b.causes.sorted().joinToString("+"), 1, Int::plus) }
+                // Bars with grace notes, on their own: how they are read.
+                synchronized(grace) {
+                    val g = bars.filter { it.grace }
+                    grace.merge("bars", g.size, Int::plus); grace.merge("verifiable", g.count { it.verifiable }, Int::plus); grace.merge("correct", g.count { it.correct }, Int::plus)
+                    grace.merge("sure", g.count { it.sure }, Int::plus); grace.merge("sure verifiable", g.count { it.sure && it.verifiable }, Int::plus)
+                    grace.merge("sure correct", g.count { it.sure && it.correct }, Int::plus)
+                    g.filter { it.verifiable && !it.correct }.forEach { b -> grace.merge("wrong: " + b.causes.sorted().joinToString("+"), 1, Int::plus) }
+                }
                 PartResult(f.relativeTo(music).path.replace('\\', '/'), bars.size, bars.count { it.verifiable }, bars.count { it.correct },
                     bars.count { it.sure }, bars.count { it.sure && it.verifiable }, bars.count { it.sure && it.correct }, outside, causes, ch) to pics
             }
@@ -616,6 +632,9 @@ class ReadingBenchmark {
         }
         if (looks.isNotEmpty()) println("LOOKS: " + looks.entries.sortedBy { it.key }.joinToString { "${it.key} ${it.value}" })
         println("WRONG BARS BY CAUSE: " + causes.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
+        println("GRACE: ${grace["bars"] ?: 0} bars with grace notes; correct ${pct(grace["correct"] ?: 0, grace["verifiable"] ?: 0)} (${grace["correct"] ?: 0}/${grace["verifiable"] ?: 0}); " +
+            "sure ${grace["sure"] ?: 0}, trust ${pct(grace["sure correct"] ?: 0, grace["sure verifiable"] ?: 0)}; " +
+            grace.filterKeys { it.startsWith("wrong: ") }.entries.sortedByDescending { it.value }.joinToString { "${it.key.removePrefix("wrong: ")} ${it.value}" })
         // Against the baseline, part by part.
         results.mkdirs()
         val last = File(results, "$mode-$set-last.tsv"); val base = File(results, "$mode-$set.tsv")

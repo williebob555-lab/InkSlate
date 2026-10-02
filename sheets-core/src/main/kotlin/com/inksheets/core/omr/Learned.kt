@@ -21,6 +21,9 @@ object Learned {
     /** A head this likely, under [floor], is faint: offered among a doubtful bar's other readings. */
     const val FAINT = 0.12f
 
+    /** Whether note [n] was read unclearly: its head (or what it is) less likely than [SURE]. */
+    fun unclear(n: Note): Boolean = n.confidence < SURE
+
     /** Whether [s] is a faint head (see [FAINT]). */
     fun faint(s: Printed.Symbol) = s.odds.size == 8 && s.odds[7] < floor
 

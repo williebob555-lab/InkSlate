@@ -13,11 +13,40 @@ object BarEdit {
     private fun replace(events: List<Event>, i: Int, e: Event?): List<Event> =
         events.toMutableList<Event?>().also { it[i] = e }.filterNotNull()
 
-    /** Event [i] [by] steps higher (negative) or lower - a chord as a whole. A rest stays as it is. */
+    /** Event [i] [by] steps higher (negative) or lower - a chord as a whole, its accidentals left behind. A rest stays as it is. */
     fun step(m: Measure, events: List<Event>, i: Int, by: Int): List<Event> {
         val n = events.getOrNull(i) as? Note ?: return events
         val steps = n.steps.map { it + by }
-        return replace(events, i, n.copy(steps = steps, pitches = steps.map { pitchOf(m, it) }, accidentals = emptyMap()))
+        return pitched(m, replace(events, i, n.copy(steps = steps, pitches = steps.map { pitchOf(m, it) }, accidentals = emptyMap())))
+    }
+
+    /**
+     * Note [i] with [alter] written before it (1 sharp, -1 flat, 0 natural), or none (null) - every
+     * head of a chord - and the bar's pitches again: an accidental carries on through the bar.
+     */
+    fun accidental(m: Measure, events: List<Event>, i: Int, alter: Int?): List<Event> {
+        val n = events.getOrNull(i) as? Note ?: return events
+        val accs = if (alter == null) emptyMap() else n.steps.associateWith { alter }
+        return pitched(m, replace(events, i, n.copy(accidentals = accs)))
+    }
+
+    /** The accidental written before note [i] (its first head's), or null. */
+    fun accidentalOf(events: List<Event>, i: Int): Int? = (events.getOrNull(i) as? Note)?.let { n -> n.steps.firstNotNullOfOrNull { n.accidentals[it] } }
+
+    /** Every note's pitch again from where it sits, the key, and the accidentals written before it in the bar. */
+    private fun pitched(m: Measure, events: List<Event>): List<Event> = Signatures.repitch(events, m.clef, m.key)
+
+    /** Rests after the last event to fill the bar out to its time: the longest that fit, in turn. */
+    fun fillWithRests(m: Measure, events: List<Event>): List<Event> {
+        var left = m.time.quarters - quarters(events)
+        if (left < 1e-6) return events
+        val out = events.toMutableList()
+        var x = (events.lastOrNull()?.x ?: 0f) + 1f
+        for (base in listOf(1, 2, 4, 8, 16, 32)) {
+            val q = 4.0 / base
+            while (left >= q - 1e-6) { out += Rest(Duration(base), x); x += 1f; left -= q }
+        }
+        return out
     }
 
     /** Event [i] a [base] (1 whole, 2 half, 4 quarter, 8 eighth...), its dots kept, out of any triplet. */

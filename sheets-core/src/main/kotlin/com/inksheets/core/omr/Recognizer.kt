@@ -1414,6 +1414,22 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var guessedTuplets = false
                 // Two voices on the staff (stems up, stems down), each adding up: nothing to mend.
                 val inVoices = voicesAddUp(events, carry.time.quarters)
+                // Too long, and a small head just before one of the part's own size is what makes it so:
+                // a grace note - it takes no time in the bar. Let go (kept among what was seen: another
+                // reading may want it), where without the small ones the bar comes out exactly.
+                var graces = emptyList<Event>()
+                if (!inVoices && !cueBar && events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) {
+                    val small = cueAt[si].orEmpty()
+                    fun isSmall(e: Event) = small.any { abs(it - e.x) <= 2f }
+                    val grace = events.indices.filter { k ->
+                        val e = events[k]
+                        e is Note && isSmall(e) && (events.getOrNull(k + 1) as? Note)?.let { nx -> nx.x - e.x <= s.space * 3.5f && !isSmall(nx) } == true
+                    }.toSet()
+                    val without = events.filterIndexed { k, _ -> k !in grace }
+                    if (grace.isNotEmpty() && abs(without.sumOf { it.duration.quarters } - carry.time.quarters) < 1e-6) {
+                        graces = grace.map { events[it] }; events = without
+                    }
+                }
                 if (!inVoices && events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) clock.sum("tuplets") { tuplets(clean, s, events, carry.time.quarters) }?.let { (e, printed) -> events = e; guessedTuplets = !printed }
                 // Still too long, and a stemless "whole note" (a loop - a flag's curl, a digit's, a letter's) or a
                 // doubtful hollow head among other notes is what makes it so: without it the bar comes out exactly.
@@ -1424,7 +1440,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     (stated || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
                 // What was seen here and let go: another reading of the bar may want it back.
                 val maybe = dropped.filter { (h, why) -> staffOf[h] == si && h.x >= from - 2 && h.x < to && !why.startsWith("the other staff") }
-                    .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> clock.sum("maybe") { maybeNote(clean, s, h, carry) } }
+                    .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> clock.sum("maybe") { maybeNote(clean, s, h, carry) } } + graces
                 val m = Measure(
                     number++, page, si, box, s.space,
                     carry.clef, carry.key, carry.time, events,

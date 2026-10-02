@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inksheets.core.omr.Ink
+import com.inksheets.core.omr.Learned
 import com.inksheets.core.omr.Measure
 import com.inksheets.core.omr.Net
 import com.inksheets.core.omr.Recognizer
@@ -26,7 +27,7 @@ internal object Transcriber {
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
     /** Bumped whenever the reader reads better: what was read before is read again. */
-    private const val READER = 12
+    private const val READER = 13
 
     /**
      * Where [file]'s reading is kept: a page to a file, in the library's own `.inksheets/readings`
@@ -267,6 +268,27 @@ internal object Transcriber {
                     val bl = (m.box.left - l).toFloat(); val br = (m.box.right - l).toFloat()
                     if (bl > 0) canvas.drawRect(0f, 0f, bl, (b - t).toFloat(), dim)
                     if (br < r - l) canvas.drawRect(br, 0f, (r - l).toFloat(), (b - t).toFloat(), dim)
+                    // What was read, marked along the picture's foot under each note and rest - green
+                    // read clearly, amber unclear - and a ring round each note seen and let go: what
+                    // the reader made of the print, and where it struggled (a note with no mark under
+                    // it was not read at all).
+                    val foot = (b - t) - sp * 0.4f
+                    val clear = androidx.compose.ui.graphics.Paint().apply { color = androidx.compose.ui.graphics.Color(0xFF2E7D32) }
+                    val unclear = androidx.compose.ui.graphics.Paint().apply { color = androidx.compose.ui.graphics.Color(0xFFE08A00) }
+                    val rest = androidx.compose.ui.graphics.Paint().apply { color = androidx.compose.ui.graphics.Color(0xFF6D7F8E) }
+                    for (e in m.events) {
+                        val x = e.x - l
+                        val w = if (e is com.inksheets.core.omr.Note) sp * 1.15f else sp * 0.9f
+                        val p = when { e !is com.inksheets.core.omr.Note -> rest; Learned.unclear(e) -> unclear; else -> clear }
+                        canvas.drawRoundRect(x, foot - sp * 0.16f, x + w, foot + sp * 0.16f, sp * 0.16f, sp * 0.16f, p)
+                    }
+                    val ring = androidx.compose.ui.graphics.Paint().apply {
+                        color = androidx.compose.ui.graphics.Color(0xFFE08A00); style = androidx.compose.ui.graphics.PaintingStyle.Stroke; strokeWidth = maxOf(1.5f, sp * 0.14f)
+                    }
+                    for (e in m.maybe) if (e is com.inksheets.core.omr.Note) for (st in e.steps) {
+                        val y = m.yAt(st * 0.5f, e.x + sp * 0.6f) - t
+                        canvas.drawCircle(androidx.compose.ui.geometry.Offset(e.x - l + sp * 0.6f, y), sp * 0.95f, ring)
+                    }
                     out
                 }
             }.getOrNull()
@@ -279,14 +301,22 @@ internal object Transcriber {
      * trained reader: a line in the library's Training folder (which syncs, and is no song), one
      * file a device so two never write the same one.
      */
-    fun recordFix(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, events: List<com.inksheets.core.omr.Event>) {
+    fun recordFix(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, events: List<com.inksheets.core.omr.Event>,
+                  /** How it was come to: "pick" (one of the readings offered) or "hand" (put right in the editor). */
+                  how: String = "pick",
+                  /** How many times "None of these" was pressed for the bar first. */
+                  noneCount: Int = 0) {
         val root = state.root ?: return
         val rel = state.relative(file) ?: return
+        // Whether it adds up to its bar's time: a pick that does not is taken with a grain of salt
+        // (never taught from - see StripExport), though kept, as it is what the player chose.
+        val adds = kotlin.math.abs(events.sumOf { it.duration.quarters } - m.time.quarters) < 1e-6
         looker.execute {
             runCatching {
                 val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
                 val line = buildString {
-                    append("{\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
+                    append("{\"how\":\"").append(how).append("\",\"adds\":").append(adds).append(",\"none\":").append(noneCount)
+                    append(",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
                     append(",\"id\":\"").append(idOf(file)).append('"')
                     append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
                     append(",\"width\":").append(width)
@@ -296,6 +326,62 @@ internal object Transcriber {
                 }
                 File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
             }.onFailure { state.platform.log("Keeping a fix for teaching failed: ${it.message}") }
+        }
+    }
+
+    /**
+     * Bar [m] of [file] left as it was in Fix ("Skip"): written down beside the fixes with what was
+     * turned down for it ([rejected]: each reading offered and not taken) and how many times "None of
+     * these" was pressed - the bars no reading offered could put right (a time or key misread, a
+     * reading far off), for finding what the readings offered miss.
+     */
+    fun recordSkip(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, rejected: List<List<com.inksheets.core.omr.Event>>, noneCount: Int) {
+        val root = state.root ?: return
+        val rel = state.relative(file) ?: return
+        looker.execute {
+            runCatching {
+                val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
+                val line = buildString {
+                    append("{\"kind\":\"skip\",\"none\":").append(noneCount)
+                    append(",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
+                    append(",\"id\":\"").append(idOf(file)).append('"')
+                    append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
+                    append(",\"width\":").append(width)
+                    append(",\"box\":[").append(m.box.left).append(',').append(m.box.top).append(',').append(m.box.right).append(',').append(m.box.bottom).append(']')
+                    append(",\"time\":\"").append(m.time.beats).append('/').append(m.time.beatType).append('"')
+                    append(",\"key\":").append(m.key.fifths).append(",\"clef\":\"").append(m.clef.name).append('"')
+                    append(",\"doubts\":").append(kotlinx.serialization.json.JsonArray(m.doubts.map { kotlinx.serialization.json.JsonPrimitive(it) }))
+                    append(",\"read\":").append(com.inksheets.core.omr.Scores.encodeFixes(mapOf(m.number to m.events)))
+                    append(",\"rejected\":[").append(rejected.joinToString(",") { com.inksheets.core.omr.Scores.encodeFixes(mapOf(m.number to it)) }).append(']')
+                    append(",\"at\":").append(System.currentTimeMillis()).append('}')
+                }
+                File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
+            }.onFailure { state.platform.log("Keeping a skipped bar for teaching failed: ${it.message}") }
+        }
+    }
+
+    /**
+     * The clef, key or time from bar [m] of [file] on is [fix], said in Fix: written down beside the
+     * fixes, with what was read, for teaching what reads them.
+     */
+    fun recordSignature(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, fix: com.inksheets.core.omr.SigFix) {
+        val root = state.root ?: return
+        val rel = state.relative(file) ?: return
+        looker.execute {
+            runCatching {
+                val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
+                val line = buildString {
+                    append("{\"kind\":\"signature\",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
+                    append(",\"id\":\"").append(idOf(file)).append('"')
+                    append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
+                    append(",\"width\":").append(width)
+                    append(",\"box\":[").append(m.box.left).append(',').append(m.box.top).append(',').append(m.box.right).append(',').append(m.box.bottom).append(']')
+                    append(",\"read\":{\"clef\":\"").append(m.clef.name).append("\",\"key\":").append(m.key.fifths).append(",\"time\":\"").append(m.time.beats).append('/').append(m.time.beatType).append("\"}")
+                    append(",\"is\":").append(com.inksheets.core.omr.Signatures.encode(mapOf(m.number to fix)))
+                    append(",\"at\":").append(System.currentTimeMillis()).append('}')
+                }
+                File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
+            }.onFailure { state.platform.log("Keeping a signature fix for teaching failed: ${it.message}") }
         }
     }
 

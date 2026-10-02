@@ -64,8 +64,14 @@ def main():
     dev = "xpu" if hasattr(torch, "xpu") and torch.xpu.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     print("training on", dev, flush=True)
     model = Reader(width).to(dev)
-    opt = torch.optim.AdamW(model.parameters(), lr=2e-3, weight_decay=1e-4, foreach=False)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=2e-3, total_steps=epochs * len(tl))
+    # Carried on from a run's weights (INIT=runs/r7/best.pt), more gently (LR): teaching a little more
+    # to a reader already shipped, rather than a new one from the start.
+    if os.environ.get("INIT"):
+        model.load_state_dict(torch.load(os.environ["INIT"], map_location=dev))
+        print("starting from", os.environ["INIT"], flush=True)
+    lr = float(os.environ.get("LR", "2e-3"))
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4, foreach=False)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=epochs * len(tl))
     log = open(os.path.join(run, "log.txt"), "a")
     best = 1e9
     # Carried on where a run stopped (a machine asleep, a session cut short): its weights, optimiser

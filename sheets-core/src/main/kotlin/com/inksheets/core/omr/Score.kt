@@ -373,6 +373,18 @@ object PlayOrder {
     fun unrolled(score: Score): Score = score.copy(measures = withJumps(score.measures).map { score.measures[it] })
 
     /**
+     * [score] as played from bar [from] on, to the end: from the first time bar [from] comes round
+     * (a multi-bar rest holding it, from the rest) - a repeat after it taken back as written, one
+     * it is inside of played on from there, as a player picking up there would.
+     */
+    fun from(score: Score, from: Int): List<Measure> {
+        val all = unrolled(score).measures
+        val i = all.indexOfFirst { from >= it.number && from < it.number + it.bars }.takeIf { it >= 0 }
+            ?: all.indexOfFirst { it.number >= from }.takeIf { it >= 0 } ?: return emptyList()
+        return all.subList(i, all.size)
+    }
+
+    /**
      * [indices], and D.S. al Coda where a part has one segno and two coda signs - "To Coda" in
      * the body, the coda's own start after the D.S.: up to the coda, back to the segno (repeats
      * not taken again), on to "To Coda", then the coda. Anything else is played as it stands:

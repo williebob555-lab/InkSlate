@@ -48,4 +48,22 @@ class BarEditTest {
         assertEquals(1.0, BarEdit.quarters(t), 1e-9)
         assertEquals(1.5, BarEdit.quarters(BarEdit.triplet(t, 0)), 1e-9)
     }
+
+    @Test
+    fun `accidentals written by hand carry on through the bar, and a short bar filled out with rests`() {
+        // Two B's in one flat: both B flat by the key.
+        var events: List<Event> = BarEdit.step(bar, listOf(note(4, 4, 0f), note(4, 4, 10f)), 0, 0)
+        assertEquals(listOf("Bb4", "Bb4"), events.map { (it as Note).pitches[0].toString() })
+        // A natural before the first: both B natural (it carries on in the bar).
+        events = BarEdit.accidental(bar, events, 0, 0)
+        assertEquals(0, BarEdit.accidentalOf(events, 0))
+        assertEquals(listOf("B4", "B4"), events.map { (it as Note).pitches[0].toString() })
+        // Taken off again: the key's flat back.
+        events = BarEdit.accidental(bar, events, 0, null)
+        assertEquals(listOf("Bb4", "Bb4"), events.map { (it as Note).pitches[0].toString() })
+        // Two quarters of four: filled with a half rest.
+        events = BarEdit.fillWithRests(bar, events)
+        assertEquals(4.0, BarEdit.quarters(events), 1e-9)
+        assertTrue(events.last() is Rest && events.last().duration.base == 2)
+    }
 }
