@@ -162,7 +162,8 @@ object Controllers {
         else -> null
     }
 
-    fun isSweep(b: RemoteButton) = range(b.kind) != null
+    /** A pedal's sweep: an action with a range, and no value of its own ("Set the tempo to 120" is a switch's). */
+    fun isSweep(b: RemoteButton) = range(b.kind) != null && b.value == null
 
     /** The value [b]'s control at [value] (0-127) stands for: across its action's range, in whole steps. */
     fun valueOf(b: ControlBinding, value: Int): Double? {

@@ -214,10 +214,14 @@ internal fun PodGoDialog(state: SheetsState, onClose: () -> Unit) {
         }
     }
 
+    if (picking && spot != null) {
+        ControllerActionDialog(state, sweeps = spot.kind != PodGoPicture.Kind.SWITCH,
+            onPick = { action -> hub.bindSpot(spot.id, action); picking = false }, onDismiss = { picking = false })
+        return
+    }
     SheetDialog(
         title = when {
             spot == null -> "POD Go"
-            picking -> "What should ${spot.label} do?"
             else -> spot.name
         },
         onDismiss = { hub.cancelPlacing(); onClose() },
@@ -225,7 +229,6 @@ internal fun PodGoDialog(state: SheetsState, onClose: () -> Unit) {
         buttons = {
             when {
                 spot == null -> TextButton(onClick = { hub.cancelPlacing(); onClose() }) { Text("Close") }
-                picking -> TextButton(onClick = { back() }) { Text("Back") }
                 listening -> {
                     TextButton(onClick = { back() }) { Text("Back") }
                     TextButton(onClick = { heard?.let { hub.keepPlaced(spot.id, it) } }, enabled = heard != null) { Text("Keep") }
@@ -238,12 +241,6 @@ internal fun PodGoDialog(state: SheetsState, onClose: () -> Unit) {
             }
         }
     ) {
-        if (picking && spot != null) {
-            ActionPicker(state, sweeps = spot.kind != PodGoPicture.Kind.SWITCH) { action ->
-                hub.bindSpot(spot.id, action); picking = false
-            }
-            return@SheetDialog
-        }
         val details: @Composable () -> Unit = {
             when {
                 spot == null -> Overview(state, onTap = { tap(it) })
@@ -364,24 +361,4 @@ private fun SpotDetails(state: SheetsState, spot: PodGoPicture.Spot, onAdd: () -
         }
     }
     TextButton(onClick = onAdd) { Text(if (does.isEmpty()) "Give it an action..." else "Give it another action...") }
-}
-
-/** The actions to choose from: the sweeps for a pedal or knob; the rest for a switch. */
-@Composable
-private fun ActionPicker(state: SheetsState, sweeps: Boolean, onPick: (com.inksheets.core.RemoteButton) -> Unit) {
-    var query by remember { mutableStateOf("") }
-    Column {
-        OutlinedTextField(query, { query = it }, placeholder = { Text("Find") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.Top) {
-            var section = ""
-            for (o in controlOffers(state).filter { Controllers.isSweep(it.button) == sweeps && (query.isBlank() || it.name.contains(query.trim(), ignoreCase = true)) }) {
-                if (o.section != section) {
-                    section = o.section
-                    Text(section, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
-                }
-                Text(o.name, Modifier.fillMaxWidth().clickable { onPick(o.button) }.padding(vertical = 8.dp))
-            }
-        }
-    }
 }

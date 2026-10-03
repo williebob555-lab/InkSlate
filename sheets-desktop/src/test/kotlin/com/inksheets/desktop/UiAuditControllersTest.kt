@@ -72,6 +72,7 @@ class UiAuditControllersTest {
             val pod = FakePodGo()
             val state = SheetsState(Platform(tmp.newFolder("Music-$size"), pod))
             state.controllers.start()
+            state.change { ensureSong("Hey Baby"); addSetlist("Football - home") }
             runDesktopComposeUiTest(width = w, height = h) {
                 setContent { MaterialTheme { Surface { Column(Modifier.verticalScroll(rememberScrollState())) { SheetsSettings(state) } } } }
                 fun look(scene: String, vararg required: String) { waitForIdle(); total += UiAudit.check(this, size, "podgo-$scene", w, h, required = required.toList()).size }
@@ -89,10 +90,28 @@ class UiAuditControllersTest {
                 click("Keep")
                 look("spot", "Take it off", "Learn again", "Back")
                 click("Give it an action...")
-                look("actions", "Find", "Back")
+                look("actions", "Find", "Close")
                 click("Next page")
                 look("spot-set", "Back")
                 assertEquals(1, state.controllers.bindingsOf("fs1").size)
+                click("Back")
+                // FS2: a song of this device's library, chosen now; then a tempo of its own, set in the editor.
+                click("FS2")
+                say(ControlEvent(usb, ControlEvent.PROGRAM, 1, 3, 3))
+                click("Keep")
+                click("Give it an action...")
+                look("actions-switch", "Find")
+                for (o in listOf("Go to a song you choose now", "Play a setlist you choose now", "Go to a bookmark you choose now", "A sequence"))
+                    assertEquals(o, true, onAllNodes(hasText(o, substring = true)).fetchSemanticsNodes().isNotEmpty())
+                click("Go to a song you choose now")
+                look("song-pick", "Hey Baby")
+                click("Hey Baby")
+                assertEquals("Hey Baby", state.controllers.bindingsOf("fs2").single().action.title)
+                click("Give it another action...")
+                click("Set the tempo to...")
+                look("editor", "Cancel", "Add")
+                click("Add")
+                state.controllers.bindingsOf("fs2").last().let { assertEquals(120.0, it.action.value); assertEquals(false, it.continuous) }
                 click("Back")
                 // The pedal: put on, given the tempo, and moved.
                 click("EXP")

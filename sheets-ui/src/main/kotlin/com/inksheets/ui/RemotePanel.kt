@@ -234,17 +234,7 @@ class RemoteControl(private val state: SheetsState) {
         val lib = state.library
         if (lib != null && state.version != libraryVersion) {
             libraryVersion = state.version
-            val songs = lib.songs.sortedBy { it.title.lowercase() }
-            h.library(RemoteLink.Library(
-                songs = songs.map { RemoteLink.Item(it.id, it.title, it.color) },
-                setlists = lib.setlists.sortedBy { it.name.lowercase() }.map { RemoteLink.Item(it.id, it.name, it.color) },
-                bookmarks = songs.flatMap { s ->
-                    s.bookmarks.sortedWith(compareBy(nullsLast()) { it.rank }).map { b ->
-                        RemoteLink.Item(listOf(s.id, b.part.orEmpty(), b.page, b.label).joinToString("|"), "${s.title} - ${b.label}", b.color ?: s.color)
-                    }
-                },
-                profiles = state.profiles.map { RemoteLink.Item(it.id, it.name) }
-            ))
+            h.library(listing(state))
         }
         val song = state.current
         val (page, pages) = state.pageShown
@@ -552,6 +542,22 @@ class RemoteControl(private val state: SheetsState) {
     }
 
     companion object {
+        /** This device's songs, setlists, bookmarks and instruments, as a remote picks from them. */
+        fun listing(state: SheetsState): RemoteLink.Library {
+            val lib = state.library ?: return RemoteLink.Library()
+            val songs = lib.songs.sortedBy { it.title.lowercase() }
+            return RemoteLink.Library(
+                songs = songs.map { RemoteLink.Item(it.id, it.title, it.color) },
+                setlists = lib.setlists.sortedBy { it.name.lowercase() }.map { RemoteLink.Item(it.id, it.name, it.color) },
+                bookmarks = songs.flatMap { s ->
+                    s.bookmarks.sortedWith(compareBy(nullsLast()) { it.rank }).map { b ->
+                        RemoteLink.Item(listOf(s.id, b.part.orEmpty(), b.page, b.label).joinToString("|"), "${s.title} - ${b.label}", b.color ?: s.color)
+                    }
+                },
+                profiles = state.profiles.map { RemoteLink.Item(it.id, it.name) }
+            )
+        }
+
         private const val K_KEY = "sheets_remote_key"
         private const val K_HOSTING = "sheets_remote_hosting"
         private const val K_LAST = "sheets_remote_last"
@@ -1133,8 +1139,8 @@ internal fun defaultName(b: RemoteButton, shown: RemoteLink.State?, lib: RemoteL
         RemoteButton.SET -> "The set..."
         RemoteButton.PAGE -> "Page ${num(v)}"
         RemoteButton.PARTS -> "Part..."
-        RemoteButton.PROFILES -> "Instrument..."
-        RemoteButton.BOOKMARKS -> "Bookmarks..."
+        RemoteButton.PROFILES -> b.title?.let { "Instrument: $it" } ?: "Instrument..."
+        RemoteButton.BOOKMARKS -> b.title?.let { "Bookmark: $it" } ?: "Bookmarks..."
         RemoteButton.TEMPO -> if ((v ?: 0.0) < 0) "Tempo −${num(-(v ?: 0.0))}" else "Tempo +${num(v)}"
         RemoteButton.TEMPO_SET -> "♩ = ${num(v)}"
         RemoteButton.TAP -> "Tap tempo"
@@ -1601,33 +1607,92 @@ internal fun offers(shown: RemoteLink.State?): List<Offer> {
 private fun needsMore(b: RemoteButton) =
     valueHint(b.kind) != null || b.kind == RemoteButton.MACRO || (b.kind == RemoteButton.MESSAGE && b.text == null)
 
-/** Adding a button to the remote - or, [forStep], a step of a sequence (no lists, no sequences). */
+/**
+ * What a pedal, footswitch or fader can do: everything a remote's button can, done here - a song,
+ * setlist, bookmark or instrument chosen now from this device's library, a page, a tempo, a
+ * message, a sequence of steps. [sweeps]: a pedal or knob (the sweeps only); false, a switch (all
+ * but the sweeps); null, either, not yet known.
+ */
 @Composable
-private fun AddDeckButtonDialog(state: SheetsState, forStep: Boolean, onAdd: (RemoteButton) -> Unit, onDismiss: () -> Unit) {
+internal fun ControllerActionDialog(state: SheetsState, sweeps: Boolean?, onPick: (RemoteButton) -> Unit, onDismiss: () -> Unit) =
+    AddDeckButtonDialog(state, forStep = false, onAdd = onPick, onDismiss = onDismiss, controller = true, sweeps = sweeps)
+
+/** What a controller can be given: the sweeps, then what a remote's button does, then the remote's own buttons. */
+internal fun controllerOffers(state: SheetsState, sweeps: Boolean?, forStep: Boolean = false): List<Offer> {
+    val sweepOffers = if (sweeps == false || forStep) emptyList() else SWEEP_OFFERS
+    if (sweeps == true) return sweepOffers
+    // A list on a remote's screen to pick from each time: nothing for a foot. A bookmark or an
+    // instrument chosen now does.
+    val screenOnly = setOf(RemoteButton.SONGS, RemoteButton.SET, RemoteButton.PARTS, RemoteButton.TOUCHPAD, RemoteButton.MESSAGE_TYPE) +
+        if (forStep) setOf(RemoteButton.TAP, RemoteButton.MACRO) else emptySet()
+    val own = offers(null).filter { it.button.kind !in screenOnly }.map { o ->
+        when (o.button.kind) {
+            RemoteButton.BOOKMARKS -> Offer(o.section, "Go to a bookmark you choose now", o.button)
+            RemoteButton.PROFILES -> Offer(o.section, "Every song to an instrument you choose now", o.button)
+            else -> o
+        }
+    }
+    val presets = state.presets.map { p -> Offer("Playing together", "One-tap: ${p.text}", RemoteButton(RemoteButton.MESSAGE, text = p.text, urgent = p.urgent, color = p.color)) }
+    val deck = if (forStep) emptyList() else state.remote.deck.filter { it.kind !in ControllerHub.PICKERS || it.id != null }.map {
+        Offer("The remote's buttons", it.label ?: defaultName(it, null, RemoteControl.listing(state)), it)
+    }
+    // (One-tap messages in with their section.)
+    val (before, after) = own.partition { it.section != "More than one thing" }
+    return sweepOffers + before + presets + after + deck
+}
+
+/** A pedal or fader sweeping a value across its range: no value of their own, it comes from the pedal. */
+internal val SWEEP_OFFERS = listOf(
+    Offer("Pedals and faders (moved across)", "Tempo, 40 to 240", RemoteButton(RemoteButton.TEMPO_SET)),
+    Offer("Pedals and faders (moved across)", "Recording volume, 0 to 100%", RemoteButton(RemoteButton.AUDIO_VOLUME_SET)),
+    Offer("Pedals and faders (moved across)", "Recording speed, 50 to 125%", RemoteButton(RemoteButton.AUDIO_SPEED_SET))
+)
+
+/**
+ * Adding a button to the remote - or, [forStep], a step of a sequence (no lists, no sequences) -
+ * or, [controller], what a controller here does, chosen from this device's own library.
+ */
+@Composable
+private fun AddDeckButtonDialog(state: SheetsState, forStep: Boolean, onAdd: (RemoteButton) -> Unit, onDismiss: () -> Unit,
+                                controller: Boolean = false, sweeps: Boolean? = false) {
     val remote = state.remote
+    val library = if (controller) remember(state.version) { RemoteControl.listing(state) } else remote.hostLibrary
     var choosing by remember { mutableStateOf<String?>(null) }
     var configuring by remember { mutableStateOf<RemoteButton?>(null) }
+    val what = if (controller) "It goes to" else "A button for"
     when (choosing) {
         RemoteButton.SONG -> {
-            PickRemoteItem("A button for which song?", remote.hostLibrary?.songs.orEmpty(),
+            PickRemoteItem("$what which song?", library?.songs.orEmpty(),
                 onChosen = { onAdd(RemoteButton(RemoteButton.SONG, it.id, it.title)) }, onDismiss = { choosing = null })
             return
         }
         RemoteButton.SETLIST -> {
-            PickRemoteItem("A button for which setlist?", remote.hostLibrary?.setlists.orEmpty(),
+            PickRemoteItem("$what which setlist?", library?.setlists.orEmpty(),
                 onChosen = { onAdd(RemoteButton(RemoteButton.SETLIST, it.id, it.title)) }, onDismiss = { choosing = null })
+            return
+        }
+        RemoteButton.BOOKMARKS -> {
+            PickRemoteItem("$what which bookmark?", library?.bookmarks.orEmpty(),
+                onChosen = { onAdd(RemoteButton(RemoteButton.BOOKMARKS, it.id, it.title)) }, onDismiss = { choosing = null })
+            return
+        }
+        RemoteButton.PROFILES -> {
+            PickRemoteItem("Every song to which instrument?", library?.profiles.orEmpty(),
+                onChosen = { onAdd(RemoteButton(RemoteButton.PROFILES, it.id, it.title)) }, onDismiss = { choosing = null })
             return
         }
     }
     configuring?.let { b ->
-        ButtonEditor(state, b, isNew = true, onSave = onAdd, onRemove = null, onDismiss = { configuring = null })
+        ButtonEditor(state, b, isNew = true, onSave = onAdd, onRemove = null, onDismiss = { configuring = null }, controller = controller)
         return
     }
     val pickers = setOf(RemoteButton.SONGS, RemoteButton.SET, RemoteButton.PARTS, RemoteButton.PROFILES, RemoteButton.BOOKMARKS,
         RemoteButton.MESSAGE_TYPE, RemoteButton.TAP, RemoteButton.MACRO)
-    val all = offers(remote.shown).filter { !forStep || it.button.kind !in pickers }
+    val all = if (controller) controllerOffers(state, sweeps, forStep) else offers(remote.shown).filter { !forStep || it.button.kind !in pickers }
+    val chosenNow = if (controller) setOf(RemoteButton.SONG, RemoteButton.SETLIST, RemoteButton.BOOKMARKS, RemoteButton.PROFILES)
+        else setOf(RemoteButton.SONG, RemoteButton.SETLIST)
     var query by remember { mutableStateOf("") }
-    SheetDialog(title = if (forStep) "Add a step" else "Add a button", onDismiss = onDismiss) {
+    SheetDialog(title = if (forStep) "Add a step" else if (controller) "What should it do?" else "Add a button", onDismiss = onDismiss) {
         Column {
             OutlinedTextField(query, { query = it }, placeholder = { Text("Find") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
@@ -1640,8 +1705,8 @@ private fun AddDeckButtonDialog(state: SheetsState, forStep: Boolean, onAdd: (Re
                     Row(
                         Modifier.fillMaxWidth().clickable {
                             when {
-                                o.button.kind == RemoteButton.SONG || o.button.kind == RemoteButton.SETLIST -> choosing = o.button.kind
-                                needsMore(o.button) -> configuring = o.button
+                                o.button.kind in chosenNow && o.button.id == null -> choosing = o.button.kind
+                                needsMore(o.button) && !(controller && o.button in SWEEP_OFFERS.map { it.button }) -> configuring = o.button
                                 else -> onAdd(o.button)
                             }
                         }.padding(vertical = 10.dp),
@@ -1668,9 +1733,12 @@ private fun ButtonEditor(
     isNew: Boolean,
     onSave: (RemoteButton) -> Unit,
     onRemove: (() -> Unit)?,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    /** For a controller here: no colour (there is no button to colour), steps from this device's library. */
+    controller: Boolean = false
 ) {
     val remote = state.remote
+    val library = if (controller) remember(state.version) { RemoteControl.listing(state) } else remote.hostLibrary
     var label by remember { mutableStateOf(button.label.orEmpty()) }
     var value by remember { mutableStateOf(num(button.value ?: valueHint(button.kind)?.second)) }
     var text by remember { mutableStateOf(button.text.orEmpty()) }
@@ -1687,20 +1755,21 @@ private fun ButtonEditor(
         steps = steps.toList()
     )
     if (addingStep) {
-        AddDeckButtonDialog(state, forStep = true, onAdd = { steps += it; addingStep = false }, onDismiss = { addingStep = false })
+        AddDeckButtonDialog(state, forStep = true, onAdd = { steps += it; addingStep = false }, onDismiss = { addingStep = false },
+            controller = controller, sweeps = false)
         return
     }
     val preview = built()
     val ready = (button.kind != RemoteButton.MESSAGE || text.isNotBlank()) && (button.kind != RemoteButton.MACRO || steps.isNotEmpty()) &&
         (valueHint(button.kind)?.second == null || preview.value != null)
-    SheetDialog(title = if (isNew) "New button" else "This button", onDismiss = onDismiss, buttons = {
+    SheetDialog(title = if (controller) "What it does" else if (isNew) "New button" else "This button", onDismiss = onDismiss, buttons = {
         onRemove?.let { TextButton(onClick = it) { Text("Take it off", color = MaterialTheme.colorScheme.error) } }
         TextButton(onClick = onDismiss) { Text("Cancel") }
         TextButton(onClick = { onSave(built()) }, enabled = ready) { Text(if (isNew) "Add" else "Save") }
     }) {
         Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())) {
-            Text("Does: " + defaultName(preview.copy(label = null), remote.shown, remote.hostLibrary), style = MaterialTheme.typography.bodyMedium)
-            OutlinedTextField(label, { label = it }, label = { Text("Name on the button (blank: as above)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+            Text("Does: " + defaultName(preview.copy(label = null), remote.shown, library), style = MaterialTheme.typography.bodyMedium)
+            OutlinedTextField(label, { label = it }, label = { Text(if (controller) "Its name in the list (blank: as above)" else "Name on the button (blank: as above)") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
             valueHint(button.kind)?.let { (hint, _) ->
                 OutlinedTextField(value, { value = it }, label = { Text(hint) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
             }
@@ -1712,8 +1781,8 @@ private fun ButtonEditor(
                 }
                 Text("Sent only while that device is leading.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text("Colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!controller) Text("Colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp))
+            if (!controller) Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.FilterChip(selected = colour == null, onClick = { colour = null }, label = { Text("None") })
                 for (c in MARK_COLOURS) {
                     Box(
@@ -1731,7 +1800,7 @@ private fun ButtonEditor(
                         Text("${i + 1}.", modifier = Modifier.width(28.dp))
                         Icon(iconFor(step, remote.shown), null, modifier = Modifier.size(20.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(step.label ?: defaultName(step, remote.shown, remote.hostLibrary), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(step.label ?: defaultName(step, remote.shown, library), modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         IconButton(onClick = { if (i > 0) steps.add(i - 1, steps.removeAt(i)) }, enabled = i > 0) { Icon(Icons.Default.ArrowUpward, "Earlier") }
                         IconButton(onClick = { steps.removeAt(i) }) { Icon(Icons.Default.Close, "Take this step out") }
                     }

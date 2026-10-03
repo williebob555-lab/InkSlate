@@ -101,25 +101,7 @@ private fun BindingRow(state: SheetsState, b: ControlBinding, onRemove: () -> Un
 }
 
 internal fun actionName(state: SheetsState, b: RemoteButton): String =
-    controlOffers(state).firstOrNull { it.button == b }?.name ?: defaultName(b, state.remote.shown, state.remote.hostLibrary)
-
-/** What a control can do: the sweeps, the remote's buttons that need no list to pick from, and the remote's own buttons. */
-internal fun controlOffers(state: SheetsState): List<Offer> {
-    val sweeps = "Pedals and faders (moved across)"
-    val shown = state.remote.shown
-    return listOf(
-        Offer(sweeps, "Tempo, 40 to 240", RemoteButton(RemoteButton.TEMPO_SET)),
-        Offer(sweeps, "Recording volume, 0 to 100%", RemoteButton(RemoteButton.AUDIO_VOLUME_SET)),
-        Offer(sweeps, "Recording speed, 50 to 125%", RemoteButton(RemoteButton.AUDIO_SPEED_SET))
-    ) + offers(shown).filter {
-        val k = it.button.kind
-        k !in ControllerHub.PICKERS && k != RemoteButton.MACRO && k != RemoteButton.TEMPO_SET &&
-            k != RemoteButton.SONG && k != RemoteButton.SETLIST && !(k == RemoteButton.MESSAGE && it.button.text == null)
-    } + state.remote.deck.filter { it.kind !in ControllerHub.PICKERS }.map {
-        // The remote's own buttons, songs and sequences and all, as set up there.
-        Offer("The remote's buttons", it.label ?: defaultName(it, shown, state.remote.hostLibrary), it)
-    }
-}
+    b.label ?: SWEEP_OFFERS.firstOrNull { it.button == b }?.name ?: defaultName(b, null, RemoteControl.listing(state))
 
 @Composable
 private fun AddControlDialog(state: SheetsState, onClose: () -> Unit) {
@@ -153,21 +135,5 @@ private fun AddControlDialog(state: SheetsState, onClose: () -> Unit) {
         }
         return
     }
-    var query by remember { mutableStateOf("") }
-    SheetDialog(title = "What should it do?", onDismiss = onClose) {
-        Column {
-            OutlinedTextField(query, { query = it }, placeholder = { Text("Find") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Column(Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
-                var section = ""
-                for (o in controlOffers(state).filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }) {
-                    if (o.section != section) {
-                        section = o.section
-                        Text(section, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
-                    }
-                    Text(o.name, Modifier.fillMaxWidth().clickable { hub.learn(o.button) }.padding(vertical = 8.dp))
-                }
-            }
-        }
-    }
+    ControllerActionDialog(state, sweeps = null, onPick = { hub.learn(it) }, onDismiss = onClose)
 }

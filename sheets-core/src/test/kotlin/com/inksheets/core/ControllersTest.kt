@@ -119,4 +119,12 @@ class ControllersTest {
         assertEquals(listOf(lit), Controllers.firing(listOf(lit, dark), on))
         assertEquals(listOf(dark), Controllers.firing(listOf(lit, dark), off))
     }
+
+    @Test
+    fun `a sweep has no value of its own - a tempo set by a switch is not one`() {
+        assertTrue(Controllers.isSweep(RemoteButton(RemoteButton.TEMPO_SET)))
+        assertTrue(!Controllers.isSweep(RemoteButton(RemoteButton.TEMPO_SET, value = 120.0)))
+        val fixed = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.CC, 5, 1)), RemoteButton(RemoteButton.TEMPO_SET, value = 120.0))
+        assertTrue(!fixed.continuous && fixed.everyMessage)
+    }
 }

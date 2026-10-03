@@ -193,7 +193,7 @@ class ControllerHub(private val state: SheetsState) {
         val now = System.currentTimeMillis()
         if (heard.firstOrNull()?.control != e.control) { heard.clear(); heardAt.clear() }
         heard += e; heardAt += now
-        val sweep = Controllers.range(action.kind) != null && e.kind == ControlEvent.CC
+        val sweep = Controllers.isSweep(action) && e.kind == ControlEvent.CC
         // A switch's press: a momentary one sends on (127) and, let go, off (0) moments later; one
         // that sends a single message a press (on one press, off the next - a POD Go footswitch set
         // to toggle) is taken at every message. Until a quick "off" follows, it is taken as that.
@@ -228,7 +228,8 @@ class ControllerHub(private val state: SheetsState) {
     }
 
     private fun act(a: RemoteButton, value: Double?) {
-        if (a.kind in PICKERS) return
+        // (A list to pick from has nothing for a foot - unless chosen already: a bookmark, an instrument.)
+        if (a.kind in PICKERS && a.id == null) return
         state.remote.performHere(RemoteLink.Command(
             action = if (a.kind == RemoteButton.ACTION) a.id.orEmpty() else a.kind,
             id = a.id, text = a.text, value = value ?: a.value, color = a.color, urgent = a.urgent
