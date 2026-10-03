@@ -3907,7 +3907,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val a = chords[k]; val b = chords[k + 1]
                 val pair = a.firstNotNullOfOrNull { ha -> b.firstOrNull { hb -> abs(ha.step - hb.step) == 1 && (hb.x - ha.x) in (sp * 0.6f).toInt()..(sp * 1.5f).toInt() &&
                     // (The head on the stem's far side may have been found with no stem of its own, and so no flags.)
-                    (ha.kind == "noteheadBlack") == (hb.kind == "noteheadBlack") && (ha.flags == hb.flags || ha.stemX < 0 || hb.stemX < 0) }?.let { ha to it } }
+                    (ha.kind == "noteheadBlack") == (hb.kind == "noteheadBlack") && (ha.flags == hb.flags || ha.stemX < 0 || hb.stemX < 0 ||
+                        // (Or both found on the one stem at the join, its flags seen from one side only.)
+                        abs(ha.stemX - hb.x) <= sp * 0.9f && abs(hb.stemX - hb.x) <= sp * 0.9f) }?.let { ha to it } }
                 // (Or each head found with a stem of its own, both at the join between the two: one stem, seen twice.)
                 val one = pair != null && (oneStemBetween(clean, s, pair.first, pair.second) ||
                     System.getProperty("inksheets.omr.nostemtwice") == null && listOf(pair.first, pair.second).all { it.stemX >= 0 && abs(it.stemX - pair.second.x) <= sp * 0.9f })
