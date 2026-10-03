@@ -1065,6 +1065,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
 
     /** What the last signature read by the trained digit reader may also be, likeliest first (null when read otherwise). */
     private var lastTimeChoices: List<TimeSig>? = null
+    /** The part's own time-signature figures read surely (a bottom's 2, 4, 8): what its others are like (see timeAt). */
+    private val figureExemplars = ArrayList<Pair<Int, BooleanArray>>()
+
     /** What a signature the trained digit reader was not sure enough of may be (see timeAt). */
     private var weakTimeChoices: List<TimeSig>? = null
     /** Those, for the bar it stands at the start of - until that bar is read. */
@@ -2426,7 +2429,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     if (h < sp * 1.4f) { if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} figure ${h / sp} sp tall"); return null }
                     val m = Digits.mask(fig, 0, y0, w - 1, y1) ?: return null
                     val odds = Digits.oddsTrained(m, h / sp, w.toFloat() / h, inStaff = true) ?: return null
+                    // The part's own figures seen before, read surely as bottoms - a 2, 4 or 8 is the same
+                    // glyph over and under: a figure plainly like one of them is that digit, whatever the
+                    // reader (trained on other fonts) makes of it.
+                    fun iou(a: BooleanArray, b: BooleanArray): Float { var both = 0; var any = 0; for (k in a.indices) { if (a[k] && b[k]) both++; if (a[k] || b[k]) any++ }; return if (any == 0) 0f else both.toFloat() / any }
+                    val near = figureExemplars.groupBy { it.first }.mapValues { (_, l) -> l.maxOf { iou(m, it.second) } }
+                    val like = near.maxByOrNull { it.value }
+                    if (like != null && like.value >= 0.62f && near.filterKeys { it != like.key }.values.all { it < like.value - 0.1f } && odds[like.key] < 0.9f) {
+                        if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} like the part's ${like.key} (${"%.2f".format(like.value)})")
+                        val rest = (0..10).filter { it != like.key }.sumOf { odds[it].toDouble() }.toFloat()
+                        for (k in 0..10) if (k != like.key && rest > 0f) odds[k] *= 0.1f / rest
+                        odds[like.key] = 0.9f
+                    }
                     val d = (0..9).maxBy { odds[it] }; val p = odds[d]
+                    if (!upper && p >= 0.9f && d in listOf(2, 4, 8) && runs.size == 1 && figureExemplars.size < 30 && like?.takeIf { it.key == d && it.value > 0.9f } == null) figureExemplars += d to m
                     if (traceRests) println("    timeAt $x0 staff y ${s.top}: trained ${if (upper) "top" else "bottom"} $d ${"%.2f".format(p)} (${(0..9).filter { odds[it] >= 0.05f }.joinToString { "$it ${"%.2f".format(odds[it])}" }})")
                     System.getProperty("inksheets.omr.timecrops")?.let { dir ->
                         val sb = StringBuilder("P1\n$w $h\n")
@@ -2439,8 +2455,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }
                 return values.sortedByDescending { it.second } to runs.last().last
             }
-            val top = half(true) ?: return null
+            // (The bottom first: a figure read there surely helps read the top.)
             val bottom = half(false) ?: return null
+            val top = half(true) ?: return null
             // Every signature these figures may be, likeliest first: the bars after it choose (see read).
             val all = top.first.filter { it.first in 1..16 }.flatMap { (t, p) -> bottom.first.filter { it.first in listOf(2, 4, 8, 16) }.map { (b, q) -> TimeSig(t, b) to p * q } }
                 .sortedByDescending { it.second }
