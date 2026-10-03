@@ -551,8 +551,14 @@ class ReadingBenchmark {
             // Which kinds of change the right reading needed (its cheapest way there), for fitting their costs.
             if (calibrate && !now) {
                 val right = com.inksheets.core.omr.BarChoices.all(m).filter { it.changes.isNotEmpty() && barRight(mi, it.events) == true }.minByOrNull { it.kinds.size * 100 + it.cost }
+                // Where the right reading stands in the order offered, a long way down.
+                val order = com.inksheets.core.omr.BarChoices.of(m, 60, deeper = true)
+                val at = order.indexOfFirst { barRight(mi, it.events) == true }
+                val bucket = when { at < 0 -> "rank: not in 60"; at < 3 -> "rank: 1-3"; at < 6 -> "rank: 4-6"; at < 12 -> "rank: 7-12"; at < 30 -> "rank: 13-30"; else -> "rank: 31-60" }
                 synchronized(calibration) {
                     calibration.merge("(bars)", 1, Int::plus)
+                    calibration.merge("($bucket)", 1, Int::plus)
+                    if (at >= 3) calibration.merge("(${bucket.removePrefix("rank: ")} by ${right?.kinds?.sorted()?.joinToString("+") ?: "none near"})", 1, Int::plus)
                     if (right == null) calibration.merge("(none within two changes)", 1, Int::plus)
                     else right.kinds.forEach { calibration.merge(it, 1, Int::plus) }
                 }
@@ -673,6 +679,8 @@ class ReadingBenchmark {
             val bars = calibration["(bars)"] ?: 0; val none = calibration["(none within two changes)"] ?: 0
             val kinds = calibration.filterKeys { !it.startsWith("(") }
             println("CALIBRATION: $bars bars read wrong; ${bars - none} have their right reading a change or two away; kinds needed: $kinds")
+            println("RANKS: " + calibration.filterKeys { it.startsWith("(rank") }.toSortedMap())
+            println("RANKED LOW BY KIND: " + calibration.filterKeys { it.startsWith("(") && " by " in it }.entries.sortedByDescending { it.value }.take(25).joinToString { "${it.key} ${it.value}" })
             println("COSTS: " + com.inksheets.core.omr.BarChoices.costsFrom(kinds, bars - none).entries.sortedBy { it.value }.joinToString { "\"${it.key}\" to ${"%.2f".format(java.util.Locale.ROOT, it.value)}f" })
         }
         if (looks.isNotEmpty()) println("LOOKS: " + looks.entries.sortedBy { it.key }.joinToString { "${it.key} ${it.value}" })
