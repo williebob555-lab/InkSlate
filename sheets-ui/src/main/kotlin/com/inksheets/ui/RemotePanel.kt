@@ -253,6 +253,7 @@ class RemoteControl(private val state: SheetsState) {
             page = page,
             pages = pages,
             part = if (song != null) state.partShown()?.let { com.inksheets.core.Instruments.partName(it) } else null,
+            instruments = if (song != null) state.partShown()?.let { p -> listOfNotNull(p.instrument) + p.also }.orEmpty() else emptyList(),
             setlistId = playing?.first,
             setlist = playing?.let { lib?.setlist(it.first)?.name },
             set = set,

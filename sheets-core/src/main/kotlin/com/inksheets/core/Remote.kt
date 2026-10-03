@@ -270,6 +270,8 @@ object RemoteLink {
         val stripOpen: Boolean = false,
         /** The instrument chosen for every song (a profile id). */
         val profileId: String? = null,
+        /** The instruments the part showing is for (instrument ids, its own first): for a watch's calibration to follow. */
+        val instruments: List<String> = emptyList(),
         /** The windows open over the music: [com.inkslate.core.PerformAction] names (TUNER, RECORDINGS, ...). */
         val windows: List<String> = emptyList(),
         /** Listen is on, and what it is doing in a few words (it hears nothing, when it turns). */

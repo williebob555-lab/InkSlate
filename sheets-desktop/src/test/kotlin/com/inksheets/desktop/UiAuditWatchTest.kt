@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inksheets.core.Part
 import com.inksheets.core.Song
@@ -81,8 +82,12 @@ class UiAuditWatchTest {
                 onAllNodes(hasText("New calibration", substring = true)).onLast().performScrollTo()
                 look("on", "New calibration...")
                 click("New calibration...")
-                onAllNodes(hasSetTextAction()).onLast().performTextInput("Electric bass")
                 look("naming", "Cancel", "Next")
+                click("Bass Guitar")
+                onAllNodes(hasSetTextAction()).onLast().performScrollTo()
+                look("naming-chosen", "Cancel", "Next")
+                onAllNodes(hasSetTextAction()).onLast().performTextClearance()
+                onAllNodes(hasSetTextAction()).onLast().performTextInput("Electric bass")
                 click("Next")
                 look("starting", "Stop")
                 val c = state.watch.calibration!!
@@ -95,8 +100,13 @@ class UiAuditWatchTest {
                 click("Done")
                 onAllNodes(hasText("Calibrate more", substring = true)).onLast().performScrollTo()
                 look("calibrated", "Electric bass", "Calibrate more")
+                click("Instruments...")
+                look("instruments", "Cancel", "Keep")
+                click("String Bass")
+                click("Keep")
                 onAllNodes(hasText("New calibration", substring = true)).onLast().performScrollTo()
                 look("calibrated-end", "New calibration...")
+                org.junit.Assert.assertEquals(listOf("bass-guitar", "string-bass"), state.watch.instrumentsOf("Electric bass"))
             }
         }
         println("UIAUDIT watch: $total problem(s)")

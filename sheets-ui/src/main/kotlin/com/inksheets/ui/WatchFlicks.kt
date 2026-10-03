@@ -83,9 +83,51 @@ class WatchFlicks(private val state: SheetsState) {
 
     private fun inUseNow(): Boolean = state.remote.connected || state.currentPath != null
 
+    // ---- the calibration for the instrument of the part showing ------------------------------
+
+    /** The instruments (ids) each calibration is for, by its name. */
+    var instrumentsFor by mutableStateOf(decodeFor(state.platform.pref(K_FOR)))
+        private set
+
+    /** Give calibration [name] the instruments it is for. */
+    fun setInstruments(name: String, ids: List<String>) {
+        instrumentsFor = instrumentsFor + (name to ids.distinct())
+        state.platform.setPref(K_FOR, encodeFor(instrumentsFor))
+        follow()
+    }
+
+    /** What [name] is for: as given, or else any instrument it is named after ("Trombone"). */
+    fun instrumentsOf(name: String): List<String> = instrumentsFor[name]
+        ?: com.inksheets.core.Instruments.all.filter { i -> i.name.equals(name, true) || i.names.any { it.equals(name, true) } }.map { it.id }
+
+    /** The instruments of the part showing: on the device this one is the remote of, or here. */
+    fun partInstruments(): List<String> =
+        if (state.remote.target != null) state.remote.shown?.instruments.orEmpty()
+        else state.partShown()?.let { p -> listOfNotNull(p.instrument) + p.also }.orEmpty()
+
+    /** Why the calibration in use is the one it is, for the settings to say. */
+    var followed by mutableStateOf<String?>(null)
+        private set
+
+    /** Use the calibration for the instrument of the part showing - when there is one for it. */
+    private fun follow() {
+        if (calibration != null) return
+        val parts = partInstruments()
+        if (parts.isEmpty()) return
+        // The part's own instrument first, then what else it is printed for, then anything it reads the same as.
+        val same = parts.flatMap { com.inksheets.core.Instruments.byId[it]?.sameAs.orEmpty() }
+        val name = (parts + same).firstNotNullOfOrNull { id -> calibrations.firstOrNull { id in instrumentsOf(it) } } ?: return
+        followed = com.inksheets.core.Instruments.byId[parts.first()]?.name
+        if (name != active) {
+            state.platform.log("Watch: the part is for ${followed ?: parts.first()} - using the calibration for $name")
+            use(name)
+        }
+    }
+
     /** Every few seconds: start the watch listening as this device comes into use, and keep it so. */
     private fun tick() {
         if (!on || link == null) return
+        follow()
         val now = inUseNow()
         if (now && !inUse) { useCount++; beatAt = 0L }
         inUse = now
@@ -216,10 +258,14 @@ class WatchFlicks(private val state: SheetsState) {
         link?.send(WatchWire.MODEL, model?.encode()?.toByteArray() ?: ByteArray(0)) { look() }
     }
 
-    /** Use [name]'s calibration: trained again from all its recordings, and sent to the watch. */
+    /** Each calibration as trained, so switching instruments does not train again. */
+    private val trained = HashMap<String, FlickTrainer.Report>()
+
+    /** Use [name]'s calibration: trained from all its recordings (once), and sent to the watch. */
     fun use(name: String) {
+        active = name
         Thread({
-            val r = FlickTrainer.train(sessionsOf(name), name)
+            val r = synchronized(trained) { trained[name] } ?: FlickTrainer.train(sessionsOf(name), name).also { synchronized(trained) { trained[name] = it } }
             state.platform.onMain {
                 report = r
                 active = name
@@ -232,6 +278,7 @@ class WatchFlicks(private val state: SheetsState) {
 
     fun delete(name: String) {
         File(folder, safe(name)).deleteRecursively()
+        if (name in instrumentsFor) { instrumentsFor = instrumentsFor - name; state.platform.setPref(K_FOR, encodeFor(instrumentsFor)) }
         listCalibrations()
         if (active == name) {
             active = null; report = null
@@ -338,6 +385,7 @@ class WatchFlicks(private val state: SheetsState) {
                         }
                     }
                     val r = FlickTrainer.train(owner.sessionsOf(name), name)
+                    synchronized(owner.trained) { owner.trained[name] = r }
                     state.platform.onMain {
                         owner.listCalibrations()
                         result = r
@@ -394,6 +442,14 @@ class WatchFlicks(private val state: SheetsState) {
         private const val K_ON = "sheets_watch_on"
         private const val K_ACTIVE = "sheets_watch_active"
         private const val K_MODEL = "sheets_watch_model"
+        private const val K_FOR = "sheets_watch_instruments"
+
+        /** "Trombone=trombone,bass-trombone" a line each. */
+        private fun encodeFor(m: Map<String, List<String>>) = m.entries.joinToString("\n") { (k, v) -> "${k.replace("=", " ").replace("\n", " ")}=${v.joinToString(",")}" }
+        private fun decodeFor(text: String?): Map<String, List<String>> = text.orEmpty().lines().mapNotNull { line ->
+            val i = line.lastIndexOf('=')
+            if (i <= 0) null else line.substring(0, i) to line.substring(i + 1).split(',').filter { it.isNotBlank() }
+        }.toMap()
         /** Playing before the first cue. */
         const val FIRST_CUE_MS = 30_000L
         /** Playing after the last. */

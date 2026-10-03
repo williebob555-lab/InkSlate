@@ -108,6 +108,35 @@ class WatchFlicksTest {
     }
 
     @Test
+    fun `the calibration in use follows the instrument of the part showing`() {
+        WatchFlicks.timeScale = 0.02
+        val fake = FakeWatch(0.02)
+        val state = SheetsState(Platform(tmp.newFolder("Music"), fake))
+        val watch = state.watch
+        watch.turn(true)
+        for ((name, ids) in listOf("Trombone" to listOf("trombone", "bass-trombone"), "Bass" to listOf("bass-guitar", "string-bass"))) {
+            javax.swing.SwingUtilities.invokeAndWait { watch.setInstruments(name, ids) }
+            val c = watch.calibrate(name)
+            waitFor("$name calibrated") { c.phase == "done" || c.phase == "failed" }
+            assertEquals(c.problem, "done", c.phase)
+            javax.swing.SwingUtilities.invokeAndWait { watch.closeCalibration() }
+        }
+        waitFor("the watch to have Bass") { fake.model?.name == "Bass" }
+        fun show(instrument: String) = javax.swing.SwingUtilities.invokeAndWait {
+            state.current = Song("s-$instrument", "A song", parts = listOf(Part(file = "$instrument.pdf", instrument = instrument)))
+        }
+        show("trombone")
+        waitFor("the watch to switch to Trombone", 15_000) { fake.model?.name == "Trombone" && watch.active == "Trombone" }
+        show("string-bass")
+        waitFor("the watch to switch to Bass", 15_000) { fake.model?.name == "Bass" }
+        // A part with no calibration of its own: the one in use stays.
+        show("trumpet")
+        Thread.sleep(6_000)
+        assertEquals("Bass", fake.model?.name)
+        assertEquals("Trombone", watch.instrumentsOf("Trombone").let { if ("trombone" in it) "Trombone" else "?" })
+    }
+
+    @Test
     fun `a calibration with no watch app answering says what to do`() {
         WatchFlicks.timeScale = 0.02
         val silent = object : WatchLink {

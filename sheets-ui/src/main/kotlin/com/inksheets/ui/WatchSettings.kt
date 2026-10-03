@@ -49,6 +49,7 @@ import com.inksheets.core.watch.FlickTrainer
 internal fun WatchSettings(state: SheetsState) {
     val watch = state.watch
     var naming by remember { mutableStateOf<String?>(null) }
+    var choosing by remember { mutableStateOf<String?>(null) }
     Row(
         Modifier.fillMaxWidth().clickable(enabled = watch.available) { watch.turn(!watch.on) }.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -100,38 +101,100 @@ internal fun WatchSettings(state: SheetsState) {
         Text("Calibrations", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
         if (watch.calibrations.isEmpty()) {
             Text("None yet. Each takes about three minutes of playing.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text(
+                "The one in use follows the part showing: a trombone part, the trombone's calibration. Or pick one here.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            watch.followed?.let { Text("Part showing is for $it - using ${watch.active ?: "none"}.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
         }
         watch.calibrations.forEach { name ->
             Row(Modifier.fillMaxWidth().clickable { watch.use(name) }, verticalAlignment = Alignment.CenterVertically) {
                 RadioButton(selected = watch.active == name, onClick = { watch.use(name) })
-                Text(name, Modifier.weight(1f))
-                TextButton(onClick = { naming = null; watch.calibrate(name) }) { Text("Calibrate more") }
+                Column(Modifier.weight(1f)) {
+                    Text(name)
+                    val ids = watch.instrumentsOf(name)
+                    Text(
+                        if (ids.isEmpty()) "For no instrument - chosen by hand only" else "For " + ids.joinToString(", ") { com.inksheets.core.Instruments.byId[it]?.name ?: it },
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 IconButton(onClick = { watch.delete(name) }) { Icon(Icons.Filled.Delete, contentDescription = "Delete $name") }
+            }
+            Row(Modifier.padding(start = 40.dp)) {
+                TextButton(onClick = { choosing = name }) { Text("Instruments...") }
+                TextButton(onClick = { naming = null; watch.calibrate(name) }) { Text("Calibrate more") }
             }
         }
         watch.report?.takeIf { watch.active != null }?.let { ReportText(it) }
         OutlinedButton(onClick = { naming = "" }, modifier = Modifier.padding(top = 4.dp)) { Text("New calibration...") }
     }
+    choosing?.let { name ->
+        var ids by remember(name) { mutableStateOf(watch.instrumentsOf(name)) }
+        SheetDialog(
+            title = "$name is for",
+            onDismiss = { choosing = null },
+            buttons = {
+                TextButton(onClick = { choosing = null }) { Text("Cancel") }
+                TextButton(onClick = { watch.setInstruments(name, ids); choosing = null }) { Text("Keep") }
+            }
+        ) {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text("Parts for these use this calibration.", style = MaterialTheme.typography.bodyMedium)
+                InstrumentChips(state, ids) { ids = it }
+            }
+        }
+    }
     naming?.let { start ->
         var name by remember { mutableStateOf(start) }
+        var ids by remember { mutableStateOf(emptyList<String>()) }
         SheetDialog(
             title = "Calibrate for which instrument?",
             onDismiss = { naming = null },
             buttons = {
                 TextButton(onClick = { naming = null }) { Text("Cancel") }
-                TextButton(onClick = { naming = null; watch.calibrate(name) }, enabled = name.isNotBlank()) { Text("Next") }
+                TextButton(onClick = {
+                    naming = null
+                    watch.setInstruments(name.trim(), ids)
+                    watch.calibrate(name)
+                }, enabled = name.isNotBlank()) { Text("Next") }
             }
         ) {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "Each instrument moves the arm its own way, so each gets its own calibration. Pick the one in use here at any time.",
+                    "Each instrument moves the arm its own way, so each gets its own calibration - used whenever a part for it is showing.",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Instrument") }, modifier = Modifier.padding(top = 8.dp))
+                OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") }, modifier = Modifier.padding(top = 8.dp))
+                InstrumentChips(state, ids) { chosen ->
+                    // The name follows the first instrument chosen, until it is typed over.
+                    val auto = ids.firstOrNull()?.let { com.inksheets.core.Instruments.byId[it]?.name }
+                    if (name.isBlank() || name == auto) name = chosen.firstOrNull()?.let { com.inksheets.core.Instruments.byId[it]?.name }.orEmpty()
+                    ids = chosen
+                }
             }
         }
     }
     watch.calibration?.let { CalibrationDialog(state, it) }
+}
+
+/** Instruments to tick, the player's own (their instrument choice) first; [onChange] hears the ids ticked. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun InstrumentChips(state: SheetsState, chosen: List<String>, onChange: (List<String>) -> Unit) {
+    val mine = state.profile?.instruments.orEmpty()
+    val all = com.inksheets.core.Instruments.all.sortedBy { i -> mine.indexOf(i.id).let { if (it < 0) Int.MAX_VALUE else it } }
+    Column(Modifier.padding(top = 8.dp)) {
+        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+            all.forEach { i ->
+                androidx.compose.material3.FilterChip(
+                    selected = i.id in chosen,
+                    onClick = { onChange(if (i.id in chosen) chosen - i.id else chosen + i.id) },
+                    label = { Text(i.name) }
+                )
+            }
+        }
+    }
 }
 
 /** How a calibration stands, in plain words. */
