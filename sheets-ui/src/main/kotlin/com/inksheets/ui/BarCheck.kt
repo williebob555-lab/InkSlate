@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -138,6 +139,9 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                     if (editing != null) BarEditor(state, m, editing, paper, printInk, short)
                     else {
                         Readings(state, m, paper, printInk, if (short) 70.dp else 104.dp)
+                        // Told what is off, the readings offered are all about it. (Side by side, under
+                        // the print instead: the readings' side has no room to spare.)
+                        if (ScoreTools.askedAgain && !short) WhatsOff(state, short)
                         CheckButtons(state, short)
                     }
                 }
@@ -152,7 +156,9 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                     BarEditor(state, m, editing, paper, printInk, short, view = false)
                 }
             } else if (wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(pad)) {
-                Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { header(); printed() }
+                Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
+                    header(); printed()
+                }
                 Column(Modifier.weight(0.58f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { choosing() }
             } else Column(Modifier.verticalScroll(rememberScrollState()).padding(pad), verticalArrangement = Arrangement.spacedBy(gap)) {
                 header(); printed(); choosing()
@@ -217,7 +223,18 @@ private fun Readings(state: SheetsState, m: Measure, paper: Color, printInk: Col
 private fun CheckButtons(state: SheetsState, short: Boolean) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val h = if (short) 40.dp else 48.dp
-        val none: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("None of these", maxLines = 1) } }
+        // (On a small screen, once turned down, it asks what is off - a menu, taking no more room.)
+        val none: @Composable (Modifier) -> Unit = { mod ->
+            if (short && ScoreTools.askedAgain) Box(mod) {
+                var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 8.dp)) { Text(ScoreTools.focus ?: "What's off?", maxLines = 1) }
+                androidx.compose.material3.DropdownMenu(open, onDismissRequest = { open = false }) {
+                    for (what in com.inksheets.core.omr.BarChoices.FOCUS.keys)
+                        androidx.compose.material3.DropdownMenuItem(text = { Text(what) }, onClick = { open = false; ScoreTools.narrow(state, what) })
+                    androidx.compose.material3.DropdownMenuItem(text = { Text("None of these, again") }, onClick = { open = false; ScoreTools.noneOfThese(state) })
+                }
+            } else OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("None of these", maxLines = 1) }
+        }
         // The bright part of the picture is not one whole bar: a part of one, or two.
         val notOne: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.notOneBar(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Not one bar", maxLines = 1) } }
         val skip: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.skip(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Skip", maxLines = 1) } }
@@ -464,6 +481,24 @@ private fun RestCount(state: SheetsState, m: Measure, short: Boolean) {
             OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", style = words, maxLines = 1) }
             OutlinedButton(onClick = { ScoreTools.endCheck() }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Done", style = words, maxLines = 1) }
             Button(onClick = { ScoreTools.setRestCount(state, m.number, count) }, contentPadding = pad, modifier = Modifier.weight(1.3f).height(h)) { Text("Use $count", style = words, maxLines = 1) }
+        }
+    }
+}
+
+/**
+ * After "None of these": what is off with them - a note's pitch, how long its notes are, a note
+ * too many or too few, its rests - and the readings offered again are all about that.
+ */
+@Composable
+private fun WhatsOff(state: SheetsState, short: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+        Text("What's off?", style = MaterialTheme.typography.labelLarge)
+        for (what in com.inksheets.core.omr.BarChoices.FOCUS.keys) {
+            val on = ScoreTools.focus == what
+            val mod = Modifier.weight(1f).height(if (short) 34.dp else 38.dp)
+            val pad = PaddingValues(horizontal = 2.dp)
+            if (on) Button(onClick = { ScoreTools.narrow(state, null) }, contentPadding = pad, modifier = mod) { Text(what, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+            else OutlinedButton(onClick = { ScoreTools.narrow(state, what) }, contentPadding = pad, modifier = mod) { Text(what, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
         }
     }
 }

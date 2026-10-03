@@ -216,7 +216,12 @@ object BarChoices {
      */
     fun of(m: Measure, count: Int = 3, rejected: List<List<Event>> = emptyList(), deeper: Boolean = false, pool: Int = if (deeper) 60 else 40,
            /** The bar as read on other looks at its staff (a little larger, smaller, higher, lower - see Recognizer.lookAgain). */
-           looked: List<Measure> = emptyList()): List<Choice> {
+           looked: List<Measure> = emptyList(),
+           /**
+            * What the player says is off (see [FOCUS]): only changes of those kinds - and more of them,
+            * three at once among more - so what is offered is all about it.
+            */
+           focus: Set<String>? = null): List<Choice> {
         val beats = m.time.quarters
         val all = ArrayList<Choice>()
         all += Choice(m.events, emptyList(), 0f)
@@ -226,12 +231,13 @@ object BarChoices {
             val sure = saw.any { it.sure }
             all += Choice(events, listOf(if (saw.size > 1) "As read on ${saw.size} other looks" else "As read on another look"), (if (sure) 0.4f else 1.0f) - 0.15f * (saw.size - 1), listOf("look"))
         }
-        val single = edits(m).take(pool)
+        val single = if (focus != null) edits(m).filter { it.kind in focus }.take(pool + 30) else edits(m).take(pool)
+        val threeAtOnce = deeper || focus != null
         for (a in single.indices) {
             apply(m, listOf(single[a]))?.let { all += Choice(it, listOf(single[a].say), single[a].cost, listOf(single[a].kind)) }
             for (b in a + 1 until single.size) {
                 apply(m, listOf(single[a], single[b]))?.let { all += Choice(it, listOf(single[a].say, single[b].say), single[a].cost + single[b].cost, listOf(single[a].kind, single[b].kind)) }
-                if (deeper) for (c in b + 1 until minOf(single.size, b + 20)) {
+                if (threeAtOnce) for (c in b + 1 until minOf(single.size, b + 20)) {
                     apply(m, listOf(single[a], single[b], single[c]))?.let {
                         all += Choice(it, listOf(single[a].say, single[b].say, single[c].say), single[a].cost + single[b].cost + single[c].cost, listOf(single[a].kind, single[b].kind, single[c].kind))
                     }
@@ -243,6 +249,8 @@ object BarChoices {
         // staff, a bar in a time not read), weighs only a little less than one that does. (Held-out
         // scans: of the bars asked about though read right, offered first 71% -> 97%.)
         val clear = m.events.filterIsInstance<Note>().all { it.confidence >= 0.8f }
+        // Told what is off: the reading as read, and what another look saw, are not it.
+        if (focus != null) all.removeAll { it.changes.isEmpty() || it.kinds == listOf("look") }
         val ranked = all.sortedBy { it.cost + if (it.addsUp(beats)) 0f else if (it.changes.isEmpty() && clear) 1.5f else 10f }
         val out = ArrayList<Choice>()
         for (c in ranked) {
@@ -252,6 +260,14 @@ object BarChoices {
         }
         return out
     }
+
+    /** What the player can say is off with a bar's readings, and the kinds of change each means. */
+    val FOCUS: Map<String, Set<String>> = linkedMapOf(
+        "Pitch" to setOf("pitch", "chord-head"),
+        "Length" to setOf("value", "dot", "hollow", "triplet", "group"),
+        "Notes" to setOf("remove", "add", "rest-out", "chord-head"),
+        "Rests" to setOf("rest", "rest-out")
+    )
 
     /** Every reading a change or two away (for measuring which kinds of change are right how often). */
     fun all(m: Measure): List<Choice> = of(m, count = 5000, pool = 60)

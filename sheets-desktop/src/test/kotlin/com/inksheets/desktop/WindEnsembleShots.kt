@@ -29,7 +29,8 @@ class WindEnsembleShots {
     @Test
     fun `the wind ensemble's set as read`() {
         assumeTrue(System.getProperty("inksheets.omr") == "wind")
-        val pieces = listOf("Chester.pdf", "Be Glad Then, America.pdf", "Fanfare and Allegro.pdf", "Highwater Rising.pdf", "Untitled (p2-3).pdf", "Untitled (p8-9).pdf")
+        val pieces = listOf("Chester.pdf", "Be Glad Then, America.pdf", "Fanfare and Allegro.pdf", "Highwater Rising.pdf", "Untitled (p2-3).pdf", "Untitled (p8-9).pdf",
+            "Ghost Train (Trombone).pdf", "Ghost Train.pdf")
         val shots = System.getProperty("inksheets.shots")
         // -Dinksheets.omr.only=Glad: just the pieces whose names have it.
         val only = System.getProperty("inksheets.omr.only")

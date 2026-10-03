@@ -82,6 +82,9 @@ class UiAuditAppTest {
                 runOnIdle { ScoreTools.startCheck(s) }
                 settle(60)
                 look("fix", "Edit", "None of these", "Not one bar", "Skip", "Done", "Clef, key or time wrong?")
+                // "None of these": what is off with them, asked.
+                runOnIdle { ScoreTools.noneOfThese(s) }
+                look("fix-whatsoff", "What's off?", "Done")
                 // The bar put right by hand, and its clef, key and time chosen anew: every control there.
                 runOnIdle { ScoreTools.offered.firstOrNull()?.let { ScoreTools.startEdit(it) } }
                 look("fix-editing", "Up", "Down", "♭♭", "♭", "♯", "x", "Dot", "Quarter", "16th", "Triplet", "Remove", "Cancel", "Undo", "Use this")

@@ -113,7 +113,7 @@ class ReadingBenchmark {
      * the next three (asked again); of those asked about though read right, how many; with that
      * reading offered first.
      */
-    class PageResult(val bars: List<Bar>, val outside: Int, val shots: List<BufferedImage>, val choices: IntArray = IntArray(5))
+    class PageResult(val bars: List<Bar>, val outside: Int, val shots: List<BufferedImage>, val choices: IntArray = IntArray(7))
 
     private data class ReadHead(val x: Float, val y: Float, val kind: Kind, val bar: Int, val dots: Int, val value: Int?, val alter: Int?, val chord: Boolean = false)
 
@@ -543,7 +543,7 @@ class ReadingBenchmark {
             synchronized(ReadingBenchmark::class.java) { File(out).appendText(lines.joinToString("\n", postfix = if (lines.isEmpty()) "" else "\n")) }
         }
         // The bars asked about: the three readings offered, and three more when those are turned down.
-        val choices = IntArray(5)
+        val choices = IntArray(7)
         val calibrate = System.getProperty("inksheets.bench.calibrate") != null
         for ((mi, m) in reading.measures.withIndex()) {
             if (m.sure || m.bars > 1) continue
@@ -577,7 +577,20 @@ class ReadingBenchmark {
             if (!now) {
                 choices[0]++
                 if (offered.any { barRight(mi, it.events) == true }) choices[1]++
-                else if (com.inksheets.core.omr.BarChoices.of(m, 3, rejected = offered.map { it.events }, deeper = true, looked = if (looking) Recognizer().lookAgain(ink, greyPage!!, net!!, m, deeper = true) + again else emptyList()).any { barRight(mi, it.events) == true }) choices[2]++
+                else {
+                    if (com.inksheets.core.omr.BarChoices.of(m, 3, rejected = offered.map { it.events }, deeper = true, looked = if (looking) Recognizer().lookAgain(ink, greyPage!!, net!!, m, deeper = true) + again else emptyList()).any { barRight(mi, it.events) == true }) choices[2]++
+                    // Told what is off (the kind of what is wrong with it - one kind only), the three offered then.
+                    val kinds = causes[mi].orEmpty().map { c -> when {
+                        c.startsWith("value") || c.startsWith("dot") || c.startsWith("head kind") -> "Length"
+                        c.startsWith("invented head") || c.startsWith("missed head") -> "Notes"
+                        c.contains("rest") -> "Rests"
+                        c.startsWith("accidental") || c.startsWith("pitch") || c.contains("step") -> "Pitch"
+                        else -> "?" } }.toSet()
+                    if (kinds.size == 1 && "?" !in kinds) {
+                        choices[5]++
+                        if (com.inksheets.core.omr.BarChoices.of(m, 3, rejected = offered.map { it.events }, deeper = true, focus = com.inksheets.core.omr.BarChoices.FOCUS[kinds.first()]).any { barRight(mi, it.events) == true }) choices[6]++
+                    }
+                }
             } else {
                 choices[3]++
                 if (offered.firstOrNull()?.changes?.isEmpty() == true) choices[4]++
@@ -593,7 +606,7 @@ class ReadingBenchmark {
 
     // ---- the run ------------------------------------------------------------------------------
 
-    class PartResult(val name: String, val bars: Int, val verifiable: Int, val correct: Int, val sure: Int, val sureVerifiable: Int, val sureCorrect: Int, val outside: Int, val causes: Map<String, Int>, val choices: IntArray = IntArray(5)) {
+    class PartResult(val name: String, val bars: Int, val verifiable: Int, val correct: Int, val sure: Int, val sureVerifiable: Int, val sureCorrect: Int, val outside: Int, val causes: Map<String, Int>, val choices: IntArray = IntArray(7)) {
         fun row() = "$name\t$bars\t$verifiable\t$correct\t$sure\t$sureVerifiable\t$sureCorrect\t$outside"
     }
 
@@ -617,10 +630,10 @@ class ReadingBenchmark {
         val pool = Executors.newFixedThreadPool(4)
         val futures = parts.map { f ->
             pool.submit<Pair<PartResult, List<BufferedImage>>> {
-                val bars = ArrayList<Bar>(); var outside = 0; val pics = ArrayList<BufferedImage>(); val ch = IntArray(5)
+                val bars = ArrayList<Bar>(); var outside = 0; val pics = ArrayList<BufferedImage>(); val ch = IntArray(7)
                 for (p in 0 until pages) {
                     val r = runCatching { markPage(f, p, scan, shotsDir != null, printed) }.getOrNull() ?: continue
-                    bars += r.bars; outside += r.outside; pics += r.shots; for (k in 0..4) ch[k] += r.choices[k]
+                    bars += r.bars; outside += r.outside; pics += r.shots; for (k in 0..6) ch[k] += r.choices[k]
                 }
                 val causes = HashMap<String, Int>()
                 // Bars asked about though read right: what the reader doubted.
@@ -652,9 +665,10 @@ class ReadingBenchmark {
         val flagged = all.map { it.bars - it.sure }.sorted()
         println("GOAL: parts with 2 or fewer bars flagged ${all.count { it.bars - it.sure <= 2 }}/${all.size}; flagged per part median ${flagged.getOrNull(flagged.size / 2)}, worst ${flagged.lastOrNull()}; " +
             "parts where every sure bar checked is correct ${all.count { it.sureCorrect == it.sureVerifiable }}/${all.size}")
-        val ch = IntArray(5); all.forEach { p -> for (k in 0..4) ch[k] += p.choices[k] }
+        val ch = IntArray(7); all.forEach { p -> for (k in 0..6) ch[k] += p.choices[k] }
         println("CHOICES: of ${ch[0]} bars asked about and read wrong, the right reading among the 3 offered ${pct(ch[1], ch[0])} (${ch[1]}), " +
             "among the next 3 ${pct(ch[2], ch[0])} (${ch[2]}) - in 6: ${pct(ch[1] + ch[2], ch[0])}; of ${ch[3]} asked about though read right, offered first ${pct(ch[4], ch[3])}")
+        println("FOCUS: of ${ch[5]} not among the first 3 (one kind wrong), right among the 3 offered once told what is off: ${pct(ch[6], ch[5])} (${ch[6]})")
         if (calibration.isNotEmpty()) {
             val bars = calibration["(bars)"] ?: 0; val none = calibration["(none within two changes)"] ?: 0
             val kinds = calibration.filterKeys { !it.startsWith("(") }

@@ -352,7 +352,7 @@ internal object ScoreTools {
     }
 
     private fun showBar(s: SheetsState) {
-        rejected = ArrayList(); noneCount = 0; askedAgain = false; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
+        rejected = ArrayList(); noneCount = 0; askedAgain = false; focus = null; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
         barPicture = null; editing = null; sigDraft = null
         val m = barUp(s) ?: run { endCheck(); return }
         // The second looks taken as its page was read: ready at once, no waiting on a look now.
@@ -443,6 +443,22 @@ internal object ScoreTools {
         // Looked at further still (once), whatever is offered meanwhile: what that sees joins in.
         if (!lookedDeeper) lookAt(s, m, deeper = true)
         if (more.isEmpty() && !looking) { said = "No other reading of bar ${m.number} - left in doubt"; next(s); return }
+        offered = more
+        changed()
+    }
+
+    /** What the player said is off with the bar up's readings (a key of [BarChoices.FOCUS]), or none. */
+    var focus by mutableStateOf<String?>(null)
+        private set
+
+    /** The readings offered again, all about [what] (Pitch, Length, Notes, Rests) - or as before (null). */
+    fun narrow(s: SheetsState, what: String?) {
+        val m = barUp(s) ?: return
+        focus = what
+        rejected += offered.map { it.events }.filter { o -> rejected.none { it == o } }
+        val kinds = what?.let { com.inksheets.core.omr.BarChoices.FOCUS[it] }
+        val more = com.inksheets.core.omr.BarChoices.of(m, 3, rejected = rejected, deeper = true, looked = looked, focus = kinds)
+        if (more.isEmpty()) { said = "No other reading changing ${what?.lowercase() ?: "it"} - try another, or Edit"; changed(); return }
         offered = more
         changed()
     }
