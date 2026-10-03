@@ -2089,21 +2089,36 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val sorted = events.sortedBy { it.x }
         val excess = sorted.sumOf { it.duration.quarters } - expected
         if (excess <= 1e-6) return null
-        val windows = (0..sorted.size - 3).filter { i ->
-            val d = sorted[i].duration
-            d.base >= 4 && d.dots == 0 && !d.tuplet && (1..2).all { sorted[i + it].duration == d }
-        }
-        if (windows.isEmpty()) return null
         val sp = s.space
-        val marks = HashMap<Int, Boolean>()
-        fun marked(i: Int) = marks.getOrPut(i) {
-            val x0 = sorted[i].x.toInt() - (sp * 0.5f).toInt(); val x1 = sorted[i + 2].x.toInt() + (sp * 1.5f).toInt()
-            printedThree(clean, s, x0, x1)
+        val marks = HashMap<Pair<Int, Int>, Boolean>()
+        // Whether a 3 is printed over or under notes [i] to [i] + [n] - 1.
+        fun marked(i: Int, n: Int, strict: Boolean = false) = marks.getOrPut(i * 64 + n to (if (strict) 1 else 0)) {
+            val x0 = sorted[i].x.toInt() - (sp * 0.5f).toInt(); val x1 = sorted[i + n - 1].x.toInt() + (sp * 1.5f).toInt()
+            printedThree(clean, s, x0, x1, strict)
         }
-        var best: List<Int>? = null; var bestMarks = -1; var tie = false
-        fun search(from: Int, chosen: List<Int>, saved: Double) {
+        // Three equal notes; or, under a printed 3, notes of any lengths coming to three of one value
+        // (a dotted quarter, an eighth and a quarter: three quarters in the time of two).
+        val groups = ArrayList<Pair<Int, Int>>()
+        for (i in 0..sorted.size - 3) {
+            val d = sorted[i].duration
+            if (d.base >= 4 && d.dots == 0 && !d.tuplet && (1..2).all { sorted[i + it].duration == d }) groups += i to 3
+        }
+        for (i in sorted.indices) for (n in 2..5) {
+            if (i + n > sorted.size || groups.contains(i to n)) continue
+            val run = sorted.subList(i, i + n)
+            if (run.any { it.duration.tuplet }) continue
+            val sum = run.sumOf { it.duration.quarters }
+            // (Of eighths or quarters: a whole note and a half under a "3" is far likelier a misread.)
+            val unit = listOf(0.5, 1.0).firstOrNull { u -> abs(sum - 3 * u) < 1e-6 } ?: continue
+            if (run.any { it.duration.quarters > 2 * unit + 1e-6 } || run.all { it.duration == run[0].duration }) continue
+            if (marked(i, n, strict = true)) groups += i to n
+        }
+        if (groups.isEmpty()) return null
+        fun saved(g: Pair<Int, Int>) = sorted.subList(g.first, g.first + g.second).sumOf { it.duration.quarters } / 3
+        var best: List<Pair<Int, Int>>? = null; var bestMarks = -1; var tie = false
+        fun search(from: Int, chosen: List<Pair<Int, Int>>, saved: Double) {
             if (abs(saved - excess) < 1e-6) {
-                val m = chosen.count { marked(it) }
+                val m = chosen.count { marked(it.first, it.second) }
                 val b = best
                 when {
                     b == null || chosen.size < b.size || (chosen.size == b.size && m > bestMarks) -> { best = chosen; bestMarks = m; tie = false }
@@ -2112,13 +2127,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 return
             }
             if (saved > excess + 1e-6 || chosen.size >= 4) return
-            for (i in windows) if (i >= from) search(i + 3, chosen + i, saved + sorted[i].duration.quarters)
+            for (g in groups) if (g.first >= from) search(g.first + g.second, chosen + g, saved + saved(g))
         }
         search(0, emptyList(), 0.0)
         val chosen = best ?: return null
         // Two ways alike, neither printed: no telling which notes are the triplet.
         if (tie && bestMarks < chosen.size) return null
-        val inTuplet = chosen.flatMap { listOf(it, it + 1, it + 2) }.toSet()
+        val inTuplet = chosen.flatMap { (i, n) -> (i until i + n).toList() }.toSet()
         val out = sorted.mapIndexed { k, e ->
             if (k !in inTuplet) e else when (e) {
                 is Note -> e.copy(duration = e.duration.copy(actual = 3, normal = 2))
@@ -2175,13 +2190,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /** Whether a small "3" - a tuplet's number, italic or upright - is printed above or below [x0]..[x1] on [s]. */
-    private fun printedThree(clean: Ink, s: Staff, x0: Int, x1: Int): Boolean {
+    private fun printedThree(clean: Ink, s: Staff, x0: Int, x1: Int, strict: Boolean = false): Boolean {
         val sp = s.space
+        // (Strict: over the middle of the notes, and read surely - for a group of notes of different
+        // lengths, where a slur's curl taken for a 3 would make a triplet of anything.)
+        val mid0 = if (strict) x0 + (x1 - x0) / 4 else x0 - sp.toInt(); val mid1 = if (strict) x1 - (x1 - x0) / 4 else x1 + sp.toInt()
         val bands = listOf(s.y(-14, x0).roundToInt() to s.y(-2, x0).roundToInt(), s.y(10, x0).roundToInt() to s.y(22, x0).roundToInt())
         // Where the PDF states its text, the 3 is one of its characters. (The trained reader's symbols
         // are no PDF's: they hold no digits, and the 3 is looked for on the page.)
         printed?.takeIf { !it.learned }?.let { p -> return p.symbols.any { d -> d.digit == 3 && (d.kind == Printed.Kind.TEXT_DIGIT || d.kind == Printed.Kind.TIME_DIGIT) &&
-            d.x >= x0 - sp && d.x <= x1 + sp && bands.any { (a, b) -> d.y >= a && d.y <= b } } }
+            d.x >= (if (strict) mid0.toFloat() else x0 - sp) && d.x <= (if (strict) mid1.toFloat() else x1 + sp) && bands.any { (a, b) -> d.y >= a && d.y <= b } } }
         // Each figure-sized shape over or under the group, read by the trained digit reader: a 3 in
         // any typeface (an old engraving's bold italic one is nothing like the music font's).
         if (Digits.hasTrained) for ((a, b) in bands) {
@@ -2194,15 +2212,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var bt = Int.MIN_VALUE
                 for (i in px.indices step 2) { l = min(l, px[i]); r = max(r, px[i]); t = min(t, px[i + 1]); bt = max(bt, px[i + 1]) }
                 val h = bt - t + 1; val w = r - l + 1
-                if (h < sp * 0.5f || h > sp * 2.2f || w > h * 1.3f || (l + r) / 2 !in x0 - sp.toInt()..x1 + sp.toInt()) continue
+                if (h < sp * 0.5f || h > sp * 2.2f || w > h * 1.3f || (l + r) / 2 !in mid0..mid1) continue
                 val m = Digits.mask(clean, l, t, r, bt) ?: continue
-                if (Digits.readTrained(m, h / sp, w.toFloat() / h)?.first == 3) return true
+                val read = Digits.readTrained(m, h / sp, w.toFloat() / h)
+                if (read?.first == 3 && (!strict || read.second >= 0.9f)) return true
             }
         }
         for (size in listOf(0.5f, 0.6f, 0.7f)) for ((a, b) in bands) {
             var y = a
             while (y <= b) {
-                for (x in x0..x1 step 2) if (score(clean, "timeSig3", sp * size, x, y) > 0.55f) return true
+                for (x in (if (strict) mid0 else x0)..(if (strict) mid1 else x1) step 2) if (score(clean, "timeSig3", sp * size, x, y) > (if (strict) 0.65f else 0.55f)) return true
                 y += 2
             }
         }

@@ -60,7 +60,8 @@ class RealScanTruthTest {
     @Test
     fun `a natural is a natural, not a flat`() {
         val fanfare = page("Fanfare and Allegro.pdf", 0)
-        assertEquals("Fanfare bar 43", listOf(0), fanfare.bar(43).events.filterIsInstance<Note>().flatMap { it.accidentals.values })
+        // (Bar 44 as printed: 43 before the two-bar rest drawn as a block, in line 1, was counted as two.)
+        assertEquals("Fanfare bar 44", listOf(0), fanfare.bar(44).events.filterIsInstance<Note>().flatMap { it.accidentals.values })
         val untitled = page("Untitled (p2-3).pdf", 0)
         val alters = untitled.bar(46).events.filterIsInstance<Note>().flatMap { it.accidentals.values }
         assertEquals("Untitled bar 46: $alters", 3, alters.count { it == 0 })
