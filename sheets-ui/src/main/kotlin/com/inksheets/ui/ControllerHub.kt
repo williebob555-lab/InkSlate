@@ -43,6 +43,16 @@ class ControllerHub(private val state: SheetsState) {
         if (started || !on) return
         val input = state.platform.controllers ?: return
         started = true
+        // What a POD Go says over USB, written into the library (Training/PodGo) - it syncs to the
+        // other devices, so working out its footswitches needs nothing copied by hand.
+        com.inksheets.core.podgo.PodGoEvents.record = { line ->
+            runCatching {
+                val root = state.root ?: return@runCatching
+                val dir = java.io.File(root, "${com.inksheets.core.LibraryScan.TRAINING}/PodGo").apply { mkdirs() }
+                val at = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+                synchronized(this) { java.io.File(dir, "podgo-${state.platform.deviceId}.txt").appendText("$at  $line\n") }
+            }
+        }
         runCatching {
             input.start(
                 onEvent = { e -> state.platform.onMain { heard(e) } },

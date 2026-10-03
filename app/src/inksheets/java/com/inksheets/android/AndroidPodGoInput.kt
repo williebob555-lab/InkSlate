@@ -49,7 +49,7 @@ class AndroidPodGoInput(private val context: () -> Context) : ControllerInput {
                     UsbManager.ACTION_USB_DEVICE_ATTACHED -> ask(device)
                     UsbManager.ACTION_USB_DEVICE_DETACHED -> stopLink()
                     PERMISSION -> if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) startLink(device)
-                        else EventLog.warn("sheets", "POD Go: the app was not let use it")
+                        else note("POD Go: the app was not let use it")
                 }
             }
         }
@@ -73,6 +73,8 @@ class AndroidPodGoInput(private val context: () -> Context) : ControllerInput {
         if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
         else @Suppress("DEPRECATION") intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
 
+    private fun note(s: String) { EventLog.warn("sheets", s); PodGoEvents.record?.invoke(s) }
+
     private fun isPodGo(d: UsbDevice) = d.vendorId == PodGoLink.VENDOR && d.productId == PodGoLink.POD_GO
 
     private fun ask(device: UsbDevice) {
@@ -85,13 +87,15 @@ class AndroidPodGoInput(private val context: () -> Context) : ControllerInput {
 
     private fun startLink(device: UsbDevice) {
         if (running != null) return
+        PodGoEvents.record?.invoke("POD Go: plugged in (${device.deviceName}, ${device.interfaceCount} interfaces: " +
+            (0 until device.interfaceCount).joinToString { i -> device.getInterface(i).let { "#${it.id} class ${it.interfaceClass}, ${it.endpointCount} endpoints" } } + ")")
         val m = usb ?: return
         val iface = (0 until device.interfaceCount).map(device::getInterface)
-            .firstOrNull { it.id == 0 && it.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC } ?: run { EventLog.warn("sheets", "POD Go: no editor interface"); return }
+            .firstOrNull { it.id == 0 && it.interfaceClass == UsbConstants.USB_CLASS_VENDOR_SPEC } ?: run { note("POD Go: no editor interface"); return }
         val out = endpoint(iface, UsbConstants.USB_DIR_OUT) ?: return
         val inp = endpoint(iface, UsbConstants.USB_DIR_IN) ?: return
-        val conn = m.openDevice(device) ?: run { EventLog.warn("sheets", "POD Go: could not be opened"); return }
-        if (!conn.claimInterface(iface, true)) { EventLog.warn("sheets", "POD Go: its editor interface is in use"); conn.close(); return }
+        val conn = m.openDevice(device) ?: run { note("POD Go: could not be opened"); return }
+        if (!conn.claimInterface(iface, true)) { note("POD Go: its editor interface is in use"); conn.close(); return }
         stopping = false
         running = Thread({ run(conn, iface, out, inp) }, "pod-go").apply { isDaemon = true; start() }
     }
@@ -108,18 +112,18 @@ class AndroidPodGoInput(private val context: () -> Context) : ControllerInput {
                 return if (n < 0) null else buf.copyOf(n)
             }
         }
-        val link = PodGoLink(wire) { EventLog.info("sheets", it) }
+        val link = PodGoLink(wire) { EventLog.info("sheets", it); PodGoEvents.record?.invoke(it) }
         var logged = 0
         try {
             if (link.start()) {
                 main.post { onDevices(listOf(PodGoEvents.DEVICE)) }
                 while (!stopping) link.pump(500) { msg ->
-                    if (logged < 300) { logged++; EventLog.info("sheets", "POD Go says: channel 0x${msg.channel.toString(16)} service ${msg.service} ${MsgPack.show(msg.body).take(400)}") }
+                    if (logged < 2000) { logged++; "POD Go says: channel 0x${msg.channel.toString(16)} service ${msg.service} ${MsgPack.show(msg.body).take(1000)}".let { EventLog.info("sheets", it.take(400)); PodGoEvents.record?.invoke(it) } }
                     PodGoEvents.toControl(msg)?.let { e -> main.post { onEvent(e) } }
                 }
             }
         } catch (t: Throwable) {
-            EventLog.warn("sheets", "POD Go: ${t.message}")
+            EventLog.warn("sheets", "POD Go: ${t.message}"); PodGoEvents.record?.invoke("POD Go: ${t.message}")
         } finally {
             runCatching { link.close() }
             runCatching { conn.releaseInterface(iface) }

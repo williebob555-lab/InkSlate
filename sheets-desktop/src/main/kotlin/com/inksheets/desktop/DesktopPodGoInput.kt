@@ -70,7 +70,7 @@ class DesktopPodGoInput : ControllerInput {
 
     private fun refuse(where: String, why: String) {
         refusedFor = where
-        EventLog.info("sheets", "POD Go: $why")
+        EventLog.info("sheets", "POD Go: $why"); PodGoEvents.record?.invoke("POD Go: $why")
     }
 
     private fun listen(handle: DeviceHandle, onEvent: (ControlEvent) -> Unit, onDevices: (List<String>) -> Unit) {
@@ -89,13 +89,13 @@ class DesktopPodGoInput : ControllerInput {
                 return ByteArray(count.get(0)).also { inBuf.get(it, 0, it.size) }
             }
         }
-        val link = PodGoLink(wire) { EventLog.info("sheets", it) }
+        val link = PodGoLink(wire) { EventLog.info("sheets", it); PodGoEvents.record?.invoke(it) }
         var logged = 0
         try {
             if (link.start()) {
                 onDevices(listOf(PodGoEvents.DEVICE))
                 while (running) link.pump(500) { msg ->
-                    if (logged < 300) { logged++; EventLog.info("sheets", "POD Go says: channel 0x${msg.channel.toString(16)} service ${msg.service} ${MsgPack.show(msg.body).take(400)}") }
+                    if (logged < 2000) { logged++; "POD Go says: channel 0x${msg.channel.toString(16)} service ${msg.service} ${MsgPack.show(msg.body).take(1000)}".let { EventLog.info("sheets", it.take(400)); PodGoEvents.record?.invoke(it) } }
                     PodGoEvents.toControl(msg)?.let(onEvent)
                 }
             }

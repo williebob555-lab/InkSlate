@@ -16,6 +16,13 @@ import com.inksheets.core.ControlEvent
 object PodGoEvents {
     const val DEVICE = "POD Go (USB)"
 
+    /**
+     * Where what the unit says, and how the link went, is written down - set by the app to a file in
+     * the music library, which syncs to the other devices (for working out which message is which
+     * footswitch). Called off the UI thread.
+     */
+    @Volatile var record: ((String) -> Unit)? = null
+
     fun toControl(m: PodGoLink.Message): ControlEvent? {
         val event = m.event ?: return null
         // (A deferred request's completion is about our own asking - never a front-panel act.)
