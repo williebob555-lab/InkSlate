@@ -134,6 +134,8 @@ dependencies {
     // activity-result API the app uses; a current one replaces it.
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     "inksheetsImplementation"("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
+    // Turning pages with a flick of a Wear OS watch (experimental): the watch's link to this phone.
+    "inksheetsImplementation"("com.google.android.gms:play-services-wearable:19.0.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

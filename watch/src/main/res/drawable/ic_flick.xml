@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A page with a curl and an arrow: turning it. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#FF1E3A5F" android:pathData="M24,0a24,24 0 1,0 0.01,0z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M14,11h14l6,6v20h-20z" />
+    <path android:fillColor="#FFB0C4DE" android:pathData="M28,11v6h6z" />
+    <path android:fillColor="#FF1E3A5F" android:pathData="M18,26h9v-4l6,6l-6,6v-4h-9z" />
+</vector>

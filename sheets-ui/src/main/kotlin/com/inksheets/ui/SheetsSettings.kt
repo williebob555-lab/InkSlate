@@ -246,6 +246,7 @@ private fun LibraryHealth(state: SheetsState) {
             }
             androidx.compose.material3.Switch(checked = state.readMusic, onCheckedChange = { state.readMusic = it })
         }
+        WatchSettings(state)
     }
 }
 

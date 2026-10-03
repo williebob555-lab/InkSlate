@@ -225,6 +225,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     /** Pedals, switches and faders plugged into this device, and what they do. */
     val controllers = ControllerHub(this)
+
+    /** A watch on the wrist: flick it to turn the page (experimental). */
+    val watch = WatchFlicks(this)
     var companionOpen by mutableStateOf(false)
 
     /** The recordings panel, for the song opened last. */

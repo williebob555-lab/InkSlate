@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.hardware.type.watch" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="true" />
+
+    <!-- Listening for flicks with the screen off, through a song: a foreground service holding the
+         processor awake. "health" is the kind for reading motion sensors; high-rate sensors is
+         what that kind asks for. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Let off battery saving (asked once, on the watch), the phone can start it listening with no tap. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <application
+        android:label="InkSheets"
+        android:icon="@drawable/ic_flick"
+        android:theme="@android:style/Theme.DeviceDefault">
+        <!-- Needs the phone: it turns the pages, and it is where calibrating happens. -->
+        <meta-data android:name="com.google.android.wearable.standalone" android:value="false" />
+
+        <activity android:name=".WatchActivity" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service android:name=".FlickService" android:exported="false" android:foregroundServiceType="health" />
+
+        <!-- What the phone says: calibrate, a cue, the flicks learned, a turn done or not. -->
+        <service android:name=".PhoneMessages" android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/inksheets/watch" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

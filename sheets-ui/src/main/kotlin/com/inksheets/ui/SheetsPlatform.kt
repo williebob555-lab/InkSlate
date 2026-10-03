@@ -92,6 +92,9 @@ interface SheetsPlatform {
     /** Controllers plugged in - MIDI foot controllers, a POD Go over USB; null where there are none. */
     val controllers: com.inksheets.core.ControllerInput? get() = null
 
+    /** A watch paired with this device, to turn pages with a flick (experimental); null where there can be none. */
+    val watch: WatchLink? get() = null
+
     /** [old]'s tab shows [new] instead, where it was in the row: another part of the same song. */
     fun swapPart(old: File, new: File) {}
 

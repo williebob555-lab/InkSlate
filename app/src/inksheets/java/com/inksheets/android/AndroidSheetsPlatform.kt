@@ -206,6 +206,15 @@ class AndroidSheetsPlatform(
         )).takeIf { pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_MIDI) || pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_USB_HOST) }
     }
 
+    /** A Galaxy Watch (any Wear OS watch) paired with this phone: needs Google Play services, which carries the watch's link. */
+    override val watch: com.inksheets.ui.WatchLink? by lazy {
+        val ok = runCatching {
+            com.google.android.gms.common.GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(context) ==
+                com.google.android.gms.common.ConnectionResult.SUCCESS
+        }.getOrDefault(false)
+        if (ok) AndroidWatch { context } else null
+    }
+
     override fun meshRadio(): com.inksheets.ui.MeshRadio? =
         if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_BLUETOOTH_LE)) mesh else null
 

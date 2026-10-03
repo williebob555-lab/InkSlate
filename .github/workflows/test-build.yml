@@ -174,7 +174,7 @@ jobs:
         # copied into one, where it can be read from anywhere.
         run: |
           set -o pipefail
-          ./gradlew :app:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/apk.log" || {
+          ./gradlew :app:assembleRelease :watch:assembleRelease --stacktrace 2>&1 | tee "$RUNNER_TEMP/apk.log" || {
             grep -A 25 "What went wrong" "$RUNNER_TEMP/apk.log" | head -40 | tr '\n' ' ' | sed 's/^/::error title=APK build::/'
             echo
             exit 1
@@ -185,11 +185,18 @@ jobs:
           mkdir -p dist
           cp app/build/outputs/apk/inkslate/release/app-inkslate-release.apk "dist/InkSlate-${{ needs.version.outputs.name }}.apk"
           cp app/build/outputs/apk/inksheets/release/app-inksheets-release.apk "dist/InkSheets-${{ needs.version.outputs.name }}.apk"
+          # The watch app (experimental: flick to turn the page) goes inside a zip. As a bare .apk named
+          # InkSheets-... the phone's updater - this version's and every older one's - could take it
+          # for its own update: same app id, same key. Installed on the watch with adb.
+          cp watch/build/outputs/apk/release/watch-release.apk "$RUNNER_TEMP/InkSheets-Watch.apk"
+          (cd "$RUNNER_TEMP" && zip -q "$GITHUB_WORKSPACE/dist/InkSheets-Watch-${{ needs.version.outputs.name }}.zip" InkSheets-Watch.apk)
 
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: dist/*.apk
+          path: |
+            dist/*.apk
+            dist/*.zip
           # Only has to reach the publish job in this same run; the release is where it lives
           # afterwards. Kept for ninety days by default, which is how three gigabytes of
           # superseded installers accumulated without anyone asking for one of them.
