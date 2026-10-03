@@ -81,7 +81,8 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
             val list = if (all) score.measures else score.measures.filter { !it.sure }
             val pages = remember(file) { HashMap<Int, ImageBitmap?>() }
             LazyColumn(Modifier.heightIn(max = 520.dp)) {
-                items(list, key = { it.number }) { m ->
+                // (Keyed by where the bar is: a number can come twice - a part counting again, a misread.)
+                items(list, key = { "${it.page}/${it.staff}/${it.box.left}" }) { m ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         tonalElevation = 1.dp,

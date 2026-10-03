@@ -34,6 +34,8 @@ dependencies {
     // Decoders for paired recordings; Java Sound reads WAV and AIFF on its own.
     implementation("com.googlecode.soundlibs:mp3spi:1.9.5.4")
     implementation("com.googlecode.soundlibs:vorbisspi:1.0.3.3")
+    // AAC (.m4a, .mp4 audio) - a phone's recordings - read through Java Sound like the rest (Apache 2.0).
+    implementation("com.tianscar.javasound:jaad:0.9.4")
     // Bluetooth sockets for remotes: Winsock's and BlueZ's, which Java has no way to reach itself.
     implementation(libs.jna)
     // A POD Go's footswitches and pedal over USB (its editor's link): libusb, its native parts included.
