@@ -1052,6 +1052,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     /** The last look for a time signature found its ink, figures read or not (see timeAt). */
     private var timeInk = false
 
+    /** The line just read ended with a time signature alone - the change shown coming, the next line's. */
+    private var changeShownAhead = false
+
     /** What the last signature read by the trained digit reader may also be, likeliest first (null when read otherwise). */
     private var lastTimeChoices: List<TimeSig>? = null
     /** Those, for the bar it stands at the start of - until that bar is read. */
@@ -1280,17 +1283,50 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             triedLoose = true
             val start = Carry(carry.clef, carry.key, carry.time).also { it.printed = carry.printed; it.alone = carry.alone }
             val first = read(ink, page, firstNumber, carry, printed, grey, net, level = false)
+            val afterFirst = Carry(carry.clef, carry.key, carry.time).also { it.printed = carry.printed; it.alone = carry.alone }
             val long = first.measures.count { m -> m.bars == 1 && m.quarters > m.time.quarters + 1e-6 }
-            if (first.measures.size < 6 || long < first.measures.size * 0.3f) return first
-            // Looser, and looser again while the bars still run long: the reading with the most bars sure kept.
+            // (Or a few bars holding two bars' worth, notes through both: a barline missed in each.)
+            val doubled = first.measures.count { m -> m.bars == 1 && m.events.count { it is Note } >= 2 && m.quarters >= m.time.quarters * 1.75 - 1e-6 }
+            if (traceRests) println("LOOSE? page $page: ${first.measures.size} bars, $long long, $doubled doubled, ${first.measures.count { it.sure }} sure")
+            if (first.measures.size < 6 || long < first.measures.size * 0.3f && (doubled < 3 || System.getProperty("inksheets.omr.nodoubled") != null)) return first
+            // Looser, and looser again unless next to no bars still run long: the reading with the most bars sure kept.
             var best = first; var bestCarry: Carry? = null; var bestTimings = timings
+            val tries = arrayListOf<Pair<PageReading, Carry?>>(first to null)
             for (gaps in listOf(10, 6)) {
                 val c = Carry(start.clef, start.key, start.time).also { it.printed = start.printed; it.alone = start.alone }
                 val again = Recognizer(debug, adapt).also { it.triedLoose = true; it.gapsAllowed = gaps; it.traceRests = traceRests }
                 val next = again.read(ink, page, firstNumber, c, printed, grey, net, level = false)
+                if (traceRests) println("LOOSE gaps $gaps: ${next.measures.size} bars, ${next.measures.count { it.sure }} sure")
+                tries += next to c
                 if (next.measures.count { it.sure } > best.measures.count { it.sure } + 2) { best = next; bestCarry = c; bestTimings = again.timings }
+                // (Both tried: the looser may find what the first still missed, its bars no longer running long.)
                 val stillLong = next.measures.count { m -> m.bars == 1 && m.quarters > m.time.quarters + 1e-6 }
-                if (stillLong < next.measures.size * 0.3f) break
+                if (stillLong < next.measures.size * 0.1f) break
+            }
+            // Line by line: the barlines a line reads best with - more of its bars sure - kept for
+            // that line (one line's barlines broken, the next's whole: a looser look invents barlines
+            // at the stems of a line that needed none).
+            val merged = if (System.getProperty("inksheets.omr.pagelooseonly") != null || tries.map { it.first.staves.size }.distinct().size != 1) null else run {
+                val staffCount = first.staves.size
+                val pick = (0 until staffCount).map { si ->
+                    fun sure(r: PageReading) = r.measures.count { it.staff == si && it.sure }
+                    // (A looser look's only where it is plainly better on that line.)
+                    var k = 0
+                    for (j in 1 until tries.size) if (sure(tries[j].first) > sure(tries[k].first) + (if (k == 0) 1 else 0)) k = j
+                    k
+                }
+                if (pick.all { it == pick[0] }) null else {
+                    var number = first.measures.firstOrNull()?.number ?: firstNumber
+                    val measures = (0 until staffCount).flatMap { si -> tries[pick[si]].first.measures.filter { it.staff == si } }.map { m -> m.copy(number = number).also { number += m.bars } }
+                    if (traceRests) println("LOOSE by line: ${pick.joinToString("")}, ${measures.size} bars, ${measures.count { it.sure }} sure")
+                    val lastStaff = (0 until staffCount).lastOrNull { si -> measures.any { it.staff == si } }
+                    PageReading(first.staves, (0 until staffCount).map { si -> tries[pick[si]].first.barlines.getOrElse(si) { emptyList() } }, measures,
+                        first.thickness, first.space, first.dropped) to lastStaff?.let { tries[pick[it]].second }
+                }
+            }
+            if (merged != null && merged.first.measures.count { it.sure } >= best.measures.count { it.sure }) {
+                merged.second.let { c -> if (c != null) { carry.clef = c.clef; carry.key = c.key; carry.time = c.time; carry.printed = c.printed; carry.alone = c.alone } else { carry.clef = afterFirst.clef; carry.key = afterFirst.key; carry.time = afterFirst.time; carry.printed = afterFirst.printed; carry.alone = afterFirst.alone } }
+                return merged.first
             }
             bestCarry?.let { c -> carry.clef = c.clef; carry.key = c.key; carry.time = c.time; carry.printed = c.printed; carry.alone = c.alone }
             timings = bestTimings
@@ -1507,6 +1543,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // A signature standing alone between a barline and a line taken for one (its figures' edge):
             // shown by the bar after it.
             var timeAhead = false
+            val shownAhead = changeShownAhead
+            changeShownAhead = false
             for ((i, span) in spans.withIndex()) {
                 var from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
                 // A change of time at a bar's start: read, and in force from here.
@@ -1539,7 +1577,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A time signature after a line's last barline, nothing else: the change ahead shown
                 // at the line's end (the next line starts with it) - no bar of its own.
                 if (i == spans.lastIndex && i > 0 && !headsHere && span.second - span.first < s.space * 5f &&
-                    (if (stated) printedTime(s, span.first) else timeAt(clean, s, span.first + (s.space * 0.3f).toInt())) != null) continue
+                    (if (stated) printedTime(s, span.first) else timeAt(clean, s, span.first + (s.space * 0.3f).toInt())) != null) { changeShownAhead = true; continue }
                 val rest = if (headsHere) null else multiRest(clean, s, from, to, ink)
                 if (rest != null) {
                     val (restBars, x) = rest
@@ -1596,7 +1634,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (!inVoices && events.sumOf { it.duration.quarters } > carry.time.quarters + 1e-6) events = withoutLoops(events, carry.time.quarters)
                 // A piece may start with a short bar - a pickup - when what is in it is certain: the
                 // file's first bar, or the first on a line that sets out its time (a book's next study).
-                val pickup = (page == 0 && measures.isEmpty() || i == 0 && showsTime) && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
+                // (Not where the line before showed the change coming: the music goes on.)
+                val pickup = (page == 0 && measures.isEmpty() || i == 0 && showsTime && !shownAhead) && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
                     (stated || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
                 // Short, and the second look's let-go heads here are what it lacks: taken back - the bar
                 // adds up exactly with them, each where nothing else was read.
@@ -3779,10 +3818,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val yMid = (a.y + b.y) / 2
         var stems = 0; var inRun = false
         for (x in x0..x1) {
-            // Upright ink through the heads' height, running on a couple of spaces either way.
-            var up = 0; var y = yMid; while (clean[x, y - 1] && yMid - y < sp * 4) { y--; up++ }
-            var down = 0; y = yMid; while (clean[x, y + 1] && y - yMid < sp * 4) { y++; down++ }
-            val stem = up >= sp * 2.2f || down >= sp * 2.2f
+            // Upright ink through the heads' height, running on a couple of spaces either way - over
+            // the gap a staff or ledger line taken out leaves across it.
+            val gap = lineThickness + 2
+            fun run(dir: Int): Int {
+                var y = yMid; var last = yMid
+                while (abs(y - yMid) < sp * 4) {
+                    val next = (1..gap + 1).firstOrNull { clean[x, y + dir * it] } ?: break
+                    y += dir * next; last = y
+                }
+                return abs(last - yMid)
+            }
+            val stem = run(-1) >= sp * 2.2f || run(1) >= sp * 2.2f
             if (stem && !inRun) stems++
             inRun = stem
         }
@@ -3813,8 +3860,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             while (k + 1 < chords.size) {
                 val a = chords[k]; val b = chords[k + 1]
                 val pair = a.firstNotNullOfOrNull { ha -> b.firstOrNull { hb -> abs(ha.step - hb.step) == 1 && (hb.x - ha.x) in (sp * 0.6f).toInt()..(sp * 1.5f).toInt() &&
-                    (ha.kind == "noteheadBlack") == (hb.kind == "noteheadBlack") && ha.flags == hb.flags }?.let { ha to it } }
-                if (pair != null && oneStemBetween(clean, s, pair.first, pair.second)) { a += b; chords.removeAt(k + 1) } else k++
+                    // (The head on the stem's far side may have been found with no stem of its own, and so no flags.)
+                    (ha.kind == "noteheadBlack") == (hb.kind == "noteheadBlack") && (ha.flags == hb.flags || ha.stemX < 0 || hb.stemX < 0) }?.let { ha to it } }
+                // (Or each head found with a stem of its own, both at the join between the two: one stem, seen twice.)
+                val one = pair != null && (oneStemBetween(clean, s, pair.first, pair.second) ||
+                    System.getProperty("inksheets.omr.nostemtwice") == null && listOf(pair.first, pair.second).all { it.stemX >= 0 && abs(it.stemX - pair.second.x) <= sp * 0.9f })
+                if (traceRests && pair != null) println("    seconds ${pair.first.step}@${pair.first.x} ${pair.second.step}@${pair.second.x}: one stem $one")
+                if (one) { a += b; chords.removeAt(k + 1) } else k++
             }
         }
         val events = ArrayList<Event>()
@@ -3823,7 +3875,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // A chord is filled heads or hollow, never both: a hollow one among filled ones is a stray loop.
         for (c in chords) if (c.any { it.kind == "noteheadBlack" } && c.any { it.kind == "noteheadHalf" || it.kind == "noteheadWhole" }) c.removeAll { it.kind == "noteheadHalf" || it.kind == "noteheadWhole" }
         for (c in chords) {
-            val h = c.first()
+            // (Its value from a head on its stem: a second's other head sits off it.)
+            val h = c.firstOrNull { it.stemX >= 0 } ?: c.first()
             val base = when (h.kind) {
                 "noteheadWhole" -> 1
                 // A hollow head with no stem is a whole note, whatever its shape.
