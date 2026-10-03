@@ -250,6 +250,12 @@ object Engraver {
             val x = at(d.x).coerceIn(from, width); val x2 = at(d.x2).coerceIn(from, width)
             val y = if (d.above) over else below
             when (d.kind) {
+                "breath" -> {
+                    // A comma over the staff: its round head, and its tail down to the left.
+                    val by = min(-1.2f, over + 0.6f)
+                    marks += Symbol("augmentationDot", x, by, 1.5f)
+                    marks += Stroke(x + 0.42f, by + 0.1f, x + 0.12f, by + 0.75f, 0.13f)
+                }
                 "dynamic" -> {
                     var cx = x
                     for (g in dynamicGlyphs(d.text) ?: continue) { marks += Symbol(g, cx, y); cx += MusicGlyphs[g].advance - 0.1f }
@@ -369,7 +375,7 @@ object Engraver {
                     for (s in e.steps) {
                         marks += Symbol(head, x, s * 0.5f)
                         e.accidentals[s]?.let { a ->
-                            val name = when (a) { 1 -> "accidentalSharp"; -1 -> "accidentalFlat"; else -> "accidentalNatural" }
+                            val name = when (a) { 2 -> "accidentalDoubleSharp"; 1 -> "accidentalSharp"; -1 -> "accidentalFlat"; -2 -> "accidentalDoubleFlat"; else -> "accidentalNatural" }
                             marks += Symbol(name, x - 1.1f, s * 0.5f)
                         }
                         if (e.duration.dots > 0) {
@@ -505,7 +511,7 @@ object Engraver {
         val headW = MusicGlyphs["noteheadBlack"].advance * k
         for (st in g.steps) {
             marks += Symbol("noteheadBlack", x, st * 0.5f, k)
-            g.accidentals[st]?.let { a -> marks += Symbol(when (a) { 1 -> "accidentalSharp"; -1 -> "accidentalFlat"; else -> "accidentalNatural" }, x - 0.75f, st * 0.5f, k) }
+            g.accidentals[st]?.let { a -> marks += Symbol(when (a) { 2 -> "accidentalDoubleSharp"; 1 -> "accidentalSharp"; -1 -> "accidentalFlat"; -2 -> "accidentalDoubleFlat"; else -> "accidentalNatural" }, x - 0.75f, st * 0.5f, k) }
         }
         // Small ledger lines, over and under the staff.
         var l = -2

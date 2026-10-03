@@ -103,8 +103,43 @@ internal object ScoreTools {
             val marked = if (wrong.isEmpty()) read else read.copy(measures = read.measures.map { m ->
                 if (m.bars == 1 && m.number in wrong && WRONG !in m.doubts) m.copy(doubts = m.doubts + WRONG) else m })
             // A clef, key or time put right laid over all (bars put right too: their pitches from it).
-            com.inksheets.core.omr.Signatures.apply(com.inksheets.core.omr.Scores.withFixes(marked, fixesOf(path)), sigsOf(path))
+            com.inksheets.core.omr.Signatures.apply(com.inksheets.core.omr.Scores.withFixes(withRests(marked, restsOf(path)), fixesOf(path)), sigsOf(path))
         }
+
+    /** Multi-bar rests' counts put right, by part: the rest's bar number to how many bars it is. Kept with the part's settings. */
+    private val rests = HashMap<String, MutableMap<Int, Int>>()
+    private fun restKey(path: String) = "sheets_rests:" + (state?.relative(File(path)) ?: path)
+    private fun restsOf(path: String): MutableMap<Int, Int> = rests.getOrPut(path) {
+        state?.platform?.pref(restKey(path))?.split(',')?.mapNotNull { it.split('=').takeIf { p -> p.size == 2 }?.let { (a, b) -> a.trim().toIntOrNull()?.let { n -> b.trim().toIntOrNull()?.let { c -> n to c } } } }?.toMap()?.toMutableMap() ?: HashMap()
+    }
+
+    /** [s] with each rest in [counts] the bars it was said to be - and the bars after it numbered on from it. */
+    private fun withRests(s: Score, counts: Map<Int, Int>): Score {
+        if (counts.isEmpty()) return s
+        var shift = 0
+        return s.copy(measures = s.measures.map { m ->
+            val n = m.number + shift
+            val c = counts[m.number]
+            if (c != null && m.bars > 1 || c != null && m.events.all { it is Rest }) {
+                shift += c!! - m.bars
+                m.copy(number = n, bars = c, doubts = m.doubts.filterNot { it.startsWith("rest of how many") || it.contains("beats found") || it == "nothing read" })
+            } else if (shift != 0) m.copy(number = n) else m
+        })
+    }
+
+    /** The rest at bar [number] of the part in front is [count] bars: kept, written down for teaching, and on to the next. */
+    fun setRestCount(s: SheetsState, number: Int, count: Int) {
+        val path = s.currentPath ?: return
+        val f = restsOf(path)
+        f[number] = count
+        state?.platform?.setPref(restKey(path), f.entries.joinToString(",") { "${it.key}=${it.value}" })
+        if (wrongOf(path).remove(number)) saveWrong(path)
+        scoreHere(s)?.measures?.firstOrNull { it.number == number }?.let { m ->
+            scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w -> Transcriber.recordRest(s, File(path), m, w, count) }
+        }
+        changed()
+        if (checking) next(s)
+    }
 
     /** Clefs, keys and times put right, by part: the bar each starts at to what it is. Kept with the part's settings. */
     private val sigs = HashMap<String, MutableMap<Int, com.inksheets.core.omr.SigFix>>()
@@ -168,7 +203,7 @@ internal object ScoreTools {
     /** Go through just bars [numbers] of the part in front (those said to be wrong), and no others. */
     private fun startCheckOf(s: SheetsState, numbers: List<Int>) {
         val score = scoreHere(s) ?: return
-        val here = numbers.filter { n -> score.measures.any { it.number == n && it.bars == 1 } }
+        val here = numbers.filter { n -> score.measures.any { it.number == n } }
         if (here.isEmpty()) return
         checkBars = here
         checking = true
@@ -306,7 +341,7 @@ internal object ScoreTools {
         // checked), then its others; then the pages after it, and those before it last.
         val here = s.pageShown.first
         val clean = s.currentPath?.let { cleanedIn(it) }.orEmpty()
-        checkBars = score.measures.filter { !it.sure && it.bars == 1 }
+        checkBars = score.measures.filter { !it.sure }
             .sortedWith(compareBy({ it.page < here }, { it.page != here }, { it.page }, { it.number !in clean }, { it.number }))
             .map { it.number }
         if (checkBars.isEmpty()) { said = "No bars in doubt"; return false }

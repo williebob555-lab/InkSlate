@@ -23,6 +23,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -122,7 +124,8 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                 }
             }
             val choosing: @Composable () -> Unit = {
-                if (ScoreTools.sigDraft != null) SignatureRow(state, m)
+                if (m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") }) RestCount(state, m, short)
+                else if (ScoreTools.sigDraft != null) SignatureRow(state, m)
                 else {
                     Text(when {
                         ScoreTools.editing != null -> "Tap a note to choose it, then change it below."
@@ -319,8 +322,8 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
         Btn("Down", Modifier.weight(1f), isNote) { ScoreTools.edit { BarEdit.step(m, it, at, 1) } }
         // What is written before it: a flat, a natural, a sharp - tapped again, none.
         val acc = BarEdit.accidentalOf(events, at)
-        for ((label, alter) in listOf("♭" to -1, "♮" to 0, "♯" to 1))
-            Btn(label, Modifier.weight(0.8f), isNote, on = acc == alter) { ScoreTools.edit { BarEdit.accidental(m, it, at, if (acc == alter) null else alter) } }
+        for ((label, alter) in listOf("♭♭" to -2, "♭" to -1, "♮" to 0, "♯" to 1, "x" to 2))
+            Btn(label, Modifier.weight(0.7f), isNote, on = acc == alter) { ScoreTools.edit { BarEdit.accidental(m, it, at, if (acc == alter) null else alter) } }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Btn(if (e?.duration?.dots ?: 0 > 0) "No dot" else "Dot", Modifier.weight(1f), e != null) { ScoreTools.edit { BarEdit.dot(it, at) } }
@@ -433,6 +436,34 @@ private fun SignatureRow(state: SheetsState, m: Measure) {
                     beats = if (draft.beats != m.time.beats || draft.beatType != m.time.beatType) draft.beats else null,
                     beatType = if (draft.beats != m.time.beats || draft.beatType != m.time.beatType) draft.beatType else null))
             }, modifier = Modifier.weight(1.3f).height(if (ScoreTools.compact) 40.dp else 48.dp)) { Text("Use from bar ${m.number}", maxLines = 1) }
+        }
+    }
+}
+
+/**
+ * A rest of many bars: how many - as read, its figure in doubt - chosen by the figure printed over
+ * it on the picture above, and kept; the bars after it numbered on from it.
+ */
+@Composable
+private fun RestCount(state: SheetsState, m: Measure, short: Boolean) {
+    var count by androidx.compose.runtime.remember(m.number) { androidx.compose.runtime.mutableIntStateOf(if (m.bars > 1) m.bars else 2) }
+    val h = if (short) 40.dp else 48.dp
+    Column(verticalArrangement = Arrangement.spacedBy(if (short) 6.dp else 10.dp), modifier = Modifier.fillMaxWidth()) {
+        Text("A rest of how many bars? (the figure over it on the page)", style = if (short) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            FilledTonalButton(onClick = { count = (count - 1).coerceAtLeast(2) }, modifier = Modifier.height(h)) { Text("−") }
+            Text("$count bars", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            FilledTonalButton(onClick = { count = (count + 1).coerceAtMost(999) }, modifier = Modifier.height(h)) { Text("+") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            for (d in listOf(-10, 10)) OutlinedButton(onClick = { count = (count + d).coerceIn(2, 999) }, modifier = Modifier.weight(1f).height(h)) { Text(if (d < 0) "−10" else "+10", maxLines = 1) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            val pad = PaddingValues(horizontal = if (short) 4.dp else 12.dp)
+            val words = if (short) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge
+            OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", style = words, maxLines = 1) }
+            OutlinedButton(onClick = { ScoreTools.endCheck() }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Done", style = words, maxLines = 1) }
+            Button(onClick = { ScoreTools.setRestCount(state, m.number, count) }, contentPadding = pad, modifier = Modifier.weight(1.3f).height(h)) { Text("Use $count", style = words, maxLines = 1) }
         }
     }
 }

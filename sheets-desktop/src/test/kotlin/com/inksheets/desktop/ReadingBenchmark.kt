@@ -728,7 +728,7 @@ class ReadingBenchmark {
         }
     }
 
-    private fun scannedGrey(ink: Ink, degrees: Double, seed: Long, warp: Warp? = null): IntArray {
+    internal fun scannedGrey(ink: Ink, degrees: Double, seed: Long, warp: Warp? = null): IntArray {
         val r = java.util.Random(seed)
         val a = Math.toRadians(degrees)
         val cos = Math.cos(a); val sin = Math.sin(a)

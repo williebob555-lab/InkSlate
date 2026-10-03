@@ -453,6 +453,27 @@ internal object Transcriber {
         looker.execute { runCatching { drawnPage(state, file, page, width) } }
     }
 
+    /** Bar [m] of [file] is a rest of [count] bars, said in Fix: written down beside the fixes, for teaching how a rest's figure is read. */
+    fun recordRest(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, count: Int) {
+        val root = state.root ?: return
+        val rel = state.relative(file) ?: return
+        looker.execute {
+            runCatching {
+                val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
+                val line = buildString {
+                    append("{\"kind\":\"rest\",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
+                    append(",\"id\":\"").append(idOf(file)).append('"')
+                    append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
+                    append(",\"width\":").append(width)
+                    append(",\"box\":[").append(m.box.left).append(',').append(m.box.top).append(',').append(m.box.right).append(',').append(m.box.bottom).append(']')
+                    append(",\"read\":").append(m.bars).append(",\"is\":").append(count)
+                    append(",\"at\":").append(System.currentTimeMillis()).append('}')
+                }
+                File(dir, "fixes-${state.platform.deviceId}.jsonl").appendText(line + "\n")
+            }.onFailure { state.platform.log("Keeping a rest's count for teaching failed: ${it.message}") }
+        }
+    }
+
     /** How long each page read on this device lately took, in ms (the last few dozen): shown so how fast it is can be seen. */
     val pageTimes: MutableList<Long> = java.util.Collections.synchronizedList(ArrayList())
 

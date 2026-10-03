@@ -52,4 +52,23 @@ class PerformanceTest {
         val rit = play(bar(1, listOf(note(10f), note(20f), note(30f), note(40f)), directions = listOf(Direction("text", 5f, 8f, "rit."))), bar(2, listOf(note(10f))))
         assertTrue("slower: bar 2 at ${rit.barStarts[1]}", rit.barStarts[1] > 4000L)
     }
+
+    @Test
+    fun `a breath mark ends the note before it early, and only that one`() {
+        val plain = play(bar(1, listOf(note(0f, tie = false, marks = listOf("tenuto")), note(10f, marks = listOf("tenuto")), note(20f), note(30f))))
+        val breathed = play(bar(1, listOf(note(0f, marks = listOf("tenuto")), note(10f, marks = listOf("tenuto")), note(20f), note(30f)), listOf(Direction("breath", 15f, above = true))))
+        val a = plain.tones.sortedBy { it.start }; val b = breathed.tones.sortedBy { it.start }
+        assertEquals("the first note as it was", a[0].length, b[0].length)
+        assertTrue("the note before the breath shorter", b[1].length < a[1].length - rate * 0.1)
+        assertEquals("the next note on its beat", a[2].start, b[2].start)
+    }
+
+    @Test
+    fun `a double flat sounds two semitones down and is drawn as one`() {
+        val n = Note(listOf(4), listOf(Pitch(6, 4)), Duration(4), 0f, accidentals = mapOf(4 to -2))
+        val out = Signatures.repitch(listOf(n), Clef.TREBLE, Key(0))
+        assertEquals(Pitch(6, 4).midi - 2, (out[0] as Note).pitches[0].midi)
+        val m = bar(1, out + listOf(note(10f, base = 2), note(20f)))
+        assertTrue(Engraver.line(listOf(m)).marks.any { it is Engraver.Symbol && it.name == "accidentalDoubleFlat" })
+    }
 }

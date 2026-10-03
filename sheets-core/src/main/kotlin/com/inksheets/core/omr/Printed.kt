@@ -38,6 +38,8 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
         ARTICULATION,
         /** A dynamic ([Symbol.name]: "p", "mf", "sfz" - or a letter, set with its neighbours into one). */
         DYNAMIC,
+        /** A breath mark (a comma or tick over the staff) or a caesura: a breath taken there - the note before ends early. */
+        BREATH,
         /** A bar-repeat sign (%): the bar before, played again. */
         BAR_REPEAT,
         /** A digit in a text font - a tuplet's number, among others (bar numbers, tempos). */
@@ -164,6 +166,8 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
             'œ'.code to Kind.HEAD_BLACK, '˙'.code to Kind.HEAD_HALF, 'w'.code to Kind.HEAD_WHOLE,
             // An X head (a spoken note, a hi-hat): a filled head's value.
             '¿'.code to Kind.HEAD_BLACK,
+            // A breath mark: the music font's comma (only ever read in the music font, never a word's).
+            ','.code to Kind.BREATH,
             '∑'.code to Kind.REST_1, 'Ó'.code to Kind.REST_2, 'Œ'.code to Kind.REST_4, '‰'.code to Kind.REST_8, '≈'.code to Kind.REST_16,
             '&'.code to Kind.CLEF_G, '?'.code to Kind.CLEF_F, 'B'.code to Kind.CLEF_C,
             'c'.code to Kind.TIME_COMMON, 'C'.code to Kind.TIME_CUT,
@@ -177,7 +181,9 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
             0xE0A4 to Kind.HEAD_BLACK, 0xE0A3 to Kind.HEAD_HALF, 0xE0A2 to Kind.HEAD_WHOLE, 0xE0A9 to Kind.HEAD_BLACK,
             0xE4E3 to Kind.REST_1, 0xE4E4 to Kind.REST_2, 0xE4E5 to Kind.REST_4, 0xE4E6 to Kind.REST_8, 0xE4E7 to Kind.REST_16, 0xE4E8 to Kind.REST_32,
             0xE050 to Kind.CLEF_G, 0xE062 to Kind.CLEF_F, 0xE05C to Kind.CLEF_C, 0xE08A to Kind.TIME_COMMON, 0xE08B to Kind.TIME_CUT,
-            0xE260 to Kind.FLAT, 0xE262 to Kind.SHARP, 0xE261 to Kind.NATURAL, 0xE264 to Kind.DOUBLE_FLAT, 0xE263 to Kind.DOUBLE_SHARP, 0xE1E7 to Kind.DOT
+            0xE260 to Kind.FLAT, 0xE262 to Kind.SHARP, 0xE261 to Kind.NATURAL, 0xE264 to Kind.DOUBLE_FLAT, 0xE263 to Kind.DOUBLE_SHARP, 0xE1E7 to Kind.DOT,
+            // Breath marks (comma, tick, up-bow-like) and caesuras.
+            0xE4CE to Kind.BREATH, 0xE4CF to Kind.BREATH, 0xE4D0 to Kind.BREATH, 0xE4D1 to Kind.BREATH, 0xE4D2 to Kind.BREATH, 0xE4D3 to Kind.BREATH
         )
 
         /**

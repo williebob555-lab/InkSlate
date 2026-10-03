@@ -46,7 +46,9 @@ class UiAuditAppTest {
         val part = File(lib, src.name).also { src.copyTo(it) }
         val (ink, _) = OmrRealPagesTest().renderAt(part, 0)!!
         val reading = Recognizer().read(ink, 0)
-        val score = Score(reading.measures, 3, listOf(ink.width, 0, 0), readPages = listOf(0))
+        // (One bar made a rest of four bars, in doubt: Fix's question of how many is looked over too.)
+        val score = Score(reading.measures.mapIndexed { i, m -> if (i == 6) m.copy(bars = 4, events = listOf(com.inksheets.core.omr.Rest(com.inksheets.core.omr.Duration(1), m.box.left + m.space * 2)),
+            doubts = listOf("rest of how many bars?")) else m }, 3, listOf(ink.width, 0, 0), readPages = listOf(0))
         var total = 0
         for ((size, w, h) in UiAudit.SIZES) {
             if (only != null && size !in only) continue
@@ -82,10 +84,16 @@ class UiAuditAppTest {
                 look("fix", "Edit", "None of these", "Not one bar", "Skip", "Done", "Clef, key or time wrong?")
                 // The bar put right by hand, and its clef, key and time chosen anew: every control there.
                 runOnIdle { ScoreTools.offered.firstOrNull()?.let { ScoreTools.startEdit(it) } }
-                look("fix-editing", "Up", "Down", "♭", "♯", "Dot", "Quarter", "16th", "Triplet", "Remove", "Cancel", "Undo", "Use this")
+                look("fix-editing", "Up", "Down", "♭♭", "♭", "♯", "x", "Dot", "Quarter", "16th", "Triplet", "Remove", "Cancel", "Undo", "Use this")
                 runOnIdle { ScoreTools.cancelEdit(); ScoreTools.sigDraft = com.inksheets.core.omr.SigFix(com.inksheets.core.omr.Clef.TREBLE, 0, 4, 4) }
                 look("fix-signature", "Treble", "Tenor", "Key", "Beats", "4/16", "Cancel", "Use from bar")
                 runOnIdle { ScoreTools.sigDraft = null; ScoreTools.endCheck() }
+                // A rest of many bars said to be wrong: how many, chosen.
+                score.measures.firstOrNull { it.bars > 1 }?.let { r ->
+                    runOnIdle { ScoreTools.markWrong(s, r.number..r.number) }
+                    look("fix-rest", "−10", "+10", "Skip", "Done", "Use")
+                    runOnIdle { ScoreTools.endCheck() }
+                }
                 // Playing: the bar along the foot that steers it.
                 runOnIdle { ScoreTools.play(s) }
                 look("playing", "Back a line", "Back a bar", "Pause", "On a bar", "On a line", "Slower", "Faster", "Stop")

@@ -33,4 +33,17 @@ class GraceSurvey {
         }
         println("GRACES total $total")
     }
+
+    @Test
+    fun `parts with breath marks`() {
+        assumeTrue(System.getProperty("inksheets.breathsurvey") != null)
+        val bench = ReadingBenchmark()
+        var total = 0
+        for (f in bench.corpus()) for (p in 0 until 2) {
+            val printed = runCatching { PdfPrinted.read(f, p) }.getOrNull() ?: continue
+            val b = printed.symbols.filter { it.kind == com.inksheets.core.omr.Printed.Kind.BREATH }
+            if (b.isNotEmpty()) { total += b.size; println("BREATHS ${f.name} p$p: ${b.size} at " + b.take(3).joinToString(" ") { "${it.x.toInt()},${it.y.toInt()}" }) }
+        }
+        println("BREATHS total $total")
+    }
 }

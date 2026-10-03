@@ -71,6 +71,9 @@ object Performance {
             val words = m.directions.filter { it.kind == "text" }.mapNotNull { d -> tempoWord(d.text)?.let { d.x to it } }.sortedBy { it.first }
             val pins = m.directions.filter { it.kind == "cresc" || it.kind == "dim" }
             val slurs = m.directions.filter { it.kind == "slur" }
+            // Breaths: the note sounding when one comes lets go a moment before the next.
+            val breaths = m.directions.filter { it.kind == "breath" }.map { it.x }
+            val xs = m.events.map { it.x }
             var di = 0; var wi = 0
             var q = 0.0
             var struck: String? = null
@@ -112,7 +115,7 @@ object Performance {
                         "accent" in a -> { v += 0.35f; accent = 0.85f }
                     }
                     val slurred = slurs.any { s -> e.x >= s.x - sp * 0.5f && e.x < s.x2 - sp * 0.8f }
-                    val sounding = when {
+                    val articulated = when {
                         "staccatissimo" in a -> beats * 0.3
                         "staccato" in a -> beats * 0.5
                         "marcato" in a -> beats * 0.75
@@ -120,6 +123,11 @@ object Performance {
                         "tenuto" in a || slurred -> beats
                         else -> beats - gap
                     }
+                    // A breath mark after it (before the next note): it ends early, a breath's worth.
+                    val i = m.events.indexOf(e)
+                    val nextX = xs.getOrNull(i + 1) ?: Float.MAX_VALUE
+                    val breathe = breaths.any { it > e.x && it < nextX }
+                    val sounding = if (breathe) min(articulated, beats - rate * 0.14) else articulated
                     // A fermata: held about twice over, then a breath before going on.
                     val hold = if ("fermata" in a) beats * 0.9 + rate * 0.15 else 0.0
                     val start = t.toLong()

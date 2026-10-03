@@ -1005,8 +1005,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
     }
 
+    /** Bars read as repeat signs, by their index in the page's bars: where the sign stood (see barRepeat) - checked once the line is read. */
+    private val repeatSide = HashMap<Int, Int>()
+    private val repeatEvents = HashMap<Int, List<Event>>()
+
+    /** The last multi-bar rest's count read two ways that differ (see multiRest): asked about. */
+    private var restFigureDoubted = false
+
     /** Say why each bar was or was not taken for a multi-bar rest (for finding out). */
-    var traceRests = false
+    var traceRests = System.getProperty("inksheets.omr.tracerests") != null
 
     /** How long the last [read]'s stages took, for finding what is slow: "staves 40 ms, ...". */
     var timings = ""
@@ -1229,7 +1236,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
             ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves.filterIndexed { i, _ -> onlyStaff == null || i == onlyStaff }.map { if (look == null) it else it.looked(look.first, look.second) }, net) else null
         this.staves = staves
-        symbolOf.clear(); fullSize.clear(); cueAt.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear(); graceAt.clear(); normalHead.clear()
+        symbolOf.clear(); fullSize.clear(); cueAt.clear(); printedAccidental.clear(); usedStems.clear(); claimedMarks.clear(); graceAt.clear(); normalHead.clear(); secondOut.clear(); repeatSide.clear(); repeatEvents.clear()
         val clean = withoutLines(ink, staves, t)
         clock.mark("lines out")
         lineThickness = t
@@ -1277,6 +1284,22 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
             val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.odds[7])
             dropped += h to "faint"
+            staffOf[h] = si
+        }
+        // The second look's heads said to be none: let go the same way, marked so a bar short without them takes them back.
+        for ((sym, si) in secondOut) {
+            val s = staves[si]; val x = sym.x.roundToInt()
+            val step = learnedStep(sym, s, ink)
+            if (headsOf[si].any { o -> abs(o.x - x) < s.space * 0.6f && abs(o.step - step) <= 1 }) continue
+            val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
+            val h = Head(x, step, s.y(step, x).roundToInt(), kind, sym.confidence)
+            // Its value as the trained reader saw it: a half head has its stem (a whole one is told by
+            // its shape), a filled one its beams or flags.
+            if (sym.kind != Printed.Kind.HEAD_WHOLE) { h.stemX = x; h.up = step >= 4 }
+            if (sym.beams > 0) h.flags = sym.beams
+            if (sym.dots > 0) h.dots = sym.dots
+            symbolOf[h] = sym
+            dropped += h to SECOND_OUT
             staffOf[h] = si
         }
         // An x or slash head with a stem of its own is a note, and a clear one: its thin strokes match less well than a head's fill.
@@ -1338,7 +1361,15 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     // (Two or more: the longest, a count of two figures - read wrong far oftener than one.)
                     val k = rests.singleOrNull() ?: rests.filter { measures[it].bars >= 10 || "rest of how many bars?" in measures[it].doubts }.singleOrNull()
                     // (A long rest, but not a misread figure's worth: 12 read as 112 is no 100-bar rest.)
-                    if (p > carry.printed && delta != 0 && k != null && measures[k].bars + delta in 2..64) {
+                    // (Only a figure not read, or one read short of a figure - "4" where "14" is printed: the
+                    // figure over a rest, read, is believed over the count - the count is out by a bar
+                    // misread somewhere else on the line far oftener.)
+                    // (A figure read, but in doubt - its two readings differing - moved by less than itself
+                    // only: the bar numbers jumping on - a medley's, a cut - are no rest of 54.)
+                    val figureDoubted = k != null && ("rest of how many bars?" in measures[k].doubts && (measures[k].bars < 2 || abs(delta) < measures[k].bars) ||
+                        // (A thin leading 1 lost - "4" where "14" is printed - and that only.)
+                        (measures[k].bars < 10 && measures[k].bars + delta == measures[k].bars + 10))
+                    if (p > carry.printed && delta != 0 && k != null && figureDoubted && measures[k].bars + delta in 2..64) {
                         val m = measures[k]
                         measures[k] = m.copy(bars = m.bars + delta, doubts = m.doubts - "rest of how many bars?")
                         for (j in k + 1 until measures.size) measures[j] = measures[j].copy(number = measures[j].number + delta)
@@ -1405,7 +1436,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     multiAt += measures.size
                     measures += Measure(number, page, si, box, s.space, carry.clef, carry.key, carry.time,
                         listOf(Rest(Duration(1), x.toFloat())), showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey,
-                        showsTime = (i == 0 && showsTime) || timeHere, doubts = if (restBars == 0) listOf("rest of how many bars?") else emptyList(), bars = max(1, restBars), lines = lines, lineWidth = t.toFloat(), start = from)
+                        showsTime = (i == 0 && showsTime) || timeHere, doubts = if (restBars == 0 || restFigureDoubted) listOf("rest of how many bars?") else emptyList(), bars = max(1, restBars), lines = lines, lineWidth = t.toFloat(), start = from)
                     number += max(1, restBars)
                 } else {
                 // A cue - another instrument's line, printed small to come in by - over the part's rest:
@@ -1457,6 +1488,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // file's first bar, or the first on a line that sets out its time (a book's next study).
                 val pickup = (page == 0 && measures.isEmpty() || i == 0 && showsTime) && events.sumOf { it.duration.quarters } < carry.time.quarters - 1e-6 &&
                     (stated || events.filterIsInstance<Note>().let { n -> n.isNotEmpty() && n.all { it.confidence >= 0.8f } })
+                // Short, and the second look's let-go heads here are what it lacks: taken back - the bar
+                // adds up exactly with them, each where nothing else was read.
+                if (!inVoices && !cueBar && events.isNotEmpty() || events.isEmpty() && !cueBar) {
+                    val q = events.sumOf { it.duration.quarters }
+                    if (q < carry.time.quarters - 1e-6) {
+                        // (Off the staff, on ledger lines, only: where the second look is wrong - it is right far
+                        // oftener than not about what sits on the staff.)
+                        val back = dropped.filter { (h, why) -> why == SECOND_OUT && staffOf[h] == si && h.x >= from - 2 && h.x < to && (h.step <= -2 || h.step >= 10) }
+                            .map { it.first }.distinctBy { it.x / 4 to it.step }
+                            .filter { h -> events.none { e -> abs(e.x - h.x) < s.space * 0.6f } }
+                            .map { h -> maybeNote(clean, s, h, carry) }
+                        if (back.isNotEmpty() && abs(q + back.sumOf { it.duration.quarters } - carry.time.quarters) < 1e-6) {
+                            events = (events + back).sortedBy { it.x }
+                            dropped.removeAll { (h, why) -> why == SECOND_OUT && back.any { b -> abs(b.x - h.x) < 2f } }
+                        }
+                    }
+                }
                 // What was seen here and let go: another reading of the bar may want it back.
                 val maybe = dropped.filter { (h, why) -> staffOf[h] == si && h.x >= from - 2 && h.x < to && !why.startsWith("the other staff") }
                     .map { it.first }.distinctBy { it.x / 4 to it.step }.map { h -> clock.sum("maybe") { maybeNote(clean, s, h, carry) } }
@@ -1482,7 +1530,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val wholeBarRest = restsWholeBar(events)
                 if (abs(q - carry.time.quarters) > 1e-6 && events.isNotEmpty() && !inVoices && !pickup && !wholeBarRest) doubts += "${fmt(q)} beats found, ${fmt(carry.time.quarters)} expected"
                 // A bar with nothing in it but a bar-repeat sign is as sure as the bar it repeats.
-                val repeatsBar = events.isEmpty() && barRepeat(clean, s, from, to)
+                // A bar-repeat sign: where nothing was read - or only a note or two, unclear, that do not
+                // add up (its slashes and dots taken for heads).
+                val signAt = if (events.isEmpty() || events.size <= 2 && events.all { it is Note && it.confidence < 0.9f } &&
+                    abs(events.sumOf { it.duration.quarters } - carry.time.quarters) > 1e-6) barRepeat(clean, s, from, to, i == 0) else 0
+                if (signAt != 0) {
+                    // (What was read in it kept, should the sign not stand - see below.)
+                    repeatSide[measures.size] = signAt; repeatEvents[measures.size] = events
+                    events = emptyList(); doubts.removeAll { it.contains("beats found") }
+                }
+                val repeatsBar = signAt != 0
                 if (events.isEmpty() && !repeatsBar) doubts += "nothing read"
                 if (guessedTuplets) doubts += "triplets taken to make the bar add up, no 3 seen"
                 if (i == 0 && timeUnread) doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
@@ -1630,6 +1687,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // The page without its staff lines, but with every stroke that crossed a line whole again
         // (a tie, a slur, a hairpin, a word): what was taken out with the line is put back where
         // there is ink just above and just below it - one shape, not pieces either side.
+        // A two-bar repeat sign stands across the barline between its two bars: the bar the other side
+        // of that barline is one with it (a sign, or nothing read). Where it is not, what was taken
+        // for the sign was something else's end (a tie's, a beam's): the bar as it was read.
+        for ((idx, side) in repeatSide) {
+            if (side == 1) continue
+            val m = measures.getOrNull(idx) ?: continue
+            val other = measures.getOrNull(if (side == 2) idx - 1 else idx + 1)?.takeIf { it.page == m.page && it.staff == m.staff }
+            if (other != null && (other.repeatsBar || other.events.isEmpty() && other.bars == 1)) continue
+            val back = repeatEvents[idx].orEmpty()
+            if (traceRests) println("    repeat let go: bar ${m.number} staff ${m.staff} side $side, the other ${other?.number} events ${other?.events?.size} repeats ${other?.repeatsBar}")
+            measures[idx] = m.copy(repeatsBar = false, events = back, doubts = if (back.isEmpty()) m.doubts + "nothing read" else m.doubts + "a bar-repeat sign or these?")
+        }
         clock.mark("bars")
         // A second look at one bar wants its notes only: what a cleaned bar keeps is not worked out.
         if (onlyStaff != null) { timings = clock.toString(); return PageReading(staves, bars, measures, t, space, dropped) }
@@ -1742,12 +1811,25 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val printed = Digits.number(page, start - sp.toInt(), start + len + sp.toInt(), s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp, musicFont = true)
         // (Over 64 bars is a figure misread - pencilled words over it, a tempo's equation - not a
         // part's rest: how many, unknown, and the next bar number printed tells.)
-        val bars = (printed?.first ?: digits.sortedBy { it.second }.fold(0) { n, (d, _) -> n * 10 + d }).takeIf { it in 0..64 } ?: 0
-        if (traceRests) println("    multiRest serifs $serifs bars $bars digits $digits")
+        // The two readings of it: whole (any typeface - the surer of the two), and figure by figure
+        // in the music font's own shapes. Whole where it reads one; the figures where it does not;
+        // the two differing, the count in doubt - asked about rather than played wrong.
+        val whole = printed?.first?.takeIf { it in 2..64 }
+        val font = digits.takeIf { it.isNotEmpty() }?.sortedBy { it.second }?.fold(0) { n, (d, _) -> n * 10 + d }?.takeIf { it in 2..64 }
+        // (Two figures read in the music font alone - nothing whole - are as often one figure and a
+        // smudge: asked about too.)
+        // (Figure by figure, a stray mark off to the side is taken for a second figure often - "41"
+        // for a 4: only one figure each, differing, is a doubt.)
+        restFigureDoubted = whole != null && font != null && whole != font && whole < 10 && font < 10 || whole == null && font != null && font >= 10
+        val bars = whole ?: font ?: 0
+        if (traceRests) println("    multiRest serifs $serifs bars $bars digits $digits whole $whole font $font at $start")
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
         if (!serifs && bars < 2) return null
-        // A multi-bar rest is never of one bar (that is a whole rest): a 1 read over it is a figure
-        // misread - how many it is, unknown (the next bar number printed may tell; see read).
+        // A "1" over a short thick bar: a rest of the one bar, as some engravers print it - the
+        // bar's rest, sure. Over a long one, a figure misread (a multi-bar rest is never of one
+        // bar): how many, unknown - the next bar number printed may tell (see read).
+        val one = printed?.first == 1 || digits.size == 1 && digits[0].first == 1
+        if (one && len < sp * 4f) { restFigureDoubted = false; return 1 to start }
         return (if (bars == 1) 0 else bars) to start
     }
 
@@ -2112,6 +2194,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     /** A PDF's small heads, by staff: (x, step) - a grace note's where one of the part's own follows it closely. */
     private val graceAt = HashMap<Int, MutableList<Pair<Int, Int>>>()
 
+    /** The trained reader's heads its second look said were none, with their staves: put back where a bar wants them. */
+    private val secondOut = ArrayList<Pair<Printed.Symbol, Int>>()
+
     /** How wide the part's own filled heads print on each staff, in spaces (measured once a page). */
     private val normalHead = HashMap<Int, Float>()
     private val printedAccidental = HashMap<Head, Int>()
@@ -2398,6 +2483,52 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return out
     }
 
+    /** -Dinksheets.omr.headwhy=1: say why a head the trained reader found was let go (for finding out). */
+    private fun headWhy(sym: Printed.Symbol, why: String) {
+        if (System.getProperty("inksheets.omr.headwhy") != null) println("HEADWHY ${sym.kind} at ${sym.x.toInt()},${sym.y.toInt()} conf ${"%.2f".format(sym.confidence)}: $why")
+    }
+
+    /**
+     * The staff a head between two staves belongs to - [near] the one whose middle it is nearer -
+     * as the page shows it: the ledger lines climb from its own staff (the first of them, next to
+     * that staff's line, printed; next to the other's, not), and its stem points into its own
+     * staff (a high note's down, a low note's up). Where neither says, [near].
+     */
+    private fun staffBetween(sym: Printed.Symbol, near: Int, staves: List<Staff>, ink: Ink): Int {
+        val s = staves[near]; val sp = s.space
+        val cx = (sym.x + sym.width / 2).roundToInt()
+        val below = sym.y > s.lineY(4, cx) + sp * 1.5f
+        val above = sym.y < s.lineY(0, cx) - sp * 1.5f
+        val oi = if (below) near + 1 else if (above) near - 1 else return near
+        val o = staves.getOrNull(oi)?.takeIf { cx >= it.left - sp && cx <= it.right } ?: return near
+        // A ledger line one space out from a staff, across the head (and not much further: a ledger is short).
+        fun rung(st: Staff, side: Int): Boolean {
+            val y = (if (side > 0) st.lineY(4, cx) + st.space else st.lineY(0, cx) - st.space).roundToInt()
+            val l = (sym.x - sp * 0.2f).roundToInt(); val r = (sym.x + sym.width + sp * 0.2f).roundToInt()
+            return (-1..1).any { dy -> (l..r).count { ink[it, y + dy] } >= (r - l + 1) * 0.75f }
+        }
+        // Each staff's first ledger towards the head - where the head is far enough out to want one.
+        val wantsNear = if (below) sym.y > s.lineY(4, cx) + sp * 0.9f else sym.y < s.lineY(0, cx) - sp * 0.9f
+        val wantsOther = if (below) sym.y < o.lineY(0, cx) - sp * 0.9f else sym.y > o.lineY(4, cx) + sp * 0.9f
+        val nearRung = wantsNear && rung(s, if (below) 1 else -1)
+        val otherRung = wantsOther && rung(o, if (below) -1 else 1)
+        if (otherRung && !nearRung) return oi
+        if (nearRung && !otherRung) return near
+        // Its stem: up from its right side, or down from its left - into its own staff.
+        val top = (sym.y - sp * 0.45f).roundToInt(); val bot = (sym.y + sp * 0.45f).roundToInt()
+        fun run(x: Int, from: Int, step: Int): Int { var y = from; var gap = 0; while (abs(y - from) < sp * 4 && gap <= 2) { y += step; if (ink[x, y]) gap = 0 else gap++ }; return abs(y - from) - gap }
+        val right = (sym.x + sym.width).roundToInt()
+        val up = (right - 3..right + 1).maxOf { run(it, top, -1) }
+        val down = (sym.x.roundToInt() - 1..sym.x.roundToInt() + 3).maxOf { run(it, bot, 1) }
+        val stemDown = down >= sp * 2.2f && up < sp * 1.2f
+        val stemUp = up >= sp * 2.2f && down < sp * 1.2f
+        // (Only well out from the nearer staff: a low note just under it is its own, whichever way its stem.)
+        val far = if (below) sym.y > s.lineY(4, cx) + sp * 2.4f else sym.y < s.lineY(0, cx) - sp * 2.4f
+        if (far && below && stemDown) return oi
+        if (far && above && stemUp) return oi
+        return near
+    }
+
     /**
      * Whether note [n] on staff [s] is printed small - a grace note's head, read by the trained
      * reader as one of the part's own: its filled head plainly narrower than the staff's others.
@@ -2415,6 +2546,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return w < normal * 0.8f
     }
 
+    private val SECOND_OUT = "second look: not a head"
+
     /** How sure the second look must be to overrule the trained reader. */
     var SECOND_SURE = 0.9f
     var HEAD_OUT_SURE = System.getProperty("inksheets.omr.headout")?.toFloatOrNull() ?: 0.98f
@@ -2427,8 +2560,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         if (all.isEmpty() || staves.isEmpty()) return out
         val small = Printed.small(all)
         for (sym in all) {
-            val si = staves.indices.filter { val s = staves[it]; sym.x >= s.left - s.space && sym.x <= s.right }
+            val near = staves.indices.filter { val s = staves[it]; sym.x >= s.left - s.space && sym.x <= s.right }
                 .minByOrNull { abs((staves[it].top + staves[it].bottom) / 2f - sym.y) } ?: continue
+            // Between two staves: whichever its ledger lines and stem say (see staffBetween), not just
+            // whichever middle is nearer - a high note over one staff is that staff's.
+            val si = if (lines != null) staffBetween(sym, near, staves, lines) else near
             val s = staves[si]
             if (abs((s.top + s.bottom) / 2f - sym.y) > s.space * 9) continue
             // Small: a cue's or a grace note's - no time in the bar. Kept aside: a grace note is
@@ -2443,8 +2579,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // (Faint ones not taken are not notes, but put back if a bar wants them - see read.)
             val second = if (p.learned && System.getProperty("inksheets.omr.noheadlook") == null) secondLook(sym, s) else null
             // (A head left out on a sterner word than anything else: a note lost is a bar wrong.)
-            if (second == "other" && secondLook(sym, s, HEAD_OUT_SURE) == "other") continue
-            if (p.learned && Learned.faint(sym) && second != "black" && second != "half" && second != "whole") continue
+            if (second == "other" && secondLook(sym, s, HEAD_OUT_SURE) == "other") {
+                // Let go, not lost: a bar that adds up only with it takes it back (see read) - the second
+                // look, sure on the scans it learned from, is wrong now and then on a real one.
+                headWhy(sym, "second look: not a head")
+                if (p.learned) secondOut += sym to si
+                continue
+            }
+            if (p.learned && Learned.faint(sym) && second != "black" && second != "half" && second != "whole") { headWhy(sym, "faint"); continue }
             val x = sym.x.roundToInt()
             val step = if (p.learned) learnedStep(sym, s, lines) else ((sym.y - s.lineY(0, x)) / (s.space / 2)).roundToInt()
             val kind = when (sym.kind) { Printed.Kind.HEAD_HALF -> "noteheadHalf"; Printed.Kind.HEAD_WHOLE -> "noteheadWhole"; else -> "noteheadBlack" }
@@ -2453,7 +2595,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // The trained reader takes a word's letter off the staff for a head (legato's "o"): off
             // the staff, a head needs its ledger line - or, where a worn scan's ledger line is too
             // faint to see, its stem. (A PDF's own heads are its notes.)
-            if (p.learned && lines != null && !onLedger(h, s, lines) && !hasStem(h, s, lines)) continue
+            if (p.learned && lines != null && !onLedger(h, s, lines) && !hasStem(h, s, lines)) { headWhy(sym, "off the staff, no ledger line or stem (step ${h.step})"); continue }
             symbolOf[h] = sym
             out[si] += h
         }
@@ -2496,8 +2638,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         // Each accidental to the head just right of it at its height (a chord's are staggered further left).
         val heads = out.flatten()
+        // Two flats side by side at one height, close: a double flat (the trained reader knows a flat,
+        // not a double one) - the one nearer the note takes it, the other is part of it.
+        val doubleFlat = HashSet<Printed.Symbol>(); val partOfDouble = HashSet<Printed.Symbol>()
+        if (p.learned) {
+            val sp0 = staves.firstOrNull()?.space ?: 0f
+            val flats = p.symbols.filter { it.kind == Printed.Kind.FLAT }.sortedBy { it.x }
+            for (a in flats) if (a !in partOfDouble && a !in doubleFlat)
+                flats.firstOrNull { b -> b !== a && b.x > a.x && b.x - a.x < sp0 * 1.0f && abs(b.y - a.y) < sp0 * 0.3f && b !in doubleFlat && b !in partOfDouble }
+                    ?.let { b -> partOfDouble += a; doubleFlat += b }
+        }
         for (a in p.symbols) {
+            if (a in partOfDouble) continue
             var alter = when (a.kind) { Printed.Kind.FLAT -> -1; Printed.Kind.SHARP -> 1; Printed.Kind.NATURAL -> 0; Printed.Kind.DOUBLE_FLAT -> -2; Printed.Kind.DOUBLE_SHARP -> 2; else -> continue }
+            if (a in doubleFlat) alter = -2
             val sp = staves.first().space
             // The trained reader's accidental looked at again on its own; else (no second look, or
             // not sure) a natural told from a flat by its strokes on the page.
@@ -2962,9 +3116,47 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (m.staff == m0.staff && m.page == m0.page && m.box.right > f.box[0] && m.box.left < f.box[2]) add.getOrPut(k) { ArrayList() } += d
             }
         }
+        // Breath marks: the mark reader knows none - a comma over the staff, between notes, taken for
+        // something else. Told by its shape: taller than wide, its round head on top and a thin tail
+        // under it, standing clear over the staff and not over a note (an accent or a dot is over one).
+        val breathsSeen = ArrayList<Found>()
+        for (f in all) {
+            if (f in inWord || f.label.startsWith("dyn_") && f.sure || f.label == "digit" || f.label == "word") continue
+            val m = measures[f.mi]
+            val sp = m.space
+            val s = staves.getOrNull(m.staff) ?: continue
+            val w = f.box[2] - f.box[0] + 1; val h = f.box[3] - f.box[1] + 1
+            if (w < sp * 0.2f || w > sp * 0.9f || h < sp * 0.5f || h > sp * 1.6f || h < w * 1.2f) continue
+            val cx = (f.box[0] + f.box[2]) / 2
+            if (System.getProperty("inksheets.omr.breathwhy") != null) println("BREATHWHY bar ${m.number} ${f.label} box ${f.box.toList()} w ${"%.2f".format(w / sp)} h ${"%.2f".format(h / sp)} top line ${s.lineY(0, cx).toInt()}")
+            // Over the staff: its head well over the top line, its tail down to it at most.
+            if (f.box[1] > s.lineY(0, cx) - sp * 0.5f || f.box[3] > s.lineY(0, cx) + sp * 0.2f) continue
+            if (m.events.any { e -> e is Note && abs(e.x + sp * 0.6f - cx) < sp * 0.9f }) continue
+            // Alone: a shape beside another at its height is a number's figure or a word's letter.
+            if (all.any { o -> o !== f && measures[o.mi].staff == m.staff && o.box[0] - f.box[2] < sp * 0.7f && f.box[0] - o.box[2] < sp * 0.7f &&
+                    o.box[1] < f.box[3] && o.box[3] > f.box[1] }) continue
+            // Not where a bar's number stands: over its first beat, just after the barline.
+            if (cx - m.box.left < sp * 1.5f) continue
+            // Its ink: the upper half much heavier than the lower (the comma's head over its tail).
+            val midY = (f.box[1] + f.box[3]) / 2
+            var top = 0; var bottom = 0
+            for (y in f.box[1]..f.box[3]) for (x in f.box[0]..f.box[2]) if (ink[x, y]) { if (y <= midY) top++ else bottom++ }
+            if (top < bottom * 1.6f || bottom == 0) continue
+            // A solid round head over a thin tail: the upper half mostly ink, the lower half's ink in a
+            // narrow column (a note's fragment, a dot beside a note, a slur's end are none of this).
+            val upperArea = (midY - f.box[1] + 1) * w
+            if (top < upperArea * 0.5f) continue
+            val tailWidth = (midY + 1..f.box[3]).maxOf { y -> (f.box[0]..f.box[2]).count { x -> ink[x, y] } }
+            if (tailWidth > w * 0.6f) continue
+            // Not beside a note high over the staff (its head's side, its ledger's end).
+            if (m.events.any { e -> e is Note && e.steps.min() < 0 && abs(e.x + sp * 0.6f - cx) < sp * 1.8f }) continue
+            breathsSeen += f
+            add.getOrPut(f.mi) { ArrayList() } += Direction("breath", cx.toFloat(), above = true, seen = true)
+        }
         for ((k, ds) in add) measures[k] = measures[k].copy(directions = measures[k].directions + ds)
-        // Articulations: to the note standing over or under them.
+        // Articulations: to the note standing over or under them (not a breath mark's comma).
         for (f in found) {
+            if (f in breathsSeen) continue
             val name = when (f.label) { "accent", "staccato", "tenuto", "marcato", "fermata" -> f.label; else -> continue }
             val m = measures[f.mi]
             val sp = m.space
@@ -3025,6 +3217,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // Its whole length, not just this bar's piece: each bar it crosses draws its slice of the one wedge.
             out += Direction(if (cresc) "cresc" else "dim", a.x0, a.x1, above = (a.y0 + a.y1) / 2 < s.top)
         }
+        // Breath marks: a breath taken there (the note before ends early).
+        for (b in p.symbols) if (b.kind == Printed.Kind.BREATH && b.x >= from && b.x < to && near(b.y)) out += Direction("breath", b.x, above = true)
         // Words: how to play it ("rit.", "a tempo", "cresc.", "legato"), at the word's place - a
         // word over the bar's start may stand just before it.
         for (w in p.symbols) if (w.kind == Printed.Kind.WORD && w.x >= from - sp && w.x < to - sp && near(w.y)) out += Direction("text", w.x, w.x + w.width, w.name, above = w.y < s.top)
@@ -3152,12 +3346,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * side, for two bars - across the barline between them) a couple of spaces tall, rising to the
      * right across the staff's middle, its dots beside it.
      */
-    private fun barRepeat(clean: Ink, s: Staff, from: Int, to: Int): Boolean {
+    private fun barRepeat(clean: Ink, s: Staff, from: Int, to: Int, lineStart: Boolean = false): Int {
         val sp = s.space
         val mid = (from + to) / 2
         val top = s.lineY(0, mid).roundToInt(); val bottom = s.lineY(4, mid).roundToInt()
-        // In the bar's middle (one bar's sign), or across either barline (a two-bar sign, half in each).
-        val x0 = max(0, from - (sp * 3f).toInt()); val x1 = to + (sp * 3f).toInt()
+        // In the bar's middle (one bar's sign), or across either barline (a two-bar sign, half in each)
+        // - not back past a line's start into its clef, key and time (a repeat's dots there are none).
+        val x0 = if (lineStart) from else max(0, from - (sp * 3f).toInt()); val x1 = to + (sp * 3f).toInt()
         val region = Outline.Region(x0, max(0, top - sp.toInt()), max(1, x1 - x0), bottom - top + 2 * sp.toInt())
         for (y in top..bottom) for (x in x0 until x1) {
             if (!clean[x, y] || !region.inside(x, y) || region.seen[region.index(x, y)]) continue
@@ -3178,6 +3373,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val cx = (l + r) / 2
             // Its middle in this bar's middle, or near one of its barlines.
             val placed = cx in (mid - sp * 2.5f).toInt()..(mid + sp * 2.5f).toInt() || abs(cx - from) <= sp * 2f || abs(cx - to) <= sp * 2f
+            if (traceRests) println("    barRepeat $from..$to shape $l..$r x $t..$b (w ${"%.1f".format(w / sp)} h ${"%.1f".format(h / sp)} sp) placed $placed")
             if (!placed || w < sp * 0.9f || w > sp * 5f || h < sp * 1.4f || h > sp * 4.2f) continue
             // Slashes rising to the right: its ink across the slant falls in one band or two (one
             // slash, or two side by side), a fifth of a space each, with its dots outside them.
@@ -3192,9 +3388,19 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val peaks = bins.indices.sortedByDescending { bins[it] }.take(2)
             fun around(k: Int) = (k - 1..k + 1).sumOf { j -> bins.getOrElse(j) { 0 } }
             val inBands = if (abs(peaks[0] - peaks[1]) <= 2) around(peaks[0]) else around(peaks[0]) + around(peaks[1])
-            if (inBands >= n * 0.6f) return true
+            if (traceRests) println("    barRepeat bands ${"%.2f".format(inBands.toFloat() / n)}")
+            // (A two-bar sign - two slashes, across a barline, the line's own ink and its dots in among
+            // them - held to a little less: the bar the other side is asked to be one too; see read.)
+            // (By whichever it is nearest: the bar's middle, or one of its barlines - a narrow bar's own
+            // sign is near both its barlines too.)
+            val across = when {
+                abs(cx - mid) <= abs(cx - from) && abs(cx - mid) <= abs(cx - to) -> 1
+                abs(cx - from) <= abs(cx - to) -> 2
+                else -> 3
+            }
+            if (inBands >= n * (if (across != 1 && w >= sp * 2.2f) 0.5f else 0.6f)) return across
         }
-        return false
+        return 0
     }
 
     /**
