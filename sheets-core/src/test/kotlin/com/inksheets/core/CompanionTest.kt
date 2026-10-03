@@ -178,13 +178,13 @@ class CompanionTest {
         val states = CopyOnWriteArrayList<Boolean>()
         val f = follower("Tablet", lines).apply { onConnected = { states += it } }
         val first = CompanionLeader("Stand", port)
-        assertTrue(first.start())
-        assertTrue(f.start(CompanionLink.Leader("Stand", listOf("10.255.255.1", "127.0.0.1"), port), retryMs = 200))
+        assertTrue("the first leader started", first.start())
+        assertTrue("the follower joined", f.start(CompanionLink.Leader("Stand", listOf("10.255.255.1", "127.0.0.1"), port), retryMs = 200))
         first.stop()
         waitFor { states.lastOrNull() == false }
         // The leader comes back - its app restarted - and the follower is on it again unasked.
         val again = CompanionLeader("Stand", port)
-        assertTrue(again.start())
+        assertTrue("the leader started again on its port", again.start())
         try {
             waitFor(8000) { again.followerCount == 1 }
             assertEquals(1, again.followerCount)
