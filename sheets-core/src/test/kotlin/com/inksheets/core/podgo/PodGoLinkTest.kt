@@ -99,4 +99,13 @@ class PodGoLinkTest {
         // The same unit's MIDI port is left to the USB link.
         assertTrue(PodGoEvents.sameUnit("POD Go") && PodGoEvents.sameUnit("Line 6 POD Go MIDI") && !PodGoEvents.sameUnit(usb) && !PodGoEvents.sameUnit("FCB1010"))
     }
+
+    @Test
+    fun `a spot set by an earlier version - a block, the pedal switched over - is known as no longer heard`() {
+        val usb = PodGoEvents.DEVICE
+        assertTrue(PodGoEvents.retired(com.inksheets.core.ControlRef(usb, ControlEvent.CC, 1, 4)))
+        assertTrue(PodGoEvents.retired(com.inksheets.core.ControlRef(usb, ControlEvent.CC, 16, 49)))
+        assertTrue(!PodGoEvents.retired(com.inksheets.core.ControlRef(usb, ControlEvent.CC, 5, 3)))
+        assertTrue(!PodGoEvents.retired(com.inksheets.core.ControlRef("FCB1010", ControlEvent.CC, 1, 4)))
+    }
 }

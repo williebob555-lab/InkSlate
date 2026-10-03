@@ -13,6 +13,7 @@ import com.inksheets.core.Controllers
 import com.inksheets.core.RemoteButton
 import com.inksheets.core.RemoteLink
 import com.inksheets.core.SpotControl
+import com.inksheets.core.podgo.PodGoEvents
 
 /**
  * Controllers plugged into this device - a foot controller, a POD Go over USB - and what their
@@ -24,7 +25,15 @@ class ControllerHub(private val state: SheetsState) {
     val devices = mutableStateListOf<String>()
     /** What came in last, newest first: for seeing that a device talks, and what it sends. */
     val recent = mutableStateListOf<ControlEvent>()
-    val bindings = mutableStateListOf<ControlBinding>().apply { addAll(Controllers.decode(state.platform.pref(K_BINDINGS))) }
+    val bindings = mutableStateListOf<ControlBinding>().apply {
+        val saved = Controllers.decode(state.platform.pref(K_BINDINGS))
+        // A preset chosen did it at every press before "one way only" was there for it: kept so, once.
+        if (state.platform.pref(K_ONE_WAY) == null) {
+            addAll(saved.map { if (it.control.kind == ControlEvent.PROGRAM && !it.continuous && !it.whenOff) it.copy(everyMessage = true) else it })
+            state.platform.setPref(K_BINDINGS, Controllers.encode(toList()))
+            state.platform.setPref(K_ONE_WAY, "1")
+        } else addAll(saved)
+    }
 
     /** Listening for a control to give [learning]'s action to; what moved so far. */
     var learning by mutableStateOf<RemoteButton?>(null)
@@ -36,7 +45,9 @@ class ControllerHub(private val state: SheetsState) {
         private set
 
     /** Which control the player put on each spot of a controller's picture ([PodGoPicture]), by spot. */
-    val spots = mutableStateMapOf<String, SpotControl>().apply { putAll(Controllers.decodeSpots(state.platform.pref(K_SPOTS))) }
+    val spots = mutableStateMapOf<String, SpotControl>().apply {
+        putAll(Controllers.decodeSpots(state.platform.pref(K_SPOTS)).mapValues { (_, s) -> if (s.control.device == PodGoEvents.DEVICE) s.copy(momentary = false) else s })
+    }
     /** When each control was last heard, and its value: for the picture to light it, and show a pedal's travel. */
     val lastHeard = mutableStateMapOf<ControlRef, Pair<Long, Int>>()
     /** When anything was last heard. */
@@ -53,6 +64,8 @@ class ControllerHub(private val state: SheetsState) {
         private set
     private var started = false
     private val taps = ArrayList<Long>()
+    /** Each switch on or off as last heard: for one done one way only. */
+    private val switched = HashMap<ControlRef, Boolean>()
 
     val available: Boolean get() = state.platform.controllers != null
 
@@ -125,7 +138,8 @@ class ControllerHub(private val state: SheetsState) {
      * control (unless another spot still has the old one).
      */
     fun keepPlaced(spot: String, control: ControlRef) {
-        val placed = SpotControl(control, momentary = listener?.momentary(control) == true)
+        // (A POD Go's switch says lit or dark, one message a press - two quick presses are not a press and a let-go.)
+        val placed = SpotControl(control, momentary = control.device != PodGoEvents.DEVICE && listener?.momentary(control) == true)
         val old = spots[spot]
         spots[spot] = placed
         if (old != null && old.control != control && spots.none { (id, s) -> id != spot && s.control == old.control }) {
@@ -186,7 +200,8 @@ class ControllerHub(private val state: SheetsState) {
             return
         }
         learning?.let { action -> learnFrom(action, e); return }
-        for (b in Controllers.firing(bindings, e)) fire(b, e)
+        val on = Controllers.on(e, switched[e.control]).also { switched[e.control] = it }
+        for (b in Controllers.firing(bindings, e, on)) fire(b, e)
     }
 
     private fun learnFrom(action: RemoteButton, e: ControlEvent) {
@@ -202,7 +217,7 @@ class ControllerHub(private val state: SheetsState) {
             control = e.control,
             action = action,
             continuous = sweep,
-            everyMessage = e.kind == ControlEvent.CC && !sweep && !letGo
+            everyMessage = !sweep && Controllers.everyPress(e.kind, momentary = letGo)
         )
     }
 
@@ -243,6 +258,7 @@ class ControllerHub(private val state: SheetsState) {
         private const val K_BINDINGS = "sheets_controller_bindings"
         private const val K_ON = "sheets_controllers_on"
         private const val K_SPOTS = "sheets_controller_spots"
+        private const val K_ONE_WAY = "sheets_controller_one_way"
 
         /** What a control is called in a list: "CC 71 (ch 1) on POD Go". */
         fun name(c: ControlRef): String = c.short() + if (c.device.isNotEmpty()) " on ${c.device}" else ""

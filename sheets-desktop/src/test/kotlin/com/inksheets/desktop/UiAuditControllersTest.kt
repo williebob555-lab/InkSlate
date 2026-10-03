@@ -73,6 +73,8 @@ class UiAuditControllersTest {
             val state = SheetsState(Platform(tmp.newFolder("Music-$size"), pod))
             state.controllers.start()
             state.change { ensureSong("Hey Baby"); addSetlist("Football - home") }
+            // FS3 as an earlier version put it: a block turned on or off, no longer heard.
+            state.controllers.spots["fs3"] = com.inksheets.core.SpotControl(com.inksheets.core.ControlRef(PodGoEvents.DEVICE, ControlEvent.CC, 1, 4))
             runDesktopComposeUiTest(width = w, height = h) {
                 setContent { MaterialTheme { Surface { Column(Modifier.verticalScroll(rememberScrollState())) { SheetsSettings(state) } } } }
                 fun look(scene: String, vararg required: String) { waitForIdle(); total += UiAudit.check(this, size, "podgo-$scene", w, h, required = required.toList()).size }
@@ -82,6 +84,9 @@ class UiAuditControllersTest {
                 look("settings", "POD Go: set up on its picture...")
                 click("POD Go: set up on its picture...")
                 look("empty", "FS1", "FS6", "MODE", "TAP", "EXP", "VOL", "TOE", "Close")
+                click("FS3")
+                look("retired", "Set by an older version", "Learn again", "Back")
+                click("Back")
                 // FS1 tapped and pressed: the preset chosen, then what follows it.
                 click("FS1")
                 look("listening-quiet", "Press FS1", "Back", "Keep")
@@ -112,6 +117,7 @@ class UiAuditControllersTest {
                 look("editor", "Cancel", "Add")
                 click("Add")
                 state.controllers.bindingsOf("fs2").last().let { assertEquals(120.0, it.action.value); assertEquals(false, it.continuous) }
+                look("preset-choices", "Back")   // (its choices under the picture, scrolled to on a phone on its side)
                 click("Back")
                 // The pedal: put on, given the tempo, and moved.
                 click("EXP")

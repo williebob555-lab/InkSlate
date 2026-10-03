@@ -98,7 +98,7 @@ class ControllersTest {
         val momentary = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.CC, 1, 80), momentary = true), RemoteButton.action("NEXT_PAGE"))
         assertTrue(!momentary.continuous && !momentary.everyMessage)
         val preset = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.PROGRAM, 1, 2)), RemoteButton.action("NEXT_PAGE"))
-        assertTrue(!preset.continuous && !preset.everyMessage)
+        assertTrue(!preset.continuous && preset.everyMessage)
         assertEquals(listOf(preset), Controllers.firing(listOf(preset), ControlEvent(pod, ControlEvent.PROGRAM, 1, 2, 2)))
     }
 
@@ -126,5 +126,23 @@ class ControllersTest {
         assertTrue(!Controllers.isSweep(RemoteButton(RemoteButton.TEMPO_SET, value = 120.0)))
         val fixed = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.CC, 5, 1)), RemoteButton(RemoteButton.TEMPO_SET, value = 120.0))
         assertTrue(!fixed.continuous && fixed.everyMessage)
+    }
+
+    @Test
+    fun `any switch can do it one way only - by what it says, or turned over at each press`() {
+        val usb = "POD Go (USB)"
+        // MODE says 1 then 0; TAP its tempo; a preset its number: turned over at each.
+        val mode = ControlEvent(usb, ControlEvent.CC, 4, 21, 1)
+        assertTrue(Controllers.on(mode, null))
+        assertTrue(!Controllers.on(mode.copy(value = 0), true))
+        assertTrue(!Controllers.on(mode.copy(value = 0), false))   // 0 is off, however it was
+        val preset = ControlEvent(usb, ControlEvent.PROGRAM, 1, 2, 2)
+        val lit = ControlBinding(preset.control, RemoteButton.action("NEXT_PAGE"))
+        var state: Boolean? = null
+        val fired = (1..4).count { state = Controllers.on(preset, state); Controllers.firing(listOf(lit), preset, state!!).isNotEmpty() }
+        assertEquals(2, fired)
+        // A footswitch says lit or dark itself: as it says, however many times it is heard.
+        assertTrue(Controllers.on(ControlEvent(usb, ControlEvent.CC, 5, 0, 127), true))
+        assertTrue(!Controllers.on(ControlEvent(usb, ControlEvent.CC, 5, 0, 0), false))
     }
 }

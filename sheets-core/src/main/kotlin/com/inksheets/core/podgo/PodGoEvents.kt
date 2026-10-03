@@ -31,6 +31,14 @@ object PodGoEvents {
     /** What follows a press, said by the unit after what tells the press apart: left out. */
     private val FOLLOWERS = setOf(4, 34, 39, 40, 49)
 
+    /**
+     * A control as an earlier version read the unit, no longer sent: a block turned on or off (CC
+     * ch 1), the pedal switched over (CC ch 3 #124), what follows a press (CC ch 16). A spot holding
+     * one never lights again - it is to be learned anew.
+     */
+    fun retired(c: com.inksheets.core.ControlRef) = c.device == DEVICE && c.kind == ControlEvent.CC &&
+        (c.channel == 1 || (c.channel == 3 && c.number == 124) || (c.channel == 16 && c.number in FOLLOWERS))
+
     /** A MIDI port of the same unit: what it says comes over USB already. */
     fun sameUnit(midiDevice: String) = midiDevice != DEVICE && midiDevice.contains("POD Go", ignoreCase = true)
 

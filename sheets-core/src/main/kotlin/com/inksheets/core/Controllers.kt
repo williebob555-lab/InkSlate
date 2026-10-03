@@ -175,8 +175,20 @@ object Controllers {
      * What [e] does under [bindings]: each binding it is for, and whether it fires - a fader every
      * time it moves; a switch when pressed (or at every message, for one that sends one a press).
      */
-    fun firing(bindings: List<ControlBinding>, e: ControlEvent): List<ControlBinding> =
-        bindings.filter { b -> b.control.matches(e) && (b.continuous || b.everyMessage || e.pressed != b.whenOff) }
+    fun firing(bindings: List<ControlBinding>, e: ControlEvent, on: Boolean = e.pressed): List<ControlBinding> =
+        bindings.filter { b -> b.control.matches(e) && (b.continuous || b.everyMessage || on != b.whenOff) }
+
+    /**
+     * Whether a switch is on after [e], [before] being how it was: as it says, where it says on
+     * (127) or off (0) - a POD Go footswitch lit or dark, a momentary switch down or up, a note -
+     * and otherwise turned over at each message (a POD Go's MODE saying 1 or 0, TAP its tempo, a
+     * preset chosen): so any switch can do a thing one way of two, pressed twice, done once.
+     */
+    fun on(e: ControlEvent, before: Boolean?): Boolean = when {
+        e.kind == ControlEvent.NOTE || e.kind == ControlEvent.KEY -> e.pressed
+        e.kind == ControlEvent.CC && (e.value == 0 || e.value == 127) -> e.value == 127
+        else -> before != true
+    }
 
     private val json = Json { ignoreUnknownKeys = true }
     private val list = ListSerializer(ControlBinding.serializer())
@@ -190,9 +202,14 @@ object Controllers {
      */
     fun bindingFor(spot: SpotControl, action: RemoteButton): ControlBinding {
         val sweep = isSweep(action) && spot.control.kind == ControlEvent.CC
-        return ControlBinding(spot.control, action, continuous = sweep,
-            everyMessage = !sweep && spot.control.kind == ControlEvent.CC && !spot.momentary)
+        return ControlBinding(spot.control, action, continuous = sweep, everyMessage = !sweep && everyPress(spot.control.kind, spot.momentary))
     }
+
+    /**
+     * Each message a press, as a switch is first set: a control change but a momentary one's (down
+     * and up are one press), a preset chosen; a note is pressed when struck.
+     */
+    fun everyPress(kind: String, momentary: Boolean) = (kind == ControlEvent.CC && !momentary) || kind == ControlEvent.PROGRAM
 
     private val spotMap = MapSerializer(String.serializer(), SpotControl.serializer())
 

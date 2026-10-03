@@ -280,10 +280,11 @@ private fun Overview(state: SheetsState, onTap: (PodGoPicture.Spot) -> Unit) {
             Text(
                 when {
                     hub.spots[s.id] == null -> "Not set: tap to set"
+                    com.inksheets.core.podgo.PodGoEvents.retired(hub.spots.getValue(s.id).control) -> "Set by an older version, and no longer heard: tap, then Learn again"
                     does.isEmpty() -> "Set, does nothing yet"
                     else -> does.joinToString(", ") { b ->
                         actionName(state, b.action) + when {
-                            b.continuous || b.everyMessage || hub.spots[s.id]?.momentary == true -> ""
+                            b.continuous || b.everyMessage -> ""
                             b.whenOff -> " (when it goes dark)"
                             else -> " (when it lights)"
                         }
@@ -336,6 +337,9 @@ private fun SpotDetails(state: SheetsState, spot: PodGoPicture.Spot, onAdd: () -
     val hub = state.controllers
     val placed = hub.spots[spot.id] ?: return
     Text("Is " + ControllerHub.name(placed.control), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (com.inksheets.core.podgo.PodGoEvents.retired(placed.control))
+        Text("Set by an older version: the POD Go is no longer heard this way. Press Learn again, then press it.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     Text("Does", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold,
         modifier = Modifier.padding(top = 10.dp))
     val does = hub.bindingsOf(spot.id)
@@ -345,9 +349,9 @@ private fun SpotDetails(state: SheetsState, spot: PodGoPicture.Spot, onAdd: () -
             Text(actionName(state, b.action), modifier = Modifier.weight(1f))
             IconButton(onClick = { hub.remove(b) }) { Icon(Icons.Default.Close, contentDescription = "Remove") }
         }
-        // A switch that lights at one press and goes dark at the next (the toe switch): each press,
-        // or one way only - pressed twice, done once.
-        if (!b.continuous && !placed.momentary && placed.control.kind == com.inksheets.core.ControlEvent.CC) {
+        // Each press, or one way only: a toggle (the toe switch) lit at one press and dark at the
+        // next - pressed twice, done once; a switch that sends on and off at a press, when pressed.
+        if (!b.continuous) {
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for ((label, every, off) in listOf(Triple("Every press", true, false), Triple("When it lights", false, false), Triple("When it goes dark", false, true))) {
