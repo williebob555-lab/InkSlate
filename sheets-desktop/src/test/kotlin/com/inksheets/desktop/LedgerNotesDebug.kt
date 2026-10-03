@@ -34,11 +34,23 @@ class LedgerNotesDebug {
         val rec = Recognizer()
         val (t, sp) = rec.metrics(ink)!!
         val staves = rec.staves(ink, t, sp)
+        for ((i, st) in staves.withIndex()) println("DEBUG staff $i lines ${st.lineY(0, (st.left + st.right) / 2).toInt()}..${st.lineY(4, (st.left + st.right) / 2).toInt()} x ${st.left}..${st.right}")
         val s = staves[staff]
         println("DEBUG width $width space ${s.space} staff $staff top ${s.lineY(0, (x0 + x1) / 2)} bottom ${s.lineY(4, (x0 + x1) / 2)}")
         val found = Learned.symbols(grey, ink.width, ink.height, staves, net)
         for (sym in found.symbols.filter { it.x + it.width / 2 in x0.toFloat()..x1.toFloat() && it.y > s.lineY(0, x0) - s.space * 8 && it.y < s.lineY(4, x0) + s.space * 8 })
             println("DEBUG  ${sym.kind} at ${sym.x.toInt()},${sym.y.toInt()} step ${((sym.y - s.lineY(0, sym.x.toInt())) / (s.space / 2)).let { "%.1f".format(it) }} conf ${"%.2f".format(sym.confidence)} odds ${sym.odds.map { "%.2f".format(it) }}")
+        if (System.getProperty("inksheets.debug.printed") != null) {
+            val pr = PdfPrinted.read(file, p)!!.scaled(ink.width)
+            println("DEBUG printed width ${pr.width} ink ${ink.width}")
+            for (sym in pr.heads.filter { it.x + it.width / 2 in x0.toFloat()..x1.toFloat() }.sortedBy { it.x })
+                println("DEBUG  printed ${sym.kind} at ${sym.x.toInt()},${sym.y.toInt()} size ${"%.1f".format(sym.size)}")
+            for ((i, st) in staves.withIndex()) println("DEBUG staff $i lines ${st.lineY(0, x0).toInt()}..${st.lineY(4, x0).toInt()} x ${st.left}..${st.right}")
+            val r2 = Recognizer().read(ink, p, 1, Recognizer.Carry(), PdfPrinted.read(file, p), grey = grey, net = null)
+            for (m in r2.measures.filter { it.staff == staff && it.box.right > x0 && it.box.left < x1 })
+                println("DEBUG printed-path bar ${m.number} ${m.box.left}-${m.box.right}: ${m.events.map { e -> if (e is com.inksheets.core.omr.Note) "${e.steps}/${e.duration.base}" else "r${e.duration.base}" }} doubts ${m.doubts}")
+            return
+        }
         val r = Recognizer().read(ink, p, 1, Recognizer.Carry(), null, grey = grey, net = net)
         for (m in r.measures.filter { it.staff == staff && it.box.right > x0 && it.box.left < x1 })
             println("DEBUG bar ${m.number} ${m.box.left}-${m.box.right}: ${m.events.map { e -> if (e is com.inksheets.core.omr.Note) "${e.steps}/${e.duration.base}" else "r${e.duration.base}" }} maybe ${m.maybe.map { e -> if (e is com.inksheets.core.omr.Note) "${e.steps}/${e.duration.base}" else "r" }} doubts ${m.doubts}")

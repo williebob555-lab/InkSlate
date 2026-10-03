@@ -155,11 +155,21 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
         /** The number a time-signature digit stands for. */
         fun digitOf(codePoint: Int): Int = when (codePoint) { in '0'.code..'9'.code -> codePoint - '0'.code; in 0xE080..0xE089 -> codePoint - 0xE080; else -> -1 }
 
-        /** The cue and grace notes among [heads]: set clearly smaller than most. */
+        /**
+         * The cue and grace notes among [heads]: set clearly smaller than most of those round them on
+         * their own staff - not the page's: a PDF may state one line's notes at a smaller size and
+         * scale them back up (an opening line set so), all of them the line's own notes.
+         */
         fun small(heads: List<Symbol>): Set<Symbol> {
             if (heads.isEmpty()) return emptySet()
-            val normal = heads.map { it.size }.sorted()[heads.size / 2]
-            return heads.filter { it.size < normal * 0.85f }.toSet()
+            val pageNormal = heads.map { it.size }.sorted()[heads.size / 2]
+            val byY = heads.sortedBy { it.y }
+            return heads.filter { h ->
+                // Those within a staff's reach of it, up and down (its own staff, and no other).
+                val near = byY.filter { abs(it.y - h.y) < pageNormal * 2.5f }.map { it.size }.sorted()
+                val normal = if (near.size >= 4) near[near.size / 2] else pageNormal
+                h.size < normal * 0.85f
+            }.toSet()
         }
 
         private val sonata: Map<Int, Kind> = mapOf(

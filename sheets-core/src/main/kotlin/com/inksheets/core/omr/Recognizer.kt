@@ -133,7 +133,40 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val lines = Array(5) { l -> FloatArray(right - left + 1) { i -> centreY(left + i, l) } }
             staves += refine(ink, Staff(left, right, lines, space), t)
         }
-        return staves.sortedBy { it.top }
+        // Two staves never share their lines' height where both run. Of two that do: one lying
+        // within the other's length is none (traced through a close-set page's beams and ledger
+        // lines, lined up); two reaching past each other are one staff in two pieces (a scan's page
+        // curling, the line followed at two heights) - joined, the one easing into the other.
+        val kept = ArrayList<Staff>()
+        for (st in staves.sortedByDescending { it.right - it.left }) {
+            val i = kept.indexOfFirst { o ->
+                val l = max(o.left, st.left); val r = min(o.right, st.right)
+                if (r <= l) return@indexOfFirst false
+                val x = (l + r) / 2
+                o.lineY(0, x) < st.lineY(4, x) && st.lineY(0, x) < o.lineY(4, x)
+            }
+            if (i < 0) { kept += st; continue }
+            val o = kept[i]
+            val inside = st.left >= o.left - space * 2 && st.right <= o.right + space * 2
+            // (Joined only where neither is a whole staff: a page's staves run its width; a piece of
+            // one, short of it - beside a whole one, what lies across it is none.)
+            val widest = staves.maxOf { it.right - it.left }
+            if (inside || o.right - o.left >= widest * 0.9f) continue
+            // Joined: each piece's lines where it alone runs, and from one to the other across where both do.
+            val (a, b) = if (o.left <= st.left) o to st else st to o
+            val left = a.left; val right = max(a.right, b.right)
+            val l0 = b.left; val r0 = min(a.right, b.right)
+            val lines = Array(5) { line -> FloatArray(right - left + 1) { k ->
+                val x = left + k
+                when {
+                    x < l0 -> a.lineY(line, x)
+                    x > r0 -> if (b.right >= a.right) b.lineY(line, x) else a.lineY(line, x)
+                    else -> { val f = (x - l0).toFloat() / max(1, r0 - l0); a.lineY(line, x) * (1 - f) + b.lineY(line, x) * f }
+                }
+            } }
+            kept[i] = Staff(left, right, lines, (a.space + b.space) / 2)
+        }
+        return kept.sortedBy { it.top }
     }
 
     /**
@@ -1424,7 +1457,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A multi-bar rest: its bar and number, and nothing else to read.
                 // A bar with notes in it is no multi-bar rest, whatever runs along its middle line (a beam).
                 // (A head far over the staff is a tempo marking's note, not one played here.)
-                val headsHere = allHeads.any { it.x >= from - 2 && it.x < to && it.step in -6..14 }
+                // (A PDF's own heads are its notes, however high - a piccolo's - its tempo marking's note
+                // never stated as a head: any of them is a note here.)
+                val headsHere = allHeads.any { it.x >= from - 2 && it.x < to && (stated || it.step in -6..14) }
                 if (traceRests) println("  bar ${span.first}..${span.second} heads here: ${allHeads.filter { it.x >= from - 2 && it.x < to }.map { "${it.kind} ${it.step}" }}")
                 // A time signature after a line's last barline, nothing else: the change ahead shown
                 // at the line's end (the next line starts with it) - no bar of its own.

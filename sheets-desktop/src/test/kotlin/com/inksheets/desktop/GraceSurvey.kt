@@ -46,4 +46,15 @@ class GraceSurvey {
         }
         println("BREATHS total $total")
     }
+
+    @Test
+    fun `what a PDF states`() {
+        val rel = System.getProperty("inksheets.pdfstates") ?: return assumeTrue(false)
+        val f = java.io.File(System.getenv("USERPROFILE"), "Music/Sheet Music/InkSheets/$rel")
+        val printed = PdfPrinted.read(f, 0) ?: return println("STATES none")
+        println("STATES " + printed.symbols.groupingBy { it.kind }.eachCount().entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
+        val heads = printed.symbols.filter { it.kind == com.inksheets.core.omr.Printed.Kind.HEAD_BLACK || it.kind == com.inksheets.core.omr.Printed.Kind.HEAD_HALF }
+        println("STATES heads by row: " + heads.groupBy { (it.y / 40).toInt() }.toSortedMap().entries.joinToString { "${it.key * 40}:${it.value.size}" } + " page width ${printed.width}")
+        println("STATES small: " + com.inksheets.core.omr.Printed.small(heads).size + " of " + heads.size + ", sizes " + heads.map { "%.1f".format(it.size) }.groupingBy { it }.eachCount())
+    }
 }

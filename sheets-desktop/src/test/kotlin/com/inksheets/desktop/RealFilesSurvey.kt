@@ -38,6 +38,7 @@ class RealFilesSurvey {
                 val printed = if (System.getProperty("inksheets.survey.scan") != null) null else runCatching { PdfPrinted.read(file, p) }.getOrNull()
                 val r = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) com.inksheets.core.omr.Net.shipped else null)
                 r.measures.lastOrNull()?.let { number = it.number + it.bars }
+                println("  PAGE ${file.name} p${p + 1}: ${r.staves.size} staves " + r.staves.joinToString(" ") { "${it.lineY(0, (it.left + it.right) / 2).toInt()}[${it.left}..${it.right}]" })
                 bars += r.measures.size; sure += r.measures.count { it.sure }
                 for (m in r.measures) for (d in m.doubts) doubts.merge(d.replace(Regex("[0-9.]+"), "#"), 1, Int::plus)
                 for (m in r.measures) for (d in m.directions) if (d.kind == "breath") {
