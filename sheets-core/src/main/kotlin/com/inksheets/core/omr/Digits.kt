@@ -57,6 +57,18 @@ object Digits {
      */
     private class Trained(val inputs: Int, val hidden: Int, val aw: FloatArray, val ab: FloatArray, val bw: FloatArray, val bb: FloatArray) {
         /** (digit 0-9 or 10 for none, its odds). */
+        /** How likely each of 0..9 and none (10) is. */
+        fun odds(x: FloatArray): FloatArray {
+            val h = FloatArray(hidden)
+            for (j in 0 until hidden) { var v = ab[j]; val o = j * inputs; for (i in 0 until inputs) v += aw[o + i] * x[i]; h[j] = if (v > 0f) v else 0f }
+            val out = FloatArray(11)
+            for (c in 0 until 11) { var v = bb[c]; val o = c * hidden; for (j in 0 until hidden) v += bw[o + j] * h[j]; out[c] = v }
+            val top = out.max(); var sum = 0f
+            for (c in 0 until 11) { out[c] = kotlin.math.exp(out[c] - top); sum += out[c] }
+            for (c in 0 until 11) out[c] /= sum
+            return out
+        }
+
         fun classify(x: FloatArray): Pair<Int, Float> {
             val h = FloatArray(hidden)
             for (j in 0 until hidden) { var v = ab[j]; val o = j * inputs; for (i in 0 until inputs) v += aw[o + i] * x[i]; h[j] = if (v > 0f) v else 0f }
@@ -87,6 +99,16 @@ object Digits {
         x[W * H] = heightSp / 3f; x[W * H + 1] = aspect; x[W * H + 2] = if (inStaff) 1f else 0f
         val (d, p) = t.classify(x)
         return if (d == 10 || p < 0.5f) null else d to p
+    }
+
+    /** The trained reader's odds on each of 0..9 and none (10) for figure [m]; null when it is not shipped. */
+    fun oddsTrained(m: BooleanArray, heightSp: Float, aspect: Float, inStaff: Boolean = false): FloatArray? {
+        val t = trained ?: return null
+        if (t.inputs != W * H + 3) return null
+        val x = FloatArray(t.inputs)
+        for (i in m.indices) x[i] = if (m[i]) 1f else 0f
+        x[W * H] = heightSp / 3f; x[W * H + 1] = aspect; x[W * H + 2] = if (inStaff) 1f else 0f
+        return t.odds(x)
     }
 
     /** Whether the trained reader is shipped (else the masks are all there is). */
