@@ -1982,8 +1982,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             if (best == null || x - start > best.second) best = start to (x - start)
         }
         if (traceRests) println("    multiRest $from..$to step $step best $best (space $sp)")
-        val (start, len) = best ?: return null
-        if (len < sp * 2.5f) return null
+        if (best == null || best.second < sp * 2.5f) return breveRest(clean, s, from, to, page)
+        val (start, len) = best
         // Its ends are short upright strokes, a space or so each way from the middle line.
         // (Short ones too: some engravers' run only a little way past the bar - on the page as printed,
         // as the middle line may have been taken out across them.)
@@ -2040,6 +2040,43 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val one = printed?.first == 1 || digits.size == 1 && digits[0].first == 1
         if (one && len < sp * 4f) { restFigureDoubted = false; return 1 to start }
         return (if (bars == 1) 0 else bars) to start
+    }
+
+    /**
+     * A rest of two bars as older engravers print it: a solid block filling one space of the staff,
+     * a little narrower than a space, alone in its bar - with a "2" over it as often as not. (bars, x)
+     * - the figure over it believed where it reads, else two.
+     */
+    private fun breveRest(clean: Ink, s: Staff, from: Int, to: Int, page: Ink): Pair<Int, Int>? {
+        val sp = s.space
+        // Columns filled from one line to the next - a whole space - and no further either way.
+        fun filledSpace(x: Int): Int? = (1..2).firstOrNull { l ->
+            val a = s.lineY(l, x).roundToInt(); val b = s.lineY(l + 1, x).roundToInt()
+            (a + 1 until b).all { clean[x, it] } && !clean[x, a - (sp * 0.6f).toInt()] && !clean[x, b + (sp * 0.6f).toInt()]
+        }
+        var x = from
+        var found: Pair<Int, Int>? = null
+        while (x < to) {
+            val l = filledSpace(x) ?: run { x++; null } ?: continue
+            val a = x
+            while (x < to && filledSpace(x) == l) x++
+            val w = x - a
+            if (w >= sp * 0.3f && w <= sp * 0.95f) { if (found != null) return null; found = a to w }
+        }
+        val (a, w) = found ?: return null
+        // Alone: nothing else in the staff across the bar but the block.
+        var other = 0; var n = 0
+        for (xx in from until to) {
+            if (xx in a - 2..a + w + 2) continue
+            for (y in s.lineY(0, xx).roundToInt() + 2 until s.lineY(4, xx).roundToInt() - 1) { n++; if (clean[xx, y]) other++ }
+        }
+        if (n == 0 || other > n * 0.02f) return null
+        val centre = a + w / 2
+        val figure = Digits.number(page, centre - (sp * 2).toInt(), centre + (sp * 2).toInt(), s.y(-9, a).roundToInt(), s.y(-1, a).roundToInt(),
+            (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, a).roundToInt(), space = sp, musicFont = true)?.first
+        if (traceRests) println("    breveRest block $a w $w figure $figure")
+        restFigureDoubted = figure != null && figure != 2
+        return (figure?.takeIf { it in 2..64 } ?: 2) to a
     }
 
     /**
