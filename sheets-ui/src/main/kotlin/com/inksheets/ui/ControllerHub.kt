@@ -132,7 +132,8 @@ class ControllerHub(private val state: SheetsState) {
             val moved = bindings.filter { it.control == old.control }
             bindings.removeAll(moved)
             for (b in moved) bindings.removeAll { it.control == control && it.action == b.action }
-            bindings += moved.map { Controllers.bindingFor(placed, it.action) }
+            // (A switch keeps which way it does it: every press, or one way of two.)
+            bindings += moved.map { m -> Controllers.bindingFor(placed, m.action).let { b -> if (b.continuous || m.continuous) b else b.copy(everyMessage = m.everyMessage, whenOff = m.whenOff) } }
             save()
         }
         saveSpots()
@@ -149,6 +150,17 @@ class ControllerHub(private val state: SheetsState) {
     /** What [spot]'s control does. */
     fun bindingsOf(spot: String): List<ControlBinding> = spots[spot]?.let { s -> bindings.filter { it.control == s.control } }.orEmpty()
 
+    /**
+     * When a switch does [b]: at [every] press, or - a toggle, lit at one press and dark at the
+     * next - only as it lights, or only as it goes dark ([off]): pressed twice, done once.
+     */
+    fun setWhen(b: ControlBinding, every: Boolean, off: Boolean) {
+        val i = bindings.indexOf(b)
+        if (i < 0) return
+        bindings[i] = b.copy(everyMessage = every, whenOff = !every && off)
+        save()
+    }
+
     /** Give [spot]'s control [action] too. */
     fun bindSpot(spot: String, action: RemoteButton) {
         val s = spots[spot] ?: return
@@ -159,6 +171,8 @@ class ControllerHub(private val state: SheetsState) {
     }
 
     internal fun heard(e: ControlEvent) {
+        // A POD Go heard over USB says over its MIDI port again what matters: once is enough.
+        if (com.inksheets.core.podgo.PodGoEvents.sameUnit(e.device) && com.inksheets.core.podgo.PodGoEvents.DEVICE in devices) return
         recent.add(0, e)
         while (recent.size > 12) recent.removeAt(recent.size - 1)
         val now = System.currentTimeMillis()

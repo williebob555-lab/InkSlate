@@ -10,21 +10,29 @@ import com.inksheets.core.ControlEvent
  * Controllers): pressing it there puts what came on its spot. Here the unit's messages are only
  * told apart, each a control of its own - none is taken for a given switch.
  *
- * Read from a USB capture of POD Go Edit (2026-10-03). Every notification is
- * {105: event, 106: {82, 68, 121: routing, 106: what happened}}:
- *  - event 8, {107: setlist, 108: preset}: a preset chosen - PROGRAM ch 1 <preset>, as the unit
- *    sends over its USB MIDI port too.
- *  - event 49, {98: block, 59: on}: a block turned on or off - CC ch 1 <block>, 127 on, 0 off.
- *  - event 30, {98: block, 28: setting, 119: 0-1}: a block's setting moved (the pedal does this) -
- *    CC ch 2 <block * 8 + setting>, 0-127 across.
- *  - event 22, {118: setting, 119: value}: a unit-wide setting - 159 (0-1) as CC ch 3 #7, 124 (1 or
- *    2) as CC ch 3 #124, 0 or 127; any other as CC ch 4 <setting>.
+ * Read from USB captures and the unit's own log (2026-10-03). Every notification is
+ * {105: event, 106: {82, 68, 121: routing, 106: what happened}} - or, for a footswitch, {105: 41,
+ * 106: {70: switch, 63: lit, 66: colour}}. A press says several things; only what tells the press
+ * apart comes through, one control a press:
+ *  - event 41, {70: footswitch, 63: lit}: a footswitch pressed (the toe switch too) - CC ch 5
+ *    <footswitch>, 127 lit, 0 not. The unit sends it only for a switch given something to do on it.
+ *  - event 8, {107: setlist, 108: preset}: a preset chosen - PROGRAM ch 1 <preset>.
+ *  - event 30, {98: block, 28: setting, 119: value}: a block's setting moved (the pedal does this) -
+ *    CC ch 2 <block * 8 + setting>; 0-1 across 0-127, a whole number as itself.
+ *  - event 22, {118: setting, 119: value}: a unit-wide setting - 159 (the volume knob, 0-1) as
+ *    CC ch 3 #7; any other as CC ch 4 <setting>.
  *  - any other event: CC ch 16 <event>, 127 - so one not worked out can still be put on a spot.
- * What follows a press (a preset loaded, its tempo) comes through as well: what fires is only what
- * the player put on a spot and gave an action, so it fires once.
+ * Left out, as what follows a press: a block turned on or off (49), the block selected (39), the
+ * pedal switched over (40, and setting 124), the preset loaded (4), its pedal assignments (34).
  */
 object PodGoEvents {
     const val DEVICE = "POD Go (USB)"
+
+    /** What follows a press, said by the unit after what tells the press apart: left out. */
+    private val FOLLOWERS = setOf(4, 34, 39, 40, 49)
+
+    /** A MIDI port of the same unit: what it says comes over USB already. */
+    fun sameUnit(midiDevice: String) = midiDevice != DEVICE && midiDevice.contains("POD Go", ignoreCase = true)
 
     /**
      * Where what the unit says, and how the link went, is written down - set by the app to a file in
@@ -37,16 +45,17 @@ object PodGoEvents {
         val event = m.event ?: return null
         // (A deferred request's completion is about our own asking - never a front-panel act.)
         if (event == 1 || event == 20) return null
-        val what = ((m.args as? Map<*, *>)?.get(106L) as? Map<*, *>).orEmpty()
+        val args = m.args as? Map<*, *>
+        val what = (if (event == 41) args else args?.get(106L) as? Map<*, *>).orEmpty()
         fun int(key: Long) = (what[key] as? Long)?.toInt()
+        if (event in FOLLOWERS) return null
         val known = when (event) {
+            41 -> int(70)?.let { fs -> ControlEvent(DEVICE, ControlEvent.CC, 5, fs and 0x7F, if (what[63L] == true) 127 else 0) }
             8 -> int(108)?.let { ControlEvent(DEVICE, ControlEvent.PROGRAM, 1, it and 0x7F, it and 0x7F) }
-            49 -> int(98)?.let { block -> ControlEvent(DEVICE, ControlEvent.CC, 1, block and 0x7F, if (what[59L] == true) 127 else 0) }
             30 -> int(98)?.let { block -> ControlEvent(DEVICE, ControlEvent.CC, 2, (block * 8 + (int(28) ?: 0)) and 0x7F, value(what[119L])) }
             22 -> when (val setting = int(118)) {
-                null -> null
+                null, 124 -> return null
                 159 -> ControlEvent(DEVICE, ControlEvent.CC, 3, 7, value(what[119L]))
-                124 -> ControlEvent(DEVICE, ControlEvent.CC, 3, 124, if (value(what[119L]) >= 2) 127 else 0)
                 else -> ControlEvent(DEVICE, ControlEvent.CC, 4, setting and 0x7F, value(what[119L]))
             }
             else -> null

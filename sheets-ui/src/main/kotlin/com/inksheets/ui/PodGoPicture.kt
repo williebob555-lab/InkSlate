@@ -93,7 +93,7 @@ internal object PodGoPicture {
 
 /** The picture, each spot lit as its control is heard; [selected] outlined. */
 @Composable
-private fun PodGoDrawing(hub: ControllerHub, selected: String?, onTap: (PodGoPicture.Spot) -> Unit) {
+private fun PodGoDrawing(hub: ControllerHub, selected: String?, widest: androidx.compose.ui.unit.Dp = 420.dp, onTap: (PodGoPicture.Spot) -> Unit) {
     // Lit for a moment: looked at again once that moment is over.
     var tick by remember { mutableStateOf(0) }
     val heardAt = hub.lastAt
@@ -106,7 +106,7 @@ private fun PodGoDrawing(hub: ControllerHub, selected: String?, onTap: (PodGoPic
     }
     fun travel(s: PodGoPicture.Spot): Float? = hub.spots[s.id]?.control?.let { hub.lastHeard[it] }?.let { it.second / 127f }
 
-    BoxWithConstraints(Modifier.widthIn(max = 420.dp).fillMaxWidth().aspectRatio(PodGoPicture.ASPECT).clip(RoundedCornerShape(10.dp))) {
+    BoxWithConstraints(Modifier.widthIn(max = widest).fillMaxWidth().aspectRatio(PodGoPicture.ASPECT).clip(RoundedCornerShape(10.dp))) {
         val w = maxWidth; val h = maxHeight
         Canvas(Modifier.size(w, h)) { drawUnit() }
         val density = androidx.compose.ui.platform.LocalDensity.current
@@ -143,7 +143,11 @@ private fun PodGoDrawing(hub: ControllerHub, selected: String?, onTap: (PodGoPic
                                 topLeft = Offset(0f, size.height * (1 - t)), size = Size(size.width, size.height * t), cornerRadius = CornerRadius(6f))
                             drawRoundRect(ring, cornerRadius = CornerRadius(6f), style = Stroke(2f))
                         }
-                        Text(s.label + (t?.let { " ${Math.round(it * 100)}%" } ?: ""), style = MaterialTheme.typography.labelSmall, maxLines = 1, softWrap = false,
+                        // Its name over how far down it is, sized to the pedal.
+                        val narrow = with(density) { minOf(11.dp, w * s.box.width * 0.16f).toSp() }
+                        Text(s.label + (t?.let { "\n${Math.round(it * 100)}%" } ?: ""), maxLines = 2, softWrap = false,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = narrow, lineHeight = narrow * 1.15f,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center),
                             color = if (placed || on) PodGoPicture.INK else PodGoPicture.UNSET)
                     }
                     PodGoPicture.Kind.KNOB -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -247,10 +251,17 @@ internal fun PodGoDialog(state: SheetsState, onClose: () -> Unit) {
                 else -> SpotDetails(state, spot, onAdd = { picking = true })
             }
         }
-        Column(Modifier.verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
-            PodGoDrawing(hub, selected, onTap = { tap(it) })
-            Spacer(Modifier.size(10.dp))
-            Column(Modifier.fillMaxWidth()) { details() }
+        // Each screen of it from its top: the picture in sight to tap.
+        val scroll = remember(selected, listening) { androidx.compose.foundation.ScrollState(0) }
+        BoxWithConstraints {
+            // One control open on a short screen (a phone on its side): the picture smaller, so what
+            // is said about the control is in sight under it.
+            val widest = if (spot != null) minOf(420.dp, maxHeight * 0.48f * PodGoPicture.ASPECT) else 420.dp
+            Column(Modifier.verticalScroll(scroll), horizontalAlignment = Alignment.CenterHorizontally) {
+                PodGoDrawing(hub, selected, widest, onTap = { tap(it) })
+                Spacer(Modifier.size(10.dp))
+                Column(Modifier.fillMaxWidth()) { details() }
+            }
         }
     }
 }
@@ -273,7 +284,13 @@ private fun Overview(state: SheetsState, onTap: (PodGoPicture.Spot) -> Unit) {
                 when {
                     hub.spots[s.id] == null -> "Not set: tap to set"
                     does.isEmpty() -> "Set, does nothing yet"
-                    else -> does.joinToString(", ") { actionName(state, it.action) }
+                    else -> does.joinToString(", ") { b ->
+                        actionName(state, b.action) + when {
+                            b.continuous || b.everyMessage || hub.spots[s.id]?.momentary == true -> ""
+                            b.whenOff -> " (when it goes dark)"
+                            else -> " (when it lights)"
+                        }
+                    }
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = if (does.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary
@@ -326,9 +343,25 @@ private fun SpotDetails(state: SheetsState, spot: PodGoPicture.Spot, onAdd: () -
         modifier = Modifier.padding(top = 10.dp))
     val does = hub.bindingsOf(spot.id)
     if (does.isEmpty()) Text("Nothing yet.", style = MaterialTheme.typography.bodyMedium)
-    for (b in does) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(actionName(state, b.action), modifier = Modifier.weight(1f))
-        IconButton(onClick = { hub.remove(b) }) { Icon(Icons.Default.Close, contentDescription = "Remove") }
+    for (b in does) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(actionName(state, b.action), modifier = Modifier.weight(1f))
+            IconButton(onClick = { hub.remove(b) }) { Icon(Icons.Default.Close, contentDescription = "Remove") }
+        }
+        // A switch that lights at one press and goes dark at the next (the toe switch): each press,
+        // or one way only - pressed twice, done once.
+        if (!b.continuous && !placed.momentary && placed.control.kind == com.inksheets.core.ControlEvent.CC) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((label, every, off) in listOf(Triple("Every press", true, false), Triple("When it lights", false, false), Triple("When it goes dark", false, true))) {
+                    androidx.compose.material3.FilterChip(
+                        selected = b.everyMessage == every && (every || b.whenOff == off),
+                        onClick = { hub.setWhen(b, every, off) },
+                        label = { Text(label) }
+                    )
+                }
+            }
+        }
     }
     TextButton(onClick = onAdd) { Text(if (does.isEmpty()) "Give it an action..." else "Give it another action...") }
 }

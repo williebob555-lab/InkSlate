@@ -108,4 +108,15 @@ class ControllersTest {
         assertEquals(spots, Controllers.decodeSpots(Controllers.encodeSpots(spots)))
         assertEquals(emptyMap<String, SpotControl>(), Controllers.decodeSpots("[]"))
     }
+
+    @Test
+    fun `a toggle can do it one way only - pressed twice, done once`() {
+        val toe = ControlRef(pod, ControlEvent.CC, 5, 8)
+        val lit = ControlBinding(toe, RemoteButton.action("NEXT_PAGE"))
+        val dark = lit.copy(whenOff = true)
+        val on = ControlEvent(pod, ControlEvent.CC, 5, 8, 127)
+        val off = ControlEvent(pod, ControlEvent.CC, 5, 8, 0)
+        assertEquals(listOf(lit), Controllers.firing(listOf(lit, dark), on))
+        assertEquals(listOf(dark), Controllers.firing(listOf(lit, dark), off))
+    }
 }

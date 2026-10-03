@@ -109,14 +109,16 @@ data class ControlRef(val device: String, val kind: String, val channel: Int, va
  * What a control does: [action], one of the remote's. [continuous]: a fader or pedal sweeping a
  * value - its 0-127 across the action's range ([Controllers.range]) - rather than a switch.
  * [everyMessage]: a switch that sends one message a press (a POD Go footswitch set to toggle sends
- * 127, then 0 the next press): each message is a press; otherwise a press is its upper half only.
+ * 127, then 0 the next press): each message is a press; otherwise a press is its upper half only -
+ * or, [whenOff], its lower half only: a toggle (the POD Go's toe switch) doing it one way of two.
  */
 @Serializable
 data class ControlBinding(
     val control: ControlRef,
     val action: RemoteButton,
     val continuous: Boolean = false,
-    val everyMessage: Boolean = false
+    val everyMessage: Boolean = false,
+    val whenOff: Boolean = false
 )
 
 /**
@@ -173,7 +175,7 @@ object Controllers {
      * time it moves; a switch when pressed (or at every message, for one that sends one a press).
      */
     fun firing(bindings: List<ControlBinding>, e: ControlEvent): List<ControlBinding> =
-        bindings.filter { b -> b.control.matches(e) && (b.continuous || b.everyMessage || e.pressed) }
+        bindings.filter { b -> b.control.matches(e) && (b.continuous || b.everyMessage || e.pressed != b.whenOff) }
 
     private val json = Json { ignoreUnknownKeys = true }
     private val list = ListSerializer(ControlBinding.serializer())

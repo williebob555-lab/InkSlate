@@ -28,7 +28,10 @@ import com.inksheets.core.podgo.PodGoLink
  * Every message it sends is written to the app's log (the first few hundred a session), for working
  * out which is which.
  */
-class AndroidPodGoInput(private val context: () -> Context) : ControllerInput {
+class AndroidPodGoInput(activity: () -> Context) : ControllerInput {
+    // The app's own context, not the activity's: an activity made anew (the screen turned) takes
+    // what was registered on it away with it, and a POD Go plugged in after would go unheard.
+    private val context: () -> Context = { activity().applicationContext }
     private val main = Handler(Looper.getMainLooper())
     private var onEvent: (ControlEvent) -> Unit = {}
     private var onDevices: (List<String>) -> Unit = {}

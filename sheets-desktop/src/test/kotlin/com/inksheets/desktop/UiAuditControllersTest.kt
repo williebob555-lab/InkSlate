@@ -8,7 +8,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -75,7 +75,7 @@ class UiAuditControllersTest {
             runDesktopComposeUiTest(width = w, height = h) {
                 setContent { MaterialTheme { Surface { Column(Modifier.verticalScroll(rememberScrollState())) { SheetsSettings(state) } } } }
                 fun look(scene: String, vararg required: String) { waitForIdle(); total += UiAudit.check(this, size, "podgo-$scene", w, h, required = required.toList()).size }
-                fun click(text: String) = onAllNodes(hasText(text, substring = true)).onFirst().apply { runCatching { performScrollTo() } }.performClick()
+                fun click(text: String) = onAllNodes(hasText(text, substring = true)).onLast().apply { runCatching { performScrollTo() } }.performClick()
                 fun say(vararg events: ControlEvent) { for (e in events) { pod.send!!(e); Thread.sleep(5) }; Thread.sleep(50); waitForIdle() }
                 val usb = PodGoEvents.DEVICE
                 look("settings", "POD Go: set up on its picture...")
@@ -101,6 +101,15 @@ class UiAuditControllersTest {
                 click("Give it an action...")
                 look("actions-pedal", "Tempo, 40 to 240")
                 click("Tempo, 40 to 240")
+                click("Back")
+                click("TOE")
+                say(ControlEvent(usb, ControlEvent.CC, 5, 8, 127))
+                click("Keep")
+                click("Give it an action...")
+                click("Next page")
+                look("toggle", "Back")   // (the choices under the picture, scrolled to on a phone on its side)
+                click("When it lights")
+                assertEquals(false, state.controllers.bindingsOf("toe").single().everyMessage)
                 click("Back")
                 say(ControlEvent(usb, ControlEvent.CC, 2, 8, 64), ControlEvent(usb, ControlEvent.PROGRAM, 1, 2, 2))
                 look("lit", "Close")
