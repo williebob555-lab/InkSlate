@@ -1705,6 +1705,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         found + scanGraces(clean, s, events, carry, from).filter { g -> found.none { abs(it.x - g.x) < s.space } }
                     else found
                 }
+                // A sliver between two lines taken for barlines, with nothing in it - no note, no rest, no
+                // sign: one of them was no barline (a rest's stroke, a pencil mark), and no bar is here.
+                if (events.isEmpty() && graceNotes.isEmpty() && i > 0 && !timeHere && span.second - span.first < s.space * 5f &&
+                    System.getProperty("inksheets.omr.keepslivers") == null) {
+                    if (traceRests) println("  bar ${span.first}..${span.second}: a sliver with nothing in it - no bar")
+                    continue
+                }
                 val m = Measure(
                     number++, page, si, box, s.space,
                     carry.clef, carry.key, carry.time, events,
