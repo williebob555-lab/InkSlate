@@ -132,7 +132,7 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override fun audioPlayer(): com.inksheets.ui.AudioPlayer = JavaSoundPlayer()
 
     override fun decodeAudio(file: File, onChunk: (FloatArray, Int) -> Unit): Boolean = runCatching {
-        javax.sound.sampled.AudioSystem.getAudioInputStream(file).use { raw ->
+        AudioFiles.open(file).use { raw ->
             val src = raw.format
             val rate = src.sampleRate.takeIf { it > 0 } ?: 44_100f
             val ch = src.channels.coerceAtLeast(1)

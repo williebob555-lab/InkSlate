@@ -36,7 +36,7 @@ class JavaSoundPlayer : AudioPlayer {
 
     override fun load(file: File): Boolean = runCatching {
         pause()
-        AudioSystem.getAudioInputStream(file).use { raw ->
+        AudioFiles.open(file).use { raw ->
             val source = raw.format
             val pcm = AudioFormat(
                 AudioFormat.Encoding.PCM_SIGNED,

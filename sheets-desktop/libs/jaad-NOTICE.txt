@@ -1,0 +1,7 @@
+jaad-0.9.4-nospi.jar is com.tianscar.javasound:jaad:0.9.4 (https://github.com/Tianscar/jaad,
+from Maven Central), licensed under the Apache License, Version 2.0
+(http://www.apache.org/licenses/LICENSE-2.0).
+
+Modification: its META-INF/services entry (a Java Sound AudioFileReader registered for every
+audio file) is removed, so that it reads only the AAC files InkSheets hands it (AudioFiles.kt)
+and never takes over WAV or MP3 files. Nothing else is changed.
