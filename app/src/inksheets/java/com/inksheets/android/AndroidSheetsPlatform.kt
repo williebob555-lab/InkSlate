@@ -198,7 +198,12 @@ class AndroidSheetsPlatform(
     }
 
     override val controllers: com.inksheets.core.ControllerInput? by lazy {
-        if (context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_MIDI)) AndroidMidiInput { context } else null
+        val pm = context.packageManager
+        AllControllers(listOfNotNull(
+            if (pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_MIDI)) AndroidMidiInput { context } else null,
+            // A POD Go's footswitches and pedal, heard over USB as its editor hears them.
+            if (pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_USB_HOST)) AndroidPodGoInput { context } else null
+        )).takeIf { pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_MIDI) || pm.hasSystemFeature(android.content.pm.PackageManager.FEATURE_USB_HOST) }
     }
 
     override fun meshRadio(): com.inksheets.ui.MeshRadio? =

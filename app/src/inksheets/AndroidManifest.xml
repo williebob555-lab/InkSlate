@@ -19,6 +19,8 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <!-- Controllers: a foot controller or a POD Go over USB, sending MIDI. Not needed to install. -->
     <uses-feature android:name="android.software.midi" android:required="false" />
+    <!-- A POD Go's footswitches and pedal over USB (it does not send them as MIDI). Not needed to install. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application>
         <!-- Scanning a leader's join code with the tablet's own camera app opens InkSheets and follows; a device's remote code makes this one its remote. -->
