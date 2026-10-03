@@ -157,3 +157,14 @@ interface ControllerInput {
     fun start(onEvent: (ControlEvent) -> Unit, onDevices: (List<String>) -> Unit)
     fun stop()
 }
+
+/** Several systems' controllers as one: MIDI, and a POD Go over USB - each device list merged. */
+class AllControllers(private val inputs: List<ControllerInput>) : ControllerInput {
+    private val devices = HashMap<Int, List<String>>()
+    override fun start(onEvent: (ControlEvent) -> Unit, onDevices: (List<String>) -> Unit) {
+        for ((i, input) in inputs.withIndex()) input.start(onEvent) { list ->
+            synchronized(devices) { devices[i] = list; onDevices(devices.toSortedMap().values.flatten()) }
+        }
+    }
+    override fun stop() = inputs.forEach { it.stop() }
+}

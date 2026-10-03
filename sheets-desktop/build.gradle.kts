@@ -36,6 +36,8 @@ dependencies {
     implementation("com.googlecode.soundlibs:vorbisspi:1.0.3.3")
     // Bluetooth sockets for remotes: Winsock's and BlueZ's, which Java has no way to reach itself.
     implementation(libs.jna)
+    // A POD Go's footswitches and pedal over USB (its editor's link): libusb, its native parts included.
+    implementation("org.usb4java:usb4java:1.3.0")
     testImplementation("junit:junit:4.13.2")
 }
 

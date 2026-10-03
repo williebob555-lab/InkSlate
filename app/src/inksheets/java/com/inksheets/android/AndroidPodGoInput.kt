@@ -138,15 +138,3 @@ class AndroidPodGoInput(private val context: () -> Context) : ControllerInput {
         const val PERMISSION = "com.inksheets.android.POD_GO_PERMISSION"
     }
 }
-
-/** Several systems' controllers as one: MIDI, and a POD Go over USB. */
-class AllControllers(private val inputs: List<ControllerInput>) : ControllerInput {
-    private val devices = HashMap<Int, List<String>>()
-    override fun start(onEvent: (ControlEvent) -> Unit, onDevices: (List<String>) -> Unit) {
-        for ((i, input) in inputs.withIndex()) input.start(onEvent) { list ->
-            devices[i] = list
-            onDevices(devices.toSortedMap().values.flatten())
-        }
-    }
-    override fun stop() = inputs.forEach { it.stop() }
-}
