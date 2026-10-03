@@ -2,6 +2,8 @@ package com.inksheets.core
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 /**
@@ -117,6 +119,38 @@ data class ControlBinding(
     val everyMessage: Boolean = false
 )
 
+/**
+ * The control the player put on a spot of a controller's picture (a POD Go's footswitch, its
+ * pedal): found by pressing it, never guessed. [momentary]: it sent on and, let go, off moments
+ * later - so a press is its upper half only; otherwise (a POD Go block switch sends on at one
+ * press, off at the next) each message is a press.
+ */
+@Serializable
+data class SpotControl(val control: ControlRef, val momentary: Boolean = false)
+
+/**
+ * Listening for the control to put on a spot: everything heard since, in the order it came - the
+ * first is most likely what was pressed (a POD Go says more after: the preset loaded, its tempo).
+ * [chatter]: controls already talking before the listening began, as a unit's own goings-on - put
+ * last, whenever they came.
+ */
+class ControlListener(private val chatter: Set<ControlRef> = emptySet()) {
+    private val heard = LinkedHashMap<ControlRef, MutableList<Pair<Long, Int>>>()
+
+    fun hear(e: ControlEvent, at: Long) { heard.getOrPut(e.control) { ArrayList() } += at to e.value }
+
+    /** What was heard, most likely first. */
+    val candidates: List<ControlRef> get() = heard.keys.sortedBy { it in chatter }
+
+    fun count(c: ControlRef): Int = heard[c]?.size ?: 0
+
+    /** Sent on, then off within a second: a momentary switch, pressed and let go. */
+    fun momentary(c: ControlRef): Boolean {
+        val h = heard[c] ?: return false
+        return (1 until h.size).any { i -> h[i - 1].second >= 64 && h[i].second < 64 && h[i].first - h[i - 1].first < 1000 }
+    }
+}
+
 object Controllers {
     /** The actions a fader or pedal can sweep, and over what values. */
     fun range(kind: String): ClosedFloatingPointRange<Double>? = when (kind) {
@@ -146,6 +180,21 @@ object Controllers {
 
     fun encode(bindings: List<ControlBinding>): String = json.encodeToString(list, bindings)
     fun decode(text: String?): List<ControlBinding> = text?.let { runCatching { json.decodeFromString(list, it) }.getOrNull() } ?: emptyList()
+
+    /**
+     * [action] for the control on a spot: a pedal or fader sweeping it if it is a sweep; a switch
+     * pressed otherwise - at every message unless it was seen to send on and off at a press.
+     */
+    fun bindingFor(spot: SpotControl, action: RemoteButton): ControlBinding {
+        val sweep = isSweep(action) && spot.control.kind == ControlEvent.CC
+        return ControlBinding(spot.control, action, continuous = sweep,
+            everyMessage = !sweep && spot.control.kind == ControlEvent.CC && !spot.momentary)
+    }
+
+    private val spotMap = MapSerializer(String.serializer(), SpotControl.serializer())
+
+    fun encodeSpots(spots: Map<String, SpotControl>): String = json.encodeToString(spotMap, spots)
+    fun decodeSpots(text: String?): Map<String, SpotControl> = text?.let { runCatching { json.decodeFromString(spotMap, it) }.getOrNull() } ?: emptyMap()
 }
 
 /**

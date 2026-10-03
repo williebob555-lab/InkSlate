@@ -2,14 +2,17 @@ package com.inksheets.ui
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inksheets.core.ControlBinding
 import com.inksheets.core.ControlEvent
+import com.inksheets.core.ControlListener
 import com.inksheets.core.ControlRef
 import com.inksheets.core.Controllers
 import com.inksheets.core.RemoteButton
 import com.inksheets.core.RemoteLink
+import com.inksheets.core.SpotControl
 
 /**
  * Controllers plugged into this device - a foot controller, a POD Go over USB - and what their
@@ -31,6 +34,20 @@ class ControllerHub(private val state: SheetsState) {
     /** The control heard while learning, and how it behaves, once it is clear. */
     var learned by mutableStateOf<ControlBinding?>(null)
         private set
+
+    /** Which control the player put on each spot of a controller's picture ([PodGoPicture]), by spot. */
+    val spots = mutableStateMapOf<String, SpotControl>().apply { putAll(Controllers.decodeSpots(state.platform.pref(K_SPOTS))) }
+    /** When each control was last heard, and its value: for the picture to light it, and show a pedal's travel. */
+    val lastHeard = mutableStateMapOf<ControlRef, Pair<Long, Int>>()
+    /** When anything was last heard. */
+    var lastAt by mutableStateOf(0L)
+        private set
+
+    /** Listening for the control to put on this spot; what came since, most likely first. */
+    var placing by mutableStateOf<String?>(null)
+        private set
+    val placingHeard = mutableStateListOf<ControlRef>()
+    private var listener: ControlListener? = null
 
     var on by mutableStateOf(state.platform.pref(K_ON) != "false")
         private set
@@ -88,10 +105,72 @@ class ControllerHub(private val state: SheetsState) {
     fun remove(b: ControlBinding) { bindings.remove(b); save() }
 
     private fun save() = state.platform.setPref(K_BINDINGS, Controllers.encode(bindings.toList()))
+    private fun saveSpots() = state.platform.setPref(K_SPOTS, Controllers.encodeSpots(spots.toMap()))
+
+    /** Listen for the control to put on [spot]: the next pressed or moved. What was already talking is offered last. */
+    fun place(spot: String) {
+        val now = System.currentTimeMillis()
+        listener = ControlListener(chatter = lastHeard.filterValues { now - it.first < 3000 }.keys.toSet())
+        placingHeard.clear()
+        placing = spot
+    }
+
+    fun cancelPlacing() { placing = null; listener = null; placingHeard.clear() }
+
+    /** How many times [c] was heard while listening. */
+    fun placingCount(c: ControlRef): Int = listener?.count(c) ?: 0
+
+    /**
+     * Put [control] on [spot]. Learned again, the spot keeps its actions: they move to the new
+     * control (unless another spot still has the old one).
+     */
+    fun keepPlaced(spot: String, control: ControlRef) {
+        val placed = SpotControl(control, momentary = listener?.momentary(control) == true)
+        val old = spots[spot]
+        spots[spot] = placed
+        if (old != null && old.control != control && spots.none { (id, s) -> id != spot && s.control == old.control }) {
+            val moved = bindings.filter { it.control == old.control }
+            bindings.removeAll(moved)
+            for (b in moved) bindings.removeAll { it.control == control && it.action == b.action }
+            bindings += moved.map { Controllers.bindingFor(placed, it.action) }
+            save()
+        }
+        saveSpots()
+        cancelPlacing()
+    }
+
+    /** Take [spot] off the picture, and its control's actions with it (unless another spot has the same control). */
+    fun clearSpot(spot: String) {
+        val old = spots.remove(spot) ?: return
+        if (spots.values.none { it.control == old.control }) { bindings.removeAll { it.control == old.control }; save() }
+        saveSpots()
+    }
+
+    /** What [spot]'s control does. */
+    fun bindingsOf(spot: String): List<ControlBinding> = spots[spot]?.let { s -> bindings.filter { it.control == s.control } }.orEmpty()
+
+    /** Give [spot]'s control [action] too. */
+    fun bindSpot(spot: String, action: RemoteButton) {
+        val s = spots[spot] ?: return
+        val b = Controllers.bindingFor(s, action)
+        bindings.removeAll { it.control == b.control && it.action == b.action }
+        bindings += b
+        save()
+    }
 
     internal fun heard(e: ControlEvent) {
         recent.add(0, e)
         while (recent.size > 12) recent.removeAt(recent.size - 1)
+        val now = System.currentTimeMillis()
+        lastHeard[e.control] = now to e.value
+        lastAt = now
+        listener?.let { l ->
+            // Placing a control on the picture: nothing fires till it is put there.
+            l.hear(e, now)
+            val c = l.candidates
+            if (c != placingHeard.toList()) { placingHeard.clear(); placingHeard.addAll(c) }
+            return
+        }
         learning?.let { action -> learnFrom(action, e); return }
         for (b in Controllers.firing(bindings, e)) fire(b, e)
     }
@@ -148,6 +227,7 @@ class ControllerHub(private val state: SheetsState) {
             RemoteButton.BOOKMARKS, RemoteButton.MESSAGE_TYPE, RemoteButton.TOUCHPAD)
         private const val K_BINDINGS = "sheets_controller_bindings"
         private const val K_ON = "sheets_controllers_on"
+        private const val K_SPOTS = "sheets_controller_spots"
 
         /** What a control is called in a list: "CC 71 (ch 1) on POD Go". */
         fun name(c: ControlRef): String = c.short() + if (c.device.isNotEmpty()) " on ${c.device}" else ""

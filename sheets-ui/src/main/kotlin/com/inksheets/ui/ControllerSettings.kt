@@ -39,6 +39,7 @@ import com.inksheets.core.RemoteButton
 internal fun ControllerSettings(state: SheetsState) {
     val hub = state.controllers
     var adding by remember { mutableStateOf(false) }
+    var podGo by remember { mutableStateOf(false) }
     Text(
         "Controllers",
         style = MaterialTheme.typography.titleSmall,
@@ -55,7 +56,7 @@ internal fun ControllerSettings(state: SheetsState) {
             Column(Modifier.weight(1f)) {
                 Text("Pedals, switches and faders")
                 Text(
-                    "A foot controller or a POD Go plugged in by USB, sending MIDI: give its switches any of the remote's buttons, " +
+                    "A foot controller sending MIDI, or a POD Go by USB: give its switches any of the remote's buttons, " +
                         "and its pedals the tempo or a recording's volume or speed.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -73,9 +74,11 @@ internal fun ControllerSettings(state: SheetsState) {
             Text("Last: " + it.describe(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         for (b in hub.bindings.toList()) BindingRow(state, b, onRemove = { hub.remove(b) })
+        TextButton(onClick = { podGo = true }) { Text("POD Go: set up on its picture...") }
         TextButton(onClick = { adding = true }) { Text("Add a control...") }
     }
     if (adding) AddControlDialog(state, onClose = { adding = false })
+    if (podGo) PodGoDialog(state, onClose = { podGo = false })
 }
 
 @Composable
@@ -97,11 +100,11 @@ private fun BindingRow(state: SheetsState, b: ControlBinding, onRemove: () -> Un
     }
 }
 
-private fun actionName(state: SheetsState, b: RemoteButton): String =
+internal fun actionName(state: SheetsState, b: RemoteButton): String =
     controlOffers(state).firstOrNull { it.button == b }?.name ?: defaultName(b, state.remote.shown, state.remote.hostLibrary)
 
 /** What a control can do: the sweeps, the remote's buttons that need no list to pick from, and the remote's own buttons. */
-private fun controlOffers(state: SheetsState): List<Offer> {
+internal fun controlOffers(state: SheetsState): List<Offer> {
     val sweeps = "Pedals and faders (moved across)"
     val shown = state.remote.shown
     return listOf(

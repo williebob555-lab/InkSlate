@@ -62,4 +62,50 @@ class ControllersTest {
         assertEquals(emptyList<ControlBinding>(), Controllers.decode("not json"))
         assertEquals(emptyList<ControlBinding>(), Controllers.decode(null))
     }
+
+    @Test
+    fun `listening for a spot - what came first is offered first, a unit's own chatter last`() {
+        val usb = "POD Go (USB)"
+        val tempo = ControlRef(usb, ControlEvent.CC, 4, 16)
+        val listener = ControlListener(chatter = setOf(tempo))
+        // A footswitch in preset mode: the preset chosen, the preset loaded, its tempo - tempo was talking before.
+        listener.hear(ControlEvent(usb, ControlEvent.CC, 4, 16, 120), 0)
+        listener.hear(ControlEvent(usb, ControlEvent.PROGRAM, 1, 2, 2), 10)
+        listener.hear(ControlEvent(usb, ControlEvent.CC, 16, 4, 127), 20)
+        listener.hear(ControlEvent(usb, ControlEvent.PROGRAM, 1, 2, 2), 900)
+        assertEquals(listOf(ControlRef(usb, ControlEvent.PROGRAM, 1, 2), ControlRef(usb, ControlEvent.CC, 16, 4), tempo), listener.candidates)
+        assertEquals(2, listener.count(ControlRef(usb, ControlEvent.PROGRAM, 1, 2)))
+    }
+
+    @Test
+    fun `a switch sending on then off at a press is momentary - one sending on, then off at the next press, is not`() {
+        val listener = ControlListener()
+        listener.hear(ControlEvent(pod, ControlEvent.CC, 1, 80, 127), 0)
+        listener.hear(ControlEvent(pod, ControlEvent.CC, 1, 80, 0), 150)
+        listener.hear(ControlEvent(pod, ControlEvent.CC, 1, 81, 127), 0)
+        listener.hear(ControlEvent(pod, ControlEvent.CC, 1, 81, 0), 2500)
+        assertTrue(listener.momentary(ControlRef(pod, ControlEvent.CC, 1, 80)))
+        assertTrue(!listener.momentary(ControlRef(pod, ControlEvent.CC, 1, 81)))
+    }
+
+    @Test
+    fun `an action given to a spot - a pedal sweeps, a block switch fires at every message, a momentary one when pressed`() {
+        val pedal = SpotControl(ControlRef(pod, ControlEvent.CC, 2, 8))
+        val tempo = Controllers.bindingFor(pedal, RemoteButton(RemoteButton.TEMPO_SET))
+        assertTrue(tempo.continuous && !tempo.everyMessage)
+        val block = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.CC, 1, 1)), RemoteButton.action("NEXT_PAGE"))
+        assertTrue(!block.continuous && block.everyMessage)
+        val momentary = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.CC, 1, 80), momentary = true), RemoteButton.action("NEXT_PAGE"))
+        assertTrue(!momentary.continuous && !momentary.everyMessage)
+        val preset = Controllers.bindingFor(SpotControl(ControlRef(pod, ControlEvent.PROGRAM, 1, 2)), RemoteButton.action("NEXT_PAGE"))
+        assertTrue(!preset.continuous && !preset.everyMessage)
+        assertEquals(listOf(preset), Controllers.firing(listOf(preset), ControlEvent(pod, ControlEvent.PROGRAM, 1, 2, 2)))
+    }
+
+    @Test
+    fun `spots are kept and read back`() {
+        val spots = mapOf("fs1" to SpotControl(ControlRef(pod, ControlEvent.PROGRAM, 1, 2)), "exp" to SpotControl(ControlRef(pod, ControlEvent.CC, 2, 8), momentary = false))
+        assertEquals(spots, Controllers.decodeSpots(Controllers.encodeSpots(spots)))
+        assertEquals(emptyMap<String, SpotControl>(), Controllers.decodeSpots("[]"))
+    }
 }

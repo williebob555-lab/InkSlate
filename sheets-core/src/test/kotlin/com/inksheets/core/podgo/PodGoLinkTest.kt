@@ -87,9 +87,11 @@ class PodGoLinkTest {
         // The volume knob, and which pedal is active.
         assertEquals(ControlEvent(PodGoEvents.DEVICE, ControlEvent.CC, 3, 7, 127), PodGoEvents.toControl(note(22, mapOf(118L to 159L, 119L to 1.0))))
         assertEquals(ControlEvent(PodGoEvents.DEVICE, ControlEvent.CC, 3, 124, 127), PodGoEvents.toControl(note(22, mapOf(118L to 124L, 119L to 2L))))
-        // What follows a preset change - its tempo, the preset loaded, its pedal assignments - fires nothing.
-        assertEquals(null, PodGoEvents.toControl(note(22, mapOf(118L to 16L, 119L to 120.0))))
-        assertEquals(null, PodGoEvents.toControl(note(4, mapOf(107L to 1L, 108L to 2L))))
-        assertEquals(null, PodGoEvents.toControl(note(34, mapOf(74L to 1L, 98L to 2L))))
+        // What follows a preset change - its tempo, the preset loaded - comes through as controls of
+        // its own, for the player to put on a spot or leave alone; a reply to our own asking does not.
+        assertEquals(ControlEvent(PodGoEvents.DEVICE, ControlEvent.CC, 4, 16, 120), PodGoEvents.toControl(note(22, mapOf(118L to 16L, 119L to 120.0))))
+        assertEquals(ControlEvent(PodGoEvents.DEVICE, ControlEvent.CC, 16, 4, 127), PodGoEvents.toControl(note(4, mapOf(107L to 1L, 108L to 2L))))
+        assertEquals(ControlEvent(PodGoEvents.DEVICE, ControlEvent.CC, 16, 34, 127), PodGoEvents.toControl(note(34, mapOf(74L to 1L, 98L to 2L))))
+        assertEquals(null, PodGoEvents.toControl(note(20, emptyMap())))
     }
 }
