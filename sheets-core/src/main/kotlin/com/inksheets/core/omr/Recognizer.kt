@@ -851,7 +851,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * digits differ in size and shape more than their noteheads, so each is tried a little smaller
      * and larger, and taken loosely.
      */
-    private fun digit(clean: Ink, s: Staff, x0: Int, x1: Int, steps: List<Int>, allowed: Set<Int> = (0..9).toSet()): Pair<Int, Int>? {
+    private fun digit(clean: Ink, s: Staff, x0: Int, x1: Int, steps: List<Int>, allowed: Set<Int> = (0..9).toSet(), least: Float = 0.5f): Pair<Int, Int>? {
         // Each digit's best fit, at whatever size and place.
         class Fit(val d: Int, val x: Int, val y: Int, val sp: Float, val sc: Float)
         val fits = HashMap<Int, Fit>()
@@ -860,7 +860,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             for (d in allowed) for (xx in x0..x1) for (step in steps) {
                 val y = s.y(step, xx).roundToInt()
                 val sc = score(clean, "timeSig$d", sp, xx, y)
-                if (sc > 0.5f && sc > (fits[d]?.sc ?: 0f)) fits[d] = Fit(d, xx, y, sp, sc)
+                if (sc > least && sc > (fits[d]?.sc ?: 0f)) fits[d] = Fit(d, xx, y, sp, sc)
             }
         }
         val best = fits.values.maxByOrNull { it.sc } ?: return null
@@ -1421,7 +1421,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val key = if (stated) printedKey(s, x) else lineKeys.getOrNull(si) ?: keyAt(clean, s, x, carry.clef)
             var showsKey = false
             if (key != null) { carry.key = key.first; x = key.second; showsKey = true }
-            val time = clock.sum("time") { if (stated) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0) }
+            val time = clock.sum("time") { if (stated) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0, lineStart = true) }
             var showsTime = false
             if (time != null) { carry.time = time.first; x = time.second; showsTime = true }
             // A part's first staff has a time signature: one in a font not read here is stepped
@@ -1460,7 +1460,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // (A PDF's own heads are its notes, however high - a piccolo's - its tempo marking's note
                 // never stated as a head: any of them is a note here.)
                 val headsHere = allHeads.any { it.x >= from - 2 && it.x < to && (stated || it.step in -6..14) }
-                if (traceRests) println("  bar ${span.first}..${span.second} heads here: ${allHeads.filter { it.x >= from - 2 && it.x < to }.map { "${it.kind} ${it.step}" }}")
+                if (traceRests) println("  bar ${span.first}..${span.second} heads here: ${allHeads.filter { it.x >= from - 2 && it.x < to }.map { "${it.kind.removePrefix("notehead")} ${it.step}@${it.x}${if (it.stemX >= 0) (if (it.up) "^" else "v") else ""}" }}")
                 // A time signature after a line's last barline, nothing else: the change ahead shown
                 // at the line's end (the next line starts with it) - no bar of its own.
                 if (i == spans.lastIndex && i > 0 && !headsHere && span.second - span.first < s.space * 5f &&
@@ -2167,7 +2167,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private fun restsWholeBar(events: List<Event>) = events.size == 1 && events[0].let { it is Rest && it.duration.base == 1 && it.duration.dots == 0 }
     private fun restsWholeBar(m: Measure) = restsWholeBar(m.events)
 
-    private fun timeAt(clean: Ink, s: Staff, x0: Int, opening: Boolean = false): Pair<TimeSig, Int>? {
+    private fun timeAt(clean: Ink, s: Staff, x0: Int, opening: Boolean = false, lineStart: Boolean = false): Pair<TimeSig, Int>? {
         val sp = s.space
         // A quick look first: a time signature fills both halves of the staff there, one figure over
         // another (or a C across the middle) - most bars' starts have a note or nothing, and are passed by.
@@ -2180,6 +2180,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 for (y in mid until bottom) if (clean[x, y]) lower++
                 n += mid - top
             }
+            if (traceRests) println("    timeAt $x0: upper ${"%.2f".format(upper.toFloat() / max(1, n))} lower ${"%.2f".format(lower.toFloat() / max(1, n))}")
             if (n == 0 || upper < n * 0.08f || lower < n * 0.08f) return null
         }
         fun digitAt(x: Int, step: Int, allowed: Set<Int> = (0..9).toSet()): Pair<Int, Int>? = digit(clean, s, x, x + (sp * 2.2f).toInt(), listOf(step), allowed)
@@ -2210,6 +2211,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // (Only at the piece's start, where a signature surely is: elsewhere that finds one in anything.)
             ?: (if (opening) digit(clean, s, x0, top.second, listOf(6), setOf(2, 4, 8))?.let { (d, x) -> d to end(d, x) } else null)
             ?: return null
+        if (traceRests) println("    timeAt $x0: top $top bottom $bottom")
         if (top.first !in 1..16) return null
         return TimeSig(top.first, bottom.first) to max(top.second, bottom.second) + (sp * 0.4f).toInt()
     }
@@ -3572,6 +3574,28 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return out to shades
     }
 
+    /**
+     * Whether the page shows one stem, not two, by heads [a] and [b] side by side: upright strokes a
+     * couple of spaces long across the span of the two, counted - one a chord's, two two notes'.
+     * (Whole notes have none: two side by side, a step apart, are a chord.)
+     */
+    private fun oneStemBetween(clean: Ink, s: Staff, a: Head, b: Head): Boolean {
+        val sp = s.space
+        if (a.kind == "noteheadWhole" && b.kind == "noteheadWhole") return true
+        val x0 = min(a.x, b.x) - (sp * 0.3f).toInt(); val x1 = max(a.x, b.x) + (sp * 1.5f).toInt()
+        val yMid = (a.y + b.y) / 2
+        var stems = 0; var inRun = false
+        for (x in x0..x1) {
+            // Upright ink through the heads' height, running on a couple of spaces either way.
+            var up = 0; var y = yMid; while (clean[x, y - 1] && yMid - y < sp * 4) { y--; up++ }
+            var down = 0; y = yMid; while (clean[x, y + 1] && y - yMid < sp * 4) { y++; down++ }
+            val stem = up >= sp * 2.2f || down >= sp * 2.2f
+            if (stem && !inRun) stems++
+            inRun = stem
+        }
+        return stems == 1
+    }
+
     private fun eventsIn(clean: Ink, s: Staff, from: Int, to: Int, t: Int, carry: Carry, heads: List<Head>): List<Event> {
         val sp = s.space
         for (h in heads) dots(clean, s, h)
@@ -3580,8 +3604,25 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         for (h in heads) {
             val with = chords.firstOrNull { c -> val o = c.first()
                 (h.stemX >= 0 && o.stemX >= 0 && abs(h.stemX - o.stemX) <= max(2, t + 1)) ||
-                    (h.kind == "noteheadWhole" && o.kind == "noteheadWhole" && abs(h.x - o.x) < sp * 0.5f) }
+                    (h.kind == "noteheadWhole" && o.kind == "noteheadWhole" && abs(h.x - o.x) < sp * 0.5f) ||
+                    // One over the other at one place, alike - both filled or both hollow, as many flags
+                    // or beams: one chord, its stems' places guessed a little apart (two voices with
+                    // rhythms of their own differ in one or the other).
+                    (abs(h.x - o.x) <= sp * 0.35f && h.kind == o.kind && h.flags == o.flags && h.step != o.step) }
             if (with != null) with += h else chords += mutableListOf(h)
+        }
+        // Two heads a second apart are printed side by side, one each side of the stem they share:
+        // one chord, not two notes - told from two notes in a row by the one stem between them
+        // (two notes have one each).
+        if (System.getProperty("inksheets.omr.noseconds") == null) {
+            chords.sortBy { c -> c.minOf { it.x } }
+            var k = 0
+            while (k + 1 < chords.size) {
+                val a = chords[k]; val b = chords[k + 1]
+                val pair = a.firstNotNullOfOrNull { ha -> b.firstOrNull { hb -> abs(ha.step - hb.step) == 1 && (hb.x - ha.x) in (sp * 0.6f).toInt()..(sp * 1.5f).toInt() &&
+                    (ha.kind == "noteheadBlack") == (hb.kind == "noteheadBlack") && ha.flags == hb.flags }?.let { ha to it } }
+                if (pair != null && oneStemBetween(clean, s, pair.first, pair.second)) { a += b; chords.removeAt(k + 1) } else k++
+            }
         }
         val events = ArrayList<Event>()
         val written = HashMap<Int, Int>()   // diatonic -> alter, for the rest of the measure
