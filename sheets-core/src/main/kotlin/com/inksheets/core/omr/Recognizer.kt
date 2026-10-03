@@ -2009,11 +2009,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
         // (Centred over the bar: a tempo marking at its start - "c. 50" - is not its count.)
         val centre = start + len / 2; val half = max(sp * 2.5f, len * 0.3f).toInt()
-        fun numberIn(a: Int, b: Int, on: Ink = page) = Digits.number(on, a, b, s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp, musicFont = true)
-        val printed = numberIn(centre - half, centre + half)
+        fun numberIn(a: Int, b: Int, on: Ink = page, tallest: Float = 3.2f) = Digits.number(on, a, b, s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * tallest).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp, musicFont = true)
+        val asPrinted = numberIn(centre - half, centre + half)
             ?: numberIn(start - sp.toInt(), start + len + sp.toInt())?.takeIf { it.second > start + len * 0.25f }
-            // (Some engravers set it down on the top line, one shape with it as printed: read with the lines out.)
-            ?: numberIn(centre - half, centre + half, clean)
+        // (Some engravers set it down on the top line, one shape with it as printed: read with the lines
+        // out - and taller than most, a guess, asked about.)
+        val linesOut = if (asPrinted == null) numberIn(centre - half, centre + half, clean) else null
+        val tall = if (asPrinted == null && linesOut == null) numberIn(centre - half, centre + half, clean, tallest = 3.7f) else null
+        val printed = asPrinted ?: linesOut ?: tall
         digits.retainAll { abs(it.second - centre) <= half + sp }
         // (Over 64 bars is a figure misread - pencilled words over it, a tempo's equation - not a
         // part's rest: how many, unknown, and the next bar number printed tells.)
@@ -2026,7 +2029,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // smudge: asked about too.)
         // (Figure by figure, a stray mark off to the side is taken for a second figure often - "41"
         // for a 4: only one figure each, differing, is a doubt.)
-        restFigureDoubted = whole != null && font != null && whole != font && whole < 10 && font < 10 || whole == null && font != null && font >= 10
+        restFigureDoubted = whole != null && font != null && whole != font && whole < 10 && font < 10 || whole == null && font != null && font >= 10 || tall != null
         val bars = whole ?: font ?: 0
         if (traceRests) println("    multiRest serifs $serifs bars $bars digits $digits whole $whole font $font at $start")
         // Some engravers end the bar in short strokes, or none: its number over it says what it is.
