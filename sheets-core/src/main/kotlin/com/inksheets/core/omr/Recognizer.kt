@@ -308,10 +308,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         while (x <= s.right) {
             val top = s.lineY(0, x).roundToInt(); val bottom = s.lineY(4, x).roundToInt()
             // Ink all the way down the staff - a scan's line may have a speck missing.
+            var gapped = false
             fun down(xx: Int): Boolean {
                 var gaps = 0
                 // (An old photocopy's thin line is broken here and there: a tenth of it may be missing.)
                 for (y in top..bottom) if (!ink[xx, y] && !ink[xx - 1, y] && !ink[xx + 1, y]) { if (++gaps > (bottom - top) / gapsAllowed + 1) return false }
+                gapped = gaps > (bottom - top) / 25 + 1
                 return true
             }
             if (!down(x)) { x++; continue }
@@ -320,6 +322,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             while (x2 + 1 <= s.right && (top..bottom).count { ink[x2 + 1, it] } >= (bottom - top) * 0.95) x2++
             val width = x2 - x + 1
             val centre = (x + x2) / 2
+            // A broken one has no head close beside it: a flat's stroke by a chord makes up a line only
+            // with the heads round it.
+            if (gapped && heads.any { h -> x2 >= h.x - (s.space * 0.9f).toInt() && x <= h.x + (s.space * 2f).toInt() }) {
+                if (traceRests) println("bar? x=$x broken, a head beside it")
+                x = x2 + 1; continue
+            }
             // Not a stem: a stem goes on past the staff, or has a head at its end.
             var above = 0; while (ink[centre, top - above - 1]) above++
             var below = 0; while (ink[centre, bottom + below + 1]) below++
@@ -1454,13 +1462,19 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         clock.mark("keys")
+        // The bar number printed over each line's start, read first for the whole page: one larger than
+        // a number further down the page is misread (a pencilled rehearsal box's "34" taken for 54) - let go.
+        val lineNumbers = staves.map { s ->
+            if (!adapt) null else clock.sum("numbers") { Digits.number(ink, s.left - (s.space * 3).toInt(), s.left + (s.space * 4).toInt(), s.y(-8, s.left).roundToInt(), s.y(-1, s.left).roundToInt(),
+                (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt(), space = s.space) }?.first
+        }.let { nums -> nums.mapIndexed { i, p -> p?.takeIf { nums.drop(i + 1).filterNotNull().all { later -> later > it } } } }
         for ((si, s) in staves.withIndex()) {
             if (onlyStaff != null && si != onlyStaff) continue
             // The bar number printed over the line's start, where it reads clearly, is believed over
             // the count - a pickup bar numbered 0, a bar missed or found twice before - if it is later
             // than the last and near the count (a digit missed would put it far off).
-            if (adapt) clock.sum("numbers") { Digits.number(ink, s.left - (s.space * 3).toInt(), s.left + (s.space * 4).toInt(), s.y(-8, s.left).roundToInt(), s.y(-1, s.left).roundToInt(),
-                (s.space * 0.6f).toInt(), (s.space * 2.5f).toInt(), bottomFrom = s.y(-6, s.left).roundToInt(), space = s.space) }?.first?.let { p ->
+            lineNumbers[si]?.let { p ->
+                if (traceRests) println("  line $si printed number $p, counted $number, carried ${carry.printed}")
                 if (alone) offsets += p - number
                 else {
                     // A multi-bar rest on the line before, of unknown length or misread (a scan's 14 read
