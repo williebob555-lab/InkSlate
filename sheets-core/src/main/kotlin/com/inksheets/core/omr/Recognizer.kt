@@ -1528,7 +1528,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // of time there, its figures not read - not read as notes either.)
             if (time == null && !stated && (page == 0 && si == 0 || timeInk)) unreadTime(clean, s, x)?.let { x = it; timeUnread = true
                 // (What the digit reader thought it may be, and the time carried: the bars choose.)
-                pendingTimeChoices = weakTimeChoices?.let { listOf(carry.time) + it } }
+                pendingTimeChoices = weakTimeChoices?.let { listOf(carry.time) + it }
+ }
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
             val allHeads = kept[si].filter { it.x >= x }
@@ -2445,7 +2446,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }
                 runs.sorted().getOrNull(runs.size / 2)?.toFloat() ?: (sp * 0.15f)
             }
-            fun half(upper: Boolean): Pair<List<Pair<Int, Float>>, Int>? {
+            fun half(upper: Boolean, signatureSure: Boolean = false): Pair<List<Pair<Int, Float>>, Int>? {
                 val xs = x0..x0 + (sp * 3f).toInt()
                 fun t(x: Int) = if (upper) s.lineY(0, x).roundToInt() - (sp * 0.3f).toInt() else s.lineY(2, x).roundToInt() + 1
                 fun b(x: Int) = if (upper) s.lineY(2, x).roundToInt() - 1 else s.lineY(4, x).roundToInt() + (sp * 0.3f).toInt()
@@ -2458,12 +2459,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     while (x <= xs.last + (sp * 1.5f).toInt() && (t(x)..b(x)).any { clean[x, it] }) x++
                     // (A sliver - the clef's dots, a speck - is no figure.)
                     if (x - a < sp * 0.3f) continue
-                    if (runs.isNotEmpty() && a - runs.last().last > sp * 0.7f) break
+                    // (A number's figures stand close; the next thing on the staff - a note - further off.)
+                    if (runs.isNotEmpty() && a - runs.last().last > sp * 0.45f) break
                     runs += a until x
                     if (runs.size > 2) { if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} runs $runs"); return null }
                 }
                 if (runs.isEmpty()) return null
                 var values = listOf(0 to 1f)
+                var firstAlone = emptyList<Pair<Int, Float>>()
                 for (r in runs) {
                     val w = r.last - r.first + 1
                     if (w < sp * 0.35f || w > sp * 1.7f) { if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} runs $runs, one ${w / sp} sp wide"); return null }
@@ -2508,15 +2511,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         for (yy in y0..y1) { for (xx in 0 until w) sb.append(if (fig[xx, yy]) "1 " else "0 "); sb.append('\n') }
                         java.io.File(dir).mkdirs(); java.io.File(dir, "t${s.top}_${x0}_${if (upper) "top" else "bot"}${r.first}_${d}_${(p * 100).toInt()}.pbm").writeText(sb.toString())
                     }
-                    // (No figure at all - the reader's "none" likelier than any digit - no signature.)
-                    if (odds[10] > p) return null
+                    // (No figure at all - the reader's "none" likelier than any digit - no signature; unless the
+                    // figure under it read surely, a signature plainly there: its guesses kept for the bars.)
+                    if (odds[10] > p && !signatureSure) return null
                     values = values.flatMap { (v, q) -> (0..9).filter { odds[it] >= 0.05f }.map { v * 10 + it to q * odds[it] } }
+                    if (r === runs.first()) firstAlone = values
                 }
-                return values.sortedByDescending { it.second } to runs.last().last
+                // (Two figures read: the first alone kept too, at half the odds - the "second" may be the
+                // note after the signature, standing close.)
+                if (runs.size > 1) values = values + firstAlone.map { (v, q) -> v to q * 0.5f }
+                return values.sortedByDescending { it.second } to (if (runs.size > 1) runs.last().last else runs.first().last)
             }
             // (The bottom first: a figure read there surely helps read the top.)
             val bottom = half(false) ?: return null
-            val top = half(true) ?: return null
+            val top = half(true, signatureSure = bottom.first.firstOrNull()?.let { it.second >= 0.9f } == true) ?: return null
             // Every signature these figures may be, likeliest first: the bars after it choose (see read).
             val all = top.first.filter { it.first in 1..16 }.flatMap { (t, p) -> bottom.first.filter { it.first in listOf(2, 4, 8, 16) }.map { (b, q) -> TimeSig(t, b) to p * q } }
                 .sortedByDescending { it.second }
