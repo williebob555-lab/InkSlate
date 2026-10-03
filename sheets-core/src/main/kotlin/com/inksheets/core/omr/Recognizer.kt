@@ -328,6 +328,22 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (traceRests) println("bar? x=$x broken, a head beside it")
                 x = x2 + 1; continue
             }
+            // A thin one keeps to its line all the way down: a rest's zigzag, met at its crossings, swings
+            // from side to side between the staff's lines.
+            if (width <= 2) {
+                val lineYs = (0..4).map { s.lineY(it, x).roundToInt() }
+                val centres = ArrayList<Int>()
+                for (y in top..bottom) {
+                    if (lineYs.any { abs(it - y) <= max(2, t) }) continue
+                    val at = (x - 1..x2 + 1).firstOrNull { ink[it, y] } ?: continue
+                    var a = at; while (ink[a - 1, y] && at - a < s.space) a--
+                    var b = at; while (ink[b + 1, y] && b - at < s.space) b++
+                    centres += a + b
+                }
+                val mid = centres.sorted().getOrNull(centres.size / 2)
+                val off = if (mid == null) 0 else centres.count { abs(it - mid) > 4 }
+                if (centres.size >= 10 && off > centres.size * 0.35f) { if (traceRests) println("bar? x=$x swings ($off of ${centres.size} rows off its line)"); x = x2 + 1; continue }
+            }
             // Not a stem: a stem goes on past the staff, or has a head at its end.
             var above = 0; while (ink[centre, top - above - 1]) above++
             var below = 0; while (ink[centre, bottom + below + 1]) below++
