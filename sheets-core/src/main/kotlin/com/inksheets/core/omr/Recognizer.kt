@@ -1065,6 +1065,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
 
     /** What the last signature read by the trained digit reader may also be, likeliest first (null when read otherwise). */
     private var lastTimeChoices: List<TimeSig>? = null
+    /** What a signature the trained digit reader was not sure enough of may be (see timeAt). */
+    private var weakTimeChoices: List<TimeSig>? = null
     /** Those, for the bar it stands at the start of - until that bar is read. */
     private var pendingTimeChoices: List<TimeSig>? = null
     /** Bars starting with such a signature, by index in the page's bars: what else it may be, for the bars after it to choose. */
@@ -1521,7 +1523,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             var timeUnread = false
             // (And on any line where what stands after the key is plainly a signature's ink: a change
             // of time there, its figures not read - not read as notes either.)
-            if (time == null && !stated && (page == 0 && si == 0 || timeInk)) unreadTime(clean, s, x)?.let { x = it; timeUnread = true }
+            if (time == null && !stated && (page == 0 && si == 0 || timeInk)) unreadTime(clean, s, x)?.let { x = it; timeUnread = true
+                // (What the digit reader thought it may be, and the time carried: the bars choose.)
+                pendingTimeChoices = weakTimeChoices?.let { listOf(carry.time) + it } }
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
             val allHeads = kept[si].filter { it.x >= x }
@@ -1576,6 +1580,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // Something like a signature there - both halves of the staff inked, one over the other -
                 // its figures not read: asked about (when nothing else stands there; see below).
                 val sigUnreadAt = if (i > 0 && !stated && !timeHere && timeInk) from else -1
+                if (sigUnreadAt >= 0) pendingTimeChoices = weakTimeChoices?.let { listOf(carry.time) + it }
                 inSpan += allHeads.filter { it.x >= from - 2 && it.x < span.second - (s.space * 0.2f).toInt() }
                 val to = span.second - (s.space * 0.2f).toInt()
                 val box = Box(span.first, s.top, span.second, s.bottom)
@@ -1600,6 +1605,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                         listOf(Rest(Duration(1), x.toFloat())), showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey,
                         showsTime = (i == 0 && showsTime) || timeHere, doubts = if (restBars == 0 || restFigureDoubted) listOf("rest of how many bars?") else emptyList(), bars = max(1, restBars), lines = lines, lineWidth = t.toFloat(), start = from)
                     number += max(1, restBars)
+                    pendingTimeChoices?.let { timeChoices[measures.size - 1] = it }; pendingTimeChoices = null
                 } else {
                 // A cue - another instrument's line, printed small to come in by - over the part's rest:
                 // small heads found here and not one at the part's own size. Its notes are not the
@@ -1726,7 +1732,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 }
                 val done = m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = directions, repeatsBar = repeatsBar)
                 measures += done
-                if (done.showsTime) { pendingTimeChoices?.let { timeChoices[measures.size - 1] = it }; pendingTimeChoices = null }
+                pendingTimeChoices?.let { timeChoices[measures.size - 1] = it }; pendingTimeChoices = null
                 }
             }
             allHeads.filter { it !in inSpan }.forEach { dropped += it to "by a barline, outside every bar" }
@@ -1749,8 +1755,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         }
         // A signature in figures read by the trained digit reader (another engraver's), taken as
         // whichever of its likely readings the most of its bars - to the next signature - come to.
+        val unreadSig = { d: String -> d.startsWith("time signature not read") || d.startsWith("a time signature here not read") }
         for ((k, choices) in timeChoices) {
-            if (k >= measures.size || !measures[k].showsTime) continue
+            if (k >= measures.size || !measures[k].showsTime && measures[k].doubts.none(unreadSig)) continue
             val signed = measures[k].time
             val end = (k + 1 until measures.size).firstOrNull { measures[it].showsTime } ?: measures.size
             val totals = (k until end).map { measures[it] }.filter { it.bars == 1 && it.events.any { e -> e is Note } }.map { it.quarters }
@@ -1760,9 +1767,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             if (best == signed || fits(best) <= fits(signed)) continue
             for (j in k until end) {
                 val m = measures[j]
-                val doubts = m.doubts.filterNot { it.contains("beats found") || it.startsWith("a time signature here not read") }.toMutableList()
+                val doubts = m.doubts.filterNot { it.contains("beats found") || unreadSig(it) }.toMutableList()
                 if (m.bars == 1 && m.events.isNotEmpty() && !restsWholeBar(m) && abs(m.quarters - best.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(best.quarters)} expected")
-                measures[j] = m.copy(time = best, doubts = doubts)
+                measures[j] = m.copy(time = best, doubts = doubts, showsTime = j == k || m.showsTime)
             }
             if (end == measures.size) carry.time = best
         }
@@ -2330,7 +2337,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
 
     private fun timeAt(clean: Ink, s: Staff, x0: Int, opening: Boolean = false, lineStart: Boolean = false): Pair<TimeSig, Int>? {
         val sp = s.space
-        lastTimeChoices = null
+        lastTimeChoices = null; weakTimeChoices = null
         // A quick look first: a time signature fills both halves of the staff there, one figure over
         // another (or a C across the middle) - most bars' starts have a note or nothing, and are passed by.
         run {
@@ -2387,15 +2394,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     if ((t(x)..b(x)).none { clean[x, it] }) { x++; continue }
                     val a = x
                     while (x <= xs.last + (sp * 1.5f).toInt() && (t(x)..b(x)).any { clean[x, it] }) x++
+                    // (A sliver - the clef's dots, a speck - is no figure.)
+                    if (x - a < sp * 0.3f) continue
                     if (runs.isNotEmpty() && a - runs.last().last > sp * 0.7f) break
                     runs += a until x
-                    if (runs.size > 2) return null
+                    if (runs.size > 2) { if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} runs $runs"); return null }
                 }
                 if (runs.isEmpty()) return null
                 var values = listOf(0 to 1f)
                 for (r in runs) {
                     val w = r.last - r.first + 1
-                    if (w < sp * 0.35f || w > sp * 1.7f) return null
+                    if (w < sp * 0.35f || w > sp * 1.7f) { if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} runs $runs, one ${w / sp} sp wide"); return null }
                     val top = t(r.first); val bottom = b(r.first)
                     // The figure as printed: where a staff line was taken out from across it, put back
                     // (ink just above and below a line, a line's width apart).
@@ -2414,7 +2423,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     var y0 = Int.MAX_VALUE; var y1 = -1
                     for (yy in 0 until fig.height) for (xx in 0 until w) if (fig[xx, yy]) { y0 = min(y0, yy); y1 = max(y1, yy) }
                     val h = y1 - y0 + 1
-                    if (h < sp * 1.4f) return null
+                    if (h < sp * 1.4f) { if (traceRests) println("    timeAt $x0: ${if (upper) "top" else "bottom"} figure ${h / sp} sp tall"); return null }
                     val m = Digits.mask(fig, 0, y0, w - 1, y1) ?: return null
                     val odds = Digits.oddsTrained(m, h / sp, w.toFloat() / h, inStaff = true) ?: return null
                     val d = (0..9).maxBy { odds[it] }; val p = odds[d]
@@ -2435,6 +2444,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // Every signature these figures may be, likeliest first: the bars after it choose (see read).
             val all = top.first.filter { it.first in 1..16 }.flatMap { (t, p) -> bottom.first.filter { it.first in listOf(2, 4, 8, 16) }.map { (b, q) -> TimeSig(t, b) to p * q } }
                 .sortedByDescending { it.second }
+            // (Not sure enough to take: what it may be kept, for the bars to choose should they not
+            // come out in the time carried - see read.)
+            weakTimeChoices = all.filter { it.second >= 0.02f }.map { it.first }.take(6).takeIf { it.isNotEmpty() }
             val best = all.firstOrNull()?.takeIf { it.second >= 0.4f } ?: return null
             lastTimeChoices = all.filter { it.second >= 0.02f }.map { it.first }.take(6)
             return best.first to max(top.second, bottom.second) + (sp * 0.6f).toInt()

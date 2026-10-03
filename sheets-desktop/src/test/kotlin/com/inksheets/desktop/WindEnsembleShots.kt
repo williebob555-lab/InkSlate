@@ -67,10 +67,12 @@ class WindEnsembleShots {
             ScoreTools.scoreSource = { if (it == path) score else null }
             try {
                 ScoreTools.showUnderlay(true)
-                val (wPts, hPts) = Loader.loadPDF(file).use { d -> d.getPage(0).mediaBox.let { it.width to it.height } }
-                val marks = ScoreTools.marks(path, 0, wPts, hPts).orEmpty()
+                // -Dinksheets.shots.page=N: that page (from 0) instead of the first.
+                val shotPage = (System.getProperty("inksheets.shots.page")?.toIntOrNull() ?: 0).coerceIn(0, pages - 1)
+                val (wPts, hPts) = Loader.loadPDF(file).use { d -> d.getPage(shotPage).mediaBox.let { it.width to it.height } }
+                val marks = ScoreTools.marks(path, shotPage, wPts, hPts).orEmpty()
                 val k = 2f
-                val img = Loader.loadPDF(file).use { PDFRenderer(it).renderImageWithDPI(0, 72f * k, ImageType.RGB) }
+                val img = Loader.loadPDF(file).use { PDFRenderer(it).renderImageWithDPI(shotPage, 72f * k, ImageType.RGB) }
                 val g = img.createGraphics()
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
                 g.scale(k.toDouble(), k.toDouble())
