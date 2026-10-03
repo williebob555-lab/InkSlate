@@ -32,6 +32,12 @@
                 <data android:scheme="inksheets" android:host="join" />
                 <data android:scheme="inksheets" android:host="remote" />
             </intent-filter>
+            <!-- A POD Go plugged in: Android offers to open InkSheets for it, and remembers the answer -
+                 so its footswitches work on stage without asking each time. -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" android:resource="@xml/pod_go" />
             <!-- Music shared from another app, one file or many, and downloads of whole folders. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

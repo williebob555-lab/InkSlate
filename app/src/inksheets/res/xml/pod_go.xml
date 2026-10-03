@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A Line 6 POD Go (0x0E41 / 0x4247): its footswitches and pedal read over USB (AndroidPodGoInput). -->
+<resources>
+    <usb-device vendor-id="3649" product-id="16967" />
+</resources>
