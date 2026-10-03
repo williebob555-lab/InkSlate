@@ -296,6 +296,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * The x of each barline on [s], left to right. [stems] are the stems of the notes found, which
      * run the height of a staff as a barline can, and [heads] the heads - a barline runs through none.
      */
+    /** How much of a barline's height may be missing (one part in this): a looser page's lines, read again, a tenth. */
+    private var gapsAllowed = System.getProperty("inksheets.omr.bargaps")?.toIntOrNull() ?: 25
+
+    /** Read once already, and read again with looser barlines - or not to be (see read). */
+    private var triedLoose = false
+
     fun barlines(ink: Ink, clean: Ink, s: Staff, t: Int, stems: List<Int> = emptyList(), heads: List<Head> = emptyList()): List<Int> {
         val found = ArrayList<Int>()
         var x = s.left
@@ -304,7 +310,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // Ink all the way down the staff - a scan's line may have a speck missing.
             fun down(xx: Int): Boolean {
                 var gaps = 0
-                for (y in top..bottom) if (!ink[xx, y] && !ink[xx - 1, y] && !ink[xx + 1, y]) { if (++gaps > (bottom - top) / 25 + 1) return false }
+                // (An old photocopy's thin line is broken here and there: a tenth of it may be missing.)
+                for (y in top..bottom) if (!ink[xx, y] && !ink[xx - 1, y] && !ink[xx + 1, y]) { if (++gaps > (bottom - top) / gapsAllowed + 1) return false }
                 return true
             }
             if (!down(x)) { x++; continue }
@@ -344,7 +351,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val headNear = isStem || throughHead || (stems.isEmpty() && listOf(runTop, runBottom).any { yEnd -> touching(-1, yEnd) || touching(1, yEnd) })
             val staysOnStaff = above < s.space * 0.6f && below < s.space * 0.6f
             val reachesAnotherStaff = above > s.space * 3 || below > s.space * 3
-            if (debug) println("bar? x=$centre w=$width above=$above below=$below thin=$thin head=$headNear (stem $isStem, through ${heads.filter { h -> val w = tpl(h.kind, s.space).ink.width; centre in h.x + w / 4..h.x + 3 * w / 4 }.map { "${it.kind}@${it.x},${it.step}" }})")
+            if (debug || traceRests) println("bar? x=$centre w=$width above=$above below=$below thin=$thin head=$headNear (stem $isStem, through ${heads.filter { h -> val w = tpl(h.kind, s.space).ink.width; centre in h.x + w / 4..h.x + 3 * w / 4 }.map { "${it.kind}@${it.x},${it.step}" }})")
             if (thin && (staysOnStaff || reachesAnotherStaff) && !headNear) {
                 if (found.isEmpty() || centre - found.last() > s.space * 1.5f) found += centre
                 else found[found.size - 1] = centre   // a double or final barline: its last stroke
@@ -1258,6 +1265,29 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val upright = read(Skew.turn(ink, deg), page, firstNumber, carry, null, grey?.let { Skew.turnGrey(it, ink.width, ink.height, deg) }, net, level = false)
                 return Skew.back(upright, deg, ink.width, ink.height)
             }
+        }
+        // A scan whose thin barlines are broken (an old photocopy): bars found run long, two or
+        // three as one. Read again, a barline let have a tenth of it missing; that reading kept where
+        // it is plainly the better - more of its bars sure. (Most pages read once: few bars run long.)
+        if (!triedLoose && printed == null && look == null && onlyStaff == null && net != null && System.getProperty("inksheets.omr.noloosebars") == null) {
+            triedLoose = true
+            val start = Carry(carry.clef, carry.key, carry.time).also { it.printed = carry.printed; it.alone = carry.alone }
+            val first = read(ink, page, firstNumber, carry, printed, grey, net, level = false)
+            val long = first.measures.count { m -> m.bars == 1 && m.quarters > m.time.quarters + 1e-6 }
+            if (first.measures.size < 6 || long < first.measures.size * 0.3f) return first
+            // Looser, and looser again while the bars still run long: the reading with the most bars sure kept.
+            var best = first; var bestCarry: Carry? = null; var bestTimings = timings
+            for (gaps in listOf(10, 6)) {
+                val c = Carry(start.clef, start.key, start.time).also { it.printed = start.printed; it.alone = start.alone }
+                val again = Recognizer(debug, adapt).also { it.triedLoose = true; it.gapsAllowed = gaps; it.traceRests = traceRests }
+                val next = again.read(ink, page, firstNumber, c, printed, grey, net, level = false)
+                if (next.measures.count { it.sure } > best.measures.count { it.sure } + 2) { best = next; bestCarry = c; bestTimings = again.timings }
+                val stillLong = next.measures.count { m -> m.bars == 1 && m.quarters > m.time.quarters + 1e-6 }
+                if (stillLong < next.measures.size * 0.3f) break
+            }
+            bestCarry?.let { c -> carry.clef = c.clef; carry.key = c.key; carry.time = c.time; carry.printed = c.printed; carry.alone = c.alone }
+            timings = bestTimings
+            return best
         }
         val (t, space) = metrics(ink) ?: return PageReading(emptyList(), emptyList(), emptyList(), 1, 0f)
         val startTime = carry.time
