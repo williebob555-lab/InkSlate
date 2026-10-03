@@ -6,12 +6,19 @@ import com.inksheets.core.ControlEvent
  * What the POD Go tells a listening editor, as controller events - so a footswitch or the
  * expression pedal can be bound to any of the app's actions like a MIDI controller's.
  *
- * Known from the HX family: a block's setting changed is event 39, {82: block, 68: setting,
- * 121: value}. Footswitches that turn blocks on and off, and the pedal moving its block's setting,
- * are expected to arrive this way - each block and setting its own control:
- * "POD Go (USB) · CC <setting> (ch <block + 1>)", the value 0-127 (on/off as 127/0, a 0-1 setting
- * across 0-127). Any other notification is a control of its own on channel 16 - numbered by its
- * event, its value 127 - so even one not worked out yet can be bound by pressing it.
+ * Worked out from a USB capture of POD Go Edit with the user pressing each control (2026-10-03).
+ * Every notification is {105: event, 106: {82, 68, 121: routing, 106: what happened}}:
+ *  - event 8, {107: setlist, 108: preset}: a footswitch chose a preset (preset mode) - as a MIDI
+ *    program change, PROGRAM ch 1 <preset>; the unit sends the same over its USB MIDI port too.
+ *  - event 49, {98: block, 59: on}: a block turned on or off (stomp mode, the pedal's toe switch) -
+ *    CC ch 1 <block>, 127 on, 0 off.
+ *  - event 30, {98: block, 28: setting, 119: 0-1}: the expression pedal moving a block's setting -
+ *    CC ch 2 <block * 8 + setting>, 0-127 across the pedal's travel.
+ *  - event 22, {118: setting, 119: value}: a unit-wide setting - the volume knob (159, 0-1) as
+ *    CC ch 3 #7, and which pedal the toe switch has active (124: 1 or 2) as CC ch 3 #124, 0 or 127.
+ *    The rest (tempo, preset number, after every preset change) are no player's act, and left out.
+ * Everything else (a preset loaded, its pedal assignments, the block selected) follows from those
+ * and is left out, so nothing fires twice.
  */
 object PodGoEvents {
     const val DEVICE = "POD Go (USB)"
@@ -25,15 +32,19 @@ object PodGoEvents {
 
     fun toControl(m: PodGoLink.Message): ControlEvent? {
         val event = m.event ?: return null
-        // (A deferred request's completion is about our own asking - never a front-panel act.)
-        if (event == 1 || event == 20) return null
-        val args = m.args as? Map<*, *>
-        if (event == 39 && args != null) {
-            val block = (args[82L] as? Long)?.toInt() ?: return null
-            val setting = (args[68L] as? Long)?.toInt() ?: return null
-            return ControlEvent(DEVICE, ControlEvent.CC, (block and 0x0F) + 1, setting and 0x7F, value(args[121L]))
+        val what = ((m.args as? Map<*, *>)?.get(106L) as? Map<*, *>) ?: return null
+        fun int(key: Long) = (what[key] as? Long)?.toInt()
+        return when (event) {
+            8 -> int(108)?.let { ControlEvent(DEVICE, ControlEvent.PROGRAM, 1, it and 0x7F, it and 0x7F) }
+            49 -> int(98)?.let { block -> ControlEvent(DEVICE, ControlEvent.CC, 1, block and 0x7F, if (what[59L] == true) 127 else 0) }
+            30 -> int(98)?.let { block -> ControlEvent(DEVICE, ControlEvent.CC, 2, (block * 8 + (int(28) ?: 0)) and 0x7F, value(what[119L])) }
+            22 -> when (int(118)) {
+                159 -> ControlEvent(DEVICE, ControlEvent.CC, 3, 7, value(what[119L]))
+                124 -> ControlEvent(DEVICE, ControlEvent.CC, 3, 124, if (value(what[119L]) >= 2) 127 else 0)
+                else -> null
+            }
+            else -> null
         }
-        return ControlEvent(DEVICE, ControlEvent.CC, 16, event and 0x7F, 127)
     }
 
     /** A setting's value as 0-127: on/off as 127/0; 0-1 across the range; a whole number as itself, held to 0-127. */
