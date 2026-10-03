@@ -1478,7 +1478,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             kept[si].filter { it.x < x }.forEach { dropped += it to "before the staff's start (clef, key, time end at $x)" }
             // Nothing fits between a staff's start and a line under three spaces on: that is a time
             // signature in another font, not a barline.
-            val b = clock.sum("barlines") { (if (stated) printedBarlines(s) else null) ?: barlines(ink, clean, s, t, allHeads.filter { it.stemX >= 0 }.map { it.stemX }, allHeads) }.filter { it > x + s.space * 3f }
+            val found = clock.sum("barlines") { (if (stated) printedBarlines(s) else null) ?: barlines(ink, clean, s, t, allHeads.filter { it.stemX >= 0 }.map { it.stemX }, allHeads) }.filter { it > x + s.space * 3f }
+            // A line just after a barline, a signature's ink between - both halves of the staff
+            // filled - is the signature's figures' edge, not a barline: the signature starts the bar.
+            val b = if (stated) found else found.filterIndexed { k, bx ->
+                val prev = found.getOrNull(k - 1) ?: return@filterIndexed true
+                if (bx - prev > s.space * 2.4f || bx - prev < s.space * 0.8f) return@filterIndexed true
+                var upper = 0; var lower = 0; var n = 0
+                for (xx in prev + 2 until bx - 1) {
+                    val top = s.lineY(0, xx).roundToInt(); val mid = s.lineY(2, xx).roundToInt(); val bottom = s.lineY(4, xx).roundToInt()
+                    for (y in top until mid) if (clean[xx, y]) upper++
+                    for (y in mid until bottom) if (clean[xx, y]) lower++
+                    n += mid - top
+                }
+                val sig = n > 0 && upper >= n * 0.15f && lower >= n * 0.15f && allHeads.none { it.x > prev && it.x < bx }
+                if (traceRests && sig) println("  barline $bx: a signature's edge, ${bx - prev} after $prev")
+                !sig
+            }
             bars += b
             val edges = (listOf(s.left) + b).distinct().sorted()
             val spans = edges.zipWithNext().filter { (a, c) -> c - a > s.space * 2 } +
@@ -1488,12 +1504,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             fun dotsBefore(bx: Int) = dotsAt(bx - (s.space * 2.2f).toInt(), bx - (s.space * 0.25f).toInt())
             fun dotsAfter(bx: Int) = dotsAt(bx + (s.space * 0.25f).toInt(), bx + (s.space * 2.2f).toInt())
             val inSpan = HashSet<Head>()
+            // A signature standing alone between a barline and a line taken for one (its figures' edge):
+            // shown by the bar after it.
+            var timeAhead = false
             for ((i, span) in spans.withIndex()) {
                 var from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
                 // A change of time at a bar's start: read, and in force from here.
-                var timeHere = false
+                var timeHere = timeAhead
+                timeAhead = false
                 timeInk = false
-                if (i > 0) (if (stated) printedTime(s, from) else timeAt(clean, s, from))?.let { (sig, end) -> if (end < span.second - s.space) { carry.time = sig; from = end; timeHere = true; pendingTimeChoices = lastTimeChoices } }
+                var signatureOnly = false
+                if (i > 0) (if (stated) printedTime(s, from) else timeAt(clean, s, from))?.let { (sig, end) ->
+                    if (end < span.second - s.space) { carry.time = sig; from = end; timeHere = true; pendingTimeChoices = lastTimeChoices }
+                    else if (i < spans.lastIndex && span.second - span.first < s.space * 4f && allHeads.none { it.x >= span.first && it.x < span.second }) {
+                        carry.time = sig; timeAhead = true; pendingTimeChoices = lastTimeChoices; signatureOnly = true
+                    }
+                }
+                if (signatureOnly) continue
                 // Something like a signature there - both halves of the staff inked, one over the other -
                 // its figures not read: asked about (when nothing else stands there; see below).
                 val sigUnreadAt = if (i > 0 && !stated && !timeHere && timeInk) from else -1
@@ -1919,9 +1946,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Read on the page as printed: taking out ledger-like strokes breaks a 7's top off.
         // (Centred over the bar: a tempo marking at its start - "c. 50" - is not its count.)
         val centre = start + len / 2; val half = max(sp * 2.5f, len * 0.3f).toInt()
-        fun numberIn(a: Int, b: Int) = Digits.number(page, a, b, s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp, musicFont = true)
+        fun numberIn(a: Int, b: Int, on: Ink = page) = Digits.number(on, a, b, s.y(-9, start).roundToInt(), s.y(-1, start).roundToInt(), (sp * 0.8f).toInt(), (sp * 3.2f).toInt(), bottomFrom = s.y(-6, start).roundToInt(), space = sp, musicFont = true)
         val printed = numberIn(centre - half, centre + half)
             ?: numberIn(start - sp.toInt(), start + len + sp.toInt())?.takeIf { it.second > start + len * 0.25f }
+            // (Some engravers set it down on the top line, one shape with it as printed: read with the lines out.)
+            ?: numberIn(centre - half, centre + half, clean)
         digits.retainAll { abs(it.second - centre) <= half + sp }
         // (Over 64 bars is a figure misread - pencilled words over it, a tempo's equation - not a
         // part's rest: how many, unknown, and the next bar number printed tells.)

@@ -150,6 +150,8 @@ object Digits {
         return out
     }
 
+    private val DEBUG = System.getProperty("inksheets.omr.digitsdebug") != null
+
     fun number(ink: Ink, x0: Int, x1: Int, y0: Int, y1: Int, minH: Int, maxH: Int, bottomFrom: Int = y0, space: Float = 0f,
                /** Set in the music font, as a time signature's digits are (a multi-bar rest's count): read as those. */
                musicFont: Boolean = false): Pair<Int, Int>? {
@@ -170,8 +172,10 @@ object Digits {
                 number(inside, l, r, t, b, minH * 2 / 3, maxH, space = space, musicFont = musicFont)?.let { return it }
             }
             // A figure: a digit's height, over the place asked about, ending near enough the line asked.
+            if (DEBUG) println("      figure? $l..$r x $t..$b (h $h w $w, minH $minH maxH $maxH, bottomFrom $bottomFrom)")
             if (h < minH || h > maxH || w > h * 1.3f || (l + r) / 2 !in x0..x1 || b < bottomFrom) continue
             val m = mask(ink, l, t, r, b) ?: continue
+            if (DEBUG && space > 0f) oddsTrained(m, h / space, w.toFloat() / h, inStaff = musicFont)?.let { o -> println("      odds ${(0..10).filter { o[it] >= 0.05f }.joinToString { "$it ${"%.2f".format(o[it])}" }}") }
             // Read by the trained reader where the staff's size is known; else by the masks.
             // (Over a multi-bar rest a number is all but sure to be there: where the trained reader sees
             // none in a figure, the masks are asked too.)
