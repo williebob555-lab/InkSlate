@@ -1042,6 +1042,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     private val repeatSide = HashMap<Int, Int>()
     private val repeatEvents = HashMap<Int, List<Event>>()
 
+    /** The last look for a time signature found its ink, figures read or not (see timeAt). */
+    private var timeInk = false
+
     /** The last multi-bar rest's count read two ways that differ (see multiRest): asked about. */
     private var restFigureDoubted = false
 
@@ -1421,13 +1424,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val key = if (stated) printedKey(s, x) else lineKeys.getOrNull(si) ?: keyAt(clean, s, x, carry.clef)
             var showsKey = false
             if (key != null) { carry.key = key.first; x = key.second; showsKey = true }
+            timeInk = false
             val time = clock.sum("time") { if (stated) printedTime(s, x) else timeAt(clean, s, x, opening = page == 0 && si == 0, lineStart = true) }
             var showsTime = false
             if (time != null) { carry.time = time.first; x = time.second; showsTime = true }
             // A part's first staff has a time signature: one in a font not read here is stepped
             // over (taken as the time carried, and said so), not read as notes.
             var timeUnread = false
-            if (time == null && page == 0 && si == 0 && !stated) unreadTime(clean, s, x)?.let { x = it; timeUnread = true }
+            // (And on any line where what stands after the key is plainly a signature's ink: a change
+            // of time there, its figures not read - not read as notes either.)
+            if (time == null && !stated && (page == 0 && si == 0 || timeInk)) unreadTime(clean, s, x)?.let { x = it; timeUnread = true }
             // Heads and stems next, after the staff's start: a stem the height of the staff is not
             // a barline - and nor is a time signature's digits.
             val allHeads = kept[si].filter { it.x >= x }
@@ -1448,7 +1454,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var from = if (i == 0) max(span.first, x) else span.first + (s.space * 0.3f).toInt()
                 // A change of time at a bar's start: read, and in force from here.
                 var timeHere = false
+                timeInk = false
                 if (i > 0) (if (stated) printedTime(s, from) else timeAt(clean, s, from))?.let { (sig, end) -> if (end < span.second - s.space) { carry.time = sig; from = end; timeHere = true } }
+                // Something like a signature there - both halves of the staff inked, one over the other -
+                // its figures not read: asked about (when nothing else stands there; see below).
+                val sigUnreadAt = if (i > 0 && !stated && !timeHere && timeInk) from else -1
                 inSpan += allHeads.filter { it.x >= from - 2 && it.x < span.second - (s.space * 0.2f).toInt() }
                 val to = span.second - (s.space * 0.2f).toInt()
                 val box = Box(span.first, s.top, span.second, s.bottom)
@@ -1572,12 +1582,18 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (signAt != 0) {
                     // (What was read in it kept, should the sign not stand - see below.)
                     repeatSide[measures.size] = signAt; repeatEvents[measures.size] = events
-                    events = emptyList(); doubts.removeAll { it.contains("beats found") }
+                    events = emptyList(); doubts.removeAll { it.contains("beats found") || it.startsWith("a time signature here not read") }
                 }
                 val repeatsBar = signAt != 0
                 if (events.isEmpty() && !repeatsBar) doubts += "nothing read"
                 if (guessedTuplets) doubts += "triplets taken to make the bar add up, no 3 seen"
-                if (i == 0 && timeUnread) doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
+                // (A part's first line: always said. Another's: where the bar does not come out in the time
+                // carried - otherwise the ink taken for a signature may be a chord, and the time is right.)
+                if (i == 0 && timeUnread && (page == 0 && si == 0 || doubts.any { it.contains("beats found") }))
+                    doubts += "time signature not read - taken as ${carry.time.beats}/${carry.time.beatType}"
+                // (Nothing read where it stood - no note, no rest: a signature's figures, not read.)
+                if (sigUnreadAt >= 0 && events.none { it.x < sigUnreadAt + s.space * 1.6f } && doubts.any { it.contains("beats found") })
+                    doubts += "a time signature here not read - say which with \"Clef, key or time wrong?\""
                 // Another engraver's heads match these a little less well and are read right: only
                 // a weak match is a doubt.
                 events.filterIsInstance<Note>().filter { it.confidence < (if (this.printed?.learned == true) Learned.SURE else 0.75f) }.takeIf { it.isNotEmpty() }?.let { doubts += "${it.size} unclear note${if (it.size > 1) "s" else ""}" }
@@ -1637,7 +1653,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     for (k in measures.indices) {
                         val m = measures[k]
                         if (m.time != signed || (carried && k >= firstSigned)) continue
-                        val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
+                        val doubts = m.doubts.filterNot { it.contains("beats found") || it.startsWith("a time signature here not read") }.toMutableList()
                         if (m.bars == 1 && m.events.isNotEmpty() && !restsWholeBar(m) && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
                         measures[k] = m.copy(time = time, doubts = doubts)
                     }
@@ -1664,7 +1680,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (abs(time.quarters - common.key) > 1e-6 || (!one && abs(beats - signed.beats) != 1)) continue
                 for (j in k until end) {
                     val m = measures[j]
-                    val doubts = m.doubts.filterNot { it.contains("beats found") }.toMutableList()
+                    val doubts = m.doubts.filterNot { it.contains("beats found") || it.startsWith("a time signature here not read") }.toMutableList()
                     if (m.bars == 1 && m.events.isNotEmpty() && !restsWholeBar(m) && abs(m.quarters - time.quarters) > 1e-6) doubts.add(0, "${fmt(m.quarters)} beats found, ${fmt(time.quarters)} expected")
                     measures[j] = m.copy(time = time, doubts = doubts)
                 }
@@ -1703,7 +1719,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     val time = TimeSig(Math.round(len * beatType / 4.0).toInt(), beatType)
                     if (abs(time.quarters - len) < 1e-6) {
                         for (j in k until end) measures[j] = measures[j].copy(time = time, showsTime = j == k || measures[j].showsTime,
-                            doubts = measures[j].doubts.filterNot { it.contains("beats found") })
+                            doubts = measures[j].doubts.filterNot { it.contains("beats found") || it.startsWith("a time signature here not read") })
                         k = end; continue
                     }
                 }
@@ -2182,6 +2198,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             if (traceRests) println("    timeAt $x0: upper ${"%.2f".format(upper.toFloat() / max(1, n))} lower ${"%.2f".format(lower.toFloat() / max(1, n))}")
             if (n == 0 || upper < n * 0.08f || lower < n * 0.08f) return null
+            // (Plainly inked both halves: what stands here is like a signature, read or not.)
+            if (upper >= n * 0.15f && lower >= n * 0.15f) timeInk = true
         }
         fun digitAt(x: Int, step: Int, allowed: Set<Int> = (0..9).toSet()): Pair<Int, Int>? = digit(clean, s, x, x + (sp * 2.2f).toInt(), listOf(step), allowed)
         // A digit's right edge, from where it was found.

@@ -61,7 +61,7 @@ object Signatures {
                 val nc = c ?: m.clef; val nk = k ?: m.key; val nt = t ?: m.time
                 val events = if (nc != m.clef || nk != m.key) repitch(m.events, nc, nk) else m.events
                 // What the beats come to, said again against the time as it now is.
-                var doubts = m.doubts.filterNot { it.contains("beats found") || it.startsWith("time signature not read") }
+                var doubts = m.doubts.filterNot { it.contains("beats found") || it.startsWith("time signature not read") || it.startsWith("a time signature here not read") }
                 val q = events.sumOf { it.duration.quarters }
                 if (m.bars == 1 && events.isNotEmpty() && abs(q - nt.quarters) > 1e-6 && m.number != s.measures.first().number)
                     doubts = doubts + "${fmt(q)} beats found, ${fmt(nt.quarters)} expected"
