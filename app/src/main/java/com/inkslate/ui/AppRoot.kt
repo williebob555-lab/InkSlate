@@ -100,6 +100,8 @@ fun AppRoot(
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var refreshKey by remember { mutableStateOf(0) }
     var newDocOpen by remember { mutableStateOf(false) }
+    // The folder Home was showing when New was pressed, which is where the new document goes.
+    var newDocIn by remember { mutableStateOf<File?>(null) }
 
     // A screen wide enough to show a side panel is wide enough to show a second document beside
     // the first - the same 840dp the editor already uses to decide whether a panel can sit beside
@@ -503,10 +505,9 @@ fun AppRoot(
                                     } else {
                                         HomeScreen(
                                             onOpenFile = ::openFile,
-                                            onOpenFolder = { screen = Screen.Browser(it.absolutePath) },
                                             onBrowse = { screen = Screen.Browser(null) },
                                             onOpenSettings = { screen = Screen.Settings },
-                                            onNewDocument = { newDocOpen = true },
+                                            onNewDocument = { newDocIn = it; newDocOpen = true },
                                             refreshKey = refreshKey
                                         )
                                     }
@@ -628,7 +629,7 @@ fun AppRoot(
                 scope.launch {
                     // Wherever the user nominated by long-pressing a folder, falling back to
                     // the first added folder so "New" never has to ask.
-                    val target = repo.defaultNewFolder
+                    val target = newDocIn?.takeIf { it.isDirectory } ?: repo.defaultNewFolder
                         ?: File(
                             android.os.Environment.getExternalStoragePublicDirectory(
                                 android.os.Environment.DIRECTORY_DOCUMENTS

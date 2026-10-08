@@ -47,6 +47,8 @@ fun main() {
     EventLog.installCrashHandler()
     EventLog.info("app", "${AppFlavor.name} ${DesktopUpdates.installedVersion()} started")
     DesktopUpdates.repairLinuxLauncher(AppFlavor.name)
+    // Pictures on the pages are kept here and carried inside the documents, never beside them.
+    com.inkslate.core.Pictures.dir = java.io.File(AppDirs.root, "pictures")
     ui()
 }
 

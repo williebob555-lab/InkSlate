@@ -75,7 +75,9 @@ off and taking the next stable release puts you back on the ordinary channel.
   the settings panel lists what it works out: period, frequency, range, time of flight, impact
   speed. Axes carry units and write their numbers in the size that suits them - 0.004 s reads as
   4 ms. Change any number and it redraws in place
-- Region capture: box a figure in the textbook and drop it in as a movable object
+- Region capture: box a figure in the textbook and drop it in as a movable object. It lives in
+  the document, like the ink - no file or folder appears beside it. Select it and press **Save as
+  PNG** to get a file of it, wherever you choose
 - Marquee, lasso and tap selection; move, resize, rotate; cut, copy and paste between documents
 
 **Reading**
@@ -99,6 +101,31 @@ off and taking the next stable release puts you back on the ordinary channel.
   in both, and one undo takes back the last change made in either
 - On Android the split needs a tablet-sized screen; tabs work everywhere
 - Browses your storage directly, with thumbnails that already show your ink
+
+**Home**
+- Built from the folders you add. Add just one - Classwork, say - and Home *is* that folder: its
+  class folders and documents are right there, without opening it first
+- Every document in the library in one list, sorted by recent, A-Z, folder, class or size and
+  broken up under headings, with filters for written on / not started, PDFs / pictures, this week,
+  and not in a folder - each shown with how many it would leave, and only when it would change
+  something. The sort and filters are remembered
+- Search across everything from the top of Home, or within the folder you are in
+- **Drag a document onto a folder to move it** (long-press and drag on the tablet; press and drag
+  with a mouse). Drop it on a step of the path at the top to move it up. While carrying it, a strip
+  of folders comes up along the bottom - rest on one to open it and go deeper. Every move can be
+  undone from the message that follows
+- Select several documents (or folders) to move, star or delete together, or drag them all at once
+- **Move to...** walks into any folder, as deep as it goes, can make a new folder there and then,
+  and suggests where the course number in the name says it belongs, and where things went lately
+- **Sort into class folders**: documents with a course number in their name - `HW4_222.pdf`,
+  `PHYS161 Sheet 3.pdf` - are offered a move into the folder named for that course (`MATH 222`,
+  `PHYS 161`), to look over and accept in one go. Where two courses share a number the letters
+  decide; courses that have documents but no folder yet can have one made. Switch on **Do this by
+  itself** and new documents with one clear course are filed as they arrive, each with an Undo
+- A document's menu offers its class folder as a one-tap move, and **Show in folder** for one
+  found in Recent or a search
+- **New** inside a folder makes the document there; folders can be made, and taken off Home, from
+  Home itself
 - Blank documents: ruled, grid, dot, graph, Cornell, music, isometric, up to whiteboard size
 - Canvas documents that grow as you write past an edge, and stay ordinary PDFs while doing it
 - Export the whole document, a page range or the pages picked in the pages view - to wherever
@@ -129,6 +156,10 @@ What the marks become in the file is a separate choice:
   Acrobat, and drawn correctly in Chrome, Canvas and anything else.
 - **Flattened** — drawn into the page itself. Permanent, and the safer option for a submission
   portal that strips annotations out.
+
+Pictures on the page - captures, photos, pasted images - travel inside the document the same way.
+Older versions kept them in a `<name>.inkassets` folder beside each document; those folders are
+still read, and each one is removed once a save has put its pictures inside the document.
 
 ### Not losing work
 

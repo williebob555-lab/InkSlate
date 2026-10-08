@@ -80,7 +80,7 @@ class FileRepo(private val context: Context) {
      * already knows about everything written on this device, and anything synced in from another
      * gets recorded there the first time it is opened.
      */
-    private fun hasInk(file: File): Boolean =
+    fun hasInk(file: File): Boolean =
         journal.hasInk(file) ||
             File(InkDocument.sidecarPathFor(file.absolutePath)).isFile
 
@@ -123,7 +123,7 @@ class FileRepo(private val context: Context) {
         val entries = children.mapNotNull { f ->
             if (!showHidden && f.name.startsWith(".")) return@mapNotNull null
             // our own bookkeeping should never show up as content
-            if (f.isDirectory && f.name == DocumentRepo.BACKUP_DIR) return@mapNotNull null
+            if (f.isDirectory && (f.name == DocumentRepo.BACKUP_DIR || com.inkslate.core.Pictures.isLegacyFolder(f))) return@mapNotNull null
             if (!f.isDirectory && f.extension.equals(InkDocument.EXTENSION, true)) return@mapNotNull null
             if (!f.isDirectory && !PageSources.isSupported(f)) return@mapNotNull null
 
@@ -149,7 +149,7 @@ class FileRepo(private val context: Context) {
     }
 
     private fun countSupported(dir: File): Int =
-        dir.listFiles()?.count { it.isDirectory || PageSources.isSupported(it) } ?: 0
+        dir.listFiles()?.count { !it.name.startsWith(".") && if (it.isDirectory) !com.inkslate.core.Pictures.isLegacyFolder(it) else PageSources.isSupported(it) } ?: 0
 
     fun createFolder(parent: File, name: String): Result<File> = runCatching {
         AppPeers.announceLibraryChanged()
@@ -344,7 +344,7 @@ class FileRepo(private val context: Context) {
             for (f in children) {
                 if (f.name.startsWith(".")) continue
                 if (f.isDirectory) {
-                    if (f.name != DocumentRepo.BACKUP_DIR) walk(f, remaining - 1)
+                    if (f.name != DocumentRepo.BACKUP_DIR && !com.inkslate.core.Pictures.isLegacyFolder(f)) walk(f, remaining - 1)
                 } else if (PageSources.isSupported(f) && seen.add(f.absolutePath)) {
                     out.add(
                         FileEntry(
@@ -399,7 +399,7 @@ class FileRepo(private val context: Context) {
                 if (out.size >= limit) return
                 if (f.name.startsWith(".")) continue
                 if (f.isDirectory) {
-                    if (f.name != DocumentRepo.BACKUP_DIR) walk(f, root, remaining - 1)
+                    if (f.name != DocumentRepo.BACKUP_DIR && !com.inkslate.core.Pictures.isLegacyFolder(f)) walk(f, root, remaining - 1)
                     continue
                 }
                 if (!PageSources.isSupported(f)) continue
@@ -439,7 +439,7 @@ class FileRepo(private val context: Context) {
 
         // not enough at this level, so look one deeper before giving up
         val deeper = dir.listFiles()?.asSequence()
-            ?.filter { it.isDirectory && !it.name.startsWith(".") }
+            ?.filter { it.isDirectory && !it.name.startsWith(".") && !com.inkslate.core.Pictures.isLegacyFolder(it) }
             ?.flatMap { sub ->
                 sub.listFiles()?.asSequence()
                     ?.filter { !it.isDirectory && PageSources.isSupported(it) } ?: emptySequence()
@@ -453,7 +453,7 @@ class FileRepo(private val context: Context) {
     /** Immediate subfolders, for navigating the library without leaving the home screen. */
     fun subfolders(dir: File): List<File> =
         dir.listFiles()
-            ?.filter { it.isDirectory && !it.name.startsWith(".") && it.name != DocumentRepo.BACKUP_DIR }
+            ?.filter { it.isDirectory && !it.name.startsWith(".") && it.name != DocumentRepo.BACKUP_DIR && !com.inkslate.core.Pictures.isLegacyFolder(it) }
             ?.sortedBy { it.name.lowercase() }
             .orEmpty()
 
@@ -464,6 +464,13 @@ class FileRepo(private val context: Context) {
             ?.sortedByDescending { it.lastModified() }
             ?.map { FileEntry(it, false, it.length(), it.lastModified(), hasInk(it), 0) }
             .orEmpty()
+
+    /** A small remembered setting for Home: its sort, its filters, whether it files by itself. */
+    fun pref(key: String): String? = prefs.getString(key, null)
+
+    fun setPref(key: String, value: String?) {
+        prefs.edit().apply { if (value == null) remove(key) else putString(key, value) }.apply()
+    }
 
     var lastFolder: String?
         get() = prefs.getString(K_LAST_DIR, null)

@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.SaveAlt
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.ExpandLess
@@ -122,6 +123,11 @@ class ToolBarActions(
     val onRotateRuler: (Float) -> Unit = {},
     val onResetRuler: () -> Unit = {},
     val canCrop: Boolean = false,
+    /**
+     * Save the selected picture as a PNG of its own, wherever the person picks. A picture on the
+     * page is never a file until someone asks for one.
+     */
+    val onSavePicture: (() -> Unit)? = null,
     val onMessage: (String) -> Unit = {}
 )
 
@@ -194,6 +200,11 @@ fun ToolBar(
                     if (actions.canCrop) {
                         IconButton(onClick = actions.onBeginCrop) {
                             Icon(Icons.Default.Crop, "Crop this picture")
+                        }
+                        actions.onSavePicture?.let { save ->
+                            IconButton(onClick = save) {
+                                Icon(Icons.Default.SaveAlt, "Save this picture as a PNG")
+                            }
                         }
                     }
                     IconButton(onClick = actions.onDuplicateSelection) {

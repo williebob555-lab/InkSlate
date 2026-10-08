@@ -1264,6 +1264,36 @@ fun EditorScreen(
     }
 
     /**
+     * Save the selected picture as a PNG of its own, wherever the person picks - the only time a
+     * capture becomes a file. Cropped the way it shows on the page.
+     */
+    fun savePicture() {
+        val picture = selected().singleOrNull()?.takeIf { it.kind == Stroke.Kind.IMAGE }
+        val id = picture?.imageId
+        if (picture == null || id == null) {
+            scope.launch { snackbar.showSnackbar("Select one picture to save it") }
+            return
+        }
+        val target = askExportTarget(file, "${file.nameWithoutExtension} picture.png") ?: return
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val whole = images.awtImage(id) ?: error("That picture is not on this computer yet")
+                    val c = picture.cropPixels(whole.width, whole.height)
+                    val cut = if (c == null) whole else whole.getSubimage(c[0], c[1], c[2] - c[0], c[3] - c[1])
+                    val tmp = File(target.parentFile, "." + target.name + ".tmp")
+                    require(javax.imageio.ImageIO.write(cut, "png", tmp)) { "Could not write a PNG" }
+                    if (!tmp.renameTo(target)) { tmp.copyTo(target, overwrite = true); tmp.delete() }
+                }
+            }
+            ok.fold(
+                onSuccess = { snackbar.showSnackbar("Saved ${target.name}") },
+                onFailure = { snackbar.showSnackbar(it.message ?: "Could not save the picture") }
+            )
+        }
+    }
+
+    /**
      * Box a figure on the page and drop it in as a movable object.
      *
      * The region is re-rendered from the document rather than grabbed off the screen, so a
@@ -1888,6 +1918,7 @@ fun EditorScreen(
                             ?.takeIf { it.kind == Stroke.Kind.IMAGE }
                     },
                     canCrop = selected().singleOrNull()?.kind == Stroke.Kind.IMAGE,
+                    onSavePicture = { savePicture() },
                     onMessage = { scope.launch { snackbar.showSnackbar(it) } }
                 )
             )

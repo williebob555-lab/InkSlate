@@ -73,7 +73,7 @@ class FileRepo {
      * draw a small label would make Home take seconds on a folder of textbooks; anything synced
      * in from the tablet earns its badge the first time it is opened here.
      */
-    private fun hasInk(file: File): Boolean =
+    fun hasInk(file: File): Boolean =
         DocumentIO.hasWorking(file) || DocumentIO.sidecarFor(file).isFile
 
     // ---- roots ---------------------------------------------------------------
@@ -117,7 +117,7 @@ class FileRepo {
         val children = dir.listFiles() ?: return emptyList()
         val entries = children.mapNotNull { f ->
             if (!showHidden && (f.name.startsWith(".") || f.isHidden)) return@mapNotNull null
-            if (f.isDirectory && f.name == BACKUP_DIR) return@mapNotNull null
+            if (f.isDirectory && (f.name == BACKUP_DIR || com.inkslate.core.Pictures.isLegacyFolder(f))) return@mapNotNull null
             if (!f.isDirectory && f.extension.equals(InkDocument.EXTENSION, true)) {
                 return@mapNotNull null
             }
@@ -146,7 +146,7 @@ class FileRepo {
 
     private fun countSupported(dir: File): Int =
         runCatching {
-            dir.listFiles()?.count { it.isDirectory || DesktopSources.isSupported(it) } ?: 0
+            dir.listFiles()?.count { !it.name.startsWith(".") && if (it.isDirectory) !com.inkslate.core.Pictures.isLegacyFolder(it) else DesktopSources.isSupported(it) } ?: 0
         }.getOrDefault(0)
 
     fun createFolder(parent: File, name: String): Result<File> = runCatching {
@@ -316,7 +316,7 @@ class FileRepo {
             for (f in children) {
                 if (f.name.startsWith(".")) continue
                 if (f.isDirectory) {
-                    if (f.name != BACKUP_DIR) walk(f, remaining - 1)
+                    if (f.name != BACKUP_DIR && !com.inkslate.core.Pictures.isLegacyFolder(f)) walk(f, remaining - 1)
                 } else if (DesktopSources.isSupported(f) && seen.add(f.absolutePath)) {
                     out.add(FileEntry(f, false, f.length(), f.lastModified(), hasInk(f), 0))
                 }
@@ -358,7 +358,7 @@ class FileRepo {
                 if (out.size >= limit) return
                 if (f.name.startsWith(".")) continue
                 if (f.isDirectory) {
-                    if (f.name != BACKUP_DIR) walk(f, root, remaining - 1)
+                    if (f.name != BACKUP_DIR && !com.inkslate.core.Pictures.isLegacyFolder(f)) walk(f, root, remaining - 1)
                     continue
                 }
                 if (!DesktopSources.isSupported(f)) continue
@@ -392,7 +392,7 @@ class FileRepo {
         if (direct.size >= count) return direct
 
         val deeper = dir.listFiles()?.asSequence()
-            ?.filter { it.isDirectory && !it.name.startsWith(".") }
+            ?.filter { it.isDirectory && !it.name.startsWith(".") && !com.inkslate.core.Pictures.isLegacyFolder(it) }
             ?.flatMap { sub ->
                 sub.listFiles()?.asSequence()
                     ?.filter { !it.isDirectory && DesktopSources.isSupported(it) } ?: emptySequence()
@@ -406,7 +406,7 @@ class FileRepo {
     /** Immediate subfolders, for navigating the library without leaving Home. */
     fun subfolders(dir: File): List<File> =
         dir.listFiles()
-            ?.filter { it.isDirectory && !it.name.startsWith(".") && it.name != BACKUP_DIR }
+            ?.filter { it.isDirectory && !it.name.startsWith(".") && it.name != BACKUP_DIR && !com.inkslate.core.Pictures.isLegacyFolder(it) }
             ?.sortedBy { it.name.lowercase() }
             .orEmpty()
 

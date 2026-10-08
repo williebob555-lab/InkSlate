@@ -84,6 +84,8 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var refreshKey by remember { mutableStateOf(0) }
     var newDocOpen by remember { mutableStateOf(false) }
+    // The folder Home was showing when New was pressed, which is where the new document goes.
+    var newDocIn by remember { mutableStateOf<File?>(null) }
     val repo = remember { FileRepo() }
     val scope = rememberCoroutineScope()
 
@@ -455,7 +457,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                                         onOpenFile = ::openFile,
                                         onBrowse = { screen = Screen.Browser(null) },
                                         onOpenSettings = { screen = Screen.Settings },
-                                        onNewDocument = { newDocOpen = true },
+                                        onNewDocument = { newDocIn = it; newDocOpen = true },
                                         refreshKey = refreshKey,
                                         navigation = navigation
                                     )
@@ -563,7 +565,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                     // first folder on Home so "New" never has to ask. With nothing on Home at all
                     // there is nowhere it could mean, so it goes to Documents\InkSlate - the
                     // Android build's fallback, one shell folder along.
-                    val target = repo.defaultNewFolder ?: File(
+                    val target = newDocIn?.takeIf { it.isDirectory } ?: repo.defaultNewFolder ?: File(
                         File(System.getProperty("user.home"), "Documents"), "InkSlate"
                     )
                     val created = withContext(Dispatchers.IO) {
