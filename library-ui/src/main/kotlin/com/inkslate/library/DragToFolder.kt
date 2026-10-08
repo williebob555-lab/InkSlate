@@ -25,7 +25,6 @@ import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
