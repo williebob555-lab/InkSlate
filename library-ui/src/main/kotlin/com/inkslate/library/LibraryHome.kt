@@ -396,6 +396,39 @@ fun LibraryHome(
     }
     val groups = remember(shown, sort, roots) { DocumentShelf.group(shown, sort, roots) }
 
+    val itemMenu: @Composable (File, Boolean) -> Unit = { target, dropdown ->
+        fun close() { menuFor = null; menuAt = null }
+        ItemActions(
+            target, backend, roots, here, dropdown = dropdown, fromRecent = menuFromRecent,
+            onOpen = { close(); tap(target) },
+            onShowInFolder = { close(); trail = pathTo(target.parentFile!!, roots); query = "" },
+            onSelect = { close(); selected = setOf(target.absolutePath) },
+            onToggleStar = { close(); scope.launch { withContext(Dispatchers.IO) { backend.togglePin(target) }; refresh() } },
+            onMoveTo = { folder -> close(); moveAll(listOf(target to folder)) },
+            onMove = { close(); moving = listOf(target) },
+            onRename = { close(); renaming = target },
+            onDelete = { close(); remove(listOf(target)) },
+            onRemoveRecent = { close(); scope.launch { withContext(Dispatchers.IO) { backend.removeRecent(target) }; refresh() } },
+            onNewFolder = { close(); newFolderIn = target },
+            onOrganize = { close(); organizing = true to target },
+            onSetDefault = {
+                close()
+                scope.launch {
+                    withContext(Dispatchers.IO) { backend.defaultNewFolder = target }
+                    snackbar.showSnackbar("New documents will go in ${target.name}")
+                }
+            },
+            onRemoveFromHome = {
+                close()
+                scope.launch {
+                    withContext(Dispatchers.IO) { backend.removeLibraryFolder(target) }
+                    trail = emptyList(); refresh()
+                    snackbar.showSnackbar("${target.name} is no longer on Home. Nothing was deleted.")
+                }
+            }
+        )
+    }
+
     var origin by remember { mutableStateOf(Offset.Zero) }
     val listState = rememberLazyListState()
 
@@ -716,39 +749,6 @@ fun LibraryHome(
     }
 
     // ---- the menu for one thing --------------------------------------------------------------
-
-    val itemMenu: @Composable (File, Boolean) -> Unit = { target, dropdown ->
-        fun close() { menuFor = null; menuAt = null }
-        ItemActions(
-            target, backend, roots, here, dropdown = dropdown, fromRecent = menuFromRecent,
-            onOpen = { close(); tap(target) },
-            onShowInFolder = { close(); trail = pathTo(target.parentFile!!, roots); query = "" },
-            onSelect = { close(); selected = setOf(target.absolutePath) },
-            onToggleStar = { close(); scope.launch { withContext(Dispatchers.IO) { backend.togglePin(target) }; refresh() } },
-            onMoveTo = { folder -> close(); moveAll(listOf(target to folder)) },
-            onMove = { close(); moving = listOf(target) },
-            onRename = { close(); renaming = target },
-            onDelete = { close(); remove(listOf(target)) },
-            onRemoveRecent = { close(); scope.launch { withContext(Dispatchers.IO) { backend.removeRecent(target) }; refresh() } },
-            onNewFolder = { close(); newFolderIn = target },
-            onOrganize = { close(); organizing = true to target },
-            onSetDefault = {
-                close()
-                scope.launch {
-                    withContext(Dispatchers.IO) { backend.defaultNewFolder = target }
-                    snackbar.showSnackbar("New documents will go in ${target.name}")
-                }
-            },
-            onRemoveFromHome = {
-                close()
-                scope.launch {
-                    withContext(Dispatchers.IO) { backend.removeLibraryFolder(target) }
-                    trail = emptyList(); refresh()
-                    snackbar.showSnackbar("${target.name} is no longer on Home. Nothing was deleted.")
-                }
-            }
-        )
-    }
 
     menuFor?.let { target ->
         if (menuAt == null) {
