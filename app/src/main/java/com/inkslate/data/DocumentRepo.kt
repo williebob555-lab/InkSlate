@@ -1147,8 +1147,13 @@ class DocumentRepo(private val context: Context) {
             !isPdf -> null
             // The autosave that runs before every save has already turned this document into
             // text. Building it again is a quarter of a second of repeating work.
-            else -> journal.textFor(ink)?.let { com.inkslate.core.InkPayload.encodeText(it) }
-                ?: com.inkslate.core.InkPayload.encode(ink)
+            else -> {
+                // Pictures an older build kept beside the document go inside it from now on.
+                com.inkslate.core.Pictures.adoptLegacy(doc.file)
+                journal.textFor(ink)?.let {
+                    com.inkslate.core.InkPayload.encodeText(it, com.inkslate.core.Pictures.idsIn(ink))
+                } ?: com.inkslate.core.InkPayload.encode(ink)
+            }
         }
         val encodedAt = System.currentTimeMillis()
 
@@ -1342,6 +1347,11 @@ class DocumentRepo(private val context: Context) {
                         }.getOrNull()
                     }
                     stamp?.let { lastEmbedded[target.absolutePath] = it }
+                    // Written over the document itself and read back: it carries its pictures
+                    // now, and the folder an older build kept them in beside it can go.
+                    if (carried && overwrite) {
+                        runCatching { com.inkslate.core.Pictures.retireLegacyFolder(doc.file, ink, payload) }
+                    }
                     if (overwrite) {
                         // Update what was written *before* recording it. These two lines used
                         // to be the other way round, so every save persisted the signatures of
@@ -1426,7 +1436,9 @@ class DocumentRepo(private val context: Context) {
                 // this app can pick the handwriting out of. Flattening deliberately omits it:
                 // that mode exists to produce something that cannot be edited.
                 val payload = if (flatten) null else {
-                    journal.textFor(doc.ink)?.let { com.inkslate.core.InkPayload.encodeText(it) }
+                    journal.textFor(doc.ink)?.let {
+                        com.inkslate.core.InkPayload.encodeText(it, com.inkslate.core.Pictures.idsIn(doc.ink))
+                    }
                         ?: com.inkslate.core.InkPayload.encode(doc.ink)
                 }
                 InkExporter.exportPdf(doc.file, target, doc.ink, format, embed = payload)

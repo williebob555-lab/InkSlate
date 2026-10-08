@@ -23,10 +23,10 @@ import javax.imageio.ImageIO
 /**
  * Pictures pasted into a document: where they are kept, and whether they come out again.
  *
- * They live beside the document as ordinary files rather than inside it, so that a sync moves an
- * image once instead of shipping it again with every stroke. That makes two things worth pinning
- * down: that the folder is the one the tablet also looks in, and that an export actually embeds
- * the picture rather than leaving an empty rectangle where it was.
+ * They live in the app's own store and travel inside the document, never as files beside it. That
+ * makes things worth pinning down: that nothing appears next to the document, that an older
+ * build's folder is still read and then cleared away, and that an export actually embeds the
+ * picture rather than leaving an empty rectangle where it was.
  */
 class ImageStoreTest {
 
@@ -50,19 +50,60 @@ class ImageStoreTest {
     }
 
     @Test
-    fun `a picture is stored beside its document and comes back`() {
+    fun `a picture is kept in the app, not beside its document, and comes back`() {
         val dir = temp.newFolder()
         val doc = File(dir, "Notes.pdf").apply { writeText("x") }
         val store = ImageStore(doc)
+        val before = dir.listFiles()!!.map { it.name }.toSet()
 
         val id = store.putFile(pictureFile(dir))
         assertNotNull(id)
         assertTrue(store.exists(id!!))
         assertNotNull(store.load(id))
 
-        // The folder name is the tablet's, so a synced document finds its own pictures.
-        assertEquals("Notes.pdf.inkassets", store.dirFor().name)
-        assertEquals(dir.absolutePath, store.dirFor().parentFile.absolutePath)
+        // Nothing new next to the document: no folder, no file.
+        assertEquals(before, dir.listFiles()!!.map { it.name }.toSet())
+        assertFalse(store.dirFor().exists())
+    }
+
+    @Test
+    fun `an older build's folder beside the document is still read`() {
+        val dir = temp.newFolder()
+        val doc = File(dir, "Old.pdf").apply { writeText("x") }
+        val legacy = File(dir, "Old.pdf.inkassets").apply { mkdirs() }
+        pictureFile(legacy, "0123456789abcdef.png")
+        assertNotNull(ImageStore(doc).load("0123456789abcdef"))
+    }
+
+    @Test
+    fun `saving carries the pictures inside and clears the old folder away`() {
+        val dir = temp.newFolder()
+        val source = BlankDocumentFactory.create(dir, BlankDocumentFactory.Spec(name = "Tidy")).getOrThrow()
+        val legacy = File(dir, "Tidy.pdf.inkassets").apply { mkdirs() }
+        pictureFile(legacy, "feedfacecafe0001.png")
+        val ink = InkDocument.create("Tidy.pdf", "pdf", 1, 0L, "").withPage(
+            0,
+            listOf(
+                Stroke(
+                    id = "img", kind = Stroke.Kind.IMAGE, color = 0xFF000000.toInt(), baseWidth = 1f,
+                    imageId = "feedfacecafe0001",
+                    points = listOf(InkPoint(100f, 100f, 1f), InkPoint(300f, 250f, 1f))
+                )
+            ),
+            "test"
+        )
+        DesktopEmbedder.write(source, ink).getOrThrow()
+        assertFalse("the old folder should be gone", legacy.exists())
+        // Opened somewhere that has never seen the picture, the document brings it along.
+        val elsewhere = temp.newFolder()
+        val was = com.inkslate.core.Pictures.dir
+        try {
+            com.inkslate.core.Pictures.dir = elsewhere
+            assertNotNull(DesktopEmbedder.read(source))
+            assertTrue(File(elsewhere, "feedfacecafe0001.png").isFile)
+        } finally {
+            com.inkslate.core.Pictures.dir = was
+        }
     }
 
     @Test
@@ -70,26 +111,6 @@ class ImageStoreTest {
         val doc = temp.newFile("Notes.pdf")
         assertNull(ImageStore(doc).load("nothing-here"))
         assertFalse(ImageStore(doc).exists("nothing-here"))
-    }
-
-    /**
-     * Pruning takes the complete set of ids a document still references.
-     *
-     * Called with a partial view it would delete a picture that a page nobody has scrolled to
-     * still uses, so the contract matters more than the code.
-     */
-    @Test
-    fun `pruning keeps what is referenced and drops what is not`() {
-        val dir = temp.newFolder()
-        val doc = File(dir, "Notes.pdf").apply { writeText("x") }
-        val store = ImageStore(doc)
-
-        val kept = store.putFile(pictureFile(dir, "a.png"))!!
-        val dropped = store.putFile(pictureFile(dir, "b.png"))!!
-
-        store.prune(setOf(kept))
-        assertTrue(store.exists(kept))
-        assertFalse(store.exists(dropped))
     }
 
     // ---- getting back out again ----------------------------------------------

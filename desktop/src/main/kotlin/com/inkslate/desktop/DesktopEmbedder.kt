@@ -3,6 +3,7 @@ package com.inkslate.desktop
 import com.inkslate.core.ImageInkCarrier
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPayload
+import com.inkslate.core.Pictures
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.cos.COSName
 import org.apache.pdfbox.pdmodel.PDDocument
@@ -80,6 +81,8 @@ object DesktopEmbedder {
      * touched until the replacement is known to be good.
      */
     fun write(file: File, doc: InkDocument): Result<Unit> = runCatching {
+        // Pictures an older build kept beside the document go inside it from now on.
+        Pictures.adoptLegacy(file)
         val payload = InkPayload.encode(doc)
         val isPdf = file.extension.equals("pdf", ignoreCase = true)
 
@@ -106,6 +109,8 @@ object DesktopEmbedder {
             val verified = readAs(staged, file.extension)
             if (verified != null && verified.totalStrokes == doc.totalStrokes) {
                 commit(staged, file)
+                // The document now carries its pictures; the folder beside it can go.
+                runCatching { Pictures.retireLegacyFolder(file, doc, payload) }
                 return@runCatching
             }
             staged.delete()

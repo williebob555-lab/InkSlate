@@ -12,6 +12,8 @@ class InkSlateApp : Application() {
         CrashLog.install(this)
         EventLog.init(this)
         com.inkslate.pdf.PageCache.init(this)
+        // Pictures on the pages are kept here and carried inside the documents, never beside them.
+        com.inkslate.core.Pictures.dir = java.io.File(filesDir, "pictures")
         // Only ever reaches devices you have paired with, and only while the app is open.
         com.inkslate.data.AppPeers.init(this)
         com.inkslate.data.AppPeers.start()

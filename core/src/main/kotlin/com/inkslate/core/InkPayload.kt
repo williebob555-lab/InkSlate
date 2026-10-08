@@ -28,8 +28,11 @@ object InkPayload {
     /** Header: magic(8) version(1) reserved(3) rawLength(4) crc32(4). */
     private const val HEADER = 20
 
-    /** Serialise, compress, and wrap. */
-    fun encode(doc: InkDocument): ByteArray = encodeText(doc.compacted().serialize())
+    /** Serialise, compress, and wrap - with the pictures the document shows. */
+    fun encode(doc: InkDocument): ByteArray {
+        val compact = doc.compacted()
+        return encodeText(compact.serialize(), Pictures.idsIn(compact))
+    }
 
     /**
      * Wrap handwriting that has already been serialised.
@@ -39,7 +42,10 @@ object InkPayload {
      * work in it. The caller is responsible for the text being this document; see
      * [InkJournal.textFor], which only hands back text it built from the very same instance.
      */
-    fun encodeText(json: String): ByteArray {
+    fun encodeText(json: String, pictures: Set<String> = emptySet()): ByteArray =
+        withPictures(wrap(json), pictures)
+
+    private fun wrap(json: String): ByteArray {
         val raw = json.toByteArray(Charsets.UTF_8)
 
         val crc = CRC32().apply { update(raw) }.value.toInt()
@@ -102,8 +108,73 @@ object InkPayload {
         }
 
         if (CRC32().apply { update(raw) }.value.toInt() != expectedCrc) return null
-        return InkDocument.parse(String(raw, Charsets.UTF_8))
+        val doc = InkDocument.parse(String(raw, Charsets.UTF_8)) ?: return null
+        // Whatever pictures the document brought with it are kept, so they show wherever it is
+        // opened - the copy here is what the page draws from.
+        readPictures(bytes)?.forEach { (id, png) -> Pictures.keep(id, png) }
+        return doc
     }
+
+    // ---- pictures --------------------------------------------------------------
+
+    /*
+     * The pictures ride after the compressed handwriting:
+     *
+     *     [header][deflated json] [id-length(2) id length(4) png]... [count(4) trailer-length(4) INKPICS1]
+     *
+     * Read from the end, so finding them never depends on where the deflate stream stopped, and
+     * an older build - which inflates the handwriting and stops - simply never looks. PNGs are
+     * stored as they are: they are compressed already, and deflating them again is time for
+     * nothing on every save.
+     */
+    private val PICS_MAGIC = "INKPICS1".toByteArray(Charsets.US_ASCII)
+    private const val PICS_FOOTER = 16
+
+    private fun withPictures(payload: ByteArray, ids: Set<String>): ByteArray {
+        val found = ids.sorted().mapNotNull { id -> Pictures.bytes(id)?.let { id to it } }
+        if (found.isEmpty()) return payload
+        val out = java.io.ByteArrayOutputStream(payload.size + found.sumOf { it.second.size + 64 })
+        out.write(payload)
+        val start = out.size()
+        for ((id, png) in found) {
+            val name = id.toByteArray(Charsets.US_ASCII)
+            out.write(name.size ushr 8); out.write(name.size and 0xFF)
+            out.write(name)
+            out.write(intBytes(png.size))
+            out.write(png)
+        }
+        val length = out.size() - start
+        out.write(intBytes(found.size))
+        out.write(intBytes(length))
+        out.write(PICS_MAGIC)
+        return out.toByteArray()
+    }
+
+    /** The pictures a payload carries, by id; null when it carries none. */
+    fun readPictures(bytes: ByteArray?): Map<String, ByteArray>? = runCatching {
+        if (bytes == null || bytes.size < HEADER + PICS_FOOTER) return null
+        val end = bytes.size
+        for (i in PICS_MAGIC.indices) if (bytes[end - 8 + i] != PICS_MAGIC[i]) return null
+        val count = readInt(bytes, end - 16)
+        val length = readInt(bytes, end - 12)
+        var at = end - PICS_FOOTER - length
+        if (count <= 0 || length <= 0 || at < HEADER) return null
+        val out = LinkedHashMap<String, ByteArray>()
+        repeat(count) {
+            val n = ((bytes[at].toInt() and 0xFF) shl 8) or (bytes[at + 1].toInt() and 0xFF)
+            at += 2
+            val id = String(bytes, at, n, Charsets.US_ASCII); at += n
+            val size = readInt(bytes, at); at += 4
+            if (size < 0 || at + size > end - PICS_FOOTER) return null
+            out[id] = bytes.copyOfRange(at, at + size); at += size
+        }
+        out
+    }.getOrNull()
+
+    /** Which pictures a payload carries, without copying them out. */
+    fun pictureIds(bytes: ByteArray?): Set<String> = readPictures(bytes)?.keys.orEmpty()
+
+    private fun intBytes(v: Int) = ByteArray(4).also { writeInt(it, 0, v) }
 
     /** Cheap test used when scanning a file, before committing to a full decode. */
     fun looksLikePayload(bytes: ByteArray, at: Int = 0): Boolean {

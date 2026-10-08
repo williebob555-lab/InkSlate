@@ -14,6 +14,9 @@ java {
 
 kotlin {
     compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
+    // Home - the documents, folders and filing - is shared source with the tablet: see
+    // library-ui/README.md.
+    sourceSets.main { kotlin.srcDir(rootProject.file("library-ui/src/main/kotlin")) }
 }
 
 // Point the real-document render test at a folder of actual PDFs:

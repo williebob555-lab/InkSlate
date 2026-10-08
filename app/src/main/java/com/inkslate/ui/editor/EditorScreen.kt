@@ -1096,6 +1096,37 @@ fun EditorScreen(
         }
     }
 
+    // A picture on the page, saved as a PNG of its own wherever the person picks - the only time
+    // a capture becomes a file. Cropped the way it shows on the page.
+    var pendingPicture by remember { mutableStateOf<com.inkslate.core.Stroke?>(null) }
+    val savePictureLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("image/png")
+    ) { uri ->
+        val picture = pendingPicture
+        pendingPicture = null
+        val id = picture?.imageId
+        if (uri == null || picture == null || id == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    val whole = imageStore.bytes(id) ?: error("That picture is not on this device yet")
+                    val bytes = if (!picture.isCropped) whole else {
+                        val bmp = android.graphics.BitmapFactory.decodeByteArray(whole, 0, whole.size)
+                            ?: error("Could not read the picture")
+                        val c = picture.cropPixels(bmp.width, bmp.height)
+                        val cut = if (c == null) bmp else android.graphics.Bitmap.createBitmap(bmp, c[0], c[1], c[2] - c[0], c[3] - c[1])
+                        java.io.ByteArrayOutputStream().also { cut.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+                    }
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } ?: error("Could not write there")
+                }
+            }
+            ok.fold(
+                onSuccess = { snackbar.showSnackbar("Picture saved") },
+                onFailure = { snackbar.showSnackbar(it.message ?: "Could not save the picture") }
+            )
+        }
+    }
+
     // Writes a finished export to wherever the system picker landed. The document itself is
     // already built by this point; all that is left is to copy the bytes across.
     val saveToLauncher = rememberLauncherForActivityResult(
@@ -2006,7 +2037,18 @@ fun EditorScreen(
                             dirty = true; undoTick++
                         },
                         onResetCrop = { drawingView.value?.resetCrop() },
-                        onCancelCrop = { drawingView.value?.cancelCrop() }
+                        onCancelCrop = { drawingView.value?.cancelCrop() },
+                        onSavePicture = {
+                            val picture = drawingView.value?.selectedStrokes()?.singleOrNull()
+                                ?.takeIf { it.kind == com.inkslate.core.Stroke.Kind.IMAGE && it.imageId != null }
+                            if (picture == null) {
+                                scope.launch { snackbar.showSnackbar("Select one picture to save it") }
+                            } else {
+                                pendingPicture = picture
+                                runCatching { savePictureLauncher.launch("${file.nameWithoutExtension} picture.png") }
+                                    .onFailure { scope.launch { snackbar.showSnackbar("No way to pick a folder on this device") } }
+                            }
+                        }
                     )
                 )
                 }

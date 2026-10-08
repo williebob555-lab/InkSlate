@@ -4,46 +4,43 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import java.io.File
-import java.io.FileOutputStream
-import java.util.UUID
+import com.inkslate.core.Pictures
 
 /**
- * Stores images pasted into a document, beside the document itself.
+ * The pictures on a document's pages: captured regions, inserted photos, pasted images.
  *
- * Kept as ordinary files in a `<name>.inkassets` folder rather than inlined into the sidecar.
- * Base64 inside the JSON would triple the size of every save and force the whole sidecar across
- * the network each time a stroke changes; separate files let Syncthing move an image once and
- * never look at it again.
+ * Kept in the app's own storage by [Pictures], and carried inside the document with its
+ * handwriting - never written beside it. An older build kept them in a `<name>.inkassets` folder
+ * next to the document, a folder and a file per capture in the middle of someone's coursework;
+ * those are still read, taken in on first use, and the folder is removed by the first save that
+ * is known to carry them all (see [Pictures.retireLegacyFolder]).
  */
 class ImageStore(private val sourceFile: File) {
 
-    private val dir = File(sourceFile.parentFile, "${sourceFile.name}.inkassets")
-
-    fun dirFor(): File = dir
+    /** Where an older build kept this document's pictures. Read, never written. */
+    fun dirFor(): File = Pictures.legacyFolder(sourceFile)
 
     /** Write a bitmap and return its id. */
     fun put(bitmap: Bitmap): String? = runCatching {
-        dir.mkdirs()
-        val id = UUID.randomUUID().toString().replace("-", "").take(16)
-        val target = File(dir, "$id.png")
-        val tmp = File(dir, ".$id.tmp")
-        FileOutputStream(tmp).use { out ->
-            // PNG so a captured diagram stays crisp; these are small regions, not photographs
-            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            out.flush()
-            runCatching { out.fd.sync() }
-        }
-        if (!tmp.renameTo(target)) { tmp.copyTo(target, overwrite = true); tmp.delete() }
-        EventLog.info("image", "Stored $id (${target.length() / 1024}KB)")
+        val bytes = java.io.ByteArrayOutputStream()
+        // PNG so a captured diagram stays crisp; these are small regions, not photographs
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, bytes)
+        val id = Pictures.put(bytes.toByteArray())
+        if (id != null) EventLog.info("image", "Stored $id (${bytes.size() / 1024}KB)")
         id
     }.onFailure { EventLog.error("image", "Could not store image: ${it.message}") }.getOrNull()
 
     /**
-     * The picture's file: in the folder beside the document, or else one that arrived over the
-     * link before file sync brought it. See [keepLinked].
+     * The picture's file: in the app's store, or else in the folder an older build left beside
+     * the document (taken into the store as it is found), or one that arrived over the link
+     * before this build kept those in the store too.
      */
     fun fileFor(id: String): File? {
-        File(dir, "$id.png").takeIf { it.isFile }?.let { return it }
+        Pictures.file(id)?.let { return it }
+        File(dirFor(), "$id.png").takeIf { it.isFile }?.let { old ->
+            runCatching { Pictures.keep(id, old.readBytes()) }
+            return Pictures.file(id) ?: old
+        }
         return linkedDir?.let { File(it, "$id.png") }?.takeIf { it.isFile }
     }
 
@@ -60,19 +57,15 @@ class ImageStore(private val sourceFile: File) {
 
     fun exists(id: String) = fileFor(id) != null
 
-    /** Remove assets no longer referenced by any stroke, so deletions do not accumulate. */
-    fun prune(referenced: Set<String>) {
-        val files = dir.listFiles { f -> f.isFile && f.extension == "png" } ?: return
-        var removed = 0
-        for (f in files) {
-            if (f.nameWithoutExtension !in referenced) {
-                if (f.delete()) removed++
-            }
-        }
-        if (removed > 0) EventLog.info("image", "Pruned $removed unused image(s)")
-    }
+    /**
+     * Nothing to remove any more. The store is shared by every document - a picture copied from
+     * one into another is the same file - so no one document can say a picture is unused, and
+     * the pictures are small. Kept so callers need not change.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun prune(referenced: Set<String>) = Unit
 
-    private fun cacheKey(id: String) = "${dir.absolutePath}|$id"
+    private fun cacheKey(id: String) = id
 
     companion object {
         /**
@@ -85,16 +78,12 @@ class ImageStore(private val sourceFile: File) {
          */
         @Volatile var linkedDir: File? = null
 
-        /** Keep a picture that arrived over the link. Returns whether it was kept. */
-        fun keepLinked(id: String, png: ByteArray): Boolean = runCatching {
-            val dir = linkedDir ?: return false
-            dir.mkdirs()
-            val target = File(dir, "$id.png")
-            val tmp = File(dir, ".$id.tmp")
-            tmp.writeBytes(png)
-            if (!tmp.renameTo(target)) { tmp.copyTo(target, overwrite = true); tmp.delete() }
-            true
-        }.getOrDefault(false)
+        /**
+         * Keep a picture that arrived over the link. Into the app's own store, like every other
+         * picture - nothing beside the document, so file sync bringing the same document cannot
+         * collide with it.
+         */
+        fun keepLinked(id: String, png: ByteArray): Boolean = Pictures.keep(id, png)
 
         /** Shared across documents; keyed by folder so two files cannot collide. */
         private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {

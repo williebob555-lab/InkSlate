@@ -60,6 +60,10 @@ android {
 
     // The music screens are shared source with the desktop build - see sheets-ui/README.md.
     sourceSets {
+        // Home - the documents, folders and filing - is shared source too: see library-ui/README.md.
+        getByName("main") {
+            kotlin.directories.add(rootProject.file("library-ui/src/main/kotlin").path)
+        }
         getByName("inksheets") {
             kotlin.directories.add(rootProject.file("sheets-ui/src/main/kotlin").path)
         }

@@ -232,6 +232,8 @@ object InkEmbedder {
                 "Your handwriting is saved, but it stays on this device for this document."
         }
         val startedAt = System.currentTimeMillis()
+        // Pictures an older build kept beside the document go inside it from now on.
+        com.inkslate.core.Pictures.adoptLegacy(file)
         val payload = InkPayload.encode(doc)
         val isPdf = file.extension.equals("pdf", ignoreCase = true)
 
@@ -267,6 +269,8 @@ object InkEmbedder {
             val verified = rawPayload(staged, file.extension)
             if (startsWithPayload(verified, payload)) {
                 commit(staged, file)
+                // The document now carries its pictures; the folder beside it can go.
+                runCatching { com.inkslate.core.Pictures.retireLegacyFolder(file, doc, payload) }
                 EventLog.info(
                     "embed",
                     "${file.name}: ${if (incremental) "appended" else "rewrote"} " +
