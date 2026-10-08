@@ -1,7 +1,6 @@
 package com.inkslate.library
 
 import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.DisposableEffect
@@ -12,7 +11,9 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -138,12 +139,19 @@ fun Modifier.openMenuOrDrag(
         }
         .pointerInput(Unit) {
             awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
+                // The press itself, read whole. awaitFirstDown answers only to the primary button,
+                // so a right-click - or a two-finger click on a trackpad, which arrives as one -
+                // never got this far, and the menu never came.
+                var press: PointerEvent
+                do {
+                    press = awaitPointerEvent()
+                } while (press.changes.none { it.changedToDownIgnoreConsumed() })
+                val down = press.changes.first { it.changedToDownIgnoreConsumed() }
                 drag.pressedAt = toRoot(down)
                 drag.pressedWithMouse = down.type == PointerType.Mouse
                 // A right-click, or a two-finger click on a trackpad: the menu, at the pointer.
-                if (currentEvent.buttons.isSecondaryPressed) {
-                    down.consume()
+                if (press.buttons.isSecondaryPressed) {
+                    press.changes.forEach { it.consume() }
                     menu()
                     return@awaitEachGesture
                 }
