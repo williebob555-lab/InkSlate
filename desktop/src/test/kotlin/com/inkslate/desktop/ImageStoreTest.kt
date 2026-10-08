@@ -56,7 +56,8 @@ class ImageStoreTest {
         val store = ImageStore(doc)
         val before = dir.listFiles()!!.map { it.name }.toSet()
 
-        val id = store.putFile(pictureFile(dir))
+        // The picture comes from somewhere else, as an inserted photo would.
+        val id = store.putFile(pictureFile(temp.newFolder()))
         assertNotNull(id)
         assertTrue(store.exists(id!!))
         assertNotNull(store.load(id))

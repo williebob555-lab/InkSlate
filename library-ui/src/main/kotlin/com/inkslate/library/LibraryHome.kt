@@ -40,7 +40,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -48,7 +48,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Search
@@ -348,7 +348,7 @@ fun LibraryHome(
                                 selected = selected + shown.map { it.file.absolutePath }
                             }) { Icon(Icons.Default.SelectAll, "Select every document listed") }
                             IconButton(onClick = { moving = selected.map(::File) }) {
-                                Icon(Icons.Default.DriveFileMove, "Move to a folder")
+                                Icon(Icons.AutoMirrored.Filled.DriveFileMove, "Move to a folder")
                             }
                             IconButton(onClick = {
                                 scope.launch {
@@ -626,7 +626,7 @@ fun LibraryHome(
                 modifier = Modifier.offset { IntOffset((at.x + with(density) { 12.dp.toPx() }).roundToInt(), (at.y - with(density) { 24.dp.toPx() }).roundToInt()) }
             ) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.DriveFileMove, null, Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Filled.DriveFileMove, null, Modifier.size(18.dp))
                     Text(
                         "  " + (drag.carrying.singleOrNull()?.name ?: "${drag.carrying.size} items") +
                             (drag.over?.let { "  →  ${it.name}" } ?: ""),
@@ -1214,11 +1214,11 @@ private fun ItemActions(
         if (elsewhere && target.parentFile != null) ActionRow(Icons.Default.Folder, "Show in folder", onShowInFolder)
         ActionRow(Icons.Default.CheckCircle, "Select", onSelect)
         ActionRow(if (starred) Icons.Default.Star else Icons.Default.StarBorder, if (starred) "Remove star" else "Star", onToggleStar)
-        if (!isRoot) ActionRow(Icons.Default.DriveFileMove, "Move to...", onMove)
+        if (!isRoot) ActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "Move to...", onMove)
         if (target.isDirectory) {
             ActionRow(Icons.Default.CreateNewFolder, "New folder inside", onNewFolder)
             ActionRow(Icons.Default.AutoAwesome, "Sort into class folders", onOrganize)
-            ActionRow(Icons.Default.PlaylistAdd, "Put new documents here", onSetDefault)
+            ActionRow(Icons.AutoMirrored.Filled.PlaylistAdd, "Put new documents here", onSetDefault)
         }
         ActionRow(Icons.Default.DriveFileRenameOutline, "Rename", onRename)
         if (isRoot) ActionRow(Icons.Default.RemoveCircleOutline, "Remove from Home", onRemoveFromHome)
