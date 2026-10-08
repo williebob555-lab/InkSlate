@@ -192,9 +192,13 @@ fun LibraryHome(
         val single = r.singleOrNull()
         val at = trail.lastOrNull() ?: single
         val inside = trail.isNotEmpty()
+        val shownFolders = if (at != null) backend.subfolders(at) else r
         Loaded(
             roots = r,
-            folders = if (at != null) backend.subfolders(at) else r,
+            folders = shownFolders,
+            // What is in each folder shown, so a document landing in one - dropped here, or
+            // arriving by sync - counts as a change and its tile is redrawn.
+            folderCounts = shownFolders.map { backend.itemCount(it) },
             recents = if (!inside) backend.recents(16) else emptyList(),
             starred = if (!inside) backend.pinned().filter { it.exists() } else emptyList(),
             docs = if (inside) backend.documentsUnder(at!!, depth = if (deep || query.isNotBlank()) 8 else 1)
@@ -202,8 +206,15 @@ fun LibraryHome(
         )
     }
 
+    // Bumped whenever what Home shows has changed, so each folder tile looks at what is inside it
+    // again - its count and its pictures - rather than keeping what it saw when it first appeared.
+    var contentStamp by remember { mutableStateOf(0) }
+    var shownLoaded by remember { mutableStateOf<Loaded?>(null) }
+
     fun show(l: Loaded) {
+        shownLoaded = l
         roots = l.roots; folders = l.folders; recents = l.recents; starred = l.starred; docs = l.docs
+        contentStamp++
         // A trail into a folder that is gone (deleted, or removed from Home) goes back up.
         if (trail.isNotEmpty() && !trail.last().isDirectory) trail = trail.takeWhile { it.isDirectory }
     }
@@ -221,7 +232,7 @@ fun LibraryHome(
             delay(HOME_REFRESH_MS)
             if (drag.active) continue
             val fresh = load()
-            if (fresh != Loaded(roots, folders, recents, starred, docs)) show(fresh)
+            if (fresh != shownLoaded) show(fresh)
         }
     }
 
@@ -441,7 +452,7 @@ fun LibraryHome(
                                 item {
                                     ScrollingRow(starred, key = { it.absolutePath }) { f ->
                                         if (f.isDirectory) {
-                                            FolderTile(f, backend, drag, starred = true, selected = f.absolutePath in selected,
+                                            FolderTile(f, backend, drag, contentStamp, starred = true, selected = f.absolutePath in selected,
                                                 onOpen = { tap(f) }, onMenu = { menu(f) }, carry = { carry(f) }, onDrop = dropInto)
                                         } else {
                                             DocumentCard(f, backend, drag, starred = true, selected = f.absolutePath in selected,
@@ -500,7 +511,7 @@ fun LibraryHome(
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     folders.forEach { f ->
-                                        FolderTile(f, backend, drag, selected = f.absolutePath in selected,
+                                        FolderTile(f, backend, drag, contentStamp, selected = f.absolutePath in selected,
                                             onOpen = { tap(f) }, onMenu = { menu(f) }, carry = { carry(f) }, onDrop = dropInto)
                                     }
                                 }
@@ -773,6 +784,7 @@ private const val K_AUTO_SKIP = "home.autoFile.skip"
 private data class Loaded(
     val roots: List<File>,
     val folders: List<File>,
+    val folderCounts: List<Int>,
     val recents: List<File>,
     val starred: List<File>,
     val docs: List<DocumentShelf.Item>
@@ -907,6 +919,8 @@ private fun FolderTile(
     folder: File,
     backend: LibraryBackend,
     drag: DragToFolder,
+    /** Changes when anything on Home changed: the tile reads its folder again. */
+    contentStamp: Int,
     starred: Boolean = false,
     selected: Boolean,
     onOpen: () -> Unit,
@@ -917,7 +931,9 @@ private fun FolderTile(
     var preview by remember(folder.absolutePath) { mutableStateOf<List<File>>(emptyList()) }
     var count by remember(folder.absolutePath) { mutableStateOf(0) }
     var isDefault by remember(folder.absolutePath) { mutableStateOf(false) }
-    LaunchedEffect(folder.absolutePath) {
+    // Keyed on the stamp as well as the folder: a document dropped in has to show up at once,
+    // not the next time the tile happens to be built from scratch.
+    LaunchedEffect(folder.absolutePath, contentStamp) {
         withContext(Dispatchers.IO) {
             Triple(backend.folderPreview(folder, 4), backend.itemCount(folder), backend.isDefaultNewFolder(folder))
         }.let { (p, c, d) -> preview = p; count = c; isDefault = d }
