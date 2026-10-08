@@ -146,22 +146,22 @@ fun OrganizeDialog(
                         val roots = p.roots
                         p.missing.forEach { (suggestedName, count) ->
                             var name by remember(suggestedName) { mutableStateOf(suggestedName) }
+                            val canMake = name.isNotBlank() && roots.isNotEmpty()
+                            fun make() {
+                                val parent = scope ?: roots.first()
+                                co.launch {
+                                    withContext(Dispatchers.IO) { backend.createFolder(parent, name) }
+                                        .fold(onSuccess = { reload++ }, onFailure = { error = it.message })
+                                }
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 OutlinedTextField(
                                     value = name, onValueChange = { name = it }, singleLine = true,
                                     supportingText = { Text(if (count == 1) "1 document" else "$count documents") },
-                                    modifier = Modifier.weight(1f)
+                                    keyboardOptions = DoneKey, keyboardActions = doneAction(canMake) { make() },
+                                    modifier = Modifier.weight(1f).onEnter(canMake) { make() }
                                 )
-                                TextButton(
-                                    enabled = name.isNotBlank() && roots.isNotEmpty(),
-                                    onClick = {
-                                        val parent = scope ?: roots.first()
-                                        co.launch {
-                                            withContext(Dispatchers.IO) { backend.createFolder(parent, name) }
-                                                .fold(onSuccess = { reload++ }, onFailure = { error = it.message })
-                                        }
-                                    }
-                                ) {
+                                TextButton(enabled = canMake, onClick = { make() }) {
                                     Icon(Icons.Default.CreateNewFolder, null, Modifier.size(18.dp))
                                     Text(" Make")
                                 }

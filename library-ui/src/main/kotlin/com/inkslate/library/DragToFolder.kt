@@ -56,6 +56,11 @@ class DragToFolder {
 
     val active: Boolean get() = carrying.isNotEmpty()
 
+    /** Where the last press on anything was, in the window - where a menu it opens appears. */
+    var pressedAt: Offset = Offset.Zero
+    /** Whether that press was a mouse or a trackpad, which gets a menu at the pointer. */
+    var pressedWithMouse: Boolean = false
+
     /** The folder under the pointer, if it is somewhere the carried things can go. */
     val over: File?
         get() {
@@ -134,6 +139,9 @@ fun Modifier.openMenuOrDrag(
         .pointerInput(Unit) {
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
+                drag.pressedAt = toRoot(down)
+                drag.pressedWithMouse = down.type == PointerType.Mouse
+                // A right-click, or a two-finger click on a trackpad: the menu, at the pointer.
                 if (currentEvent.buttons.isSecondaryPressed) {
                     down.consume()
                     menu()

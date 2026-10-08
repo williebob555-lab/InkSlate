@@ -107,6 +107,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.ClassCodes
 import com.inkslate.core.DocumentShelf
+import com.inkslate.core.DocumentTrash
 import com.inkslate.core.DocumentShelf.Filter
 import com.inkslate.core.DocumentShelf.Sort
 import kotlinx.coroutines.Dispatchers
@@ -164,8 +165,19 @@ fun LibraryHome(
 
     // How the documents are listed, remembered between visits.
     var sort by remember { mutableStateOf(runCatching { Sort.valueOf(backend.pref(K_SORT) ?: "") }.getOrDefault(Sort.RECENT)) }
-    var filters by remember {
+    // Filters belong to where they were set. The top's are remembered between visits; going into
+    // a folder starts it with none, rather than carrying over a filter that may leave it looking
+    // empty, and coming back out finds the top's as they were.
+    var topFilters by remember {
         mutableStateOf(backend.pref(K_FILTERS).orEmpty().split(',').mapNotNull { n -> Filter.entries.firstOrNull { it.name == n } }.toSet())
+    }
+    var folderFilters by remember(trail) { mutableStateOf<Set<Filter>>(emptySet()) }
+    val filters = if (atTop) topFilters else folderFilters
+    fun setFilters(to: Set<Filter>) {
+        if (atTop) {
+            topFilters = to
+            backend.setPref(K_FILTERS, to.joinToString(",") { it.name }.ifEmpty { null })
+        } else folderFilters = to
     }
     var deep by remember { mutableStateOf(backend.pref(K_DEEP) == "on") }
     var query by remember { mutableStateOf("") }
@@ -177,6 +189,11 @@ fun LibraryHome(
 
     // What a menu or dialog is open for.
     var menuFor by remember { mutableStateOf<File?>(null) }
+    // Where a right-click (or a two-finger click) opened the menu - it opens right there. Null when
+    // a finger held it, which gets the sheet from the bottom.
+    var menuAt by remember { mutableStateOf<Offset?>(null) }
+    // Opened from the Recent row, which offers taking it off that row.
+    var menuFromRecent by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<File?>(null) }
     var deleting by remember { mutableStateOf<List<File>>(emptyList()) }
     var moving by remember { mutableStateOf<List<File>>(emptyList()) }
@@ -192,9 +209,13 @@ fun LibraryHome(
         val single = r.singleOrNull()
         val at = trail.lastOrNull() ?: single
         val inside = trail.isNotEmpty()
+        val shownFolders = if (at != null) backend.subfolders(at) else r
         Loaded(
             roots = r,
-            folders = if (at != null) backend.subfolders(at) else r,
+            folders = shownFolders,
+            // What is in each folder shown, so a document landing in one - dropped here, or
+            // arriving by sync - counts as a change and its tile is redrawn.
+            folderCounts = shownFolders.map { backend.itemCount(it) },
             recents = if (!inside) backend.recents(16) else emptyList(),
             starred = if (!inside) backend.pinned().filter { it.exists() } else emptyList(),
             docs = if (inside) backend.documentsUnder(at!!, depth = if (deep || query.isNotBlank()) 8 else 1)
@@ -202,8 +223,15 @@ fun LibraryHome(
         )
     }
 
+    // Bumped whenever what Home shows has changed, so each folder tile looks at what is inside it
+    // again - its count and its pictures - rather than keeping what it saw when it first appeared.
+    var contentStamp by remember { mutableStateOf(0) }
+    var shownLoaded by remember { mutableStateOf<Loaded?>(null) }
+
     fun show(l: Loaded) {
+        shownLoaded = l
         roots = l.roots; folders = l.folders; recents = l.recents; starred = l.starred; docs = l.docs
+        contentStamp++
         // A trail into a folder that is gone (deleted, or removed from Home) goes back up.
         if (trail.isNotEmpty() && !trail.last().isDirectory) trail = trail.takeWhile { it.isDirectory }
     }
@@ -221,7 +249,7 @@ fun LibraryHome(
             delay(HOME_REFRESH_MS)
             if (drag.active) continue
             val fresh = load()
-            if (fresh != Loaded(roots, folders, recents, starred, docs)) show(fresh)
+            if (fresh != shownLoaded) show(fresh)
         }
     }
 
@@ -256,7 +284,7 @@ fun LibraryHome(
                 append(if (targets.size == 1) targets[0].name else "${targets.size} folders")
                 if (failed.isNotEmpty()) append(" (${failed.size} could not be moved)")
             }
-            val result = snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Long)
+            val result = snackbar.showSnackbar(message, actionLabel = "Undo", duration = SnackbarDuration.Short)
             if (result == SnackbarResult.ActionPerformed) {
                 withContext(Dispatchers.IO) {
                     for ((now, from) in done) backend.move(now, from)
@@ -289,12 +317,46 @@ fun LibraryHome(
         }
     }
 
+    /**
+     * Delete [items]: into Recently deleted, from which an Undo - or Settings, for 30 days - brings
+     * them back. Only what is outside every folder on Home (or is one of them) is deleted for
+     * good, and that is asked about first.
+     */
+    fun remove(items: List<File>) {
+        val (trashable, other) = items.partition { DocumentTrash.rootFor(it, roots) != null }
+        if (other.isNotEmpty()) deleting = other
+        if (trashable.isEmpty()) return
+        scope.launch {
+            val done = ArrayList<Pair<File, DocumentTrash.Entry>>()
+            val failed = ArrayList<String>()
+            withContext(Dispatchers.IO) {
+                for (f in trashable) backend.trash(f).fold(onSuccess = { done.add(it) }, onFailure = { failed.add(it.message ?: "Could not delete ${f.name}") })
+            }
+            selected = emptySet()
+            refresh()
+            if (done.isEmpty()) { snackbar.showSnackbar(failed.firstOrNull() ?: "Nothing was deleted"); return@launch }
+            val what = if (done.size == 1) done[0].second.name else "${done.size} items"
+            val result = snackbar.showSnackbar(
+                "Deleted $what" + (if (failed.isNotEmpty()) " (${failed.size} could not be)" else ""),
+                actionLabel = "Undo", duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                withContext(Dispatchers.IO) { done.forEach { (root, entry) -> backend.restore(root, entry) } }
+                refresh()
+            }
+        }
+    }
+
+    // What has been in the trash past its 30 days goes for good, once a visit.
+    LaunchedEffect(Unit) { withContext(Dispatchers.IO) { backend.purgeTrash() } }
+
     fun carry(item: File): List<File> {
         if (item.absolutePath !in selected) return listOf(item)
         return selected.map(::File).filter { it.exists() }
     }
     val dropInto: (List<File>, File) -> Unit = { items, folder ->
-        if (folder.isDirectory) {
+        if (folder.absolutePath == TRASH_TARGET.absolutePath) remove(items)
+        else if (folder.isDirectory) {
             moveAll(items.filter { it.parentFile?.absolutePath != folder.absolutePath }.map { it to folder })
         }
     }
@@ -308,7 +370,12 @@ fun LibraryHome(
             else -> onOpenFile(f)
         }
     }
-    fun menu(f: File) { if (selecting) toggle(f) else menuFor = f }
+    fun menu(f: File, fromRecent: Boolean = false) {
+        if (selecting) { toggle(f); return }
+        menuFor = f
+        menuFromRecent = fromRecent
+        menuAt = if (drag.pressedWithMouse) drag.pressedAt else null
+    }
 
     // ---- back / Escape -------------------------------------------------------------------
 
@@ -328,6 +395,39 @@ fun LibraryHome(
         DocumentShelf.apply(docs, DocumentShelf.Query(sort = sort, filters = filters, text = query), roots)
     }
     val groups = remember(shown, sort, roots) { DocumentShelf.group(shown, sort, roots) }
+
+    val itemMenu: @Composable (File, Boolean) -> Unit = { target, dropdown ->
+        fun close() { menuFor = null; menuAt = null }
+        ItemActions(
+            target, backend, roots, here, dropdown = dropdown, fromRecent = menuFromRecent,
+            onOpen = { close(); tap(target) },
+            onShowInFolder = { close(); trail = pathTo(target.parentFile!!, roots); query = "" },
+            onSelect = { close(); selected = setOf(target.absolutePath) },
+            onToggleStar = { close(); scope.launch { withContext(Dispatchers.IO) { backend.togglePin(target) }; refresh() } },
+            onMoveTo = { folder -> close(); moveAll(listOf(target to folder)) },
+            onMove = { close(); moving = listOf(target) },
+            onRename = { close(); renaming = target },
+            onDelete = { close(); remove(listOf(target)) },
+            onRemoveRecent = { close(); scope.launch { withContext(Dispatchers.IO) { backend.removeRecent(target) }; refresh() } },
+            onNewFolder = { close(); newFolderIn = target },
+            onOrganize = { close(); organizing = true to target },
+            onSetDefault = {
+                close()
+                scope.launch {
+                    withContext(Dispatchers.IO) { backend.defaultNewFolder = target }
+                    snackbar.showSnackbar("New documents will go in ${target.name}")
+                }
+            },
+            onRemoveFromHome = {
+                close()
+                scope.launch {
+                    withContext(Dispatchers.IO) { backend.removeLibraryFolder(target) }
+                    trail = emptyList(); refresh()
+                    snackbar.showSnackbar("${target.name} is no longer on Home. Nothing was deleted.")
+                }
+            }
+        )
+    }
 
     var origin by remember { mutableStateOf(Offset.Zero) }
     val listState = rememberLazyListState()
@@ -361,7 +461,7 @@ fun LibraryHome(
                                     selected = emptySet(); refresh()
                                 }
                             }) { Icon(Icons.Default.Star, "Star") }
-                            IconButton(onClick = { deleting = selected.map(::File) }) {
+                            IconButton(onClick = { remove(selected.map(::File)) }) {
                                 Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
                             }
                         }
@@ -441,7 +541,7 @@ fun LibraryHome(
                                 item {
                                     ScrollingRow(starred, key = { it.absolutePath }) { f ->
                                         if (f.isDirectory) {
-                                            FolderTile(f, backend, drag, starred = true, selected = f.absolutePath in selected,
+                                            FolderTile(f, backend, drag, contentStamp, starred = true, selected = f.absolutePath in selected,
                                                 onOpen = { tap(f) }, onMenu = { menu(f) }, carry = { carry(f) }, onDrop = dropInto)
                                         } else {
                                             DocumentCard(f, backend, drag, starred = true, selected = f.absolutePath in selected,
@@ -455,7 +555,7 @@ fun LibraryHome(
                                 item {
                                     ScrollingRow(recents, key = { it.absolutePath }) { f ->
                                         DocumentCard(f, backend, drag, selected = f.absolutePath in selected,
-                                            onOpen = { tap(f) }, onMenu = { menu(f) }, carry = { carry(f) }, onDrop = dropInto)
+                                            onOpen = { tap(f) }, onMenu = { menu(f, fromRecent = true) }, carry = { carry(f) }, onDrop = dropInto)
                                     }
                                 }
                             }
@@ -500,7 +600,7 @@ fun LibraryHome(
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     folders.forEach { f ->
-                                        FolderTile(f, backend, drag, selected = f.absolutePath in selected,
+                                        FolderTile(f, backend, drag, contentStamp, selected = f.absolutePath in selected,
                                             onOpen = { tap(f) }, onMenu = { menu(f) }, carry = { carry(f) }, onDrop = dropInto)
                                     }
                                 }
@@ -545,8 +645,7 @@ fun LibraryHome(
                                         FilterChip(
                                             selected = on,
                                             onClick = {
-                                                filters = if (on) filters - f else filters + f
-                                                backend.setPref(K_FILTERS, filters.joinToString(",") { it.name })
+                                                setFilters(if (on) filters - f else filters + f)
                                             },
                                             label = { Text("${f.label} ($n)") }
                                         )
@@ -560,7 +659,7 @@ fun LibraryHome(
                                     )
                                 }
                                 if (filters.isNotEmpty()) {
-                                    TextButton(onClick = { filters = emptySet(); backend.setPref(K_FILTERS, null) }) { Text("Clear filters") }
+                                    TextButton(onClick = { setFilters(emptySet()) }) { Text("Clear filters") }
                                 }
                             }
                         }
@@ -610,6 +709,17 @@ fun LibraryHome(
             }
         }
 
+        // ---- the menu, right where it was right-clicked ----
+        val at = menuAt
+        val target = menuFor
+        if (at != null && target != null) {
+            Box(Modifier.offset { (at - origin).let { IntOffset(it.x.roundToInt(), it.y.roundToInt()) } }) {
+                androidx.compose.material3.DropdownMenu(expanded = true, onDismissRequest = { menuFor = null; menuAt = null }) {
+                    itemMenu(target, true)
+                }
+            }
+        }
+
         // ---- while something is carried: somewhere to put it, and it under the finger ----
         if (drag.active) {
             DropDock(
@@ -641,35 +751,10 @@ fun LibraryHome(
     // ---- the menu for one thing --------------------------------------------------------------
 
     menuFor?.let { target ->
-        ModalBottomSheet(onDismissRequest = { menuFor = null }, sheetState = rememberModalBottomSheetState()) {
-            ItemActions(
-                target, backend, roots, here,
-                onOpen = { menuFor = null; tap(target) },
-                onShowInFolder = { menuFor = null; trail = pathTo(target.parentFile!!, roots); query = "" },
-                onSelect = { menuFor = null; selected = setOf(target.absolutePath) },
-                onToggleStar = { menuFor = null; scope.launch { withContext(Dispatchers.IO) { backend.togglePin(target) }; refresh() } },
-                onMoveTo = { folder -> menuFor = null; moveAll(listOf(target to folder)) },
-                onMove = { menuFor = null; moving = listOf(target) },
-                onRename = { menuFor = null; renaming = target },
-                onDelete = { menuFor = null; deleting = listOf(target) },
-                onNewFolder = { menuFor = null; newFolderIn = target },
-                onOrganize = { menuFor = null; organizing = true to target },
-                onSetDefault = {
-                    menuFor = null
-                    scope.launch {
-                        withContext(Dispatchers.IO) { backend.defaultNewFolder = target }
-                        snackbar.showSnackbar("New documents will go in ${target.name}")
-                    }
-                },
-                onRemoveFromHome = {
-                    menuFor = null
-                    scope.launch {
-                        withContext(Dispatchers.IO) { backend.removeLibraryFolder(target) }
-                        trail = emptyList(); refresh()
-                        snackbar.showSnackbar("${target.name} is no longer on Home. Nothing was deleted.")
-                    }
-                }
-            )
+        if (menuAt == null) {
+            ModalBottomSheet(onDismissRequest = { menuFor = null }, sheetState = rememberModalBottomSheetState()) {
+                itemMenu(target, false)
+            }
         }
     }
 
@@ -773,6 +858,7 @@ private const val K_AUTO_SKIP = "home.autoFile.skip"
 private data class Loaded(
     val roots: List<File>,
     val folders: List<File>,
+    val folderCounts: List<Int>,
     val recents: List<File>,
     val starred: List<File>,
     val docs: List<DocumentShelf.Item>
@@ -907,6 +993,8 @@ private fun FolderTile(
     folder: File,
     backend: LibraryBackend,
     drag: DragToFolder,
+    /** Changes when anything on Home changed: the tile reads its folder again. */
+    contentStamp: Int,
     starred: Boolean = false,
     selected: Boolean,
     onOpen: () -> Unit,
@@ -917,7 +1005,9 @@ private fun FolderTile(
     var preview by remember(folder.absolutePath) { mutableStateOf<List<File>>(emptyList()) }
     var count by remember(folder.absolutePath) { mutableStateOf(0) }
     var isDefault by remember(folder.absolutePath) { mutableStateOf(false) }
-    LaunchedEffect(folder.absolutePath) {
+    // Keyed on the stamp as well as the folder: a document dropped in has to show up at once,
+    // not the next time the tile happens to be built from scratch.
+    LaunchedEffect(folder.absolutePath, contentStamp) {
         withContext(Dispatchers.IO) {
             Triple(backend.folderPreview(folder, 4), backend.itemCount(folder), backend.isDefaultNewFolder(folder))
         }.let { (p, c, d) -> preview = p; count = c; isDefault = d }
@@ -1135,6 +1225,8 @@ private fun DropDock(
                 folders.forEach { f ->
                     DockChip(f, f.name, Icons.Default.Folder, drag, highlighted = drag.over?.absolutePath == f.absolutePath)
                 }
+                // Dropped here, it goes to Recently deleted - with an Undo, and 30 days to change your mind.
+                DockChip(TRASH_TARGET, "Delete", Icons.Default.Delete, drag, highlighted = drag.over?.absolutePath == TRASH_TARGET.absolutePath, danger = true)
             }
         }
     }
@@ -1147,13 +1239,24 @@ private fun DockChip(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     drag: DragToFolder,
     highlighted: Boolean,
-    keySuffix: String = ""
+    keySuffix: String = "",
+    danger: Boolean = false
 ) {
     val usable = drag.canDrop(folder)
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = if (highlighted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-        contentColor = if (highlighted) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        color = when {
+            highlighted && danger -> MaterialTheme.colorScheme.error
+            highlighted -> MaterialTheme.colorScheme.primary
+            danger -> MaterialTheme.colorScheme.errorContainer
+            else -> MaterialTheme.colorScheme.surface
+        },
+        contentColor = when {
+            highlighted && danger -> MaterialTheme.colorScheme.onError
+            highlighted -> MaterialTheme.colorScheme.onPrimary
+            danger -> MaterialTheme.colorScheme.onErrorContainer
+            else -> MaterialTheme.colorScheme.onSurface
+        },
         modifier = Modifier.dropTarget(drag, DOCK + folder.absolutePath + keySuffix, folder)
     ) {
         Row(
@@ -1176,6 +1279,10 @@ private fun ItemActions(
     backend: LibraryBackend,
     roots: List<File>,
     here: File?,
+    /** Drawn as the small menu at the pointer, rather than the sheet from the bottom. */
+    dropdown: Boolean,
+    /** Opened on the Recent row, which can be left without touching the document. */
+    fromRecent: Boolean,
     onOpen: () -> Unit,
     onShowInFolder: () -> Unit,
     onSelect: () -> Unit,
@@ -1184,6 +1291,7 @@ private fun ItemActions(
     onMove: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onRemoveRecent: () -> Unit,
     onNewFolder: () -> Unit,
     onOrganize: () -> Unit,
     onSetDefault: () -> Unit,
@@ -1193,36 +1301,53 @@ private fun ItemActions(
     // Where its course number says it belongs - one tap rather than a trip through the picker.
     var classFolder by remember(target.absolutePath) { mutableStateOf<File?>(null) }
     LaunchedEffect(target.absolutePath) {
-        withContext(Dispatchers.IO) {
-            starred = backend.isPinned(target)
-            if (target.isFile) {
-                classFolder = ClassCodes.suggest(listOf(target), backend.allFolders(roots))
+        val (s, c) = withContext(Dispatchers.IO) {
+            backend.isPinned(target) to if (target.isFile) {
+                ClassCodes.suggest(listOf(target), backend.allFolders(roots))
                     .firstOrNull { it.alternatives.isEmpty() && !it.clash }?.target
-            }
+            } else null
         }
+        starred = s; classFolder = c
     }
     val isRoot = roots.any { it.absolutePath == target.absolutePath }
     val elsewhere = target.parentFile?.absolutePath != here?.absolutePath && !isRoot
-    Column(Modifier.padding(bottom = 20.dp)) {
-        Text(
-            target.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp)
-        )
-        HorizontalDivider()
-        ActionRow(if (target.isDirectory) Icons.Default.FolderOpen else Icons.Default.PictureAsPdf, "Open", onOpen)
-        classFolder?.let { f -> ActionRow(Icons.Default.AutoAwesome, "Move to ${f.name}", { onMoveTo(f) }) }
-        if (elsewhere && target.parentFile != null) ActionRow(Icons.Default.Folder, "Show in folder", onShowInFolder)
-        ActionRow(Icons.Default.CheckCircle, "Select", onSelect)
-        ActionRow(if (starred) Icons.Default.Star else Icons.Default.StarBorder, if (starred) "Remove star" else "Star", onToggleStar)
-        if (!isRoot) ActionRow(Icons.AutoMirrored.Filled.DriveFileMove, "Move to...", onMove)
-        if (target.isDirectory) {
-            ActionRow(Icons.Default.CreateNewFolder, "New folder inside", onNewFolder)
-            ActionRow(Icons.Default.AutoAwesome, "Sort into class folders", onOrganize)
-            ActionRow(Icons.AutoMirrored.Filled.PlaylistAdd, "Put new documents here", onSetDefault)
+    val inTrashReach = DocumentTrash.rootFor(target, roots) != null
+
+    @Composable
+    fun row(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit, danger: Boolean = false) {
+        if (dropdown) {
+            val tint = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text(label, color = if (danger) MaterialTheme.colorScheme.error else androidx.compose.ui.graphics.Color.Unspecified) },
+                leadingIcon = { Icon(icon, null, Modifier.size(20.dp), tint = tint) },
+                onClick = onClick
+            )
+        } else ActionRow(icon, label, onClick, danger)
+    }
+
+    Column(if (dropdown) Modifier.widthIn(min = 220.dp) else Modifier.padding(bottom = 20.dp)) {
+        if (!dropdown) {
+            Text(
+                target.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 10.dp)
+            )
+            HorizontalDivider()
         }
-        ActionRow(Icons.Default.DriveFileRenameOutline, "Rename", onRename)
-        if (isRoot) ActionRow(Icons.Default.RemoveCircleOutline, "Remove from Home", onRemoveFromHome)
-        ActionRow(Icons.Default.Delete, "Delete", onDelete, danger = true)
+        row(if (target.isDirectory) Icons.Default.FolderOpen else Icons.Default.PictureAsPdf, "Open", onOpen)
+        classFolder?.let { f -> row(Icons.Default.AutoAwesome, "Move to ${f.name}", { onMoveTo(f) }) }
+        if (elsewhere && target.parentFile != null) row(Icons.Default.Folder, "Show in folder", onShowInFolder)
+        if (fromRecent) row(Icons.Default.Clear, "Remove from Recent", onRemoveRecent)
+        row(Icons.Default.CheckCircle, "Select", onSelect)
+        row(if (starred) Icons.Default.Star else Icons.Default.StarBorder, if (starred) "Remove star" else "Star", onToggleStar)
+        if (!isRoot) row(Icons.AutoMirrored.Filled.DriveFileMove, "Move to...", onMove)
+        if (target.isDirectory) {
+            row(Icons.Default.CreateNewFolder, "New folder inside", onNewFolder)
+            row(Icons.Default.AutoAwesome, "Sort into class folders", onOrganize)
+            row(Icons.AutoMirrored.Filled.PlaylistAdd, "Put new documents here", onSetDefault)
+        }
+        row(Icons.Default.DriveFileRenameOutline, "Rename", onRename)
+        if (isRoot) row(Icons.Default.RemoveCircleOutline, "Remove from Home", onRemoveFromHome)
+        row(Icons.Default.Delete, if (inTrashReach) "Delete" else "Delete for good...", onDelete, danger = true)
     }
 }
 
@@ -1260,7 +1385,12 @@ private fun RenameDialog(target: File, onDismiss: () -> Unit, onRename: (String)
         title = { Text("Rename") },
         text = {
             Column {
-                OutlinedTextField(value = value, onValueChange = { value = it }, singleLine = true, label = { Text("Name") })
+                val ok = value.text.isNotBlank() && finalName() != target.name
+                OutlinedTextField(
+                    value = value, onValueChange = { value = it }, singleLine = true, label = { Text("Name") },
+                    keyboardOptions = DoneKey, keyboardActions = doneAction(ok) { onRename(finalName()) },
+                    modifier = Modifier.onEnter(ok) { onRename(finalName()) }
+                )
                 if (target.isFile) {
                     Text(
                         "Your handwriting and pictures are stored inside the document, so they follow the new name.",
@@ -1285,7 +1415,13 @@ private fun NameDialog(title: String, initial: String, confirm: String, onDismis
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Default.CreateNewFolder, null) },
         title = { Text(title) },
-        text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") }) },
+        text = {
+            OutlinedTextField(
+                value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Name") },
+                keyboardOptions = DoneKey, keyboardActions = doneAction(name.isNotBlank()) { onDone(name.trim()) },
+                modifier = Modifier.onEnter(name.isNotBlank()) { onDone(name.trim()) }
+            )
+        },
         confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onDone(name.trim()) }) { Text(confirm) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
@@ -1309,6 +1445,9 @@ internal fun Thumb(file: File, backend: LibraryBackend) {
         else -> CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
     }
 }
+
+/** Where the strip's Delete chip says something was dropped: not a folder, the trash. */
+private val TRASH_TARGET = File("\u0000trash")
 
 /** How long resting on a folder in the strip takes to open it. */
 private const val SPRING_MS = 700L

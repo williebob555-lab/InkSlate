@@ -90,6 +90,9 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
             AppFlavor.settingsSection?.let { it(); HorizontalDivider(Modifier.padding(top = 14.dp)) }
             SavingSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
+            // Anything deleted from Home, to put back - kept 30 days.
+            com.inkslate.library.RecentlyDeletedSection(remember { DesktopLibrary(FileRepo()) })
+            HorizontalDivider(Modifier.padding(top = 14.dp))
             YourDevicesSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             WhileOpenSection()

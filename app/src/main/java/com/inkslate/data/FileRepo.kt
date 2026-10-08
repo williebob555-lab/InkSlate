@@ -253,6 +253,24 @@ class FileRepo(private val context: Context) {
         Unit
     }
 
+    /** What [delete] lets go of besides the file itself, for something sent to the trash. */
+    fun forgetRemoved(file: File, savePrefs: SavePrefs) {
+        AppPeers.announceLibraryChanged()
+        if (!file.isDirectory) {
+            File(InkDocument.sidecarPathFor(file.absolutePath)).delete()
+            InkJournal(context).forget(file)
+        }
+        savePrefs.clearOverride(file.absolutePath)
+        unpin(file)
+        removeRecent(file)
+    }
+
+    /** Off the Recent row, and nothing more: the document stays where it is. */
+    fun removeRecent(file: File) {
+        val cur = (prefs.getString(K_RECENTS, "") ?: "").split('\n').filter { it.isNotBlank() && it != file.absolutePath }
+        prefs.edit().putString(K_RECENTS, cur.joinToString("\n")).apply()
+    }
+
     // ---- recents and pins ----------------------------------------------------
 
     fun recents(limit: Int = 12): List<File> =

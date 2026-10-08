@@ -73,7 +73,7 @@ fun HomeScreen(
 }
 
 /** The computer's files, as Home asks for them. */
-private class DesktopLibrary(private val repo: FileRepo) : LibraryBackend {
+internal class DesktopLibrary(private val repo: FileRepo) : LibraryBackend {
     override fun libraryFolders() = repo.libraryFolders()
     override fun removeLibraryFolder(dir: File) = repo.removeLibraryFolder(dir)
     override fun recents(limit: Int) = repo.recents(limit)
@@ -91,6 +91,8 @@ private class DesktopLibrary(private val repo: FileRepo) : LibraryBackend {
     override fun move(f: File, destination: File) = repo.move(f, destination)
     override fun delete(f: File) = repo.delete(f)
     override fun thumbnail(f: File): ImageBitmap? = repo.thumbnail(f)
+    override fun removeRecent(f: File) = repo.removeRecent(f)
+    override fun forget(f: File) = repo.forgetRemoved(f)
     override fun pref(key: String) = DesktopPrefs.get(key)
     override fun setPref(key: String, value: String?) = DesktopPrefs.put(key, value)
 }

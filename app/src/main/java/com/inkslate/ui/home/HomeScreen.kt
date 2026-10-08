@@ -48,7 +48,7 @@ fun HomeScreen(
 }
 
 /** The tablet's files, as Home asks for them. */
-private class AndroidLibrary(private val repo: FileRepo, private val savePrefs: SavePrefs) : LibraryBackend {
+internal class AndroidLibrary(private val repo: FileRepo, private val savePrefs: SavePrefs) : LibraryBackend {
     override fun libraryFolders() = repo.libraryFolders()
     override fun removeLibraryFolder(dir: File) = repo.removeLibraryFolder(dir)
     override fun recents(limit: Int) = repo.recents(limit)
@@ -66,6 +66,8 @@ private class AndroidLibrary(private val repo: FileRepo, private val savePrefs: 
     override fun move(f: File, destination: File) = repo.move(f, destination, savePrefs)
     override fun delete(f: File) = repo.delete(f, savePrefs)
     override fun thumbnail(f: File): ImageBitmap? = repo.thumbnail(f)?.asImageBitmap()
+    override fun removeRecent(f: File) = repo.removeRecent(f)
+    override fun forget(f: File) = repo.forgetRemoved(f, savePrefs)
     override fun pref(key: String) = repo.pref(key)
     override fun setPref(key: String, value: String?) = repo.setPref(key, value)
 }
