@@ -179,6 +179,12 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            // Anything deleted from Home, to put back - kept 30 days.
+            com.inkslate.library.RecentlyDeletedSection(
+                remember { com.inkslate.ui.home.AndroidLibrary(FileRepo(context), prefs) }
+            )
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Autosave")
 
             SwitchRow(

@@ -5,6 +5,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.ImageBitmap
 import com.inkslate.core.DocumentShelf
+import com.inkslate.core.DocumentTrash
 import com.inkslate.core.Pictures
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -40,11 +41,43 @@ interface LibraryBackend {
 
     fun thumbnail(f: File): ImageBitmap?
 
+    /** Take [f] off the Recent row, and nothing else. */
+    fun removeRecent(f: File)
+
+    /**
+     * Let go of what the app keeps about [f] apart from the file - its star, its place in Recent,
+     * its save rules, its working copy - once it has gone to the trash.
+     */
+    fun forget(f: File)
+
     /** A small remembered setting: the sort, the filters, the automation switch. */
     fun pref(key: String): String?
     fun setPref(key: String, value: String?)
 
     // ---- built from the above; the same on every platform ------------------------------------
+
+    /**
+     * Delete [f] the forgiving way: into the trash of the folder on Home it is in, for
+     * [DocumentTrash.KEEP_DAYS] days. Fails for anything not inside a folder on Home.
+     */
+    fun trash(f: File): Result<Pair<File, DocumentTrash.Entry>> = runCatching {
+        val root = DocumentTrash.rootFor(f, libraryFolders()) ?: error("\"${f.name}\" is not inside a folder on Home")
+        val entry = DocumentTrash(root).put(f)
+        runCatching { forget(f) }
+        root to entry
+    }
+
+    /** Everything deleted from Home, newest first, with the folder on Home it came from. */
+    fun trashed(): List<Pair<File, DocumentTrash.Entry>> =
+        libraryFolders().flatMap { root -> DocumentTrash(root).entries().map { root to it } }
+            .sortedByDescending { it.second.removedAt }
+
+    fun restore(root: File, entry: DocumentTrash.Entry): Result<File> = runCatching { DocumentTrash(root).restore(entry) }
+
+    fun deleteForever(root: File, entry: DocumentTrash.Entry) = DocumentTrash(root).deleteForever(entry)
+
+    /** Clear out what has been in the trash past its time. */
+    fun purgeTrash() = libraryFolders().forEach { runCatching { DocumentTrash(it).purge() } }
 
     /** Folders of a folder, as a person would see them: no hidden ones, no bookkeeping. */
     fun subfolders(dir: File): List<File> =

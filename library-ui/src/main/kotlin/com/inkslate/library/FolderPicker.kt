@@ -174,22 +174,24 @@ fun FolderPicker(
                 }
                 if (creating && here != null) {
                     var name by remember { mutableStateOf("") }
+                    fun make() {
+                        scope.launch {
+                            withContext(Dispatchers.IO) { backend.createFolder(here, name) }.fold(
+                                onSuccess = { made -> creating = false; at = made; reload++ },
+                                onFailure = { error = it.message ?: "Could not make it" }
+                            )
+                        }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = name, onValueChange = { name = it; error = null },
                             singleLine = true, label = { Text("New folder in ${here.name}") },
                             isError = error != null,
                             supportingText = error?.let { { Text(it) } },
-                            modifier = Modifier.weight(1f)
+                            keyboardOptions = DoneKey, keyboardActions = doneAction(name.isNotBlank()) { make() },
+                            modifier = Modifier.weight(1f).onEnter(name.isNotBlank()) { make() }
                         )
-                        TextButton(enabled = name.isNotBlank(), onClick = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { backend.createFolder(here, name) }.fold(
-                                    onSuccess = { made -> creating = false; at = made; reload++ },
-                                    onFailure = { error = it.message ?: "Could not make it" }
-                                )
-                            }
-                        }) { Text("Make") }
+                        TextButton(enabled = name.isNotBlank(), onClick = { make() }) { Text("Make") }
                     }
                 }
             }

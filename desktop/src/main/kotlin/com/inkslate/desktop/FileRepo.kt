@@ -249,6 +249,21 @@ class FileRepo {
         invalidateThumb(file)
     }
 
+    /** What [delete] lets go of besides the file itself, for something sent to the trash. */
+    fun forgetRemoved(file: File) {
+        DesktopPeers.announceLibraryChanged()
+        if (!file.isDirectory) {
+            DocumentIO.sidecarFor(file).delete()
+            DocumentIO.forgetWorking(file)
+        }
+        removeFromList(K_PINS, file)
+        removeFromList(K_RECENTS, file)
+        invalidateThumb(file)
+    }
+
+    /** Off the Recent row, and nothing more: the document stays where it is. */
+    fun removeRecent(file: File) = removeFromList(K_RECENTS, file)
+
     // ---- recents and pins ----------------------------------------------------
 
     fun recents(limit: Int = 12): List<File> =
