@@ -234,7 +234,16 @@ internal object Transcriber {
         }, "read-resume").apply { isDaemon = true; start() }
     }
 
-    private fun readNow(state: SheetsState, file: File, only: Set<Int>? = null): Score? {
+    /**
+     * Read [file] whole, off the screen's thread, saying nothing on the screen - several at once
+     * (the band's parts before the band plays). Kept like any reading.
+     */
+    fun readQuietly(state: SheetsState, file: File): Score? =
+        runCatching { readNow(state, file, null, quiet = true) }.onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
+
+    private fun readNow(state: SheetsState, file: File, only: Set<Int>? = null,
+                        /** Read beside others (the band's parts): no word of it on the screen - the caller says how far they all are. */
+                        quiet: Boolean = false): Score? {
         val peek = state.platform.peek(file) ?: return null
         peek.use {
             val dir = folder(state, file)
@@ -261,7 +270,7 @@ internal object Transcriber {
                 return pageInk(peek, p)
             }
             try { for ((i, p) in todo.withIndex()) {
-                state.platform.onMain { progress = i.toFloat() / todo.size.coerceAtLeast(1); busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
+                if (!quiet) state.platform.onMain { progress = i.toFloat() / todo.size.coerceAtLeast(1); busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
                 // A page following one just read, or read before, carries on from it: its clef, key,
                 // time and bar numbers. One on its own takes its numbers from the print.
                 if (p != last + 1) {
@@ -297,7 +306,7 @@ internal object Transcriber {
                 val net = if (printed == null) Net.shipped else null
                 val unsure = reading.measures.filter { !it.sure && it.bars == 1 }
                 if (net != null && unsure.isNotEmpty()) runCatching {
-                    state.platform.onMain { busy = "Looking again at ${unsure.size} unsure bar${if (unsure.size == 1) "" else "s"} on page ${p + 1}..." }
+                    if (!quiet) state.platform.onMain { busy = "Looking again at ${unsure.size} unsure bar${if (unsure.size == 1) "" else "s"} on page ${p + 1}..." }
                     val looked = Workers.map(unsure.groupBy { it.staff }.entries.toList()) { (staff, bars) ->
                         val first = reading.measures.first { it.staff == staff }
                         Recognizer().lookAgainStaff(ink, grey, net, bars, first)

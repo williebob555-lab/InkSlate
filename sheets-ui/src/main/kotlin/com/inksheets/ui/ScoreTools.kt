@@ -1072,17 +1072,29 @@ internal object ScoreTools {
         return todo
     }
 
-    /** Read whichever of the band's parts are not read yet, one after another, then [then]. */
+    /**
+     * Read whichever of the band's parts are not read yet - several at once where the device has
+     * the cores for it - then [then]. How many are done is said as they finish.
+     */
     private fun readBand(s: SheetsState, then: () -> Unit) {
         val todo = otherParts(s).filter { Transcriber.cached(s, it.second) == null }.distinctBy { it.second.absolutePath }
         if (todo.isEmpty()) { bandReading = null; then(); return }
         val total = otherParts(s).distinctBy { it.second.absolutePath }.size
-        fun next(i: Int) {
-            if (i >= todo.size) { bandReading = null; then(); return }
-            bandReading = "${total - todo.size + i + 1} of $total"
-            Transcriber.read(s, todo[i].second) { next(i + 1) }
+        val done = java.util.concurrent.atomic.AtomicInteger(total - todo.size)
+        bandReading = "${done.get()} of $total"
+        // Each reading already shares the reader's own threads; two or three parts side by side
+        // keeps every core busy without starving the sound.
+        val side = if (com.inksheets.core.omr.Workers.roomy) 3 else 1
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(side, todo.size)) { r -> Thread(r, "read-band").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+        for ((_, f) in todo) pool.execute {
+            Transcriber.readQuietly(s, f)
+            val n = done.incrementAndGet()
+            s.platform.onMain {
+                bandReading = if (n >= total) null else "$n of $total"
+                if (n >= total) then()
+            }
         }
-        next(0)
+        pool.shutdown()
     }
 
     /** The band - every other part read - from the bars chosen or the page in front, without this part. */
@@ -1111,7 +1123,10 @@ internal object ScoreTools {
             val first = from?.minus(offset) ?: sel?.first ?: mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
             val range = if (sel != null) first..sel.last else first..last
             val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(mine, first) else null
-            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, order = order)
+            // This part too, where asked: to hear the whole, or to hear how it fits.
+            val (myId, myTranspose) = instrumentOf(s)
+            val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, Synth.patchFor(Midi.program(soundAs ?: myId))) to 1f else null
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order)
             said = "The band: ${voices.size} parts"
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
@@ -1138,6 +1153,16 @@ internal object ScoreTools {
     }
 
     private var ensemble: com.inksheets.core.omr.EnsemblePlayer? = null
+
+    /** The band played with this part in it as well (the whole piece), or without it (to play along). Remembered. */
+    var bandWithMe by mutableStateOf(false)
+        private set
+
+    fun chooseBandWithMe(s: SheetsState, on: Boolean) { bandWithMe = on; s.platform.setPref(K_BAND_ME, on.toString()) }
+
+    fun loadBandWithMe(s: SheetsState) { bandWithMe = s.platform.pref(K_BAND_ME) == "true" }
+
+    private const val K_BAND_ME = "sheets_band_with_me"
 
     // ---- cue notes ---------------------------------------------------------------------------
 

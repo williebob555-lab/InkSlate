@@ -36,9 +36,9 @@ change size. **No build until the very end** — commit locally, one `[build she
 - [ ] Clean view overhaul: match the piece's style, carry over every musical element
 - [x] "Replace the whole page" = an overlay on the existing page (undoable), never a new document/duplicate files
 - [x] Readings must persist — user keeps re-scanning the same parts (investigate cache keys/sync)
-- [ ] Band playback: option to include/exclude own part; read the band's parts in parallel
+- [x] Band playback: option to include/exclude own part; read the band's parts in parallel
 ### P Playback engine
-- [ ] Expressive, planned performance: whole piece analysed before playing (phrasing, breath, momentum, dynamics shaping, articulation blend), human-sounding — a demo-quality interpretation, not a note machine
+- [~] (engine landed: Interpretation.kt; next: listen-test with user, timbre work) Expressive, planned performance: whole piece analysed before playing (phrasing, breath, momentum, dynamics shaping, articulation blend), human-sounding — a demo-quality interpretation, not a note machine
 
 ## Phase 0 — setup
 - [x] Pull Slate's Home rebuild (df95372) — `library-ui/` shared source now exists

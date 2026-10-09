@@ -92,7 +92,13 @@ class Synth(val sampleRate: Int) {
      * One note to play: from sample [start] for [length] samples. [accent] (0-1): struck harder - a
      * quicker, brighter start that stands out from the notes round it and falls back at once.
      */
-    class Tone(val midi: Int, val start: Long, val length: Long, val velocity: Float, val patch: Patch, val accent: Float = 0f)
+    class Tone(
+        val midi: Int, val start: Long, val length: Long, val velocity: Float, val patch: Patch, val accent: Float = 0f,
+        /** How loud it has become by its end: a swell into a high point, a taper away from it. */
+        val endVelocity: Float = velocity,
+        /** Joined to the note before it (a slur): no new attack - the sound moves on to it. */
+        val legato: Boolean = false
+    )
 
     private class Voice(val tone: Tone, val freq: Double) {
         var phase = DoubleArray(tone.patch.harmonics.size)
@@ -121,6 +127,12 @@ class Synth(val sampleRate: Int) {
         pending.clear(); voices.clear(); position = to
     }
 
+    /**
+     * The room: a small hall's reverberation under everything, so notes bloom and decay into a
+     * space rather than stopping dead in a box - what most makes a synthesised band sound played.
+     */
+    private val room = Room(sampleRate)
+
     /** What the voices make, before it is levelled and added in. */
     private var mix = FloatArray(0)
     /** The level the whole is turned down to now (1: as it is), and the gain per sample towards where it is going. */
@@ -137,6 +149,7 @@ class Synth(val sampleRate: Int) {
         if (mix.size != n) mix = FloatArray(n)
         java.util.Arrays.fill(mix, 0f)
         render(mix)
+        room.process(mix)
         var peak = 0f
         for (v in mix) peak = max(peak, kotlin.math.abs(v))
         // Headroom: the loudest sample at nine tenths of full scale at most. Turned down at once
@@ -174,11 +187,21 @@ class Synth(val sampleRate: Int) {
         val p = v.tone.patch
         val sr = sampleRate.toDouble()
         val accent = v.tone.accent.toDouble()
+        // Joined to the note before (a slur): no fresh attack, the tone simply moves on - a brief
+        // glide in from nothing so it never clicks.
+        val legato = v.tone.legato && p.fade <= 0.0
         // An accent speaks at once: its attack a fraction of the patch's own.
-        val attack = p.attack * sr * (1.0 - 0.75 * accent); val decay = p.decay * sr; val release = p.release * sr
+        val attack = if (legato) 0.012 * sr else p.attack * sr * (1.0 - 0.75 * accent)
+        val decay = p.decay * sr; val release = p.release * sr
         val punch = 0.07 * sr
-        val stop = v.tone.start + v.tone.length
+        val length = max(1L, v.tone.length)
+        val stop = v.tone.start + length
         val nyquist = sr / 2 * 0.9
+        // Louder is brighter: a soft note's upper harmonics fall away, a loud one's ring out - as
+        // every wind and brass instrument does (its tone changes with its dynamic, not only its level).
+        val v0 = v.tone.velocity; val v1 = v.tone.endVelocity
+        // Vibrato only on a held note, and only once it has settled.
+        val vibDelay = 0.28 * sr
         for (i in buf.indices) {
             val s = from + i
             if (s < v.tone.start) continue
@@ -186,6 +209,7 @@ class Synth(val sampleRate: Int) {
             // The envelope: up, down to the held level, and away after the note ends.
             var env = when {
                 t < attack -> t / attack
+                legato -> p.sustain.toDouble() + (1.0 - p.sustain) * 0.25 * exp(-(t - attack) / (0.05 * sr))
                 t < attack + decay -> 1.0 - (1.0 - p.sustain) * (t - attack) / decay
                 else -> p.sustain.toDouble()
             }
@@ -199,27 +223,72 @@ class Synth(val sampleRate: Int) {
                 env *= 1.0 - r / release
             }
             if (env <= 0.0) continue
-            val vib = if (p.vibratoHz > 0 && t > attack * 2) p.vibratoCents / 1200.0 * sin(2 * PI * p.vibratoHz * t / sr) * min(1.0, (t - attack * 2) / (0.3 * sr)) else 0.0
+            // Where its loudness has got to: a swell or a taper across the note.
+            val u = (t / length).coerceIn(0.0, 1.0)
+            val vel = v0 + (v1 - v0) * u.toFloat()
+            val vib = if (p.vibratoHz > 0 && t > vibDelay && length > sr * 0.45)
+                p.vibratoCents / 1200.0 * sin(2 * PI * p.vibratoHz * t / sr) * min(1.0, (t - vibDelay) / (0.4 * sr)) else 0.0
             val f = v.freq * (1.0 + vib * 0.693)
-            // Brass blooms: its upper harmonics come in over the attack.
-            // (An accent is bright from its very start.)
-            val bright = if (p.bloom > 0f && accent < 0.5) min(1.0, 0.3 + t / (attack * 3 + 1)) else 1.0
+            // Brass blooms: its upper harmonics come in over the attack. (An accent is bright from its very start.)
+            val bloom = if (p.bloom > 0f && accent < 0.5 && !legato) min(1.0, 0.3 + t / (attack * 3 + 1)) else 1.0
+            val loud = (0.45 + 0.55 * min(1.2, vel.toDouble())).coerceIn(0.3, 1.15)
             var x = 0.0
             for (h in p.harmonics.indices) {
                 val fh = f * (h + 1)
                 if (fh >= nyquist) break
-                val amp = p.harmonics[h] * (if (h == 0) 1.0 else bright.pow(1.0 + h * p.bloom))
+                val amp = p.harmonics[h] * (if (h == 0) 1.0 else bloom.pow(1.0 + h * p.bloom) * loud.pow(h * 0.45))
                 v.phase[h] += 2 * PI * fh / sr
                 if (v.phase[h] > 2 * PI) v.phase[h] -= 2 * PI
                 x += amp * sine(v.phase[h])
             }
             if (p.breath > 0f) {
                 noise = noise * 6364136223846793005L + 1442695040888963407L
-                x += p.breath * ((noise ushr 33).toDouble() / (1L shl 31) - 1.0) * 4
+                // Breath: most at the start of a note (the tongue and the air), a little under it after.
+                val b = p.breath * (if (legato) 0.6 else 1.0 + 2.5 * exp(-t / (0.06 * sr)))
+                x += b * ((noise ushr 33).toDouble() / (1L shl 31) - 1.0) * 4
             }
-            buf[i] += (x * env * p.gain * v.tone.velocity).toFloat()
+            buf[i] += (x * env * p.gain * vel).toFloat()
         }
         return from + buf.size >= stop + release
+    }
+
+    /**
+     * A small hall (Schroeder's reverberator: four combs in parallel, two all-passes after): mono,
+     * the same on every device; about a second and a half to die away, mixed under the dry sound.
+     */
+    private class Room(rate: Int) {
+        private val k = rate / 44100.0
+        private val combs = intArrayOf(1557, 1617, 1491, 1422).map { FloatArray((it * k).toInt().coerceAtLeast(1)) }
+        private val combAt = IntArray(4)
+        private val combLow = FloatArray(4)
+        private val passes = intArrayOf(556, 225).map { FloatArray((it * k).toInt().coerceAtLeast(1)) }
+        private val passAt = IntArray(2)
+        private val feedback = 0.76f
+        private val damp = 0.3f
+        private val wet = 0.16f
+
+        fun process(buf: FloatArray) {
+            for (i in buf.indices) {
+                val input = buf[i] * 0.25f
+                var out = 0f
+                for (c in combs.indices) {
+                    val line = combs[c]; val j = combAt[c]
+                    val y = line[j]
+                    combLow[c] = y * (1 - damp) + combLow[c] * damp
+                    line[j] = input + combLow[c] * feedback
+                    combAt[c] = if (j + 1 >= line.size) 0 else j + 1
+                    out += y
+                }
+                for (a in passes.indices) {
+                    val line = passes[a]; val j = passAt[a]
+                    val y = line[j]
+                    line[j] = out + y * 0.5f
+                    out = y - out * 0.5f
+                    passAt[a] = if (j + 1 >= line.size) 0 else j + 1
+                }
+                buf[i] = buf[i] + out * wet
+            }
+        }
     }
 }
 
@@ -327,47 +396,36 @@ class EnsemblePlayer(
 
     init {
         val order = order ?: PlayOrder.unrolled(mine).measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
-        val loud = 0.75f / kotlin.math.sqrt(others.size.coerceAtLeast(1).toFloat())
+        // The timeline: every bar of the part played from, in playing order (a rest of many bars
+        // as that many bars), each as long as it is played.
+        val numbers = ArrayList<Int>(); val lengths = ArrayList<Double>(); val mineBars = ArrayList<Measure?>()
+        for (mm in order) for (k in 0 until mm.bars) {
+            numbers += mm.number + k
+            lengths += if (mm.bars > 1) mm.time.quarters else mm.playedQuarters
+            mineBars += if (mm.bars > 1) null else mm
+        }
+        val len = lengths.toDoubleArray()
+        fun along(v: Voice): List<Measure?> = numbers.map { n -> v.score.measures.firstOrNull { n >= it.number && n < it.number + it.bars }?.takeIf { it.bars == 1 } }
+        // Every part planned on the one timeline; one tempo for all, led by the part played from.
+        val plans = others.map { v -> Interpretation.analyse(along(v), len, v.drums) }
+        val lead = Interpretation.analyse(mineBars, len)
+        val map = Interpretation.tempoMap(listOf(lead) + plans, bpm, ensemble = true)
+        // Balanced as a band is: the tune on top a little forward, the inner parts back, the bass firm.
+        val means = plans.map { p -> p.notes.flatMap { it.keys.toList() }.takeIf { it.isNotEmpty() }?.average() }
+        val pitched = others.indices.filter { others[it].drums == null && means[it] != null }
+        val top = pitched.maxByOrNull { means[it]!! - others[it].transpose }
+        val bottom = pitched.minByOrNull { means[it]!! - others[it].transpose }
+        val base = 0.8f / kotlin.math.sqrt(others.size.coerceAtLeast(1).toFloat())
         val tones = ArrayList<Synth.Tone>()
-        val s = ArrayList<Long>(); val n = ArrayList<Int>()
-        var t = 0L
-        fun samples(q: Double) = (q * 60.0 / bpm * synth.sampleRate).toLong()
-        fun lay(v: Voice, m: Measure, at: Long, velocity: Float) {
-            if (m.bars > 1) return
-            var q = 0.0
-            val graces = m.gracesBefore()
-            for (e in m.events) {
-                if (e is Note && q < m.time.quarters) {
-                    // Grace notes: quick, just before the beat.
-                    graces[e]?.let { gs ->
-                        val each = min(synth.sampleRate * 0.06, samples(e.duration.quarters) / 3.0).toLong().coerceAtLeast(1L)
-                        for ((gi, g) in gs.withIndex()) {
-                            val gStart = max(0L, at + samples(q) - each * (gs.size - gi))
-                            val drums = v.drums
-                            if (drums != null) for (k in drums.keys(g)) tones += Synth.Tone(k, gStart, each, velocity * 0.8f, drums.patch)
-                            else for (p in g.pitches) tones += Synth.Tone((p.midi - v.transpose).coerceIn(12, 115), gStart, each, velocity * 0.8f, v.patch)
-                        }
-                    }
-                    val len = max(1L, samples(min(e.duration.quarters, m.time.quarters - q)) - synth.sampleRate / 60)
-                    val drums = v.drums
-                    if (drums != null) for (k in drums.keys(e)) tones += Synth.Tone(k, at + samples(q), len, velocity, drums.patch,
-                        if ("accent" in e.articulations || "marcato" in e.articulations) 0.8f else 0f)
-                    else for (p in e.pitches) tones += Synth.Tone((p.midi - v.transpose).coerceIn(12, 115), at + samples(q), len, velocity, v.patch)
-                }
-                q += e.duration.quarters
-            }
+        for ((i, v) in others.withIndex()) {
+            val weight = when (i) { top -> 1.2f; bottom -> 1.05f; else -> if (v.drums != null) 1f else 0.88f }
+            tones += Interpretation.tones(plans[i], map, synth.sampleRate, v.transpose, v.patch, 0L, base * weight, v.drums)
         }
-        for (mm in order) {
-            for (k in 0 until mm.bars) {
-                val number = mm.number + k
-                s += t; n += number
-                val barLen = samples(if (mm.bars > 1) mm.time.quarters else mm.playedQuarters)
-                for (v in others) v.score.measures.firstOrNull { number >= it.number && number < it.number + it.bars }?.let { lay(v, it, t, loud) }
-                guide?.let { (v, g) -> if (g > 0f && k == 0) lay(v, mm, t, g) }
-                t += barLen
-            }
-        }
-        starts = s.toLongArray(); numbers = n.toIntArray(); length = t
+        // Your own part as well, where wanted - at the loudness asked for.
+        guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose, v.patch, 0L, base * g, v.drums) }
+        starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }
+        this.numbers = numbers.toIntArray()
+        length = (map.seconds(lead.totalQ) * synth.sampleRate).toLong()
         synth.add(tones)
     }
 

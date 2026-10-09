@@ -22,153 +22,20 @@ object Performance {
     /** A dynamic that strikes one note hard and then returns ("sfz"), or drops at once after ("fp"). */
     private val STRUCK = setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp", "sfzp")
 
-    private fun tempoWord(text: String): Int? {
-        val w = text.lowercase().trim('.', ' ')
-        return when {
-            w.startsWith("rit") || w.startsWith("rall") || w.startsWith("allarg") || w.startsWith("slower") || w.startsWith("morendo") || w.startsWith("calando") -> 1
-            w.startsWith("accel") || w.startsWith("string") || w.startsWith("faster") -> -1
-            w == "tempo" || w.startsWith("a tempo") || w == "primo" || w.startsWith("tempo i") || w.startsWith("tempo 1") -> 0
-            else -> null
-        }
-    }
-
-    private class Held(val midi: Int, val start: Long, var end: Long, val velocity: Float, val accent: Float = 0f)
-
     /**
      * [bars] (in the order played) at [bpm] quarter notes a minute, [rate] samples a second, as
-     * [patch] sounds them ([transpose] semitones written above sounding), from sample [at].
+     * [patch] sounds them ([transpose] semitones written above sounding), from sample [at]: the
+     * whole passage planned first and played as a player would ([Interpretation]).
      */
     fun play(bars: List<Measure>, bpm: Double, rate: Int, transpose: Int, patch: Synth.Patch, at: Long = 0L,
              /** Drums: the drums each note is, in place of its pitches (see [DrumKind]). */
              drums: DrumKind? = null): Played {
-        val tones = ArrayList<Synth.Tone>()
-        val starts = ArrayList<Long>(); val numbers = ArrayList<Int>()
-        val perQuarter = rate * 60.0 / bpm
-        var t = at.toDouble()
-        var level = LEVELS.getValue("mf")
-        var tempo = 1.0          // beats' length against the written tempo: over 1 is slower
-        var pressing = 0         // 1 slowing, -1 pressing on, 0 steady
-        val open = HashMap<Int, Held>()
-        val hairpinsDone = HashSet<String>()
-        val gap = rate / 60L      // a hair between notes, so repeated ones are heard apart
-
-        val sounds = drums?.patch ?: patch
-        fun flush(midi: Int) { open.remove(midi)?.let { h -> tones += Synth.Tone(h.midi, h.start, max(1L, h.end - h.start), h.velocity, sounds, h.accent) } }
-        fun flushAll() { for (k in open.keys.toList()) flush(k) }
-
-        for (m in bars) {
-            starts += (t - at).toLong(); numbers += m.number
-            val played = m.playedQuarters
-            // A new section (its own time or key printed) starts in time again.
-            if (m.showsTime || m.showsKey) { tempo = 1.0; pressing = 0 }
-            if (m.bars > 1 || m.events.all { it is Rest }) {
-                flushAll()
-                t += played * perQuarter * tempo
-                continue
-            }
-            val sp = m.space
-            val dyn = m.directions.filter { it.kind == "dynamic" }.sortedBy { it.x }
-            val words = m.directions.filter { it.kind == "text" }.mapNotNull { d -> tempoWord(d.text)?.let { d.x to it } }.sortedBy { it.first }
-            val pins = m.directions.filter { it.kind == "cresc" || it.kind == "dim" }
-            val slurs = m.directions.filter { it.kind == "slur" }
-            // Breaths: the note sounding when one comes lets go a moment before the next.
-            val breaths = m.directions.filter { it.kind == "breath" }.map { it.x }
-            val xs = m.events.map { it.x }
-            var di = 0; var wi = 0
-            var q = 0.0
-            var struck: String? = null
-            val barStart = t
-            val graces = m.gracesBefore()
-            for (e in m.events) {
-                if (q >= played - 1e-9) break
-                val len = min(e.duration.quarters, played - q)
-                // What is marked at or before this note: dynamics, tempo words.
-                while (di < dyn.size && dyn[di].x <= e.x + sp) {
-                    val text = dyn[di].text.lowercase()
-                    LEVELS[text]?.let { level = it }
-                    if (text in STRUCK) struck = text
-                    di++
-                }
-                while (wi < words.size && words[wi].first <= e.x + sp) {
-                    when (words[wi].second) { 0 -> { tempo = 1.0; pressing = 0 }; else -> pressing = words[wi].second }
-                    wi++
-                }
-                // A hairpin past: the level it was heading for, held (until a dynamic says otherwise).
-                for (h in pins) {
-                    val key = "${m.page}/${m.staff}/${h.x}/${h.x2}"
-                    if (e.x > h.x2 && key !in hairpinsDone) { hairpinsDone += key; level = (level + if (h.kind == "cresc") 0.18f else -0.18f).coerceIn(0.15f, 1.1f) }
-                }
-                val beats = len * perQuarter * tempo
-                if (e is Note) {
-                    var v = level
-                    // In a hairpin: on the way there.
-                    for (h in pins) if (e.x >= h.x && e.x <= h.x2 && h.x2 > h.x) {
-                        val f = ((e.x - h.x) / (h.x2 - h.x)).coerceIn(0f, 1f)
-                        v += (if (h.kind == "cresc") 0.18f else -0.18f) * f
-                    }
-                    val a = e.articulations
-                    // Accents leant on hard: louder, and struck (see Synth.Tone.accent).
-                    var accent = 0f
-                    when {
-                        struck != null -> { v = max(v + 0.4f, 1.0f); accent = 1f; if (struck!!.endsWith("p")) level = LEVELS.getValue("p"); struck = null }
-                        "marcato" in a -> { v += 0.45f; accent = 1f }
-                        "accent" in a -> { v += 0.35f; accent = 0.85f }
-                    }
-                    val slurred = slurs.any { s -> e.x >= s.x - sp * 0.5f && e.x < s.x2 - sp * 0.8f }
-                    val articulated = when {
-                        "staccatissimo" in a -> beats * 0.3
-                        "staccato" in a -> beats * 0.5
-                        "marcato" in a -> beats * 0.75
-                        "accent" in a -> beats * 0.88
-                        "tenuto" in a || slurred -> beats
-                        else -> beats - gap
-                    }
-                    // A breath mark after it (before the next note): it ends early, a breath's worth.
-                    val i = m.events.indexOf(e)
-                    val nextX = xs.getOrNull(i + 1) ?: Float.MAX_VALUE
-                    val breathe = breaths.any { it > e.x && it < nextX }
-                    val sounding = if (breathe) min(articulated, beats - rate * 0.14) else articulated
-                    // A fermata: held about twice over, then a breath before going on.
-                    val hold = if ("fermata" in a) beats * 0.9 + rate * 0.15 else 0.0
-                    val start = t.toLong()
-                    val end = (t + sounding + hold).toLong()
-                    val velocity = (v.coerceIn(0.1f, 1.5f) * 1.15f)
-                    val pitches = drums?.keys(e) ?: e.pitches.map { (it.midi - transpose).coerceIn(12, 115) }
-                    // Its grace notes: quick, just before the beat - the note itself on it (a drum's
-                    // flam the same: a light stroke a moment ahead).
-                    graces[e]?.let { gs ->
-                        val each = min(rate * 0.06, beats / 3).toLong().coerceAtLeast(1L)
-                        for ((gi, g) in gs.withIndex()) {
-                            val gStart = max(at, start - each * (gs.size - gi))
-                            for (gp in drums?.keys(g) ?: g.pitches.map { (it.midi - transpose).coerceIn(12, 115) })
-                                tones += Synth.Tone(gp, gStart, each, velocity * 0.8f, sounds)
-                        }
-                    }
-                    // Tied notes no longer sounding go; one tied into this note sounds on through it.
-                    for (k in open.keys.toList()) if (k !in pitches) flush(k)
-                    for (p in pitches) {
-                        val h = open[p]
-                        // Tied into, it sounds on - not struck again. A staccato on the note tied into: the
-                        // sound stops on its beat, as a player lets go there.
-                        if (h != null) h.end = if ("staccato" in a || "staccatissimo" in a) start + gap * 3 else end
-                        else open[p] = Held(p, start, end, velocity, accent)
-                        if (!e.tie) flush(p)
-                    }
-                    t += beats + hold
-                } else {
-                    flushAll()
-                    t += beats
-                }
-                // Slowing or pressing on, a little more every beat (to half again as slow, or a third quicker).
-                if (pressing == 1) tempo = min(1.5, tempo + 0.07 * len)
-                if (pressing == -1) tempo = max(0.75, tempo - 0.05 * len)
-                q += len
-            }
-            // A bar whose notes fall short of it: the rest of it, at the tempo it ends in.
-            if (q < played - 1e-9) t += (played - q) * perQuarter * tempo
-            if (t < barStart) t = barStart
-        }
-        flushAll()
-        return Played(tones, starts.toLongArray(), numbers.toIntArray(), (t - at).toLong())
+        val lengths = DoubleArray(bars.size) { bars[it].playedQuarters }
+        val plan = Interpretation.analyse(bars, lengths, drums)
+        val map = Interpretation.tempoMap(listOf(plan), bpm, ensemble = false)
+        val tones = Interpretation.tones(plan, map, rate, transpose, patch, at, 1f, drums)
+        val starts = LongArray(bars.size) { Math.round(map.seconds(plan.barQ[it]) * rate) }
+        val numbers = IntArray(bars.size) { bars[it].number }
+        return Played(tones, starts, numbers, Math.round(map.seconds(plan.totalQ) * rate))
     }
 }

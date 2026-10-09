@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -145,7 +146,16 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                         if (playing != null) ScoreTools.stop(state) else if (ScoreTools.band) ScoreTools.playBand(state) else ScoreTools.play(state)
                     }
                     // The band without you: the other parts played, yours left for you.
-                    StripButton(Icons.Default.Groups, "Band", "Play the other parts, not yours", btn, named, lit = ScoreTools.band) { ScoreTools.band = !ScoreTools.band }
+                    StripButton(Icons.Default.Groups, "Band", "Play the other parts with yours, or without it", btn, named, lit = ScoreTools.band) {
+                        ScoreTools.loadBandWithMe(state); ScoreTools.band = !ScoreTools.band
+                    }
+                    // With the band on: this part in it too, or left out for you to play - one tap to change.
+                    if (ScoreTools.band) Text(
+                        if (ScoreTools.bandWithMe) "+ my part" else "without me",
+                        style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { ScoreTools.chooseBandWithMe(state, !ScoreTools.bandWithMe) }.padding(2.dp)
+                    )
                     ScoreTools.bandReading?.let { Text("Reading $it", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center) }
                     StripButton(Icons.Default.Repeat, "Loop", "Play round and round", btn, named, lit = ScoreTools.loop) { ScoreTools.loop = !ScoreTools.loop }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
