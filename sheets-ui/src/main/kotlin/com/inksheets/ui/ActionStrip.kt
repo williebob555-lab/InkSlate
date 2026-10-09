@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.DragHandle
@@ -184,19 +185,13 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 state.companion.status?.let { status ->
                     Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
                 }
-                // Which page, and the way to every page: the page editor, one tap away.
+                // Which page: words only. The file's pages (arranging, adding, taking out) are the
+                // File button under it.
                 val (page, count) = state.pageShown
                 if (count > 0) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { Perform.openPages?.invoke() }
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                    ) {
-                        Text("${page + 1}/$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        if (named) Text("Pages", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp)
-                    }
+                    Text("${page + 1}/$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                    StripButton(Icons.Default.Description, "File", "The file's pages: arrange, add, take out", btn, named) { Perform.openPages?.invoke() }
                 }
                 // Leading: a message to the band, one tap away.
                 if (state.companion.leading) {

@@ -117,8 +117,8 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                 }
                 val readingWhole = busy != null && Transcriber.pagesToDo > 1
                 if (score == null || !score.hasRead(here)) {
-                    if (score == null) {
-                        // Nothing to work from yet: reading the part (or this page of it) is the one thing to do.
+                    if (score == null || score.readPages != null) {
+                        // Nothing to work from yet (or only some of it): reading the part (or this page of it) is the one thing to do.
                         StripButton(Icons.Default.MusicNote, "Read", "Read this part's music, every page", btn, named, lit = readingWhole,
                             progress = if (readingWhole) filled else null) {
                             if (file != null && busy == null) Transcriber.read(state, file) { Perform.marksChanged() }
@@ -132,7 +132,9 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                         style = MaterialTheme.typography.labelSmall, fontSize = 9.sp,
                         lineHeight = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 4.dp))
                 }
-                if (score != null) {
+                // The tools only for a page that has been read: an unread page offers reading it,
+                // and nothing else - not tools with nothing to work on.
+                if (score != null && score.hasRead(here)) {
                     // Check: every bar coloured by how sure its reading is - green, yellow, red - and
                     // a tap on any bar puts it right. One button for what was Clean, Fix and Wrong.
                     val red = ScoreTools.redCount(state)
