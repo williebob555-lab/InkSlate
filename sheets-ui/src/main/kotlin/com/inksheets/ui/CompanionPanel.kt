@@ -1010,12 +1010,17 @@ internal fun NetworkHint(state: SheetsState) {
         Column(Modifier.padding(12.dp)) {
             Text("This Wi-Fi keeps cutting the link", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
             Text(
-                "School and eduroam networks stop devices talking to each other after a few seconds, so pages and messages arrive in fits. " +
-                    "Put everyone on one hotspot instead: a phone's hotspot, or on the laptop Settings > Network > Mobile hotspot. " +
-                    "Then start leading again.",
+                "School and eduroam Wi-Fi stops devices reaching each other. Use Bluetooth here, or put everyone on one hotspot.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onErrorContainer
             )
+            // The answer where the problem shows: Bluetooth on in one tap (on every device playing together).
+            val companion = state.companion
+            if (state.platform.meshRadio() != null && !companion.meshOn) {
+                androidx.compose.material3.TextButton(onClick = { companion.meshOn = true }) { Text("Use Bluetooth as well") }
+            } else if (companion.meshOn) {
+                Text(companion.meshStatus ?: "Bluetooth on", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+            }
         }
     }
 }

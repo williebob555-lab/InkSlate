@@ -466,7 +466,9 @@ object Interpretation {
                         continue
                     }
                 }
-                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null)
+                // A slurred line, one note at a time: each moves over from the last, not struck anew.
+                val from = if (joined && drums == null && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
+                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from)
             }
         }
         return out

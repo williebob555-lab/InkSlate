@@ -409,6 +409,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             // A whole read of this part cut off part way (the app closed) carries on.
             if (currentPath != path) Transcriber.resume(this, File(path))
             currentPath = path
+            ScoreTools.syncTool()
             if (pagesWanted == path) { pagesWanted = null; com.inkslate.core.Perform.openPages?.invoke() }
             songAt(path)?.let { song ->
                 if (current?.id != song.id) current = song

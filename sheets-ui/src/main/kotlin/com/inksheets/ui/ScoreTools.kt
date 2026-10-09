@@ -36,7 +36,10 @@ internal object ScoreTools {
     enum class Tool { NONE, SELECT, CLEAN, WRONG, CHECK }
 
     /** The tools' lane is out. */
-    var open by mutableStateOf(false)
+    private var openState by mutableStateOf(false)
+    var open: Boolean
+        get() = openState
+        set(v) { openState = v; syncTool() }
     var tool by mutableStateOf(Tool.NONE)
         private set
 
@@ -292,7 +295,12 @@ internal object ScoreTools {
      * Presses on the page are the music tools' while one is in hand - and while the music plays (or
      * waits, paused) with the tools out: a tap on a bar plays from it.
      */
-    private fun syncTool() { Perform.musicTool = tool != Tool.NONE || (open && (playing != null || paused != null)) }
+    internal fun syncTool() {
+        // Only while the tools are out, and only on a part that has been read: a tool left in hand
+        // must never stop the pages of another song from turning.
+        val read = state?.let { s -> s.currentPath?.let { scoreOf(it) } } != null
+        Perform.musicTool = open && ((tool != Tool.NONE && read) || playing != null || paused != null)
+    }
 
     fun showUnderlay(on: Boolean) { underlay = on; changed() }
 
