@@ -129,9 +129,7 @@ class JavaSoundPlayer : AudioPlayer {
         thread = Thread({
             runCatching {
                 val format = AudioFormat(rate.toFloat(), 16, 1, true, false)
-                val line = AudioSystem.getSourceDataLine(format)
-                line.open(format, rate / 10 * 2)
-                line.start()
+                val line = OutLine(format, rate / 10 * 2)
                 val block = FloatArray(1024)
                 val bytes = ByteArray(block.size * 2)
                 while (playing) {
@@ -146,9 +144,8 @@ class JavaSoundPlayer : AudioPlayer {
                         bytes[2 * i] = v.toByte()
                         bytes[2 * i + 1] = (v shr 8).toByte()
                     }
-                    line.write(bytes, 0, bytes.size)
+                    line.write(bytes, bytes.size)
                 }
-                line.stop()
                 line.close()
             }.onFailure { EventLog.warn("sheets", "Playback failed: ${it.message}"); playing = false }
         }, "recording").apply { isDaemon = true; start() }

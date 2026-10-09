@@ -289,11 +289,9 @@ private class JavaSoundOut : AudioOut {
         thread = Thread({
             runCatching {
                 val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
-                val line = AudioSystem.getSourceDataLine(format)
                 // 100 ms held in the card's buffer: a pause elsewhere (a page drawn, memory tidied, a busy
                 // machine) no longer cuts the sound. (The instrument is also rendered ahead of this: see Sound.)
-                line.open(format, sampleRate / 10 * 2)
-                line.start()
+                val line = OutLine(format, sampleRate / 10 * 2)
                 val block = FloatArray(480)
                 val bytes = ByteArray(block.size * 2)
                 while (running) {
@@ -303,9 +301,8 @@ private class JavaSoundOut : AudioOut {
                         bytes[2 * i] = v.toByte()
                         bytes[2 * i + 1] = (v shr 8).toByte()
                     }
-                    line.write(bytes, 0, bytes.size)
+                    line.write(bytes, bytes.size)
                 }
-                line.stop()
                 line.close()
             }.onFailure { EventLog.warn("sheets", "Sound out failed: ${it.message}") }
         }, "metronome").apply { isDaemon = true; priority = Thread.MAX_PRIORITY; start() }

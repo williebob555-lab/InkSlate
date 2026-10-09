@@ -122,6 +122,8 @@ tasks.register<JavaExec>("runSandbox") {
 }
 
 tasks.withType<Test>().configureEach {
+    // Never a sound through the machine's speakers from a test: the lines play nothing, at pace (see OutLine).
+    systemProperty("inksheets.silent", "1")
     // Whole pages drawn large, read and compared, many in one run.
     maxHeapSize = "5g"
     // The testers' review passes (review/T1..T6) work on copies of the real library made on this

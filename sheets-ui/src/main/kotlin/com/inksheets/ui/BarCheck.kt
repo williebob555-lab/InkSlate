@@ -84,7 +84,8 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     val narrowScreen = maxWidth < 600.dp
     // A phone on its side, a bar put right by hand: the editor takes the whole screen - tabs and
     // strips out of the way until it is done - so the print, the staff and every button fit.
-    val whole = handWork && room < 480.dp
+    // (A small phone upright too: its panel cannot hold the editor's rows under the print.)
+    val whole = handWork && room < 620.dp
     val panel: @Composable (Modifier) -> Unit = { mod -> Surface(
         shape = if (whole) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
         tonalElevation = 4.dp,
@@ -94,11 +95,14 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     ) {
         BoxWithConstraints {
             val wide = maxWidth >= 640.dp
+            // Wide enough: the editor's buttons in four long rows (fewer rows, so it fits a tablet on its side too).
+            val flatEdit = maxWidth >= 560.dp
+            val tiny = whole && room < 360.dp
             val pad = if (short) 10.dp else 14.dp
             val gap = if (whole) 4.dp else if (short) 6.dp else 8.dp
             // Small on a phone either way up; large where there is room.
             val small = short || maxWidth < 600.dp
-            val pictureHeight = if (whole) 52.dp else if (small) 76.dp else 118.dp
+            val pictureHeight = if (tiny) 40.dp else if (whole) 52.dp else if (small) 76.dp else 118.dp
             // (On a phone the strips' folded tabs sit at the edges: kept clear of them.)
             Column(Modifier.padding(start = if (narrowScreen && !whole) pad + 18.dp else pad, end = if (narrowScreen && !whole) pad + 18.dp else pad, top = 8.dp, bottom = pad)) {
                 // Which bar, how far through, and what happens after a fix.
@@ -133,7 +137,7 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                         m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") } -> RestCount(state, m, short)
                         ScoreTools.sigDraft != null -> SignatureRow(state, m)
                         ScoreTools.numbering -> BarNumber(state, m, short)
-                        editing != null -> BarEditor(state, m, editing, paper, printInk, short, flat = whole)
+                        editing != null -> BarEditor(state, m, editing, paper, printInk, short, flat = flatEdit, tiny = tiny)
                         else -> {
                             Text(when {
                                 ScoreTools.looking && ScoreTools.askedAgain -> "Looking at it further..."
@@ -314,14 +318,16 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
                       /** Which half: the bar itself (with what it comes to and which note is chosen), its buttons, or both. */
                       view: Boolean = true, buttons: Boolean = true,
                       /** The whole of a short, wide screen (a phone on its side): fewer, longer rows of lower buttons. */
-                      flat: Boolean = false) {
+                      flat: Boolean = false,
+                      /** A very short screen: lower still. */
+                      tiny: Boolean = false) {
     val at = ScoreTools.editAt
     val drawing = remember(events) { Engraver.line(listOf(m.copy(events = events)), lineStart = false) }
     val chosen = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
     // Where the drawing was last laid out: its space and the x and y of its top line - what a tap is measured by.
     val layout = androidx.compose.runtime.remember { FloatArray(3) }
     if (view) Canvas(
-        Modifier.fillMaxWidth().height(if (flat) 64.dp else if (short) 84.dp else 130.dp).clip(RoundedCornerShape(10.dp)).background(paper)
+        Modifier.fillMaxWidth().height(if (tiny) 52.dp else if (flat && short) 64.dp else if (short) 84.dp else 110.dp).clip(RoundedCornerShape(10.dp)).background(paper)
             .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp))
             .pointerInput(drawing) {
                 detectTapGestures { tap ->
@@ -373,7 +379,7 @@ private fun BarEditor(state: SheetsState, m: Measure, events: List<Event>, paper
     // (Small screens: smaller words and less padding, so every label fits its button whole.)
     val labels = if (short) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge
     val inset = PaddingValues(horizontal = if (short) 2.dp else 6.dp)
-    val bh = if (flat) 32.dp else if (short) 38.dp else 44.dp
+    val bh = if (tiny) 28.dp else if (flat && short) 32.dp else if (short) 38.dp else 44.dp
     @Composable
     fun Btn(label: String, modifier: Modifier, enabled: Boolean = true, on: Boolean = false, onClick: () -> Unit) =
         if (on) Button(onClick = onClick, enabled = enabled, contentPadding = inset, modifier = modifier.height(bh)) {

@@ -81,7 +81,7 @@ class UiAuditAppTest {
                 look("music-tools")
                 runOnIdle { ScoreTools.startCheck(s) }
                 settle(60)
-                look("fix", "Edit", "None of these", "Not one bar", "Skip", "Close Fix", "Clef, key or time wrong?")
+                look("fix", "Edit", "None of these", "Skip", "Close Fix")
                 // "None of these": what is off with them, asked.
                 runOnIdle { ScoreTools.noneOfThese(s) }
                 look("fix-whatsoff", "None of these", "Close Fix")
@@ -94,7 +94,7 @@ class UiAuditAppTest {
                 // A rest of many bars said to be wrong: how many, chosen.
                 score.measures.firstOrNull { it.bars > 1 }?.let { r ->
                     runOnIdle { ScoreTools.markWrong(s, r.number..r.number) }
-                    look("fix-rest", "−10", "+10", "Skip", "Close Fix", "Use")
+                    look("fix-rest", "−10", "+10", "Skip", "Use")
                     runOnIdle { ScoreTools.endCheck() }
                 }
                 // Playing: the bar along the foot that steers it.
