@@ -59,7 +59,7 @@ class BarCheckTest {
         val reading = Recognizer().read(ink, 0)
         val score = Score(reading.measures, 1, listOf(ink.width))
         ScoreTools.scoreSource = { if (it == part.absolutePath) score else null }
-        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
         val home = AppFlavor.home!!
         var openFile: ((File) -> Unit)? = null
         AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }
@@ -101,7 +101,7 @@ class BarCheckTest {
             assertEquals("the bar tapped is up first", red, ScoreTools.checkBars.first())
             assertEquals("then every other red bar", doubtful, ScoreTools.checkBars.size)
             fun spot(text: String) = onAllNodesWithText(text, substring = false, useUnmergedTree = true).onFirst().fetchSemanticsNode().boundsInRoot
-            val buttons = listOf("◀ Back", "None of these", "Skip", "Done")
+            val buttons = listOf("◀ Back", "None of these", "Skip", "Close Fix")
             val placed = buttons.associateWith { spot(it) }
             println("offered for bar $red: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
             assertTrue("readings offered", ScoreTools.offered.isNotEmpty())
@@ -129,7 +129,15 @@ class BarCheckTest {
             tapText("Bar number")
             shot("bar-number")
             tapText("Cancel")
-            tapText("Done")
+            // Editing a reading by hand: only the editor's own buttons - no Skip or Close Fix under them.
+            tapText("Edit")
+            shot("edit-by-hand")
+            assertTrue("editing", ScoreTools.editing != null)
+            assertTrue("no Skip while editing", onAllNodesWithText("Skip", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+            assertTrue("Use this there", onAllNodesWithText("Use this", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
+            tapText("Cancel")
+            assertTrue("back to the readings", ScoreTools.editing == null)
+            tapText("Close Fix")
             shot("done")
             assertTrue("done", !ScoreTools.checking)
         }
@@ -146,7 +154,7 @@ class BarCheckTest {
         val score = Score(reading.measures, 1, listOf(ink.width))
         val sure = score.measures.first { it.sure && it.bars == 1 }.number
         ScoreTools.scoreSource = { if (it == part.absolutePath) score else null }
-        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
         val home = AppFlavor.home!!
         var openFile: ((File) -> Unit)? = null
         AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }

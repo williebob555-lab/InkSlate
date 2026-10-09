@@ -396,6 +396,15 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             }
         }
         com.inkslate.core.Perform.centreTap = { bottom -> centreTap(bottom) }
+        // Space while music plays: pause it, or play on - the music read, or the recording.
+        com.inkslate.core.Perform.playPause = {
+            when {
+                ScoreTools.playing != null -> { ScoreTools.pause(this); true }
+                ScoreTools.paused != null -> { ScoreTools.resume(this); true }
+                Recording.session -> { Recording.playPause(this); true }
+                else -> false
+            }
+        }
         ScoreTools.install(this)
         PracticeLog.start(this)
         // Whichever song is in front is "the song": the one the play button plays and the one a

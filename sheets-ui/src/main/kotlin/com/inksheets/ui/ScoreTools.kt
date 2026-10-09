@@ -74,7 +74,8 @@ internal object ScoreTools {
     var said by mutableStateOf<String?>(null)
 
     /** Bumped at every change, so the pages are drawn again and the marks made afresh. */
-    private var version = 0
+    // State, so what is shown from it (Clean lit, the bars' colours) follows every change at once.
+    private var version by androidx.compose.runtime.mutableIntStateOf(0)
     private val marksCache = HashMap<Pair<String, Int>, Pair<Int, List<PageMark>>>()
 
     private fun changed() {
@@ -329,6 +330,8 @@ internal object ScoreTools {
     /** Turn the colours on or off. */
     fun toggleCheck(s: SheetsState) {
         goOn = s.platform.pref(K_GO_ON) != "false"
+        // Checking and playing are one or the other: Check stops the music.
+        if (tool != Tool.CHECK && (playing != null || paused != null)) stop(s)
         if (tool == Tool.CHECK) { if (checking) endCheck(); choose(Tool.CHECK) } else choose(Tool.CHECK)
         changed()
     }
@@ -349,6 +352,15 @@ internal object ScoreTools {
     }
 
     private const val K_GO_ON = "sheets_fix_goes_on"
+
+    /** Back to playing: Fix and Check put away, the tools and the strips folded, the page fitted. */
+    fun putAway(s: SheetsState) {
+        if (checking) endCheck()
+        if (tool == Tool.CHECK) choose(Tool.CHECK)
+        close(s)
+        s.stripCollapsed = true
+        Perform.recentre?.invoke()
+    }
 
     fun close(s: SheetsState) {
         stop(s)
@@ -672,6 +684,7 @@ internal object ScoreTools {
 
     /** Whether the part in front is shown clean: most of its bars cleaned. */
     fun cleanedWhole(s: SheetsState): Boolean {
+        version   // (read, so the Clean button is redrawn when it changes)
         val path = s.currentPath ?: return false
         val n = scoreHere(s)?.measures?.size ?: return false
         return n > 0 && cleanedIn(path).size * 2 >= n
@@ -779,7 +792,9 @@ internal object ScoreTools {
                     return
                 }
                 if (kotlin.math.hypot(dx, dy) > space * 2f) return
-                val bar = bars.firstOrNull() ?: return
+                // A tap on no bar (blank paper): done checking - back to playing, everything put
+                // away, the page fitted.
+                val bar = bars.firstOrNull() ?: run { state?.let { putAway(it) }; return }
                 state?.let { fixBar(it, bar) }
             }
             Tool.NONE -> Unit
@@ -1004,8 +1019,12 @@ internal object ScoreTools {
      * Play the bars chosen - or, with none, from the page in front to the end - at the metronome's
      * tempo, as the part's instrument sounds (or [soundAs]).
      */
+    /** Playing and checking are one or the other: playing puts Check (and Fix) away. */
+    private fun leaveCheck() { if (checking) endCheck(); if (tool == Tool.CHECK) choose(Tool.CHECK) }
+
     fun play(s: SheetsState, from: Int? = null) {
         stop(s)
+        leaveCheck()
         val path = s.currentPath ?: return
         val score = scoreOf(path) ?: run { said = "Read the music first"; return }
         val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return }
@@ -1120,6 +1139,7 @@ internal object ScoreTools {
     /** The band - every other part read - from the bars chosen or the page in front, without this part. */
     fun playBand(s: SheetsState, from: Int? = null) {
         stop(s)
+        leaveCheck()
         val path = s.currentPath ?: return
         val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
         // This part's own bars, numbered as the band's are - and back again for showing.

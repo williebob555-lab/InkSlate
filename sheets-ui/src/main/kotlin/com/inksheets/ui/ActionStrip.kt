@@ -118,13 +118,26 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
     // The music being read: a slim bar up the screen's edge filling as it goes - always in sight,
     // never over the music, whatever is open.
-    Transcriber.progress?.let { p ->
-        val shown by androidx.compose.animation.core.animateFloatAsState(p.coerceIn(0.03f, 1f))
-        Box(
-            Modifier.align(if (state.stripOnLeft) Alignment.CenterStart else Alignment.CenterEnd).padding(horizontal = 2.dp)
-                .width(5.dp).fillMaxHeight(0.5f).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+    // (The music tools show it in themselves while they are out.)
+    if (Transcriber.progress != null && !(ScoreTools.open && !state.stripCollapsed)) {
+        // Moving all the time while a part is read - the page in hand filling as pages take here.
+        var shown by remember { mutableStateOf(0f) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) { Transcriber.smoothProgress()?.let { shown = it }; kotlinx.coroutines.delay(100) }
+        }
+        Column(
+            Modifier.align(if (state.stripOnLeft) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(shown).background(MaterialTheme.colorScheme.primary))
+            Box(
+                Modifier.width(10.dp).fillMaxHeight(0.45f).clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+            ) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(shown.coerceIn(0.02f, 1f)).background(MaterialTheme.colorScheme.primary))
+            }
+            Text("${(shown * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 3.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), RoundedCornerShape(4.dp)).padding(horizontal = 3.dp))
         }
     }
     // "End of the set": a small pill at the page's foot for two seconds - a turn that does nothing says why.
@@ -297,9 +310,12 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             ) {
                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                 if (side) {
-                    androidx.compose.foundation.layout.FlowColumn(
-                        itemHorizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(vertical = 4.dp)
+                    // One column, always: never a second one beside it. Where the buttons do not all
+                    // fit (a short screen, many buttons), the column scrolls instead.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.heightIn(max = (room - 12.dp).coerceAtLeast(120.dp))
+                            .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(vertical = 4.dp)
                     ) { items() }
                 } else {
                     androidx.compose.foundation.layout.FlowRow(
@@ -661,6 +677,8 @@ internal fun StripButton(
     size: androidx.compose.ui.unit.Dp,
     named: Boolean,
     lit: Boolean = false,
+    /** Work in hand (a part being read): the button fills from left to right, 0 to 1. */
+    progress: Float? = null,
     onClick: () -> Unit
 ) {
     Column(
@@ -672,7 +690,14 @@ internal fun StripButton(
                 if (lit) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier
             ),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, description) }
+        ) {
+            if (progress != null) Box(
+                Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(progress.coerceIn(0.04f, 1f))
+                    .clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+            )
+            Icon(icon, description)
+        }
+        if (progress != null && named) Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, color = MaterialTheme.colorScheme.primary)
         if (named) {
             Text(name, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1, lineHeight = 11.sp)
         }

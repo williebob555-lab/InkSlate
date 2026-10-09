@@ -26,6 +26,23 @@ internal object Transcriber {
     var progress by mutableStateOf<Float?>(null)
         private set
 
+    /** The reading in hand: pages done of how many, when the page being read began, and how long a page takes here. */
+    @Volatile var pagesDone = 0
+    @Volatile var pagesToDo = 0
+    @Volatile var pageBegan = 0L
+    @Volatile var msPerPage = 4_000L
+
+    /**
+     * How far the reading has got, 0 to 1, moving all the time: the pages done, and the page in
+     * hand by how long pages have been taking here - never quite reaching its end before it does.
+     */
+    fun smoothProgress(): Float? {
+        if (progress == null || pagesToDo <= 0) return null
+        val inPage = ((System.currentTimeMillis() - pageBegan).toFloat() / msPerPage).coerceAtLeast(0f)
+        val part = 1f - kotlin.math.exp(-inPage * 1.6f)   // eases towards the page's end, never past it
+        return ((pagesDone + part * 0.97f) / pagesToDo).coerceIn(0f, 1f)
+    }
+
     /** The part read last, for the notes panel. */
     var shown by mutableStateOf<Pair<File, Score>?>(null)
 
@@ -282,6 +299,12 @@ internal object Transcriber {
                 return pageInk(peek, p)
             }
             try { for ((i, p) in todo.withIndex()) {
+                if (!quiet) {
+                    val now = System.currentTimeMillis()
+                    // How long a page takes on this device, learned as pages are read.
+                    if (i > 0 && pageBegan > 0) msPerPage = ((msPerPage * 2 + (now - pageBegan)) / 3).coerceIn(500L, 60_000L)
+                    pagesDone = i; pagesToDo = todo.size; pageBegan = now
+                }
                 if (!quiet) state.platform.onMain { progress = i.toFloat() / todo.size.coerceAtLeast(1); busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
                 // A page following one just read, or read before, carries on from it: its clef, key,
                 // time and bar numbers. One on its own takes its numbers from the print.
