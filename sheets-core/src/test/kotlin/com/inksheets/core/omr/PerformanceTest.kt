@@ -48,7 +48,7 @@ class PerformanceTest {
     fun `dynamics and accents set how loud, a ritardando slows`() {
         val p = play(bar(1, listOf(note(10f), note(20f, marks = listOf("accent")), note(30f), note(40f)), directions = listOf(Direction("dynamic", 35f, 38f, "p"))))
         val v = p.tones.sortedBy { it.start }.map { it.velocity }
-        assertTrue("mf, then accented, then p: $v", v[1] > v[0] && v[2] < v[0])
+        assertTrue("accented (a weight in the sound, not a louder level), and p once its dynamic has arrived: $v", p.tones.sortedBy { it.start }[1].accent > 0f && v[3] < v[0])
         val rit = play(bar(1, listOf(note(10f), note(20f), note(30f), note(40f)), directions = listOf(Direction("text", 5f, 8f, "rit."))), bar(2, listOf(note(10f))))
         assertTrue("slower: bar 2 at ${rit.barStarts[1]}", rit.barStarts[1] > 4000L)
     }

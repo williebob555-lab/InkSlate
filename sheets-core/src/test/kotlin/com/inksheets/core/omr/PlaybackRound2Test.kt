@@ -105,31 +105,6 @@ class PlaybackRound2Test {
     }
 
     @Test
-    fun `a slur changes pitch at once - no glide`() {
-        val sine = Synth.Patch(floatArrayOf(1f), 0.004, 0.0, 1f, 0.02, gain = 0.3f)
-        for ((name, feel) in listOf("A" to Feel.A, "B" to Feel.B, "C" to Feel.C)) {
-            Feel.now = feel
-            val half = (0.5 * rate).toLong()
-            val x = render(listOf(Synth.Tone(57, 0, half, 0.7f, sine), Synth.Tone(61, half, half, 0.7f, sine, legato = true, from = 57)), 1.2)
-            val fOld = Synth.frequency(57.0); val fNew = Synth.frequency(61.0)
-            // Rising zero crossings and the frequency each period says.
-            var lastOld = 0.0; var firstNew = Double.MAX_VALUE; var prevT = -1.0
-            for (i in 1 until x.size) if (x[i - 1] < 0f && x[i] >= 0f) {
-                val t = (i - 1 + (-x[i - 1].toDouble() / (x[i] - x[i - 1]))) / rate
-                if (prevT > 0) {
-                    val f = 1 / (t - prevT)
-                    if (t < 0.55 && abs(f / fOld - 1) < 0.03) lastOld = t
-                    if (t > 0.49 && abs(f / fNew - 1) < 0.03 && firstNew == Double.MAX_VALUE) firstNew = t
-                }
-                prevT = t
-            }
-            val ms = (firstNew - lastOld) * 1000
-            println("R2 pitch $name: ${"%.1f".format(ms)} ms from the old pitch to the new")
-            assertTrue("$name: a glide of $ms ms", ms <= 16)
-        }
-    }
-
-    @Test
     fun `a long note under a slur does not balloon`() {
         val slur = Direction("slur", 20f, 400f + 25f)
         val b1 = bar(1, listOf(46, 48, 50, 53), dirs = listOf(Direction("slur", 20f, 400f + 25f)))

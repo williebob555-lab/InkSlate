@@ -56,6 +56,8 @@ object Interpretation {
         var sounding = 1.0
         /** A new dynamic is written at it: the loudness moves over to it in a moment (not a jump), from where the note before left it. */
         var stepped = false
+        /** The new dynamic is a sudden one (sfz then p, fp, "sub."): the only kind that moves quickly. */
+        var subito = false
         /** Its loudness before the phrase's shape is laid over it: at its start and at its end. */
         var baseStart = 0.68f
         var baseEnd = 0.68f
@@ -168,6 +170,7 @@ object Interpretation {
                     p.level = v
                     if (p.endLevel == 0.68f) p.endLevel = v
                     p.stepped = steppedHere || stepNext
+                    p.subito = stepNext || (steppedHere && m.directions.any { d -> d.kind == "text" && d.text.lowercase().trim().startsWith("sub") && abs(d.x - e.x) < sp * 6 })
                     stepNext = false
                     pendingStruck?.let { st -> p.accent = 1f; p.level = min(v + 0.04f, 1.05f); if (st.endsWith("p")) { level = LEVELS.getValue("p"); stepNext = true; p.endLevel = level }; pendingStruck = null }
                     // Leant on, not shouted: a gentle weight in the sound (Synth's accent, 2 dB at most
@@ -198,6 +201,11 @@ object Interpretation {
                     if (strength > 0f) breaks += Triple(start + q, strength, false)
                 }
                 q += len
+            }
+            // A hairpin that ended within this bar leaves the music where it got to (not back where it began).
+            for (h in pins) {
+                val key = "${m.page}/${m.staff}/${h.x}/${h.x2}"
+                if (key !in pinsDone && h.x2 < m.box.right - sp * 1.5f) { pinsDone += key; level = (level + if (h.kind == "cresc") 0.16f else -0.16f).coerceIn(0.15f, 1.05f) }
             }
         }
         val total = barQ.last()
@@ -317,7 +325,8 @@ object Interpretation {
         for ((i, n) in notes.withIndex()) {
             val next = notes.getOrNull(i + 1)
             val contiguous = next != null && abs(n.q + n.len - next.q) < 1e-6
-            val own = n.baseEnd + archAt(n.phrase, n.q + n.len) - (if (n.phraseEnd) 0.04f else 0f)
+            // A slight taper at a phrase's end, and before a rest.
+            val own = n.baseEnd + archAt(n.phrase, n.q + n.len) - (if (n.phraseEnd) 0.04f else 0f) - (if (!contiguous) 0.04f else 0f)
             n.endLevel = if (n.slurred && contiguous && !next!!.stepped) next.level else own
         }
         for ((i, n) in notes.withIndex()) {
@@ -452,6 +461,16 @@ object Interpretation {
         // Sounding now, by pitch: a slurred or tied note carries into the next of its pitch.
         var held = HashMap<Int, IntArray>()
         val notes = plan.notes
+        class Ramp(val t0: Long, val len: Long, val ref: Float)
+        val ramps = ArrayList<Ramp>()
+        for ((i, n) in notes.withIndex()) if (n.stepped && i > 0) {
+            val ref = (notes[i - 1].endLevel * balance * 1.1f).coerceIn(0.03f, 1.5f)
+            val own = (n.level * balance * 1.1f).coerceIn(0.05f, 1.5f)
+            val dB = abs(own - ref) * 26.8
+            val noteSecs = map.seconds(n.q + n.len) - map.seconds(n.q)
+            val secs = if (n.subito) 0.12 else max(max(0.6, dB / 14.0), min(3.0, noteSecs))
+            ramps += Ramp(sample(n.q), (secs * rate).toLong(), ref)
+        }
         for ((i, n) in notes.withIndex()) {
             val start = sample(n.q)
             val nominal = sample(n.q + n.len) - start
@@ -461,34 +480,44 @@ object Interpretation {
             val joined = prev != null && (prev.sounding == JOINED || prev.tie) && abs(prev.q + prev.len - n.q) < 1e-6
             val joinsNext = drums == null && n.sounding == JOINED && nextTouches
             val feel = Feel.now
-            // A note's release is short and clean; what is heard of it ends [audible] after its start.
-            val rel = (if (sounds.fade > 0) rate * 0.1 else rate * feel.releaseMs / 1000).toLong()
+            // The note's own release - a natural decay (brass 80-150 ms): what is heard goes on after the hold.
+            val rel = (sounds.release * rate).toLong()
             var length: Long
             if (joinsNext) {
-                // Joined to the next: held to it, the next note takes the sound over.
+                // Joined to the next: held to it; the next note takes the sound over.
                 length = nominal
             } else {
-                // Not joined: it ends with a silence before the next note is tongued - a moment in time,
-                // a share of the note, never most of it.
+                // Not joined: it is let go before the next is tongued, and the release decays into the gap -
+                // separated, not chopped.
                 val gap = max(nominal * feel.gap, rate * feel.gapMinMs / 1000).coerceAtMost(nominal * 0.35)
-                var audible = when (n.sounding) {
+                var hold = when (n.sounding) {
                     TENUTO -> nominal - (rate * 0.02).toLong()
-                    DETACHED, DETACHED_ACCENT, JOINED -> nominal - gap.toLong()
-                    else -> (nominal * n.sounding).toLong()
+                    DETACHED, DETACHED_ACCENT, JOINED -> nominal - gap.toLong() - (rel * 0.3).toLong()
+                    // Staccato and marcato: a share of the note, the release (shorter for staccato) making up the rest.
+                    else -> (nominal * n.sounding).toLong() - (if (n.sounding < 0.5) rate * 0.025 else rel * 0.3).toLong()
                 }
                 // Before a breath (marked, or between phrases): let go a breath early - a little, never most of the note.
                 if ((n.breathAfter || (n.phraseEnd && nextTouches)) && "staccato" !in n.articulations)
-                    audible = min(audible, max(nominal * 6 / 10, nominal - (rate * 0.13).toLong()))
+                    hold = min(hold, max(nominal * 6 / 10, nominal - (rate * 0.13).toLong()))
                 // A fermata sounds over its hold.
-                if (n.fermata) audible = sample(n.q + n.len) - start + (rate * (n.len * 0.5)).toLong()
+                if (n.fermata) hold = sample(n.q + n.len) - start + (rate * (n.len * 0.5)).toLong()
                 // Staccato in seconds, not only a share: never a click, never a long note.
-                if ("staccato" in n.articulations) audible = audible.coerceIn((rate * 0.06).toLong(), (rate * 0.32).toLong())
-                length = max(audible - rel, (rate * 0.02).toLong())
+                if ("staccato" in n.articulations) hold = hold.coerceIn((rate * 0.035).toLong(), (rate * 0.28).toLong())
+                length = max(hold, (rate * 0.02).toLong())
             }
-            val v = (n.level * balance * 1.1f * (if (drums != null && n.inBar < 1e-6) 1.06f else 1f)).coerceIn(0.05f, 1.5f)
-            val vEnd = (n.endLevel * balance * 1.1f).coerceIn(0.03f, 1.5f)
-            val fromV = if (joined && n.stepped) (n.fromLevel * balance * 1.1f).coerceIn(0.05f, 1.5f) else v
-            val ramp = if (fromV != v) min(rate * 0.25, length.toDouble()).toLong() else 0L
+            // The level line: dynamics arrive over 0.6-3 s (an S-curve), over the first note or two when they are long, a
+            // sudden mark (sfz-p, fp, sub.) in a moment.
+            fun shaped(level: Float, at: Long): Float {
+                val r = ramps.lastOrNull { it.t0 <= at } ?: return level
+                if (at >= r.t0 + r.len) return level
+                val x = (at - r.t0).toDouble() / r.len
+                val sm = (x * x * (3 - 2 * x)).toFloat()
+                return r.ref * (1 - sm) + level * sm
+            }
+            val v = shaped((n.level * balance * 1.1f * (if (drums != null && n.inBar < 1e-6) 1.06f else 1f)).coerceIn(0.05f, 1.5f), start)
+            val vEnd = shaped((n.endLevel * balance * 1.1f).coerceIn(0.03f, 1.5f), start + nominal)
+            val fromV = v
+            val ramp = 0L
             // Grace notes: quick, just before the beat.
             val each = min(rate * 0.055, nominal / 3.0).toLong().coerceAtLeast(1L)
             for ((gi, g) in n.graces.withIndex()) {

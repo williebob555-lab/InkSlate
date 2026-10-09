@@ -168,7 +168,7 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
     fun render(buf: FloatArray, from: Long): Boolean {
         val n = buf.size
         // The move from one note to the next under a slur: a quick crossfade, no slide.
-        val xf = (com.inksheets.core.omr.Feel.now.dipMs.coerceIn(15.0, 40.0) / 1000 * rate).toInt()
+        val xf = (cur.patch.slur.let { (it.minOverlapMs + it.maxOverlapMs) / 2 }.coerceIn(10.0, 45.0) / 1000 * rate).toInt()
         var i = max(0, (cur.start - from).toInt())
         while (i < n) {
             val s = from + i

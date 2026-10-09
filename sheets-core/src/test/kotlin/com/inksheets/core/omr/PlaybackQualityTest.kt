@@ -382,7 +382,7 @@ class PlaybackQualityTest {
         val q = played(listOf(
             bar(1, notes(0, listOf(50, 50, 50, 50)), dirs = listOf(Direction("dynamic", 5f, text = "p"))),
             bar(2, notes(400, listOf(50, 50, 50, 50)), left = 400, dirs = listOf(Direction("dynamic", 405f, text = "f"))), b3))
-        val v2 = q.tones.slice(4..7).map { it.velocity }.average(); val v3 = q.tones.slice(8..11).map { it.velocity }.average()
+        val v2 = q.tones.slice(6..7).map { it.velocity }.average(); val v3 = q.tones.slice(8..11).map { it.velocity }.average()
         assertEquals(v2, v3, 0.15)
         assertTrue("still forte, not piano", v3 - q.tones.slice(0..3).map { it.velocity }.average() > 0.4)
     }
