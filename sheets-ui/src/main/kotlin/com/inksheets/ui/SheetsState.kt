@@ -220,7 +220,22 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     var tunerOpen by mutableStateOf(false)
 
     /** The song opened last - what the strip's recording button plays. */
-    var current by mutableStateOf<com.inksheets.core.Song?>(null)
+    var current: com.inksheets.core.Song?
+        get() {
+            val opened = openedSong ?: return null
+            // Read afresh whenever the library changes: recordings paired, turns taught or a speed
+            // set on another device are seen by what plays them without reopening the song.
+            val v = version
+            if (v != freshVersion || opened.id != fresh?.id) {
+                fresh = library?.song(opened.id) ?: opened
+                freshVersion = v
+            }
+            return fresh
+        }
+        set(value) { openedSong = value; fresh = null }
+    private var openedSong by mutableStateOf<com.inksheets.core.Song?>(null)
+    private var fresh: com.inksheets.core.Song? = null
+    private var freshVersion = -1L
 
     /** The file of the part in front, as the editor last reported it. */
     var currentPath by mutableStateOf<String?>(null)
@@ -372,6 +387,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         }
         com.inkslate.core.Perform.centreTap = { bottom -> centreTap(bottom) }
         ScoreTools.install(this)
+        PracticeLog.start(this)
         // Whichever song is in front is "the song": the one the play button plays and the one a
         // leading tablet tells its followers about.
         com.inkslate.core.Perform.onPosition = { page, count ->
@@ -382,6 +398,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
             Listener.pageChanged(this, path, page)
+            PracticeLog.touch()
             // A whole read of this part cut off part way (the app closed) carries on.
             if (currentPath != path) Transcriber.resume(this, File(path))
             currentPath = path

@@ -52,6 +52,7 @@ import com.inksheets.core.AudioTrack
 import com.inksheets.core.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
@@ -79,6 +80,22 @@ internal object Recording {
         p.volume = track.volume
         p.setLoop(track.loopStartMs, track.loopEndMs)
         return true
+    }
+
+    /**
+     * Looking at [track] in the list: it is loaded for when Play is pressed on it, unless something
+     * is playing - what plays is never stopped or swapped by looking at another row.
+     */
+    fun peek(state: SheetsState, track: AudioTrack): Boolean {
+        if (loadedFile == track.file) return true
+        if (playing || player?.playing == true || Click.purpose == Click.Purpose.PLAYBACK) return true
+        return load(state, track)
+    }
+
+    /** [track]'s speed, pitch, volume and loop changed in the list: heard only if it is the one loaded. */
+    fun apply(track: AudioTrack) {
+        if (loadedFile != track.file) return
+        player?.let { p -> p.speed = track.speed; p.pitch = track.pitch; p.volume = track.volume; p.setLoop(track.loopStartMs, track.loopEndMs) }
     }
 
     /** The strip's play button and the pedal: the current song's first recording, played or paused. */
@@ -263,10 +280,10 @@ internal object SelfRecorder {
         bpm = e?.settings?.bpm
         beatsPerBar = e?.settings?.beatsPerBar
         var skip = if (e != null && bars > 0) (mic.sampleRate * e.msFor(bars) / 1000.0).toLong() else 0L
-        val started = mic.start { whole ->
+        val started = Ears.listen(state, "record") { whole ->
             var chunk = whole
             if (skip > 0) {
-                if (whole.size <= skip) { skip -= whole.size; return@start }
+                if (whole.size <= skip) { skip -= whole.size; return@listen }
                 chunk = whole.copyOfRange(skip.toInt(), whole.size)
                 skip = 0
             }
@@ -293,7 +310,7 @@ internal object SelfRecorder {
 
     /** Stop, and pair the take with the song, labelled with when it was made. */
     fun stop(state: SheetsState) {
-        state.platform.microphone?.stop()
+        Ears.stop("record")
         if (Click.purpose == Click.Purpose.RECORD) Click.stop(state)
         val w = writer ?: return
         writer = null
@@ -468,7 +485,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                         val at = tracks.indexOfFirst { it.file == track.file }.takeIf { it >= 0 } ?: return@TrackControls
                         val t = change(track)
                         save(tracks.toMutableList().also { it[at] = t })
-                        Recording.player?.let { p -> p.speed = t.speed; p.pitch = t.pitch; p.volume = t.volume; p.setLoop(t.loopStartMs, t.loopEndMs) }
+                        Recording.apply(t)
                     }
                 }
             }
@@ -499,17 +516,16 @@ private fun Hint(text: String, error: Boolean = false) {
 @Composable
 private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack, update: ((AudioTrack) -> AudioTrack) -> Unit) {
     val player = remember { Recording.playerFor(state) }
-    var loaded by remember(track.file) { mutableStateOf(Recording.loadedFile == track.file) }
+    // Looking at another row never stops or replaces what is playing: it is loaded when Play is pressed on it.
+    val loaded = Recording.loadedFile == track.file
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var failed by remember(track.file) { mutableStateOf(false) }
     var position by remember { mutableStateOf(0L) }
     var duration by remember { mutableStateOf(0L) }
 
     LaunchedEffect(track.file) {
-        if (!loaded) {
-            val ok = withContext(Dispatchers.IO) { Recording.load(state, track) }
-            loaded = ok
-            failed = !ok
-        }
+        // Not while another plays: it is loaded when Play is pressed on this one.
+        if (!loaded) failed = !withContext(Dispatchers.IO) { Recording.peek(state, track) }
     }
     LaunchedEffect(loaded) {
         while (loaded) {
@@ -533,9 +549,17 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             FilledIconButton(onClick = {
-                if (Recording.playing) Recording.pause(state) else Recording.play(state, track, state.library?.song(songId))
-            }, enabled = loaded) {
-                Icon(if (Recording.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause")
+                val now = state.library?.song(songId)
+                if (loaded && Recording.playing) Recording.pause(state)
+                else if (loaded) Recording.play(state, track, now)
+                else scope.launch {
+                    if (Recording.playing) Recording.pause(state)
+                    val ok = withContext(Dispatchers.IO) { Recording.load(state, track) }
+                    failed = !ok
+                    if (ok) Recording.play(state, track, now)
+                }
+            }) {
+                Icon(if (loaded && Recording.playing) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause")
             }
             Spacer(Modifier.width(12.dp))
             Text("${clock(position)} / ${clock(duration)}")
@@ -548,10 +572,10 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
 
         Text("Loop a passage", style = MaterialTheme.typography.labelMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = { update { it.copy(loopStartMs = position) } }) {
+            OutlinedButton(onClick = { update { it.copy(loopStartMs = position, loopEndMs = it.loopEndMs?.takeIf { e -> e > position }) } }) {
                 Text("A " + (track.loopStartMs?.let(::clock) ?: "–"))
             }
-            OutlinedButton(onClick = { update { it.copy(loopEndMs = position) } }) {
+            OutlinedButton(onClick = { update { it.copy(loopEndMs = position, loopStartMs = it.loopStartMs?.takeIf { s -> s < position }) } }) {
                 Text("B " + (track.loopEndMs?.let(::clock) ?: "–"))
             }
             TextButton(onClick = { update { it.copy(loopStartMs = null, loopEndMs = null) } }) { Text("No loop") }
@@ -564,7 +588,7 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
             value = kotlin.math.sqrt(track.volume).toFloat(),
             onValueChange = { v ->
                 val vol = ((v * v) * 100).roundToInt() / 100.0
-                player.volume = vol
+                if (loaded) player.volume = vol
                 update { it.copy(volume = vol) }
             },
             valueRange = 0f..1f

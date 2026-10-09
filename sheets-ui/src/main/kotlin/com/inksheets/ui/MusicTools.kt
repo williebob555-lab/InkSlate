@@ -151,7 +151,7 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
                         Text(
                             when {
                                 Ears.deaf -> "  Hears nothing" + (Ears.device?.let { " - $it" } ?: "") + " (Settings, Microphone)"
-                                TempoFollow.heard != null -> "  Hearing about ${TempoFollow.heard!!.roundToInt()} bpm"
+                                TempoFollow.heard != null -> "  Hearing about ${TempoFollow.heard!!.roundToInt()} bpm" + (TempoFollow.drift?.let { d -> if (abs(d) >= 0.03) "  (${(abs(d) * 100).roundToInt()}% ${if (d > 0) "rushing" else "dragging"})" else "  (on tempo)" } ?: "")
                                 else -> "  Listening for a steady beat..."
                             },
                             style = MaterialTheme.typography.labelSmall,
@@ -204,16 +204,16 @@ internal fun TunerBody(state: SheetsState, large: Boolean = false) {
             val window = FloatArray(size)
             var sinceLast = 0
             var smoothed: Double? = null
-            listening = mic.start { chunk ->
+            listening = Ears.listen(state, "tuner") { chunk ->
                 // Slide the window along; look again every quarter of a window.
                 val n = chunk.size.coerceAtMost(size)
                 System.arraycopy(window, n, window, 0, size - n)
                 System.arraycopy(chunk, chunk.size - n, window, size - n, n)
                 sinceLast += chunk.size
-                if (sinceLast < size / 4) return@start
+                if (sinceLast < size / 4) return@listen
                 sinceLast = 0
                 val reading = Tuner.detect(window.copyOf(), mic.sampleRate)
-                if (reading == null || reading.clarity < 0.75) return@start
+                if (reading == null || reading.clarity < 0.75) return@listen
                 // A little smoothing, so the needle settles rather than shivers.
                 val s = smoothed?.let { prev ->
                     if (abs(1200 * kotlin.math.log2(reading.hz / prev)) > 60) reading.hz else prev * 0.6 + reading.hz * 0.4
@@ -223,7 +223,7 @@ internal fun TunerBody(state: SheetsState, large: Boolean = false) {
             }
             failed = !listening
         }
-        onDispose { mic?.stop() }
+        onDispose { if (mic != null) Ears.stop("tuner") }
     }
     val note = hz?.let { Tuner.note(it, if (transposed) instrument?.transpose ?: 0 else 0, a4) }
 
