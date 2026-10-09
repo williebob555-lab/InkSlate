@@ -26,19 +26,30 @@ class DesktopPodGoInput : ControllerInput {
 
     override fun start(onEvent: (ControlEvent) -> Unit, onDevices: (List<String>) -> Unit) {
         if (running) return
+        // One watcher in the whole process: libusb's native code has been seen to crash the JVM
+        // when several threads list the devices at once (each app made in a test started its own).
+        synchronized(USB) { if (watching) return; watching = true }
         if (runCatching { LibUsb.init(null) }.getOrElse { EventLog.info("sheets", "POD Go: no USB access here (${it.message})"); return } != LibUsb.SUCCESS) return
         running = true
         watcher = Thread({
             while (running) {
-                runCatching { look(onEvent, onDevices) }.onFailure { EventLog.warn("sheets", "POD Go: ${it.message}") }
+                runCatching { synchronized(USB) { look(onEvent, onDevices) } }.onFailure { EventLog.warn("sheets", "POD Go: ${it.message}") }
                 try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
             }
         }, "pod-go").apply { isDaemon = true; start() }
     }
 
     override fun stop() {
+        if (!running) return
         running = false
         watcher?.interrupt()
+        synchronized(USB) { watching = false }
+    }
+
+    private companion object {
+        /** Every call into libusb's device list goes one at a time. */
+        val USB = Any()
+        var watching = false
     }
 
     /** The unit, if plugged in and not linked yet: opened and listened to until it goes or the app stops. */
