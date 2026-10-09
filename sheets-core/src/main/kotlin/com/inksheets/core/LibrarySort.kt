@@ -34,7 +34,11 @@ class LibrarySort(
     /** How long each step took the last time, for the log. */
     val timings = LinkedHashMap<String, Long>()
 
+    /** What the folder walk found, by path: each file's size and age without asking the disk again. */
+    private var listed: Map<String, LibraryScan.Found> = emptyMap()
+
     fun run(disk: List<LibraryScan.Found>) {
+        listed = disk.associateBy { File(root, it.path).path }
         fun step(name: String, block: () -> Unit) { val t = System.nanoTime(); block(); timings[name] = (System.nanoTime() - t) / 1_000_000 }
         step("names") { reread() }
         step("folders") { byFolder(disk) }
@@ -48,13 +52,18 @@ class LibrarySort(
     private fun fingerprint(f: File): String? {
         // A file this small is a blank page or a placeholder: two of them being the same says
         // nothing about two songs being one.
-        if (!f.isFile || f.length() < MIN_PRINT_BYTES) return null
-        val key = "${f.path}|${f.length()}|${f.lastModified()}"
-        return prints.getOrPut(key) { "${f.length()}:${LibraryScan.hashOf(f)}" }
+        // From the walk where it has the file (three questions to the disk a part, every sort, was
+        // most of a sort's time on a big library); asked only for one it did not list.
+        val seen = listed[f.path]
+        val size = seen?.size ?: (if (f.isFile) f.length() else -1L)
+        if (size < MIN_PRINT_BYTES) return null
+        val key = "${f.path}|$size|${seen?.modified ?: f.lastModified()}"
+        return prints.getOrPut(key) { "$size:${LibraryScan.hashOf(f)}" }
     }
 
     private fun pageCount(f: File): Int? {
-        val key = "${f.path}|${f.length()}|${f.lastModified()}"
+        val seen = listed[f.path]
+        val key = "${f.path}|${seen?.size ?: f.length()}|${seen?.modified ?: f.lastModified()}"
         pageCounts[key]?.let { return it }
         return pages(f)?.also { pageCounts[key] = it }
     }

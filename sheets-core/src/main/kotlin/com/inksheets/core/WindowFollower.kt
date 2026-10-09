@@ -167,7 +167,7 @@ class WindowFollower(
         val end = lo + bestJ
         // An unsure line-up far from where the band should be is not believed: the place carries on
         // at the band's pace instead - a moment's confusion must not throw the page about.
-        if (REJECT && found && sure < UNSURE && abs(end - predicted) > 30) { confidence = sure; return null }
+        if (REJECT && found && sure < UNSURE && abs(end - predicted) > REJECT_FRAMES) { confidence = sure; return null }
         confidence = sure
         if (sure >= UNSURE) found = true
         // The band's pace from how far the music moved since the last line-up.
@@ -186,5 +186,7 @@ class WindowFollower(
         /** Before it is found, how strongly the page in front pulls (against the found pull). */
         private val EARLY_PULL = System.getProperty("inksheets.turns.early")?.toFloatOrNull() ?: 0.3f
         private val REJECT = System.getProperty("inksheets.turns.reject") != "0"
+        /** How far from where the band should be an unsure line-up must be to be refused, in frames. */
+        private val REJECT_FRAMES = System.getProperty("inksheets.turns.rejectFrames")?.toIntOrNull() ?: 60
     }
 }

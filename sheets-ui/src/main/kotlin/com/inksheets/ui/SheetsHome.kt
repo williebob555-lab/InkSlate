@@ -100,6 +100,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     var chooseFolder by remember { mutableStateOf(false) }
     var openShared by remember { mutableStateOf(false) }
     var showDeleted by remember { mutableStateOf(false) }
+    var heldBackKept by remember { mutableStateOf(false) }
     var backupToImport by remember { mutableStateOf<java.io.File?>(null) }
     var backupsLookedAt by remember { mutableStateOf(0) }
     // A MobileSheets backup put in the music folder is noticed and offered, once.
@@ -269,6 +270,20 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                             backupsLookedAt++
                         }) { Text("Not now") }
                         Button(onClick = { backupToImport = msb }) { Text("Import it") }
+                    }
+                }
+            }
+            // Many files gone at once (a folder renamed or deleted, a drive not there): nothing was
+            // removed - asked here, where it shows, not five scrolls down in Settings.
+            state.lastScan?.heldBack?.takeIf { it > 0 && !heldBackKept }?.let { n ->
+                androidx.compose.material3.Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("$n parts' files went from the music folder at once. Remove them from the library?",
+                            style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { heldBackKept = true }) { Text("Keep") }
+                        TextButton(onClick = {
+                            Thread({ state.scanFolder(allowMassRemoval = true) }, "remove-held").apply { isDaemon = true; start() }
+                        }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
                     }
                 }
             }

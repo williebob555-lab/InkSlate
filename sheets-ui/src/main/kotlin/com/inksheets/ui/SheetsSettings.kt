@@ -78,8 +78,7 @@ private fun LibraryHealth(state: SheetsState) {
         val lib = state.library
         val songs = lib?.songs.orEmpty()
         Text(
-            "${songs.size} songs, ${songs.sumOf { it.parts.size }} parts. The music folder is checked every few " +
-                "seconds; what is added, moved or deleted there - on any device - is followed here.",
+            "${songs.size} songs, ${songs.sumOf { it.parts.size }} parts - kept in step with the music folder by itself.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -96,11 +95,11 @@ private fun LibraryHealth(state: SheetsState) {
                 )
             }
             if (heard.size == 1) {
+                // Normal on a device used alone; a hint, not an alarm.
                 Text(
-                    "Only this device's changes are here. If you use InkSheets on others, the file sync is not " +
-                        "bringing their changes - check the folder is set to send and receive on each device.",
+                    "Only this device so far. Using others? Check the folder syncs both ways on each.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -122,8 +121,7 @@ private fun LibraryHealth(state: SheetsState) {
         // Held back: too much gone at once to be sure it was meant.
         state.lastScan?.heldBack?.takeIf { it > 0 }?.let { n ->
             Text(
-                "$n parts' files disappeared at once, so nothing was removed. If the music folder is all " +
-                    "there and they really were deleted, remove them.",
+                "$n parts' files went at once, so nothing was removed. Deleted on purpose? Remove them.",
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall
             )
@@ -134,8 +132,7 @@ private fun LibraryHealth(state: SheetsState) {
 
         if (missing.isNotEmpty()) {
             Text(
-                "${missing.size} parts point at files that are not on this device - left behind by an older " +
-                    "version, or still on their way from another device.",
+                "${missing.size} parts' files are not on this device (still syncing, or left by an older version).",
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(top = 6.dp)
             )
