@@ -211,7 +211,7 @@ internal fun SetlistsPane(state: SheetsState) {
                             menu = listOf(
                                 "Rename" to { naming = Naming.RenameFolder(f) },
                                 "Colour..." to { colouringFolder = f },
-                                "Delete (keeps its setlists)" to { state.change { deleteFolder(f.id) } },
+                                "Delete (keeps its setlists)" to { state.deleteFolder(f.id, withSetlists = false) },
                                 "Merge its setlists into one..." to { joiningFolder = f },
                                 "Delete with its setlists..." to { clearing = f }
                             )
@@ -249,7 +249,7 @@ internal fun SetlistsPane(state: SheetsState) {
                         "Rename" to { naming = Naming.RenameSetlist(s) },
                         (if (s.date.isNullOrBlank()) "Concert date..." else "Change concert date...") to { naming = Naming.SetlistDate(s) },
                         "Merge into another setlist..." to { joiningInto = s },
-                        "Delete" to { state.change { deleteSetlist(s.id) } }
+                        "Delete" to { state.deleteSetlist(s.id) }
                     )
                 )
                 }
@@ -289,13 +289,7 @@ internal fun SetlistsPane(state: SheetsState) {
             buttons = {
                 TextButton(onClick = { clearing = null }) { Text("Keep them") }
                 TextButton(onClick = {
-                    state.change {
-                        lists.forEach { deleteSetlist(it.id) }
-                        // Its folders inside it go too, deepest first.
-                        fun under(id: String): List<String> = foldersIn(id).flatMap { under(it.id) + it.id }
-                        under(f.id).forEach { deleteFolder(it) }
-                        deleteFolder(f.id)
-                    }
+                    state.deleteFolder(f.id, withSetlists = true)
                     if (folderId == f.id) folderId = f.parentId
                     clearing = null
                 }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
@@ -525,7 +519,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.weight(1f)) {
                                 ListRow(icon = {}, title = "(removed from the library)", detail = null, onClick = {}, menu = listOf(
-                                    "Take out of setlist" to { state.change { removeFromSetlist(setlist.id, entry.id) } }
+                                    "Take out of setlist" to { state.takeOut(setlist.id, entry.id) }
                                 ))
                             }
                         }
@@ -554,7 +548,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             trailing = {
                                 // Its place in the set, however the list is sorted.
                                 Text("${setlist.entries.indexOfFirst { it.id == entry.id } + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
-                                IconButton(onClick = { state.change { removeFromSetlist(setlist.id, entry.id) } }) {
+                                IconButton(onClick = { state.takeOut(setlist.id, entry.id) }) {
                                     Icon(Icons.Default.Close, "Take out of setlist")
                                 }
                             }

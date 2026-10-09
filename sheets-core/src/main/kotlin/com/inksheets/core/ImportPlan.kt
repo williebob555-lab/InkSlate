@@ -294,9 +294,15 @@ object ImportPlan {
      * -> "Liberty Bell".
      */
     fun titleOf(fileName: String): String {
-        val cleaned = cleanTitle(readableName(fileName))
+        val readable = readableName(fileName)
+        val cleaned = cleanTitle(readable)
+        // The part was already cut off at a separator ("Cafe del Mar - Trombone 1"): what is
+        // left is all title, even when its last word is also an instrument's ("Mar", "Flute").
+        if (cleaned.trim() != readable.trim() && SEPARATED.containsMatchIn(readable)) return cleaned.trim()
         return stripTrailingInstrument(cleaned)
     }
+
+    private val SEPARATED = Regex("""\s+[-–—]\s+|\(|\[""")
 
     /**
      * A file name as words: no extension, no "(1)" a browser adds to a second download, no

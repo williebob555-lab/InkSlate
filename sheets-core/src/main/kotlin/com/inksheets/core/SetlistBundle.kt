@@ -119,14 +119,31 @@ object SetlistBundle {
             val safeName = manifest.name.map { if (it in "\\/:*?\"<>|") ' ' else it }.joinToString("").trim().ifEmpty { "Setlist" }
             val base = "Shared/$safeName"
 
+            // Each file in the bundle gets its own name here: two parts of the same name from
+            // different folders of someone's zip are two files, not one written over the other.
+            val namedAs = HashMap<String, String>()
+            val trash = LibraryTrash(root, library)
             fun extract(inZip: String): String? {
+                namedAs[inZip]?.let { return it }
                 val entry = zip.getEntry(inZip) ?: return null
                 // Only a plain name inside the bundle's own folder: never a path that climbs out.
                 val name = inZip.substringAfterLast('/').replace("..", "_")
-                val rel = "$base/$name"
+                var rel = "$base/$name"
+                var n = 2
+                while (rel.lowercase() in namedAs.values.map { it.lowercase() }) {
+                    rel = "$base/${name.substringBeforeLast('.')} ($n)" + name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }; n++
+                }
+                namedAs[inZip] = rel
                 val target = File(root, rel)
                 target.parentFile.mkdirs()
-                zip.getInputStream(entry).use { input -> target.outputStream().use { input.copyTo(it) } }
+                val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                if (target.isFile) {
+                    // Brought in before: the same file again changes nothing; a different one
+                    // (marked here since, or a new edition) keeps the old copy in the trash.
+                    if (target.length() == bytes.size.toLong() && target.readBytes().contentEquals(bytes)) return rel
+                    trash.keepFile(rel, "${manifest.name}: $name (before it was brought in again)")
+                }
+                target.writeBytes(bytes)
                 return rel
             }
 
@@ -166,7 +183,9 @@ object SetlistBundle {
                 }
             }
             val folder = library.foldersIn(null).firstOrNull { it.name == SHARED_FOLDER } ?: library.addFolder(SHARED_FOLDER)
-            val setlist = library.addSetlist(manifest.name, folder.id)
+            // The same setlist shared again: brought up to date, not made twice.
+            val setlist = library.setlists.firstOrNull { it.folderId == folder.id && it.name == manifest.name }
+                ?: library.addSetlist(manifest.name, folder.id)
             library.editSetlist(setlist.id) { entries = ids.map { SetlistEntry(songId = it) } }
             return Imported(library.setlist(setlist.id)!!, added, matched)
         }

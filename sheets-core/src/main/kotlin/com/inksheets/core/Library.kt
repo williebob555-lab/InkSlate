@@ -622,6 +622,26 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
 
     fun deleteSetlist(id: String) = edit(SETLIST, id) { put(Op.DELETED, true) }
 
+    /** Bring back a deleted setlist, as it was. */
+    fun restoreSetlist(id: String) = edit(SETLIST, id) { put(Op.DELETED, false) }
+
+    /** Bring back a deleted folder (what was in it is put back by whoever kept the list). */
+    fun restoreFolder(id: String) = edit(FOLDER, id) { put(Op.DELETED, false) }
+
+    /**
+     * Setlists deleted in the last [days] days, newest first, with when: kept as records with a
+     * deleted mark, so any device can bring one back.
+     */
+    fun deletedSetlists(days: Int = LibraryTrash.KEEP_DAYS, now: Long = System.currentTimeMillis()): List<Pair<Setlist, Long>> = synchronized(this) {
+        val all = state.allOf(SETLIST)
+        all.mapNotNull { (id, fields) ->
+            val d = fields[Op.DELETED] ?: return@mapNotNull null
+            if ((d.value as? JsonPrimitive)?.content != "true") return@mapNotNull null
+            if (now - d.at.ms > days * 86_400_000L) return@mapNotNull null
+            setlist(id, fields.mapValues { it.value.value }) to d.at.ms
+        }.sortedByDescending { it.second }
+    }
+
     /**
      * Delete a folder. What was inside moves up to where the folder was, rather than going with
      * it: deleting "2023-24" must never quietly delete that year's setlists.
@@ -878,7 +898,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
          * ("Sleigh Ride demo" with "Sleigh Ride"), and for song ids.
          */
         fun titleKey(title: String): String =
-            sortKey(title.lowercase().replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim())
+            sortKey(java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFC).lowercase().replace(Regex("""[^\p{L}\p{N}]+"""), " ").trim())
     }
 }
 

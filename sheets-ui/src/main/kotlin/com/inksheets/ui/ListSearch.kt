@@ -39,13 +39,21 @@ internal fun ListSearch(count: Int, query: String, onQuery: (String) -> Unit, hi
     )
 }
 
-/** Whether any of [texts] has every word of [query] in it, ignoring case. */
+/**
+ * Whether [texts] together have every word of [query] in them, in any order - ignoring case,
+ * accents ("dvorak" finds Dvořák) and which apostrophe was typed.
+ */
 internal fun matches(query: String, vararg texts: String?): Boolean {
-    val words = query.trim().lowercase().split(Regex("""\s+""")).filter { it.isNotEmpty() }
+    val words = fold(query).split(Regex("""\s+""")).filter { it.isNotEmpty() }
     if (words.isEmpty()) return true
-    val hay = texts.filterNotNull().joinToString(" ").lowercase()
+    val hay = fold(texts.filterNotNull().joinToString(" "))
     return words.all { it in hay }
 }
+
+/** Text as search compares it: lower case, accents off, one kind of apostrophe. */
+internal fun fold(text: String): String =
+    java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD).replace(Regex("""\p{M}+"""), "")
+        .replace('’', '\'').replace('‘', '\'').replace('`', '\'').lowercase().trim()
 
 /** An instrument found by its name, a name it is printed as, or a short form: "tpt", "euph". */
 internal fun matches(query: String, instrument: Instrument): Boolean {

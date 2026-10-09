@@ -26,7 +26,9 @@ class LibraryTrash(private val root: File, private val library: Library) {
         val parts: List<Pair<String, String>>,
         val audio: List<String>,
         /** This entry's folder inside the trash. */
-        val folder: String = ""
+        val folder: String = "",
+        /** Files kept with no part of their own: an old copy something replaced. */
+        val files: List<String> = emptyList()
     )
 
     private val dir = File(root, ".inksheets/trash")
@@ -52,10 +54,11 @@ class LibraryTrash(private val root: File, private val library: Library) {
             to.parentFile?.mkdirs()
             if (!from.renameTo(to)) { from.copyTo(to, overwrite = true); from.delete() }
         }
-        song.parts.forEach { stash(it.file) }
-        song.audio.forEach { stash(it.file) }
+        // The list first, then the files: stopped halfway, the trash still knows what it holds.
         val entry = Entry(song.id, song.title, System.currentTimeMillis(), song.parts.map { it.id to it.file }, song.audio.map { it.file })
         File(folder, MANIFEST).writeText(json.encodeToString(Entry.serializer(), entry))
+        song.parts.forEach { stash(it.file) }
+        song.audio.forEach { stash(it.file) }
         song.parts.forEach { library.deletePart(it.id) }
         library.deleteSong(song.id)
         return entry.copy(folder = folder.name)
@@ -72,6 +75,8 @@ class LibraryTrash(private val root: File, private val library: Library) {
         val safe = name.map { if (it.isLetterOrDigit() || it in " -_") it else '_' }.joinToString("").trim().take(40)
         val folder = File(dir, "$stamp $safe").apply { mkdirs() }
         val othersUse = library.songs.flatMap { s -> (s.parts + s.duplicates).filter { it.id != part.id }.map { it.file } + s.audio.map { it.file } }.toSet()
+        val entry = Entry(song.id, name, System.currentTimeMillis(), listOf(part.id to part.file), emptyList())
+        File(folder, MANIFEST).writeText(json.encodeToString(Entry.serializer(), entry))
         if (part.file !in othersUse) {
             val from = File(root, part.file)
             if (from.isFile) {
@@ -80,9 +85,29 @@ class LibraryTrash(private val root: File, private val library: Library) {
                 if (!from.renameTo(to)) { from.copyTo(to, overwrite = true); from.delete() }
             }
         }
-        val entry = Entry(song.id, name, System.currentTimeMillis(), listOf(part.id to part.file), emptyList())
-        File(folder, MANIFEST).writeText(json.encodeToString(Entry.serializer(), entry))
         library.deletePart(part.id)
+        return entry.copy(folder = folder.name)
+    }
+
+    /**
+     * Keep the file at [rel] in the trash before something is written over it (a part replaced,
+     * a setlist or download brought in again) - so a player's marks in the old copy are never
+     * lost by one wrong tap. Restoring it puts it back beside whatever is there then.
+     */
+    fun keepFile(rel: String, title: String): Entry? {
+        val from = File(root, rel)
+        if (!from.isFile) return null
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+        val safe = title.map { if (it.isLetterOrDigit() || it in " -_") it else '_' }.joinToString("").trim().take(40)
+        var folder = File(dir, "$stamp $safe")
+        var n = 2
+        while (folder.exists()) folder = File(dir, "$stamp $safe $n").also { n++ }
+        folder.mkdirs()
+        val entry = Entry("", title, System.currentTimeMillis(), emptyList(), emptyList(), files = listOf(rel))
+        File(folder, MANIFEST).writeText(json.encodeToString(Entry.serializer(), entry))
+        val to = File(folder, rel)
+        to.parentFile?.mkdirs()
+        from.copyTo(to, overwrite = true)
         return entry.copy(folder = folder.name)
     }
 
@@ -90,16 +115,37 @@ class LibraryTrash(private val root: File, private val library: Library) {
     fun restore(entry: Entry): Boolean {
         val folder = File(dir, entry.folder)
         if (!folder.isDirectory) return false
-        for (rel in entry.parts.map { it.second } + entry.audio) {
+        // Where each file goes back to: its own place, or - when another file has been put
+        // there since - beside it, "(restored)", so neither is lost.
+        val placed = HashMap<String, String>()
+        for (rel in entry.parts.map { it.second } + entry.audio + entry.files) {
             val from = File(folder, rel)
-            val to = File(root, rel)
-            if (!from.isFile || to.exists()) continue
+            if (!from.isFile || rel in placed) continue
+            var target = rel
+            if (File(root, rel).exists()) {
+                val base = rel.substringBeforeLast('.'); val ext = rel.substringAfterLast('.', "")
+                var n = 1
+                do { target = "$base (restored${if (n > 1) " $n" else ""})" + (if (ext.isNotEmpty()) ".$ext" else ""); n++ } while (File(root, target).exists())
+            }
+            val to = File(root, target)
             to.parentFile?.mkdirs()
             if (!from.renameTo(to)) { from.copyTo(to); from.delete() }
+            placed[rel] = target
         }
-        library.restoreSong(entry.songId)
+        if (entry.songId.isNotEmpty()) library.restoreSong(entry.songId)
         entry.parts.forEach { (id, _) -> library.restorePart(id) }
-        folder.deleteRecursively()
+        // Parts and recordings put back beside where they were point at where they are now.
+        for ((id, rel) in entry.parts) {
+            val now = placed[rel]?.takeIf { it != rel } ?: continue
+            val (songId, _) = library.partHome(id)
+            val part = songId?.let { library.song(it) }?.all?.firstOrNull { it.id == id } ?: continue
+            library.writePart(songId, part.copy(file = now))
+        }
+        if (entry.audio.any { placed[it] != null && placed[it] != it }) library.song(entry.songId)?.let { s ->
+            library.editSong(s.id) { audio = s.audio.map { t -> placed[t.file]?.let { t.copy(file = it) } ?: t } }
+        }
+        // Anything that could not be put back stays in the trash rather than going for good.
+        if (folder.walkBottomUp().none { it.isFile && it.name != MANIFEST }) folder.deleteRecursively()
         return true
     }
 

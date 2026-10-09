@@ -613,39 +613,39 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
      */
     fun readUnknownParts(onProgress: (done: Int, of: Int) -> Unit = { _, _ -> }) {
         val lib = library ?: return
+        // Each part tried is noted with its file's size: a file still arriving, or replaced,
+        // is tried again once it has changed.
         val tried = platform.pref(K_TRIED).orEmpty().split(',').filter { it.isNotEmpty() }.toMutableSet()
+        fun key(part: com.inksheets.core.Part, file: File?) = part.id + ":" + (file?.length() ?: 0L)
         val todo = lib.songs.flatMap { song ->
-            song.parts.filter { it.instrument == null && it.id !in tried }.map { song to it }
-        }
+            song.parts.filter { it.instrument == null }.map { song to it }
+        }.filter { (song, part) -> key(part, partFile(song, part)) !in tried && part.id !in tried }
+        var unsaved = 0
         todo.forEachIndexed { i, (song, part) ->
             onProgress(i, todo.size)
             val file = partFile(song, part) ?: return@forEachIndexed
-            if (!file.isFile) return@forEachIndexed
+            if (!file.isFile || file.length() == 0L) return@forEachIndexed
             // The page's own words where it has them; a scan read where it does not.
             val text = runCatching { platform.pageText(file, part.firstPage ?: 1) }.getOrNull()
                 ?.takeIf { com.inksheets.core.InstrumentReader.read(it) != null }
                 ?: if (platform.canRecognise) runCatching { platform.recognise(file, part.firstPage ?: 1) }.getOrNull() else null
             val match = text?.let { com.inksheets.core.InstrumentReader.read(it) }
             if (match != null) {
-                // Read the song again at the moment of writing: another part may have changed.
-                val current = lib.song(song.id) ?: return@forEachIndexed
+                // Read the part again at the moment of writing: it may have been set meanwhile.
                 change {
-                    editSong(song.id) {
-                        parts = current.parts.map { p ->
-                            if (p.id == part.id && p.instrument == null) {
-                                p.copy(
-                                    instrument = match.instrument.id,
-                                    source = com.inksheets.core.InstrumentSource.OCR,
-                                    label = match.label
-                                )
-                            } else p
-                        }
-                    }
+                    val current = song(song.id)?.parts?.firstOrNull { it.id == part.id }
+                    if (current != null && current.instrument == null) writePart(song.id, current.copy(
+                        instrument = match.instrument.id,
+                        source = com.inksheets.core.InstrumentSource.OCR,
+                        label = match.label
+                    ))
                 }
             }
-            tried += part.id
-            platform.setPref(K_TRIED, tried.joinToString(","))
+            tried.remove(part.id)
+            tried += key(part, file)
+            if (++unsaved >= 25) { platform.setPref(K_TRIED, tried.joinToString(",")); unsaved = 0 }
         }
+        if (unsaved > 0) platform.setPref(K_TRIED, tried.joinToString(","))
         onProgress(todo.size, todo.size)
     }
 
@@ -882,6 +882,10 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** Imports in progress: the scan waits, so it does not file half-copied music its own way. */
     @Volatile var importing = 0
 
+    /** One scan at a time: Home, the watcher, "Check now" and Library health all start them. */
+    private val scanLock = Any()
+    private var purgedAt = 0L
+
     private fun scanner(): com.inksheets.core.LibraryScan? {
         val base = root ?: return null
         val lib = library ?: return null
@@ -894,9 +898,10 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
      * followed, deleted ones removed, doubles put together. Slow-ish: off the UI thread.
      * [allowMassRemoval] is the person confirming a removal that was held back.
      */
-    fun scanFolder(allowMassRemoval: Boolean = false): com.inksheets.core.LibraryScan.Report? {
+    fun scanFolder(allowMassRemoval: Boolean = false): com.inksheets.core.LibraryScan.Report? = synchronized(scanLock) {
         if (importing > 0) return null
-        runCatching { trash()?.purge() }
+        // Old trash cleared now and then - not on every scan, which read every entry each time.
+        if (System.currentTimeMillis() - purgedAt > 3_600_000L) { purgedAt = System.currentTimeMillis(); runCatching { trash()?.purge() } }
         val report = runCatching { scanner()?.run(allowMassRemoval) }
             .onFailure { platform.log("Library scan failed: ${it.message}") }
             .getOrNull() ?: return null
@@ -926,7 +931,11 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** Take a song out of the library: its files go to the library's Trash for 30 days. */
     fun removeSong(song: com.inksheets.core.Song) {
         importing++
-        try { runCatching { trash()?.remove(song) }.onFailure { platform.log("Could not remove ${song.title}: ${it.message}") } }
+        try {
+            runCatching { trash()?.remove(song) }
+                .onSuccess { e -> e?.let { offerUndo("Removed ${song.title}") { restore(it) } } }
+                .onFailure { platform.log("Could not remove ${song.title}: ${it.message}") }
+        }
         finally { importing-- }
         change { }
     }
@@ -934,9 +943,79 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** Take one part out of its song, its file to the library's Trash for 30 days. */
     fun removePart(song: com.inksheets.core.Song, part: com.inksheets.core.Part) {
         importing++
-        try { runCatching { trash()?.removePart(song, part) }.onFailure { platform.log("Could not remove ${part.file}: ${it.message}") } }
+        try {
+            runCatching { trash()?.removePart(song, part) }
+                .onSuccess { e -> e?.let { offerUndo("Removed ${song.title} - ${com.inksheets.core.Instruments.partName(part)}") { restore(it) } } }
+                .onFailure { platform.log("Could not remove ${part.file}: ${it.message}") }
+        }
         finally { importing-- }
         change { }
+    }
+
+    // ---- undo -------------------------------------------------------------------------
+
+    /** Something just removed or deleted, and how to put it back: offered for a few seconds. */
+    class UndoOffer(val text: String, val undo: () -> Unit, val at: Long = System.currentTimeMillis())
+
+    var undoOffer by mutableStateOf<UndoOffer?>(null)
+
+    /** Say what was just removed, with an Undo beside it (Home's foot, or over the music). */
+    fun offerUndo(text: String, undo: () -> Unit) {
+        val offer = UndoOffer(text, undo)
+        platform.onMain { undoOffer = offer }
+    }
+
+    /** Take a song out of a setlist, with an Undo that puts it back in its place. */
+    fun takeOut(setlistId: String, entryId: String) {
+        val lib = library ?: return
+        val before = lib.setlist(setlistId)?.entries ?: return
+        val title = before.firstOrNull { it.id == entryId }?.let { lib.song(it.songId)?.title } ?: "it"
+        change { removeFromSetlist(setlistId, entryId) }
+        offerUndo("Took $title out") {
+            change {
+                val now = setlist(setlistId)?.entries.orEmpty()
+                if (now.none { it.id == entryId }) {
+                    val i = before.indexOfFirst { it.id == entryId }.coerceIn(0, now.size)
+                    editSetlist(setlistId) { entries = now.toMutableList().apply { add(i, before.first { it.id == entryId }) } }
+                }
+            }
+        }
+    }
+
+    /** Delete a setlist - with an Undo, and in Recently deleted for 30 days. */
+    fun deleteSetlist(id: String) {
+        val name = library?.setlist(id)?.name ?: return
+        change { deleteSetlist(id) }
+        offerUndo("Deleted $name") { change { restoreSetlist(id) } }
+    }
+
+    /**
+     * Delete a folder. With [withSetlists], the setlists and folders inside go too; otherwise
+     * they move up to where it was. Either way one Undo puts everything back as it was.
+     */
+    fun deleteFolder(id: String, withSetlists: Boolean) {
+        val lib = library ?: return
+        val folder = lib.folders.firstOrNull { it.id == id } ?: return
+        // Everything under it, and where each thing was, for the Undo.
+        val folders = ArrayList<com.inksheets.core.Folder>()
+        fun walk(f: String) { lib.foldersIn(f).forEach { folders += it; walk(it.id) } }
+        walk(id)
+        val inside = (folders.map { it.id } + id).toSet()
+        val lists = lib.setlists.filter { it.folderId in inside }
+        change {
+            if (withSetlists) {
+                lists.forEach { deleteSetlist(it.id) }
+                folders.reversed().forEach { deleteFolder(it.id) }
+            }
+            deleteFolder(id)
+        }
+        offerUndo("Deleted ${folder.name}" + if (withSetlists && lists.isNotEmpty()) " and ${lists.size} setlist${if (lists.size == 1) "" else "s"}" else "") {
+            change {
+                restoreFolder(id)
+                folders.forEach { f -> restoreFolder(f.id); moveFolder(f.id, f.parentId) }
+                lists.forEach { l -> restoreSetlist(l.id); editSetlist(l.id) { folderId = l.folderId } }
+            }
+        }
     }
 
     fun restore(entry: com.inksheets.core.LibraryTrash.Entry) {
@@ -1043,6 +1122,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
                     Fate.Skip -> Unit
                     is Fate.Replace -> {
                         val part = lib.song(fate.songId)?.parts?.firstOrNull { it.id == fate.partId } ?: return@forEach
+                        // The old file - and the marks in it - kept in the trash first, for 30 days.
+                        runCatching { trash()?.keepFile(part.file, "${lib.song(fate.songId)?.title ?: ""} - ${com.inksheets.core.Instruments.partName(part)} (replaced)") }
                         runCatching { f.copyTo(File(base, part.file), overwrite = true) }
                             .onFailure { platform.log("Could not replace ${part.file}: ${it.message}") }
                         touched += fate.songId

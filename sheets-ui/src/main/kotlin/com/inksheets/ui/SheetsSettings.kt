@@ -150,30 +150,13 @@ private fun LibraryHealth(state: SheetsState) {
             }) { Text(if (confirmMissing) "Tap again to remove them from the library" else "Remove missing (${missing.size})") }
         }
 
+        // One list of everything removed, the same one Home's menu opens.
         if (trash.isNotEmpty()) {
-            // Folded to one line until opened: a long list of removed songs is not worth the room.
-            Row(
-                Modifier.fillMaxWidth().clickable { trashOpen = !trashOpen }.padding(top = 8.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text((if (trashOpen) "▾ " else "▸ ") + "Trash (${trash.size})", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
-                Text(if (trashOpen) "Hide" else "Show", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-            }
-            if (trashOpen) Text(
-                "Removed songs stay here for ${com.inksheets.core.LibraryTrash.KEEP_DAYS} days, on every device.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (trashOpen) trash.forEach { e ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(e.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(howLongAgo(e.removedAt, "Just now"), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    TextButton(onClick = { scope.launch { withContext(Dispatchers.IO) { state.restore(e) }; look() } }) { Text("Restore") }
-                }
+            TextButton(onClick = { trashOpen = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                Text("Recently deleted (${trash.size})...")
             }
         }
+        if (trashOpen) RecentlyDeletedDialog(state, onClose = { trashOpen = false; scope.launch { look() } })
 
         if (state.scanHistory.isNotEmpty()) {
             Text("Recent changes", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))

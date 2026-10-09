@@ -143,6 +143,9 @@ class LibraryScan(
         library.songs.forEach { s -> s.all.forEach { referenced += it.file.lowercase() } }
         val unclaimed = disk.filter { it.path.lowercase() !in referenced }.toMutableList()
         val missing = library.songs.flatMap { s -> s.all.filter { it.file !in onDisk }.map { s to it } }
+        // The same file with its name now spelled in other letter case (renamed so, or delivered
+        // so by a sync from a system that tells case apart): followed like any move.
+        val byLowerPath = disk.groupBy { it.path.lowercase() }
         val gone = ArrayList<Pair<Song, Part>>()
         // Where each missing file went, decided once per file: every part of a band pack follows it.
         val movedTo = HashMap<String, Found?>()
@@ -153,6 +156,13 @@ class LibraryScan(
                 continue
             }
             val was = memory[part.file]
+            byLowerPath[part.file.lowercase()]?.singleOrNull()?.let { same ->
+                movedTo[part.file] = same
+                library.writePart(song.id, part.copy(file = same.path))
+                memory[part.file]?.let { memory[same.path] = it }
+                moved += part.file to same.path
+                continue
+            }
             val name = part.file.substringAfterLast('/').lowercase()
             // Moved: the one new file with its name, or failing that its size and content.
             val byName = unclaimed.filter { it.path.substringAfterLast('/').lowercase() == name }
@@ -196,10 +206,14 @@ class LibraryScan(
             .mapValues { (_, files) -> ImportPlan.folderIsSong(files.map { it.path }) }
         for (file in unclaimed) {
             if (!file.music) continue
+            // Nothing in it yet (a copy just begun): it is looked at again on the next scan.
+            if (file.size == 0L) continue
             val id = Library.partIdFor(file.path)
             // Removed on another device, and the file's own deletion not here yet: stay removed.
+            // Only a file this device already had can be that; one it watched go and now finds
+            // again was put back (a copy keeps its old date), and comes back.
             val removedAt = library.partDeletedAt(id)
-            if (removedAt != null && removedAt >= file.modified) continue
+            if (removedAt != null && removedAt >= file.modified && memory[file.path]?.size == file.size) continue
             val (home, _) = library.partHome(id)
             val planned = ImportPlan.readPart(file.path)
             val folder = file.path.substringBeforeLast('/', "")
@@ -251,9 +265,13 @@ class LibraryScan(
             val groups = library.songs.filter { !it.apart }.groupBy { Library.matchKey(ImportPlan.titleOfTitle(it.title).ifBlank { it.title }) }
             for ((_, same) in groups) {
                 if (same.size < 2) continue
-                // The same choice on every device: the title's own id if one has it, else the smallest.
+                // The same choice on every device: the song that was here first (its setlists,
+                // bookmarks and a title the person may have given it), else the title's own id,
+                // else the smallest.
+                val firstMade = same.filter { it.created > 0 }.minByOrNull { it.created }
+                    ?.takeIf { f -> same.none { it.id != f.id && it.created == f.created } }
                 val clean = same.filter { ImportPlan.titleOfTitle(it.title) == it.title.trim() }
-                val keep = (clean.ifEmpty { same }).let { c -> c.firstOrNull { it.id == Library.songIdFor(it.title) } ?: c.minBy { it.id } }
+                val keep = firstMade ?: (clean.ifEmpty { same }).let { c -> c.firstOrNull { it.id == Library.songIdFor(it.title) } ?: c.minBy { it.id } }
                 val have = HashSet(library.song(keep.id)?.seats.orEmpty())
                 var took = false
                 for (s in same) if (s.id != keep.id) {
@@ -266,10 +284,12 @@ class LibraryScan(
                     took = true
                     merged += "${s.title} into ${keep.title}"
                 }
-                // Kept a title with an instrument on it: it is the song's now, so it goes.
+                // Kept a title with an instrument on it: it is the song's now, so it goes. Words
+                // that are no instrument ("(pep band)") were the person's, and stay.
                 if (took) {
                     val title = ImportPlan.titleOfTitle(keep.title)
-                    if (title.isNotBlank() && title != keep.title) library.editSong(keep.id) { this.title = title }
+                    val tail = keep.title.trim().removePrefix(title).trim(' ', '-', '(', ')', '[', ']')
+                    if (title.isNotBlank() && title != keep.title && InstrumentReader.read(tail) != null) library.editSong(keep.id) { this.title = title }
                 }
             }
         }

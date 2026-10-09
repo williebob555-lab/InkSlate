@@ -223,6 +223,19 @@ object BulkImport {
             if (inPlace == null) {
                 val target = File(root, rel)
                 if (!target.isFile || target.length() == 0L) source.copy(path, target)
+                else {
+                    // Brought in before: the same file changes nothing; a different one (a new
+                    // edition in a download of the same name) replaces it, the old copy - and any
+                    // marks in it - kept in the trash.
+                    val incoming = File(target.parentFile, ".${target.name}.incoming")
+                    source.copy(path, incoming)
+                    val same = incoming.length() == target.length() && incoming.readBytes().contentEquals(target.readBytes())
+                    if (same) incoming.delete()
+                    else {
+                        LibraryTrash(root, library).keepFile(rel, "${target.nameWithoutExtension} (replaced by a new download)")
+                        if (!incoming.renameTo(target)) { incoming.copyTo(target, overwrite = true); incoming.delete() }
+                    }
+                }
             }
             return rel
         }

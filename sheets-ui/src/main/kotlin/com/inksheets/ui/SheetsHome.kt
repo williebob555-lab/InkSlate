@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GraphicEq
@@ -94,6 +95,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     var showImport by remember { mutableStateOf(false) }
     var chooseFolder by remember { mutableStateOf(false) }
     var openShared by remember { mutableStateOf(false) }
+    var showDeleted by remember { mutableStateOf(false) }
     var backupToImport by remember { mutableStateOf<java.io.File?>(null) }
     var backupsLookedAt by remember { mutableStateOf(0) }
     // A MobileSheets backup put in the music folder is noticed and offered, once.
@@ -150,8 +152,14 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                     onClick = { if (tunerShown) { showTuner = false; state.tunerOpen = false } else showTuner = true },
                     modifier = if (tunerShown) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
                 ) { Icon(Icons.Default.GraphicEq, "Tuner") }
+                // Named, not an icon among icons: the first thing a new library needs.
                 if (state.library != null) {
-                    IconButton(onClick = { showImport = true }) { Icon(Icons.Default.LibraryAdd, "Add music") }
+                    if (narrow) IconButton(onClick = { showImport = true }) { Icon(Icons.Default.LibraryAdd, "Add music") }
+                    else TextButton(onClick = { showImport = true }) {
+                        Icon(Icons.Default.LibraryAdd, null)
+                        Spacer(Modifier.size(6.dp))
+                        Text("Add music")
+                    }
                 }
                 var more by remember { mutableStateOf(false) }
                 Box {
@@ -177,6 +185,13 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                                 text = { Text("Open a shared setlist...") },
                                 leadingIcon = { Icon(Icons.Default.LibraryAdd, null) },
                                 onClick = { more = false; openShared = true }
+                            )
+                        }
+                        if (state.library != null) {
+                            DropdownMenuItem(
+                                text = { Text("Recently deleted...") },
+                                leadingIcon = { Icon(Icons.Default.Delete, null) },
+                                onClick = { more = false; showDeleted = true }
                             )
                         }
                         DropdownMenuItem(
@@ -284,6 +299,8 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     state.downloadWaiting?.let { zip -> BulkImportDialog(state, onClose = { state.downloadWaiting = null }, start = zip) }
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
+    if (showDeleted) RecentlyDeletedDialog(state, onClose = { showDeleted = false })
+    if (state.homeInFront) UndoBar(state)
     if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
     if (state.homeInFront) state.notesFor?.let { song -> NotesDialog(state, song, onClose = { state.notesFor = null }) }
     if (state.remote.remoteOpen) RemoteScreen(state, onClose = { state.remote.remoteOpen = false })
@@ -379,14 +396,22 @@ private fun SongsPane(state: SheetsState) {
             missing = if (onDisk == null) emptySet() else all.filter { s -> s.parts.any { it.file !in onDisk } }.map { it.id }.toSet()
         )
     }
+    // What a search looks through, per song, worked out once per change to the library - not on
+    // every key: the title and who wrote it, tags, notes, and its parts' instruments and names.
+    val searchText = remember(version) {
+        state.library?.songs.orEmpty().associate { s ->
+            s.id to fold((listOf(s.title, s.notes.orEmpty()) + s.composers + s.arrangers + s.artists + s.genres + s.tags +
+                s.parts.map { p -> com.inksheets.core.Instruments.partName(p) + " " + (p.label ?: "") + " " + p.file.substringAfterLast('/') }).joinToString(" "))
+        }
+    }
     val songs = remember(version, state.profileId, query, sort, withRecording, notInSet, noInstrument, noTempo, missingOnly) {
         val lib = state.library
         val all = lib?.songs.orEmpty()
         val inSets = if (notInSet) lib?.setlists.orEmpty().flatMap { l -> l.entries.map { it.songId } }.toSet() else emptySet()
-        val q = query.trim().lowercase()
+        // Every word, in any order, in any of them: "liberty sousa", "trombone 2", "dvorak".
+        val words = fold(query).split(Regex("""\s+""")).filter { it.isNotEmpty() }
         val matching = all.filter { s ->
-            (q.isEmpty() || (listOf(s.title) + s.composers + s.arrangers + s.artists + s.genres + s.tags)
-                .any { it.lowercase().contains(q) }) &&
+            (words.isEmpty() || searchText[s.id].orEmpty().let { hay -> words.all { it in hay } }) &&
                 (!withRecording || s.audio.isNotEmpty()) &&
                 (!notInSet || s.id !in inSets) &&
                 (!noInstrument || s.parts.any { it.instrument == null }) &&
@@ -394,8 +419,8 @@ private fun SongsPane(state: SheetsState) {
                 (!missingOnly || s.id in counts.missing)
         }
         // Filling in details is for every song, not only the chosen instrument's.
-        if (noInstrument || noTempo || missingOnly) return@remember matching.map { it to PartChoice.Fit.YES }
-        val listed = PartChoice.songsFor(matching, state.profile)
+        val listed = if (noInstrument || noTempo || missingOnly) matching.map { it to PartChoice.Fit.YES }
+            else PartChoice.songsFor(matching, state.profile)
         when (sort) {
             SongSort.AZ -> listed
             SongSort.OPENED -> listed.sortedByDescending { it.first.opened }
@@ -409,7 +434,7 @@ private fun SongsPane(state: SheetsState) {
             value = query,
             onValueChange = { query = it },
             leadingIcon = { Icon(Icons.Default.Search, null) },
-            placeholder = { Text("Title, composer, tag...") },
+            placeholder = { Text("Title, composer, instrument...") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
@@ -431,10 +456,11 @@ private fun SongsPane(state: SheetsState) {
                 androidx.compose.material3.FilterChip(selected = notInSet, onClick = { notInSet = !notInSet }, label = { Text("In no setlist") })
             }
             // Details worth filling in, offered only while some are missing.
-            if (counts.noInstrument > 0 || noInstrument) {
+            // Only while some - not all - are missing it: "No tempo" on every song says nothing.
+            if (useful(counts.noInstrument, noInstrument)) {
                 androidx.compose.material3.FilterChip(selected = noInstrument, onClick = { noInstrument = !noInstrument }, label = { Text("No instrument (${counts.noInstrument})") })
             }
-            if (counts.noTempo > 0 || noTempo) {
+            if (useful(counts.noTempo, noTempo)) {
                 androidx.compose.material3.FilterChip(selected = noTempo, onClick = { noTempo = !noTempo }, label = { Text("No tempo (${counts.noTempo})") })
             }
             if (counts.missing.isNotEmpty() || missingOnly) {

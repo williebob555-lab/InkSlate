@@ -125,6 +125,9 @@ class LibraryState {
             .filter { (_, fields) -> !isDeleted(fields) }
             .associate { (id, fields) -> id to fields.mapValues { it.value.value } }
 
+    /** Every record of [kind], deleted ones too, with their fields as stamped. */
+    fun allOf(kind: String): Map<String, Map<String, Value>> = byKind[kind].orEmpty()
+
     fun latestOf(kind: String, id: String, field: String): Stamp? = records[Key(kind, id)]?.get(field)?.at
 
     private fun isDeleted(fields: Map<String, Value>): Boolean =

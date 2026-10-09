@@ -33,8 +33,35 @@ change size. **No build until the very end** — commit locally, one `[build she
 - [ ] Triage REVIEW.md into fix lists below (severity, area)
 - [ ] Design: how each experimental feature becomes an everyday tool (write the plan here first)
 
+### Design notes (lead, gathering)
+- Settings › Experimental is three switches each with a paragraph of prose (SheetsSettings.kt:191) — against "lean chrome / explain once".
+- **Listen's taught turns are stored per recording (`AudioTrack.turnsMs`), not per part.** Bass part (3 pp) and trombone part (2 pp) of one song share one list → teaching one corrupts the other. Must key by part file (or by bar, once read).
+- Recording playback never turns pages by itself even when turns are known — the obvious everyday win ("play along": the app knows exactly where its own recording is, no microphone needed). Mic-following is only for live playing.
+- Candidate everyday uses: Read the music → "Go to bar 47" (director calls a bar at rehearsal), rehearsal letters, hear a passage, print for my instrument (bass reading tuba part); Bluetooth → automatic fallback when Wi-Fi blocks devices (no switch); watch → per-instrument, set up from the watch's own card.
+
 ## Phase 3 — fixes
-(filled from triage)
+(filled from triage; IDs refer to review/Tn.md)
+
+### F1 Library data safety (lead)
+- [ ] T1-01 case-only rename loses song · T1-02 re-copied file with old date never re-added
+- [ ] T1-03 song editor Save writes stale parts snapshot (diff instead)
+- [ ] T1-05 restore with path clash deletes only copy · T1-09 trash manifest first
+- [ ] T1-06 Replace a part → old file to Trash first
+- [ ] T1-07 bundle re-import overwrites marked files + duplicate setlist; same-named parts in zip collide · T1-08 bulk import same name drops new files silently
+- [ ] T1-15 titles ending in an instrument word · T1-16 NFC/NFD · T1-17 hand-set title replaced
+- [ ] T1-18 0-byte/junk files added at once; "tried" never retried · T1-22 scans not serialised; prefs rewritten per part
+- [ ] T1-04 setlist/bookmark/audio lists LWW as one field → concurrent adds lost
+- [ ] T1-20 one new file = full sort (0.7 s @300 songs); purge every scan
+
+### F2 Library UX (Slate-inspired)
+- [ ] Undo snackbar on every remove/delete (song, part, setlist, folder, set entry); Recently deleted reachable from Home, covering setlists/folders (T1-24/25/26)
+- [ ] One search (`matches()` everywhere, accents/apostrophes folded, parts/instruments/notes) (T1-10)
+- [ ] "Needs attention" line replacing No tempo/No instrument/File missing chips + held-back removal (T1-11, T1-23); sort chips honest
+- [ ] Home top bar labelled; Add music findable (T1-12); right-click/two-finger menus; Enter confirms dialogs
+- [ ] Select several (add to setlist / merge / remove); Move to… for setlists/folders; drag song onto setlist
+- [ ] Recording-only song (T1-13); dropped zip + files (T1-14); MS import cancel + idempotent (T1-32); share zip to temp + "only my parts" (T1-33)
+- [ ] Phone layouts: import review, incoming chips, add instrument (T1-27/28); walls of text (T1-29); bookmark rows (T1-30); empty states/default setlist name (T1-31)
+- [ ] Recently added strip after arrivals; check-now from Home (T1-21)
 
 ## Phase 4 — re-test
 - [ ] Re-run testers on changed areas (round 2)

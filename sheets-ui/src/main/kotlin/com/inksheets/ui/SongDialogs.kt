@@ -67,19 +67,30 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
         buttons = {
             TextButton(onClick = onClose) { Text("Cancel") }
             TextButton(onClick = {
+                // Only what was changed here is written: the dialog shows the song as it was when
+                // opened, and a part that arrived meanwhile (or an instrument read in the
+                // background) must not be overwritten by that old picture of it.
                 state.change {
                     editSong(song.id) {
-                        this.title = title.trim().ifEmpty { song.title }
-                        this.composers = list(composers)
-                        this.arrangers = list(arrangers)
-                        this.key = key.trim().ifEmpty { null }
-                        this.timeSignature = time.trim().ifEmpty { null }
+                        val t = title.trim().ifEmpty { song.title }
+                        if (t != song.title) this.title = t
+                        if (list(composers) != song.composers) this.composers = list(composers)
+                        if (list(arrangers) != song.arrangers) this.arrangers = list(arrangers)
+                        if (key.trim().ifEmpty { null } != song.key) this.key = key.trim().ifEmpty { null }
+                        if (time.trim().ifEmpty { null } != song.timeSignature) this.timeSignature = time.trim().ifEmpty { null }
                         val bpm = tempo.trim().toIntOrNull()
                         // A tempo typed or picked is the person's: reading again leaves it be.
                         if (bpm != song.tempo) { this.tempo = bpm; this.tempoRead = false }
-                        this.tags = list(tags)
-                        this.parts = parts.toList()
+                        if (list(tags) != song.genres + song.tags) this.tags = list(tags)
                         if (colour != song.color) this.color = colour
+                    }
+                    val before = song.parts.associateBy { it.id }
+                    val now = this.song(song.id)?.parts.orEmpty().associateBy { it.id }
+                    for (p in parts) {
+                        val was = before[p.id] ?: continue
+                        val current = now[p.id] ?: continue
+                        if (p.instrument == was.instrument && p.chair == was.chair && p.also == was.also) continue
+                        writePart(song.id, current.copy(instrument = p.instrument, chair = p.chair, also = p.also, source = p.source))
                     }
                 }
                 onClose()
