@@ -3,7 +3,7 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** (2026-10-09 03:15) Listen tuning vs PageTurnBench; then T5 (reading/music tools) + T6 (settings/UiAudit) testers; merge T4 fixer; clean-view overhaul; Android compile; final build.
+**Now:** (2026-10-09 ~08:30) Midterm test build pushed at the user's request (e49d2b2 [build sheets]) - confirm it published. Playback rebuilt twice (planning engine + spectral wind/brass synth): user to listen and judge. T6 (UI audit 12 sizes + regression) running. Then: triage T6, remaining open items below, final build.
 
 **Earlier:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
 
