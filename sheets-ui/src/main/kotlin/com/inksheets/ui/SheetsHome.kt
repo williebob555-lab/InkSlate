@@ -493,6 +493,17 @@ private fun SongsPane(state: SheetsState) {
                 }
             }.toList()
         }
+        // Music that arrived lately (synced in, imported): said, so nothing comes in unseen - a tap lists it newest first.
+        val fresh = remember(version) { state.library?.songs.orEmpty().count { System.currentTimeMillis() - it.created < 86_400_000L } }
+        if (fresh > 0 && sort != SongSort.ADDED && query.isBlank()) {
+            Text(
+                "$fresh new in the last day  ·  show",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp)
+                    .clickable { sortName = SongSort.ADDED.name }.padding(horizontal = 4.dp, vertical = 6.dp)
+            )
+        }
         // Several chosen: what can be done to them all, in one bar over the list.
         if (picked.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
