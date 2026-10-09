@@ -491,19 +491,23 @@ object Interpretation {
                 for (k in g) out += Synth.Tone(sound(k, transpose, drums), gStart, each, v * 0.8f, sounds, legato = gi > 0)
             }
             val keys = n.keys.map { sound(it, transpose, drums) }
+            val a = n.articulations
+            val art = (if ("staccato" in a) Synth.ART_STACCATO else 0) or (if ("accent" in a) Synth.ART_ACCENT else 0) or
+                (if ("tenuto" in a) Synth.ART_TENUTO else 0) or (if ("marcato" in a) Synth.ART_MARCATO else 0)
+            val layer = ((n.level + wobble) * 1.1f).coerceIn(0.05f, 1.5f)
             for ((ki, k) in keys.withIndex()) {
                 // Tied into: the sound carries on - its tone stretched to this note's end, not struck again.
                 if (drums == null && prev != null && prev.tie && joined && n.keys[ki] in prev.keys) {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
-                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from)
+                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.art, t.layer)
                         continue
                     }
                 }
                 // A slurred line, one note at a time: each moves over from the last, not struck anew.
                 val from = if (joined && drums == null && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
-                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from)
+                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, art = art, layer = layer)
             }
         }
         return out

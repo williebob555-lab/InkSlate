@@ -1,5 +1,7 @@
 package com.inksheets.core.omr
 
+import com.inksheets.core.sampler.SampledInstrument
+import com.inksheets.core.sampler.SampledVoice
 import kotlin.math.PI
 import kotlin.math.exp
 import kotlin.math.ln
@@ -50,7 +52,9 @@ class Synth(val sampleRate: Int) {
         /** How far under the note a brass player's lips start it, cents, falling in over 30 ms. */
         val scoop: Double = 0.0,
         /** The buzz (or chiff) of a note's start, as a share of the note. */
-        val chiff: Float = 0f
+        val chiff: Float = 0f,
+        /** Recordings in place of the synthesised voice (see [SampledInstrument]); everything above is then unused but [gain]. */
+        val sampled: SampledInstrument? = null
     )
 
     companion object {
@@ -70,6 +74,22 @@ class Synth(val sampleRate: Int) {
             spectral = true, slopeSoft = 1.8, slopeLoud = 1.1, formantHz = 1100.0, formantGain = 2.6, chiff = 0.03f)
         val FLUTE = Patch(FloatArray(1), 0.05, 0.08, 0.92f, 0.1, vibratoHz = 5.0, vibratoCents = 7.0, breath = 0.035f, gain = 0.24f,
             spectral = true, slopeSoft = 3.6, slopeLoud = 2.4, formantHz = 800.0, formantGain = 1.2, chiff = 0.08f)
+
+        /** A tone's articulation, for a sampled instrument's articulation groups. */
+        const val ART_STACCATO = 1
+        const val ART_ACCENT = 2
+        const val ART_TENUTO = 4
+        const val ART_MARCATO = 8
+
+        /** A patch playing [inst]'s recordings. */
+        fun sampledPatch(inst: SampledInstrument, gain: Float = 0.3f) = Patch(FloatArray(1), 0.0, 0.0, 1f, 0.1, gain = gain, sampled = inst)
+
+        /**
+         * The patch for instrument id [instrument] (see [Midi.program]): the recordings assigned to it in
+         * [com.inksheets.core.sampler.SamplerLibrary.active] where there are any, else the synthesised voice.
+         */
+        fun patchFor(instrument: String?, bank: com.inksheets.core.sampler.SamplerLibrary? = com.inksheets.core.sampler.SamplerLibrary.active): Patch =
+            bank?.patchFor(instrument) ?: patchFor(Midi.program(instrument))
 
         /** How high a spectral voice's harmonics go: above this a wind instrument has little to say. */
         const val SPECTRAL_TOP = 9000.0
@@ -143,7 +163,11 @@ class Synth(val sampleRate: Int) {
         /** Joined to the note before it (a slur): no new attack - the sound moves on to it. */
         val legato: Boolean = false,
         /** Slurred from this note (MIDI): the pitch glides over from it, as a slurred line does. */
-        val from: Int? = null
+        val from: Int? = null,
+        /** Which articulations the note carries ([ART_STACCATO] ...), for sampled instruments. */
+        val art: Int = 0,
+        /** The loudness the player meant, before the band's balance (picks a sampled instrument's velocity layer); -1: as [velocity]. */
+        val layer: Float = -1f
     )
 
     private class Voice(var tone: Tone) {
@@ -199,6 +223,7 @@ class Synth(val sampleRate: Int) {
 
     private val pending = ArrayList<Tone>()
     private val voices = ArrayList<Voice>()
+    private val sampled = ArrayList<SampledVoice>()
     private var noise = 12345L
 
     /** Where the music is: samples played since the start. */
@@ -221,21 +246,25 @@ class Synth(val sampleRate: Int) {
         if (ratio <= 0.0 || kotlin.math.abs(ratio - 1.0) < 1e-6) return
         val now = position
         fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
-        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from)
+        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.art, t.layer)
         val shifted = pending.map { moved(it) }
         pending.clear(); pending += shifted
         for (v in voices) {
             val t = v.tone
             val end = t.start + t.length
-            if (end > now) v.tone = Tone(t.midi, t.start, (at(end) - t.start).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from)
+            if (end > now) v.tone = Tone(t.midi, t.start, (at(end) - t.start).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.art, t.layer)
             for (k in v.queue.indices) v.queue[k] = moved(v.queue[k])
         }
+        for (v in sampled) v.retime({ t ->
+            val end = t.start + t.length
+            if (end > now) Tone(t.midi, t.start, (at(end) - t.start).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.art, t.layer) else t
+        }, ::moved)
     }
 
     /** Everything stopped at once, and the clock back to [to]. */
     @Synchronized
     fun reset(to: Long = 0L) {
-        pending.clear(); voices.clear(); position = to
+        pending.clear(); voices.clear(); sampled.clear(); position = to
     }
 
     /**
@@ -290,6 +319,19 @@ class Synth(val sampleRate: Int) {
         // Notes starting in this block begin at their own sample.
         while (pending.isNotEmpty() && pending.first().start < end) {
             val t = pending.removeAt(0)
+            val bank = t.patch.sampled
+            if (bank != null) {
+                if (t.legato) {
+                    val tol = (sampleRate * 0.06).toLong()
+                    val want = (t.from ?: t.midi).toDouble()
+                    val carrier = sampled.filter { v ->
+                        v.last().patch.sampled === bank && v.last().start < t.start && kotlin.math.abs(v.last().start + v.last().length - t.start) <= tol && v.queue.none { it.start == t.start }
+                    }.minByOrNull { kotlin.math.abs(it.last().midi - want) * 1000.0 + kotlin.math.abs(it.last().start + it.last().length - t.start) / sampleRate }
+                    if (carrier != null) { carrier.queue += t; continue }
+                }
+                sampled += SampledVoice(bank, sampleRate, t, t.patch.gain)
+                continue
+            }
             if (t.legato && !t.patch.drum && t.patch.fade <= 0.0) {
                 // Joined to the note before: carried on by the voice that is playing it.
                 val want = (t.from ?: t.midi).toDouble()
@@ -310,6 +352,8 @@ class Synth(val sampleRate: Int) {
             val v = it.next()
             if (render(v, buf, position)) it.remove()
         }
+        val sv = sampled.iterator()
+        while (sv.hasNext()) if (sv.next().render(buf, position)) sv.remove()
         position = end
     }
 
