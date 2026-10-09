@@ -124,6 +124,11 @@ tasks.register<JavaExec>("runSandbox") {
 tasks.withType<Test>().configureEach {
     // Whole pages drawn large, read and compared, many in one run.
     maxHeapSize = "5g"
+    // The testers' review passes (review/T1..T6) work on copies of the real library made on this
+    // laptop: run only when asked (-Dinksheets.review=1), never on the build machines.
+    if (System.getProperty("inksheets.review") == null && gradle.startParameter.taskRequests.none { r -> r.args.any { it.contains("review") } }) {
+        exclude("**/review/**")
+    }
     // -Dinksheets.jfr=<file>: a flight recording of the run, for finding what is slow (jfr print).
     System.getProperty("inksheets.jfr")?.let { jvmArgs("-XX:StartFlightRecording=filename=$it,settings=profile") }
     // Never the real app's settings folder: see desktop/build.gradle.kts.
