@@ -17,7 +17,8 @@ import kotlin.math.max
  */
 internal object Ears {
     private val hearing = ConcurrentHashMap<String, (FloatArray) -> Unit>()
-    private var mic: Microphone? = null
+    @Volatile private var mic: Microphone? = null
+    @Volatile private var lastChunkAt = 0L
 
     /** The rate of what is heard; 0 until open. */
     @Volatile var rate = 0
@@ -57,6 +58,7 @@ internal object Ears {
         heardOn = null
         peak = 0f
         failed.clear()
+        lastChunkAt = openedAt
         val started = m.start { chunk ->
             measure(state, m, chunk)
             for ((name, hear) in hearing) runCatching { hear(chunk) }.onFailure {
@@ -66,12 +68,29 @@ internal object Ears {
         }
         if (!started) { hearing.remove(who); return false }
         mic = m
+        watch(state, m)
         return true
+    }
+
+    /**
+     * Nothing arriving at all (the input was taken by something else, the device went away) is
+     * deaf too: the chunks that would say so never come, so a timer says it instead.
+     */
+    private fun watch(state: SheetsState, m: Microphone) {
+        Thread({
+            while (mic === m) {
+                try { Thread.sleep(500) } catch (_: InterruptedException) { return@Thread }
+                if (mic === m && System.currentTimeMillis() - lastChunkAt > 2_000) {
+                    state.platform.onMain { if (mic === m) { level = 0f; deaf = true } }
+                }
+            }
+        }, "ears-watch").apply { isDaemon = true; start() }
     }
 
     private fun measure(state: SheetsState, m: Microphone, chunk: FloatArray) {
         for (v in chunk) peak = max(peak, abs(v))
         val now = System.currentTimeMillis()
+        lastChunkAt = now
         // Another input taken (the first gave silence): it has heard nothing yet either.
         if (m.inUse != heardOn) { heardOn = m.inUse; if (!everHeard) openedAt = now }
         if (peak > 24f / 32768f) everHeard = true

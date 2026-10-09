@@ -155,7 +155,7 @@ class Metronome(private val sampleRate: Int = 48_000) {
 
     companion object {
         /**
-         * Tempo from taps: the average of the most recent intervals, ignoring a gap long enough
+         * Tempo from taps: the middle of the most recent intervals, ignoring a gap long enough
          * to be a new start. Returns null until there are two taps to go on.
          */
         fun tapTempo(tapsMs: List<Long>): Double? {
@@ -165,7 +165,10 @@ class Metronome(private val sampleRate: Int = 48_000) {
             )
             val gaps = sinceStart.takeLast(8).zipWithNext { a, b -> b - a }.filter { it >= 150 }
             if (gaps.isEmpty()) return null
-            return 60_000.0 / gaps.takeLast(4).average()
+            // The middle of the recent gaps, not their mean: one late tap or a bounce does not move it.
+            val recent = gaps.takeLast(5).sorted()
+            val mid = if (recent.size % 2 == 1) recent[recent.size / 2].toDouble() else (recent[recent.size / 2 - 1] + recent[recent.size / 2]) / 2.0
+            return 60_000.0 / mid
         }
     }
 }

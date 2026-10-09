@@ -74,6 +74,8 @@ internal object Click {
         val e = engine(state) ?: return null
         if (purpose != null) Sound.stop(WHO)
         e.reset()
+        // Following the band, the click stays quiet: the microphone would hear it and follow itself.
+        if (TempoFollow.on) e.muted = true
         counting = countBeats
         e.onBeat = { beat ->
             SharedMetronome.beat = beat

@@ -5,13 +5,16 @@ import java.io.RandomAccessFile
 
 /**
  * Writing a recording as it is made: 16-bit mono WAV, with the length filled in when it is
- * closed. Anything that plays sound plays a WAV, and nothing is lost if the app is closed
- * mid-take except the length in the header, which most players work out for themselves.
+ * closed - and refreshed every second meanwhile, so a take cut short by the app dying is a
+ * recording that plays up to that second rather than one with an empty header.
  */
 class WavWriter(val file: File, private val sampleRate: Int) : AutoCloseable {
 
     private val out = RandomAccessFile(file, "rw").apply { setLength(0); write(ByteArray(44)) }
     private var samples = 0L
+    private var stamped = 0L
+
+    init { stamp() }
 
     val seconds: Double get() = samples.toDouble() / sampleRate
 
@@ -25,10 +28,24 @@ class WavWriter(val file: File, private val sampleRate: Int) : AutoCloseable {
         }
         out.write(bytes)
         samples += chunk.size
+        if (samples - stamped >= sampleRate) stamp()
+    }
+
+    /** The header as the take stands now; the writing position stays at the end. */
+    private fun stamp() {
+        val end = out.filePointer
+        header()
+        out.seek(end)
+        stamped = samples
     }
 
     @Synchronized
     override fun close() {
+        header()
+        out.close()
+    }
+
+    private fun header() {
         val data = samples * 2
         out.seek(0)
         out.write("RIFF".toByteArray())
@@ -43,7 +60,6 @@ class WavWriter(val file: File, private val sampleRate: Int) : AutoCloseable {
         out.write(le16(16))                 // bits
         out.write("data".toByteArray())
         out.write(le32(data))
-        out.close()
     }
 
     private fun le32(v: Long) = byteArrayOf(v.toByte(), (v shr 8).toByte(), (v shr 16).toByte(), (v shr 24).toByte())

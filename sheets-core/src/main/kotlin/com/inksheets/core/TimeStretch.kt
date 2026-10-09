@@ -17,7 +17,16 @@ import kotlin.math.pow
  * Works on mono float samples from a position the caller controls, so seeking and A-B loops are the
  * caller's: [read] fills a block and returns where in the source it got to.
  */
-class TimeStretch(private val source: FloatArray, sampleRate: Int) {
+class TimeStretch(source: FloatArray, sampleRate: Int) {
+
+    @Volatile private var source = source
+
+    /** How much of the source is there to play: all of it, unless it is still being filled in. */
+    @Volatile var length = source.size
+        private set
+
+    /** The source as it grows (decoded while it plays): [filled] samples of [more] are good. */
+    fun extend(more: FloatArray, filled: Int) { source = more; length = filled }
 
     private val frame = (sampleRate * 0.040).toInt()          // 40 ms windows
     private val overlap = frame / 2
@@ -41,14 +50,14 @@ class TimeStretch(private val source: FloatArray, sampleRate: Int) {
 
     /** Start again at [sample], forgetting any half-built output. */
     fun seek(sample: Double) {
-        position = sample.coerceIn(0.0, source.size.toDouble())
+        position = sample.coerceIn(0.0, length.toDouble())
         tail = FloatArray(overlap)
         pending = FloatArray(0)
         pendingAt = 0
         resampleAt = 0.0
     }
 
-    val atEnd: Boolean get() = position >= source.size - frame
+    val atEnd: Boolean get() = position >= length - frame
 
     /** Fill [out] with the next samples; silence past the end. */
     fun read(out: FloatArray) {
@@ -83,7 +92,7 @@ class TimeStretch(private val source: FloatArray, sampleRate: Int) {
         var best = nominal
         var bestScore = Double.NEGATIVE_INFINITY
         val from = (nominal - search).coerceAtLeast(0)
-        val to = (nominal + search).coerceAtMost(source.size - frame - 1)
+        val to = (nominal + search).coerceAtMost(length - frame - 1)
         if (to >= from) {
             var s = from
             while (s <= to) {
@@ -97,18 +106,18 @@ class TimeStretch(private val source: FloatArray, sampleRate: Int) {
                 s += 1
             }
         }
-        best = best.coerceIn(0, (source.size - frame).coerceAtLeast(0))
+        best = best.coerceIn(0, (length - frame).coerceAtLeast(0))
 
         val produced = FloatArray(hop)
         for (j in 0 until hop) {
-            val fresh = if (best + j < source.size) source[best + j] else 0f
+            val fresh = if (best + j < length) source[best + j] else 0f
             produced[j] = if (j < overlap) {
                 tail[j] * (1 - window[j]) + fresh * window[j]
             } else fresh
         }
         for (j in 0 until overlap) {
             val at = best + hop + j
-            tail[j] = if (at < source.size) source[at] else 0f
+            tail[j] = if (at < length) source[at] else 0f
         }
         // Keep the unread part of the buffer and add the new hop.
         val keep = pending.size - pendingAt

@@ -108,6 +108,9 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                 Spacer(Modifier.size(8.dp))
                 Box(Modifier.weight(1f)) { Field("Tempo", tempo) { tempo = it.filter(Char::isDigit) } }
             }
+            PracticeLog.summary(state, song.id)?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 2.dp))
+            }
             // What the music says, and the range a tempo word means - a baseline to pick from.
             val range = com.inksheets.core.TempoReader.rangeOf(song.tempoMark)
             if (song.tempoMark != null || song.tempoRead) {

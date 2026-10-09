@@ -111,10 +111,23 @@ object MeshFrames {
         }
     }.getOrNull()
 
-    /** A message as pieces, cut on character boundaries and shortened to fit if need be. */
+    /** A message's id on the air: its time in milliseconds folded to 32 bits, so two in one second differ. */
+    fun idOf(atMs: Long): Long = (atMs xor (atMs ushr 32)) and 0xFFFFFFFFL
+
+    /** A message as pieces, cut on character boundaries and, if too long, ended with an ellipsis. */
     fun notePieces(session: Int, noteId: Long, text: String, urgent: Boolean, colour: Int): List<NotePiece> {
+        val max = NOTE_PIECE * NOTE_PIECES
         var bytes = text.toByteArray(Charsets.UTF_8)
-        while (bytes.size > NOTE_PIECE * NOTE_PIECES) bytes = text.substring(0, text.length - (bytes.size - NOTE_PIECE * NOTE_PIECES).coerceAtLeast(1)).let { t -> t.toByteArray(Charsets.UTF_8) }
+        if (bytes.size > max) {
+            var n = text.length
+            do {
+                n -= (bytes.size - max).coerceAtLeast(1)
+                n = n.coerceAtLeast(0)
+                // Not between the halves of one character.
+                val cut = if (n > 0 && text[n - 1].isHighSurrogate()) n - 1 else n
+                bytes = (text.substring(0, cut).trimEnd() + "\u2026").toByteArray(Charsets.UTF_8)
+            } while (bytes.size > max && n > 0)
+        }
         val chunks = bytes.toList().chunked(NOTE_PIECE).map { it.toByteArray() }.ifEmpty { listOf(ByteArray(0)) }
         return chunks.mapIndexed { i, c -> NotePiece(session, noteId and 0xFFFFFFFFL, i, chunks.size, urgent, colour, c) }
     }

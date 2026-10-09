@@ -215,7 +215,7 @@ class Companion(private val state: SheetsState) {
     private fun meshNote(note: CompanionLink.Note, hops: Int) {
         if (radio == null) return
         val colour = note.color?.let { c -> MARK_COLOURS.indexOf(c).takeIf { it >= 0 }?.plus(1) } ?: 0
-        val pieces = com.inksheets.core.MeshFrames.notePieces(meshSession, (note.at / 1000), note.text, note.urgent, colour)
+        val pieces = com.inksheets.core.MeshFrames.notePieces(meshSession, com.inksheets.core.MeshFrames.idOf(note.at), note.text, note.urgent, colour)
             .map { it.copy(hops = hops) }
         meshNotes += System.currentTimeMillis() to pieces
         rebroadcast()
@@ -256,7 +256,7 @@ class Companion(private val state: SheetsState) {
                 val text = assembler.take(frame) ?: return
                 val colour = frame.colour.takeIf { it > 0 }?.let { MARK_COLOURS.getOrNull(it - 1) }
                 heard(CompanionLink.Line.Message(CompanionLink.Note(
-                    text = text, from = following.orEmpty(), at = frame.noteId * 1000, urgent = frame.urgent, color = colour
+                    text = text, from = following.orEmpty(), at = System.currentTimeMillis(), urgent = frame.urgent, color = colour
                 )))
             }
         }
@@ -490,7 +490,7 @@ class Companion(private val state: SheetsState) {
             is CompanionLink.Line.Ink -> takeInk(line.share)
             is CompanionLink.Line.Message -> {
                 // Given again after a dropped link: shown once.
-                val id = "n" + (line.note.at / 1000)
+                val id = "n" + line.note.at
                 if (!seenNotes.add(id)) return
                 meshNote(line.note, hops = 1)
                 if (CompanionLink.noteIsFor(line.note, myInstruments())) {
