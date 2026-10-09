@@ -18,8 +18,16 @@ object Workers {
     /** A device with room to spare: more cores put to the reading. */
     val roomy = cores >= 6 && Runtime.getRuntime().maxMemory() >= (384L shl 20)
 
+    /** Android (a tablet or phone): the screen shares these cores, so the reader takes half of them at most. */
+    private val android = System.getProperty("java.vendor")?.contains("Android", true) == true ||
+        System.getProperty("java.vm.vendor")?.contains("Android", true) == true ||
+        System.getProperty("java.runtime.name")?.contains("Android", true) == true
+
     /** How many things are worked on at once. */
-    val threads = if (roomy) min(8, cores - 1) else max(1, min(4, cores - 1))
+    val threads = if (android) max(1, min(4, cores / 2)) else if (roomy) min(8, cores - 1) else max(1, min(4, cores - 1))
+
+    /** Run first by each worker before it takes up a piece of work; the app sets it to let the screen go first. */
+    @Volatile var courtesy: () -> Unit = {}
 
     private val inPool = ThreadLocal.withInitial { false }
     private val pool by lazy {
@@ -33,5 +41,5 @@ object Workers {
      */
     fun <T, R> map(items: List<T>, f: (T) -> R): List<R> =
         if (threads == 1 || items.size < 2 || inPool.get()) items.map(f)
-        else pool.invokeAll(items.map { Callable { f(it) } }).map { try { it.get() } catch (e: ExecutionException) { throw e.cause ?: e } }
+        else pool.invokeAll(items.map { Callable { courtesy(); f(it) } }).map { try { it.get() } catch (e: ExecutionException) { throw e.cause ?: e } }
 }

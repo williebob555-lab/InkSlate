@@ -149,6 +149,9 @@ class PdfSource(
     }
 
     private fun renderPiece(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? =
+        com.inkslate.core.RenderGate.display { renderPieceNow(index, region, targetWidthPx) }
+
+    private fun renderPieceNow(index: Int, region: Box, targetWidthPx: Int): ImageBitmap? =
         synchronized(lock) {
             if (index !in 0 until doc.numberOfPages) return null
             if (region.width <= 0f || region.height <= 0f) return null
@@ -184,7 +187,9 @@ class PdfSource(
             }.getOrNull()
         }
 
-    override fun render(index: Int, targetWidthPx: Int): ImageBitmap? {
+    override fun render(index: Int, targetWidthPx: Int): ImageBitmap? = com.inkslate.core.RenderGate.display { renderNow(index, targetWidthPx) }
+
+    private fun renderNow(index: Int, targetWidthPx: Int): ImageBitmap? {
         // Drawn before at this width: shown again, not drawn again. See PageCache.
         val key = PageCache.key(file, index, targetWidthPx)
         PageCache.get(key)?.let { return it }

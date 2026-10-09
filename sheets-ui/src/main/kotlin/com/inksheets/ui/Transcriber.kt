@@ -229,6 +229,11 @@ internal object Transcriber {
     }
 
     /** Left in a part's readings while every page of it is being read: a read cut off carries on ([resume]). */
+    init {
+        // The reader's worker threads give way to the screen between pieces of work.
+        Workers.courtesy = { com.inkslate.core.RenderGate.pause() }
+    }
+
     private fun wholeMark(dir: File) = File(dir, "whole")
 
     /**
@@ -238,8 +243,12 @@ internal object Transcriber {
     fun resume(state: SheetsState, file: File) {
         if (busy != null) return
         Thread({
+            Thread.currentThread().priority = Thread.MIN_PRIORITY
             val dir = folder(state, file)
             if (!wholeMark(dir).isFile) return@Thread
+            // A file just opened wants its pages drawn first: the carrying on starts after a pause.
+            com.inkslate.core.RenderGate.touch(2500)
+            com.inkslate.core.RenderGate.pause()
             val c = cached(state, file)
             if (c != null && (0 until c.pages).all { c.hasRead(it) }) { wholeMark(dir).delete(); return@Thread }
             state.platform.onMain { if (busy == null && state.currentPath == file.absolutePath) read(state, file) { com.inkslate.core.Perform.marksChanged() } }
@@ -282,6 +291,8 @@ internal object Transcriber {
                 return pageInk(peek, p)
             }
             try { for ((i, p) in todo.withIndex()) {
+                // Between pages the screen goes first: a page just turned to or opened is drawn before the next is read.
+                com.inkslate.core.RenderGate.pause()
                 if (!quiet) state.platform.onMain { progress = i.toFloat() / todo.size.coerceAtLeast(1); busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
                 // A page following one just read, or read before, carries on from it: its clef, key,
                 // time and bar numbers. One on its own takes its numbers from the print.
@@ -301,11 +312,11 @@ internal object Transcriber {
                     if (Workers.roomy && rt.maxMemory() - (rt.totalMemory() - rt.freeMemory()) > (256L shl 20)) {
                         val task = java.util.concurrent.FutureTask { pageInk(peek, next) }
                         ahead = next to task
-                        Thread(task, "read-ahead").apply { isDaemon = true; start() }
+                        Thread(task, "read-ahead").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
                     }
                 }
                 // A PDF that states its notes is read from them, exactly; a scan by the trained reader.
-                val printed = runCatching { synchronized(peek) { peek.printed(p) } }.getOrNull()
+                val printed = runCatching { com.inkslate.core.RenderGate.reading { synchronized(peek) { peek.printed(p) } } }.getOrNull()
                 val reading = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) Net.shipped else null)
                 measures += reading.measures
                 // The width the page really came back at: a renderer may draw a small page narrower
@@ -621,7 +632,8 @@ internal object Transcriber {
     }
 
     private fun inkOf(peek: PagePeek, page: Int, width: Int): Pair<IntArray, Ink>? {
-        val img = synchronized(peek) { peek.render(page, width) } ?: return null
+        // The reader's draw: after any page the screen wants, one at a time (see RenderGate).
+        val img = com.inkslate.core.RenderGate.reading { synchronized(peek) { peek.render(page, width) } } ?: return null
         val px = IntArray(img.width * img.height)
         img.readPixels(px)
         return com.inksheets.core.omr.Strips.grey(px) to Ink.fromArgb(img.width, img.height, px)

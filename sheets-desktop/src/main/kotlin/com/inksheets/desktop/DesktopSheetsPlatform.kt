@@ -18,6 +18,11 @@ import javax.sound.sampled.TargetDataLine
 
 /** The desktop's side of [SheetsPlatform]: Java Sound for the metronome and tuner, PDFBox for text. */
 class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatform {
+    init {
+        // The laptop draws two of the reader's pages side by side (the page ahead while this one is read); a tablet, one.
+        com.inkslate.core.RenderGate.readerRenders = if (com.inksheets.core.omr.Workers.roomy) 2 else 1
+    }
+
 
     override val deviceId: String =
         DesktopPrefs.get(K_DEVICE) ?: ("desktop-" + UUID.randomUUID().toString().take(8)).also {
