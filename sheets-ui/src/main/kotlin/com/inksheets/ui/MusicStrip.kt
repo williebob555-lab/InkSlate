@@ -98,12 +98,11 @@ fun BoxScope.MusicStrip(state: SheetsState) {
             modifier = Modifier.align(if (state.stripOnLeft) Alignment.CenterEnd else Alignment.CenterStart).padding(6.dp).width(60.dp)
                 .reportWidth { w -> Overlays.musicOut = with(density) { w.toDp() } + 12.dp }
         ) {
-            // One column, always - scrolling where the screen is too short for every button.
+            // One column, always, never scrolling (a scrolling strip swallows taps): the buttons shrink to fit.
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.heightIn(max = (maxHeight - 12.dp).coerceAtLeast(120.dp))
-                    .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(vertical = 6.dp)
+                modifier = Modifier.padding(vertical = 6.dp)
             ) {
                 // The page in front, and whether it has been read: a long book can be read a page at a
                 // time, just the passage being worked on.
@@ -115,22 +114,29 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     while (Transcriber.progress != null) { Transcriber.smoothProgress()?.let { filled = it }; kotlinx.coroutines.delay(100) }
                     filled = 0f
                 }
-                val readingWhole = busy != null && Transcriber.pagesToDo > 1
-                if (score == null || !score.hasRead(here)) {
+                if (busy != null) {
+                    // Reading: one tile saying so - how far, on one line, with a bar - and Stop. No
+                    // buttons that look pressable and do nothing while it reads.
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                        Text("Reading", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1)
+                        androidx.compose.material3.LinearProgressIndicator(progress = { filled }, modifier = Modifier.width(48.dp).padding(vertical = 3.dp))
+                        Text("${(filled * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                    HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
+                    StripButton(Icons.Default.Stop, if (Transcriber.stopAsked) "Stopping" else "Stop", "Stop reading (the pages read are kept)", btn, named) {
+                        Transcriber.stopAsked = true
+                    }
+                } else if (score == null || !score.hasRead(here)) {
                     if (score == null || score.readPages != null) {
                         // Nothing to work from yet (or only some of it): reading the part (or this page of it) is the one thing to do.
-                        StripButton(Icons.Default.MusicNote, "Read", "Read this part's music, every page", btn, named, lit = readingWhole,
-                            progress = if (readingWhole) filled else null) {
-                            if (file != null && busy == null) Transcriber.read(state, file) { Perform.marksChanged() }
+                        StripButton(Icons.Default.MusicNote, "Read", "Read this part's music, every page", btn, named) {
+                            if (file != null) Transcriber.read(state, file) { Perform.marksChanged() }
                         }
                     }
-                    StripButton(Icons.Default.Description, "Page ${here + 1}", "Read just this page's music", btn, named,
-                        progress = if (busy != null && !readingWhole) filled else null) {
-                        if (file != null && busy == null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
+                    StripButton(Icons.Default.Description, "Page ${here + 1}", "Read just this page's music", btn, named) {
+                        if (file != null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
                     }
-                    Text(busy ?: if (score == null) "Whole part, or this page" else "Not read yet",
-                        style = MaterialTheme.typography.labelSmall, fontSize = 9.sp,
-                        lineHeight = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 4.dp))
                 }
                 // The tools only for a page that has been read: an unread page offers reading it,
                 // and nothing else - not tools with nothing to work on.

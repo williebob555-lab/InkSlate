@@ -164,9 +164,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         // Always down a side: along the bottom, the buttons wrap into two rows and take more room.
         val side = true
         // Every button on screen at once, in one column - never a second column, never a strip to
-        // scroll. The buttons shrink to fit a short screen; where even that is not enough, the
-        // last of them move into More (named there), and only on a very short screen do the
-        // names under the buttons go.
+        // scroll. On a short screen the buttons shrink and their names go small; only where even
+        // that is not enough do the last of them move into More (named there).
         val wanted = shown.filter { a ->
             !((a == PerformAction.NEXT_SONG || a == PerformAction.PREVIOUS_SONG) && state.playing == null) &&
                 !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
@@ -178,16 +177,18 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             34.dp * onStripPresets.size
         // File, Music and More are there besides the chosen buttons.
         val fixed = 1 + (if (state.pageShown.second > 0) 1 else 0) + (if (state.readMusic && state.current != null) 1 else 0)
-        fun fitting(label: androidx.compose.ui.unit.Dp) = ((room - extras) / (32.dp + label + 2.dp)).toInt() - fixed
-        val named = state.stripLabels && fitting(12.dp) >= minOf(wanted.size, 6)
-        val labelRoom = if (named && side) 12.dp else 0.dp
-        val fits = fitting(labelRoom).coerceAtLeast(2)
+        val named = state.stripLabels
+        fun fitting(least: androidx.compose.ui.unit.Dp, label: androidx.compose.ui.unit.Dp) = ((room - extras) / (least + label + 2.dp)).toInt() - fixed
+        val small = named && fitting(32.dp, 12.dp) < wanted.size
+        val labelRoom = if (!named) 0.dp else if (small) 9.dp else 12.dp
+        val least = if (small) 28.dp else 32.dp
+        val fits = fitting(least, labelRoom).coerceAtLeast(2)
         // The last of them go first - but never the page turns, Undo or the tools' switch.
         val keep = setOf(PerformAction.NEXT_PAGE, PerformAction.PREVIOUS_PAGE, PerformAction.UNDO, PerformAction.FULLSCREEN)
         val overflow = if (wanted.size > fits) wanted.reversed().filter { it !in keep }.take(wanted.size - fits) else emptyList()
         val visible = wanted.size - overflow.size
-        val btn = ((room - extras) / (visible + fixed).coerceAtLeast(1) - labelRoom - 2.dp).coerceIn(32.dp, 44.dp)
-        val items: @Composable () -> Unit = {
+        val btn = ((room - extras) / (visible + fixed).coerceAtLeast(1) - labelRoom - 2.dp).coerceIn(least, 44.dp)
+        val items: @Composable () -> Unit = { androidx.compose.runtime.CompositionLocalProvider(LocalSmallNames provides small) {
             if (!collapsed) {
                 if (SelfRecorder.recording) {
                     Text("● Rec", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
@@ -293,7 +294,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             }, modifier = Modifier.size(36.dp)) {
                 Icon(if (collapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess, if (collapsed) "Show buttons" else "Hide buttons")
             }
-        }
+        } }
         // In the bottom corner, the fold button last - folded away, it is all there is, out of
         // the music's way. In playback mode, the recording's own column stands beside it, on the
         // music's side. A window over the music that does not fit beside it: the strip steps
@@ -678,6 +679,9 @@ private fun StripEditor(state: SheetsState, onClose: () -> Unit) {
     }
 }
 
+/** A short screen: the strip's names in small print, so every button still fits with its name. */
+internal val LocalSmallNames = androidx.compose.runtime.compositionLocalOf { false }
+
 /**
  * One of the strip's buttons: its icon, and its name under it - so what it does is never a guess.
  * [description] is what a screen reader says.
@@ -712,7 +716,8 @@ internal fun StripButton(
         }
         if (progress != null && named) Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, color = MaterialTheme.colorScheme.primary)
         if (named) {
-            Text(name, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1, lineHeight = 11.sp)
+            val small = LocalSmallNames.current
+            Text(name, style = MaterialTheme.typography.labelSmall, fontSize = if (small) 8.sp else 10.sp, maxLines = 1, lineHeight = if (small) 9.sp else 11.sp)
         }
     }
 }

@@ -32,6 +32,9 @@ internal object Transcriber {
     @Volatile var pageBegan = 0L
     @Volatile var msPerPage = 4_000L
 
+    /** Stop pressed: the reading ends after the page in hand (what is read is kept) and does not carry on later by itself. */
+    @Volatile var stopAsked = false
+
     /**
      * How far the reading has got, 0 to 1, moving all the time: the pages done, and the page in
      * hand by how long pages have been taking here - never quite reaching its end before it does.
@@ -231,6 +234,7 @@ internal object Transcriber {
             synchronized(known) { known.remove(dir.path) }
         }
         busy = "Getting ready..."
+        stopAsked = false
         Thread({
             // A reading gives way to everything else: the sound of the music most of all.
             Thread.currentThread().priority = Thread.MIN_PRIORITY
@@ -299,6 +303,7 @@ internal object Transcriber {
                 return pageInk(peek, p)
             }
             try { for ((i, p) in todo.withIndex()) {
+                if (!quiet && stopAsked) { runCatching { wholeMark(dir).delete() }; break }
                 if (!quiet) {
                     val now = System.currentTimeMillis()
                     // How long a page takes on this device, learned as pages are read.
