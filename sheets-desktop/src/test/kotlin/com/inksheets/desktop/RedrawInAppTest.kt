@@ -71,6 +71,11 @@ class RedrawInAppTest {
             repeat(20) { settle() }
             val root = onAllNodes(isRoot()).onFirst()
             ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "redraw-in-app.png"))
+            // And the whole part cleaned (Clean on the music strip), as the app draws it.
+            runOnIdle { ScoreTools.showUnderlay(false); ScoreTools.cleanWhole(sheets(), true) }
+            repeat(20) { settle() }
+            ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "redraw-in-app-clean.png"))
+            runOnIdle { ScoreTools.cleanWhole(sheets(), false) }
             val score = ScoreTools.scoreHere(sheets())
             println("REDRAW-APP read: ${score?.measures?.size} bars, widths ${score?.pageWidths}, read pages ${score?.readPages}, first box ${score?.measures?.firstOrNull()?.box}, last box ${score?.measures?.lastOrNull()?.box}")
             val peek = sheets().platform.peek(part)!!

@@ -35,7 +35,7 @@ change size. **No build until the very end** — commit locally, one `[build she
 - [x] Tap any bar (even green) → Fix for that bar; choose close-after-fix or keep going (bulk)
 - [x] Fix panel never moves on screen (may cover the music) — capture accurate and FAST; option buttons (None of these…) never move
 - [x] Fix: Undo/back; ways to say what's wrong: bar number, grace notes, clef, key, time, "not a note"… (not just None of these)
-- [~] Clean view overhaul: done - strokes weighted by the print's own line weight, hairpins one wedge clear of dynamics, paper under kept shapes. OPEN: kept outlines (text, rehearsal boxes) are drawn a few px off the print (registration: see T5 clean/digital-diva-system0.png, 'Perc. Arr.' doubled) - suspect OutlinesSerializer decode or reading-px origin; slurs blunt-ended; doubtful bars stay print (by design: a guess drawn cleanly is worse)
+- [~] Clean view overhaul: done - strokes weighted by the print's own line weight, hairpins one wedge clear of dynamics, paper under kept shapes. (the doubled text T5 saw was its harness's scale - the app draws it right: RedrawInAppTest redraw-in-app-clean.png). OPEN: slurs blunt-ended; doubtful bars stay print (by design: a guess drawn cleanly is worse)
 - [x] "Replace the whole page" = an overlay on the existing page (undoable), never a new document/duplicate files
 - [x] Readings must persist — user keeps re-scanning the same parts (investigate cache keys/sync)
 - [x] Band playback: option to include/exclude own part; read the band's parts in parallel
