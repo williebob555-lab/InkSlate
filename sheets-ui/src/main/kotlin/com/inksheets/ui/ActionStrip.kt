@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -115,6 +116,17 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
     val readingMode = state.platform.readingMode
     androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
+    // The music being read: a slim bar up the screen's edge filling as it goes - always in sight,
+    // never over the music, whatever is open.
+    Transcriber.progress?.let { p ->
+        val shown by androidx.compose.animation.core.animateFloatAsState(p.coerceIn(0.03f, 1f))
+        Box(
+            Modifier.align(if (state.stripOnLeft) Alignment.CenterStart else Alignment.CenterEnd).padding(horizontal = 2.dp)
+                .width(5.dp).fillMaxHeight(0.5f).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+        ) {
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(shown).background(MaterialTheme.colorScheme.primary))
+        }
+    }
     // Playing along with the song's recording: its pages turn by themselves (PlayAlong).
     androidx.compose.runtime.LaunchedEffect(Unit) {
         PlayAlong.load(state)

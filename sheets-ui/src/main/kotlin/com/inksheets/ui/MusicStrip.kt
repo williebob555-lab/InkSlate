@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Spellcheck
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Undo
@@ -118,38 +119,25 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                         lineHeight = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 4.dp))
                 }
                 if (score != null) {
-                    StripButton(Icons.Default.Visibility, "Clean", "Show the clean reading over the print", btn, named, lit = ScoreTools.underlay) {
-                        ScoreTools.showUnderlay(!ScoreTools.underlay)
+                    // Check: every bar coloured by how sure its reading is - green, yellow, red - and
+                    // a tap on any bar puts it right. One button for what was Clean, Fix and Wrong.
+                    val red = ScoreTools.redCount(state)
+                    StripButton(Icons.Default.Spellcheck, if (red > 0) "Check $red" else "Check", "Colour the bars by how sure the reading is; tap a bar to put it right", btn, named, lit = ScoreTools.colours) {
+                        ScoreTools.toggleCheck(state)
                     }
-                    StripButton(Icons.Default.AutoFixHigh, "Clean up", "Clean-up pen: draw over bars to show them clean", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.CLEAN) {
-                        ScoreTools.choose(ScoreTools.Tool.CLEAN)
-                    }
-                    if (ScoreTools.canUndo(state)) {
-                        StripButton(Icons.Default.Undo, "Undo", "Undo the last clean-up", btn, named) { ScoreTools.undoClean(state) }
-                    }
-                    // The bars in doubt, one by one: three readings of each to pick from.
-                    val doubtful = score.measures.count { !it.sure && it.bars == 1 }
-                    if (doubtful > 0 || ScoreTools.checking) {
-                        StripButton(Icons.Default.Build, if (ScoreTools.checking) "Fixing" else "Fix $doubtful", "Go through the bars in doubt and pick what each is", btn, named, lit = ScoreTools.checking) {
-                            if (ScoreTools.checking) ScoreTools.endCheck() else ScoreTools.startCheck(state)
-                        }
+                    // The whole part redrawn clean, laid over the page (nothing new made): on and off.
+                    val whole = ScoreTools.cleanedWhole(state)
+                    StripButton(Icons.Default.AutoFixHigh, "Clean", "Show the whole part redrawn clean, over the page", btn, named, lit = whole) {
+                        ScoreTools.cleanWhole(state, !whole)
                     }
                     HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
                     StripButton(Icons.Default.SelectAll, "Select", "Select bars: press and drag across them", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.SELECT) {
                         ScoreTools.choose(ScoreTools.Tool.SELECT)
                     }
-                    // A bar read wrong, though sure: this, then a tap on the bar - and it is put right there and then.
-                    StripButton(Icons.Default.ReportProblem, "Wrong", "Tap a bar read wrong to fix it", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.WRONG) {
-                        ScoreTools.choose(ScoreTools.Tool.WRONG)
-                    }
-                    ScoreTools.selection?.let { sel ->
+                    ScoreTools.selection?.takeIf { !ScoreTools.checking }?.let { sel ->
                         Text(if (sel.first == sel.last) "Bar ${sel.first}" else "Bars ${sel.first}-${sel.last}",
                             style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center,
                             modifier = Modifier.clickable { ScoreTools.clearSelection() })
-                        // A bar read as sure that is not: say so, and fix it now.
-                        if (!ScoreTools.checking && ScoreTools.anySure(state, sel)) {
-                            StripButton(Icons.Default.ReportProblem, "Fix chosen", "These bars are read wrong: fix them", btn, named) { ScoreTools.markWrong(state, sel) }
-                        }
                     }
                     val playing = ScoreTools.playing
                     StripButton(if (playing != null) Icons.Default.Stop else Icons.Default.PlayArrow, if (playing != null) "Stop" else "Play",

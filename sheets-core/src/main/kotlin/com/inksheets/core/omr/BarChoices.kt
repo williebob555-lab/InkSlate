@@ -266,7 +266,11 @@ object BarChoices {
         "Pitch" to setOf("pitch", "chord-head"),
         "Length" to setOf("value", "dot", "hollow", "triplet", "group"),
         "Notes" to setOf("remove", "add", "rest-out", "chord-head"),
-        "Rests" to setOf("rest", "rest-out")
+        "Rests" to setOf("rest", "rest-out"),
+        // What the player can say is wrong, in their words (Fix's "What's wrong" row).
+        "Extra note" to setOf("remove", "rest-out"),
+        "Missing note" to setOf("add"),
+        "Grace note" to setOf("remove")
     )
 
     /** Every reading a change or two away (for measuring which kinds of change are right how often). */

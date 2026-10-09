@@ -282,6 +282,17 @@ data class Measure(
     /** Read well enough to trust: its notes fill the bar exactly, and nothing was in doubt. */
     val sure: Boolean get() = doubts.isEmpty()
 
+    /**
+     * How far the reading of this bar can be trusted, for colouring it: [Certainty.FIX] in doubt
+     * (what Fix asks about), [Certainty.LOOK] sure but with a note read unclearly or one seen and
+     * let go - worth a glance - and [Certainty.SURE] otherwise.
+     */
+    val certainty: Certainty get() = when {
+        !sure -> Certainty.FIX
+        events.any { it is Note && Learned.unclear(it) } || maybe.isNotEmpty() -> Certainty.LOOK
+        else -> Certainty.SURE
+    }
+
     val quarters: Double get() = events.sumOf { it.duration.quarters }
 
     /**
@@ -432,3 +443,6 @@ object PlayOrder {
     /** Bar numbers in the order played. */
     fun bars(measures: List<Measure>): List<Int> = indices(measures).flatMap { k -> measures[k].let { m -> (m.number until m.number + m.bars).toList() } }
 }
+
+/** How far a bar's reading can be trusted: green, yellow, red. See [Measure.certainty]. */
+enum class Certainty { SURE, LOOK, FIX }

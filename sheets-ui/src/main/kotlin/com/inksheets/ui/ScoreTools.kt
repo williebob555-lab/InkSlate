@@ -33,7 +33,7 @@ import java.io.File
  */
 internal object ScoreTools {
     /** What a press on the page does: choose bars, clean them up, or say one is read wrong (and fix it there and then). */
-    enum class Tool { NONE, SELECT, CLEAN, WRONG }
+    enum class Tool { NONE, SELECT, CLEAN, WRONG, CHECK }
 
     /** The tools' lane is out. */
     var open by mutableStateOf(false)
@@ -96,6 +96,23 @@ internal object ScoreTools {
     internal var scoreSource: ((String) -> Score?)? = null
 
     /** A part's notes as read - with the bars put right by hand in place of their readings. */
+    /**
+     * What the player put right in a part's reading, kept with the reading in the library (see
+     * Transcriber.keptEdit) - or, from before that, in this device's settings.
+     */
+    private fun kept(key: String, path: String): String? {
+        val s = state ?: return null
+        Transcriber.keptEdit(s, File(path), key.substringBefore(':'))?.let { return it.ifEmpty { null } }
+        return s.platform.pref(key)
+    }
+
+    private fun keep(key: String, path: String, value: String?) {
+        val s = state ?: return
+        Transcriber.keepEdit(s, File(path), key.substringBefore(':'), value)
+        // The library has it now: the device's own copy would only bring a cleared one back.
+        if (s.platform.pref(key) != null) s.platform.setPref(key, null)
+    }
+
     private fun scoreOf(path: String): Score? =
         (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { read ->
             // Bars you said are wrong, though read as sure: in doubt, until fixed.
@@ -103,14 +120,56 @@ internal object ScoreTools {
             val marked = if (wrong.isEmpty()) read else read.copy(measures = read.measures.map { m ->
                 if (m.bars == 1 && m.number in wrong && WRONG !in m.doubts) m.copy(doubts = m.doubts + WRONG) else m })
             // A clef, key or time put right laid over all (bars put right too: their pitches from it).
-            com.inksheets.core.omr.Signatures.apply(com.inksheets.core.omr.Scores.withFixes(withRests(marked, restsOf(path)), fixesOf(path)), sigsOf(path))
+            com.inksheets.core.omr.Signatures.apply(com.inksheets.core.omr.Scores.withFixes(renumbered(withRests(marked, restsOf(path)), numbersOf(path)), fixesOf(path)), sigsOf(path))
         }
+
+    /**
+     * Bar numbers put right, by part: from the bar read as [key] on, the bars are numbered from
+     * [value] - the number printed there (a bar the reader missed, or one it read twice, puts every
+     * number after it out by one). Kept with the reading in the library.
+     */
+    private val numbers = HashMap<String, MutableMap<Int, Int>>()
+    private fun numberKey(path: String) = "sheets_numbers:" + (state?.relative(File(path)) ?: path)
+    private fun numbersOf(path: String): MutableMap<Int, Int> = numbers.getOrPut(path) {
+        kept(numberKey(path), path)?.split(',')?.mapNotNull { it.split('=').takeIf { p -> p.size == 2 }?.let { (a, b) -> a.trim().toIntOrNull()?.let { n -> b.trim().toIntOrNull()?.let { c -> n to c } } } }?.toMap()?.toMutableMap() ?: HashMap()
+    }
+
+    /** [s] with its bars numbered as put right in [from]: each change holds until the next. */
+    private fun renumbered(s: Score, from: Map<Int, Int>): Score {
+        if (from.isEmpty()) return s
+        val starts = from.keys.sorted()
+        return s.copy(measures = s.measures.map { m ->
+            val at = starts.lastOrNull { it <= m.number } ?: return@map m
+            m.copy(number = m.number - at + from.getValue(at))
+        })
+    }
+
+    /** Bar [shown] (as numbered now) is numbered [printed] on the page: it and the bars after it numbered on from it. */
+    fun setBarNumber(s: SheetsState, shown: Int, printed: Int) {
+        val path = s.currentPath ?: return
+        val read = renumberedBack(path, shown)
+        val map = numbersOf(path)
+        if (printed == read && map.keys.none { it < read }) map.remove(read) else map[read] = printed
+        keep(numberKey(path), path, map.entries.sortedBy { it.key }.joinToString(",") { "${it.key}=${it.value}" }.ifEmpty { null })
+        // The bars being gone through are numbered anew too.
+        val delta = printed - shown
+        checkBars = checkBars.map { if (it >= shown) it + delta else it }
+        changed()
+        showBar(s)
+    }
+
+    /** The number bar [shown] (as numbered now) was read as. */
+    private fun renumberedBack(path: String, shown: Int): Int {
+        val from = numbersOf(path)
+        val start = from.entries.filter { (read, at) -> shown >= at }.maxByOrNull { it.value }
+        return if (start == null) shown else start.key + (shown - start.value)
+    }
 
     /** Multi-bar rests' counts put right, by part: the rest's bar number to how many bars it is. Kept with the part's settings. */
     private val rests = HashMap<String, MutableMap<Int, Int>>()
     private fun restKey(path: String) = "sheets_rests:" + (state?.relative(File(path)) ?: path)
     private fun restsOf(path: String): MutableMap<Int, Int> = rests.getOrPut(path) {
-        state?.platform?.pref(restKey(path))?.split(',')?.mapNotNull { it.split('=').takeIf { p -> p.size == 2 }?.let { (a, b) -> a.trim().toIntOrNull()?.let { n -> b.trim().toIntOrNull()?.let { c -> n to c } } } }?.toMap()?.toMutableMap() ?: HashMap()
+        kept(restKey(path), path)?.split(',')?.mapNotNull { it.split('=').takeIf { p -> p.size == 2 }?.let { (a, b) -> a.trim().toIntOrNull()?.let { n -> b.trim().toIntOrNull()?.let { c -> n to c } } } }?.toMap()?.toMutableMap() ?: HashMap()
     }
 
     /** [s] with each rest in [counts] the bars it was said to be - and the bars after it numbered on from it. */
@@ -132,7 +191,7 @@ internal object ScoreTools {
         val path = s.currentPath ?: return
         val f = restsOf(path)
         f[number] = count
-        state?.platform?.setPref(restKey(path), f.entries.joinToString(",") { "${it.key}=${it.value}" })
+        keep(restKey(path), path, f.entries.joinToString(",") { "${it.key}=${it.value}" })
         if (wrongOf(path).remove(number)) saveWrong(path)
         scoreHere(s)?.measures?.firstOrNull { it.number == number }?.let { m ->
             scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w -> Transcriber.recordRest(s, File(path), m, w, count) }
@@ -145,7 +204,7 @@ internal object ScoreTools {
     private val sigs = HashMap<String, MutableMap<Int, com.inksheets.core.omr.SigFix>>()
     private fun sigKey(path: String) = "sheets_sig:" + (state?.relative(File(path)) ?: path)
     private fun sigsOf(path: String): MutableMap<Int, com.inksheets.core.omr.SigFix> = sigs.getOrPut(path) {
-        com.inksheets.core.omr.Signatures.decode(state?.platform?.pref(sigKey(path))).toMutableMap()
+        com.inksheets.core.omr.Signatures.decode(kept(sigKey(path), path)).toMutableMap()
     }
 
     /** The clef, key or time put right from bar [number] of the part in front, if any. */
@@ -160,7 +219,7 @@ internal object ScoreTools {
         val path = s.currentPath ?: return
         val f = sigsOf(path)
         if (fix == null || fix == com.inksheets.core.omr.SigFix()) f.remove(number) else f[number] = fix
-        state?.platform?.setPref(sigKey(path), com.inksheets.core.omr.Signatures.encode(f))
+        keep(sigKey(path), path, com.inksheets.core.omr.Signatures.encode(f))
         sigDraft = null
         val m = scoreHere(s)?.measures?.firstOrNull { it.number == number }
         if (fix != null && m != null) scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w -> Transcriber.recordSignature(s, File(path), m, w, fix) }
@@ -180,9 +239,9 @@ internal object ScoreTools {
     private val wrong = HashMap<String, MutableSet<Int>>()
     private fun wrongKey(path: String) = "sheets_wrong:" + (state?.relative(File(path)) ?: path)
     private fun wrongOf(path: String): MutableSet<Int> = wrong.getOrPut(path) {
-        state?.platform?.pref(wrongKey(path))?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.toMutableSet() ?: HashSet()
+        kept(wrongKey(path), path)?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.toMutableSet() ?: HashSet()
     }
-    private fun saveWrong(path: String) = state?.platform?.setPref(wrongKey(path), wrongOf(path).sorted().joinToString(",").ifEmpty { null })
+    private fun saveWrong(path: String) = keep(wrongKey(path), path, wrongOf(path).sorted().joinToString(",").ifEmpty { null })
 
     /**
      * Bars [bars] of the part in front are wrong, though read as sure (or fixed before): put in
@@ -194,7 +253,7 @@ internal object ScoreTools {
         val f = fixesOf(path)
         for (n in bars) { w += n; f.remove(n) }
         saveWrong(path)
-        state?.platform?.setPref(fixKey(path), com.inksheets.core.omr.Scores.encodeFixes(f))
+        keep(fixKey(path), path, com.inksheets.core.omr.Scores.encodeFixes(f))
         changed()
         // Just these bars to go through - not every bar in doubt in the part: done with them, done.
         startCheckOf(s, bars.toList())
@@ -202,6 +261,7 @@ internal object ScoreTools {
 
     /** Go through just bars [numbers] of the part in front (those said to be wrong), and no others. */
     private fun startCheckOf(s: SheetsState, numbers: List<Int>) {
+        history.clear()
         val score = scoreHere(s) ?: return
         val here = numbers.filter { n -> score.measures.any { it.number == n } }
         if (here.isEmpty()) return
@@ -247,6 +307,41 @@ internal object ScoreTools {
     /** Every bar of [path] shown as printed again (for tests: not kept). */
     internal fun undoAllClean(path: String) { cleaned.remove(path); changed() }
 
+    // ---- Check: every bar coloured by how sure its reading is; a tap on one puts it right ----
+
+    /** The bars coloured: green sure, yellow worth a look, red in doubt - and a tap on any fixes it. */
+    val colours: Boolean get() = tool == Tool.CHECK
+
+    /** After a bar is put right: on to the next red bar (true), or back to the page (false). Remembered. */
+    var goOn by mutableStateOf(true)
+        private set
+
+    fun chooseGoOn(on: Boolean) { goOn = on; state?.platform?.setPref(K_GO_ON, on.toString()) }
+
+    /** Turn the colours on or off. */
+    fun toggleCheck(s: SheetsState) {
+        goOn = s.platform.pref(K_GO_ON) != "false"
+        if (tool == Tool.CHECK) { if (checking) endCheck(); choose(Tool.CHECK) } else choose(Tool.CHECK)
+        changed()
+    }
+
+    /** The bars to put right in the part in front: those in doubt (red), not yet fixed. */
+    fun redCount(s: SheetsState): Int = scoreHere(s)?.measures?.count { !it.sure && it.bars == 1 } ?: 0
+
+    /**
+     * Put bar [bar] right - whatever colour it is - and then, if [goOn], the red bars after it
+     * (round to the start), one by one.
+     */
+    fun fixBar(s: SheetsState, bar: Int) {
+        val score = scoreHere(s) ?: return
+        if (score.measures.none { it.number == bar }) return
+        val reds = if (!goOn) emptyList() else score.measures.filter { !it.sure && it.bars == 1 && it.number != bar }
+            .sortedWith(compareBy({ it.number < bar }, { it.number })).map { it.number }
+        startCheckOf(s, listOf(bar) + reds)
+    }
+
+    private const val K_GO_ON = "sheets_fix_goes_on"
+
     fun close(s: SheetsState) {
         stop(s)
         open = false
@@ -263,14 +358,14 @@ internal object ScoreTools {
     private val fixes = HashMap<String, MutableMap<Int, List<com.inksheets.core.omr.Event>>>()
     private fun fixKey(path: String) = "sheets_fixed:" + (state?.relative(File(path)) ?: path)
     private fun fixesOf(path: String): MutableMap<Int, List<com.inksheets.core.omr.Event>> = fixes.getOrPut(path) {
-        state?.platform?.pref(fixKey(path))?.let { com.inksheets.core.omr.Scores.decodeFixes(it).toMutableMap() } ?: HashMap()
+        kept(fixKey(path), path)?.let { com.inksheets.core.omr.Scores.decodeFixes(it).toMutableMap() } ?: HashMap()
     }
 
     /** Bar [number] of [path] is [events]: kept, and no longer in doubt. */
     fun fix(path: String, number: Int, events: List<com.inksheets.core.omr.Event>) {
         val f = fixesOf(path)
         f[number] = events
-        state?.platform?.setPref(fixKey(path), com.inksheets.core.omr.Scores.encodeFixes(f))
+        keep(fixKey(path), path, com.inksheets.core.omr.Scores.encodeFixes(f))
         // Put right: no longer the bar you said was wrong.
         if (wrongOf(path).remove(number)) saveWrong(path)
         changed()
@@ -336,6 +431,7 @@ internal object ScoreTools {
 
     /** The bars in doubt in the part in front, to go through; false when there are none. */
     fun startCheck(s: SheetsState): Boolean {
+        history.clear()
         val score = scoreHere(s) ?: return false
         // Where you are first: on the page in front, the bars you asked to clean (framed until
         // checked), then its others; then the pages after it, and those before it last.
@@ -353,7 +449,7 @@ internal object ScoreTools {
 
     private fun showBar(s: SheetsState) {
         rejected = ArrayList(); noneCount = 0; askedAgain = false; focus = null; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
-        barPicture = null; editing = null; sigDraft = null
+        barPicture = null; editing = null; sigDraft = null; numbering = false
         val m = barUp(s) ?: run { endCheck(); return }
         // The second looks taken as its page was read: ready at once, no waiting on a look now.
         val ready = s.currentPath?.let { Transcriber.lookedFor(s, File(it), m) }.orEmpty()
@@ -377,10 +473,31 @@ internal object ScoreTools {
         changed()
     }
 
+    /** The bars put right in this run of Fix, latest last, with what each was before: for Back. */
+    private val history = ArrayList<Triple<Int, Int, List<com.inksheets.core.omr.Event>?>>()
+
+    /** There is a bar to go back to: the last one put right or passed in this run. */
+    val canGoBack: Boolean get() = checking && (history.isNotEmpty() || checkAt > 0)
+
+    /** Back to the bar before - what was picked for it undone - to be done again. */
+    fun back(s: SheetsState) {
+        val path = s.currentPath ?: return
+        val last = history.removeLastOrNull()
+        if (last == null) { if (checkAt > 0) { checkAt--; showBar(s) }; return }
+        val (index, number, before) = last
+        val f = fixesOf(path)
+        if (before == null) f.remove(number) else f[number] = before
+        keep(fixKey(path), path, com.inksheets.core.omr.Scores.encodeFixes(f))
+        checkAt = index.coerceIn(0, checkBars.lastIndex.coerceAtLeast(0))
+        changed()
+        showBar(s)
+    }
+
     /** [choice] is what bar up is: kept, and on to the next. */
     fun pick(s: SheetsState, choice: com.inksheets.core.omr.BarChoices.Choice, how: String = "pick") {
         val path = s.currentPath ?: return
         val m = barUp(s) ?: return
+        history += Triple(checkAt, m.number, fixesOf(path)[m.number])
         fix(path, m.number, choice.events)
         // What it really is, kept for teaching the reader (the bar as it was read: its place on the page).
         scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
@@ -451,6 +568,9 @@ internal object ScoreTools {
     var focus by mutableStateOf<String?>(null)
         private set
 
+    /** Putting the bar up's number right (Fix's "Bar number"). */
+    var numbering by mutableStateOf(false)
+
     /** The readings offered again, all about [what] (Pitch, Length, Notes, Rests) - or as before (null). */
     fun narrow(s: SheetsState, what: String?) {
         val m = barUp(s) ?: return
@@ -482,6 +602,7 @@ internal object ScoreTools {
     fun skip(s: SheetsState) {
         val path = s.currentPath
         val m = barUp(s)
+        if (path != null && m != null) history += Triple(checkAt, m.number, fixesOf(path)[m.number])
         if (path != null && m != null) scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
             val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
             Transcriber.recordSkip(s, File(path), read, w, rejected + offered.map { it.events }, noneCount)
@@ -494,7 +615,7 @@ internal object ScoreTools {
         val bars = scoreHere(s)?.measures.orEmpty()
         var i = checkAt + 1
         while (i < checkBars.size && bars.firstOrNull { it.number == checkBars[i] }?.sure == true) i++
-        if (i >= checkBars.size) { endCheck(); said = "All the bars in doubt gone through"; return }
+        if (i >= checkBars.size) { val many = checkBars.size > 1; endCheck(); said = if (many) "All the bars in doubt gone through" else null; return }
         checkAt = i
         showBar(s)
     }
@@ -519,15 +640,33 @@ internal object ScoreTools {
     private fun keyOf(path: String) = "sheets_clean:" + (state?.relative(File(path)) ?: path)
 
     private fun cleanedIn(path: String): MutableSet<Int> = cleaned.getOrPut(path) {
-        state?.platform?.pref(keyOf(path))?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.toMutableSet() ?: HashSet()
+        kept(keyOf(path), path)?.split(',')?.mapNotNull { it.trim().toIntOrNull() }?.toMutableSet() ?: HashSet()
     }
 
     private fun saveCleaned(path: String) {
         val set = cleanedIn(path)
-        state?.platform?.setPref(keyOf(path), if (set.isEmpty()) null else set.sorted().joinToString(","))
+        keep(keyOf(path), path, if (set.isEmpty()) null else set.sorted().joinToString(","))
     }
 
     fun canUndo(s: SheetsState) = undo.any { it.first == s.currentPath }
+
+    /** Every bar of the part in front shown clean - laid over the page, nothing new made - or none. */
+    fun cleanWhole(s: SheetsState, on: Boolean) {
+        val path = s.currentPath ?: return
+        val score = scoreHere(s) ?: return
+        val set = cleanedIn(path)
+        undo += path to set.toSet()
+        if (on) set += score.measures.flatMap { m -> m.number until m.number + m.bars } else set.clear()
+        saveCleaned(path)
+        changed()
+    }
+
+    /** Whether the part in front is shown clean: most of its bars cleaned. */
+    fun cleanedWhole(s: SheetsState): Boolean {
+        val path = s.currentPath ?: return false
+        val n = scoreHere(s)?.measures?.size ?: return false
+        return n > 0 && cleanedIn(path).size * 2 >= n
+    }
 
     fun undoClean(s: SheetsState) {
         val path = s.currentPath ?: return
@@ -620,6 +759,20 @@ internal object ScoreTools {
                 }
                 changed()
             }
+            Tool.CHECK -> {
+                // A tap on a bar: put it right. A sweep across: the page turns, as ever.
+                if (!done || pts.size < 2) return
+                val dx = pts[pts.size - 2] - pts[0]; val dy = pts[pts.size - 1] - pts[1]
+                val m0 = bars.firstOrNull()?.let { n -> score.measures.firstOrNull { it.number == n } }
+                val space = (m0?.space ?: 12f) * k
+                if (kotlin.math.abs(dx) > space * 8f && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.2f) {
+                    Perform.run(if (dx < 0) com.inkslate.core.PerformAction.NEXT_PAGE else com.inkslate.core.PerformAction.PREVIOUS_PAGE)
+                    return
+                }
+                if (kotlin.math.hypot(dx, dy) > space * 2f) return
+                val bar = bars.firstOrNull() ?: return
+                state?.let { fixBar(it, bar) }
+            }
             Tool.NONE -> Unit
         }
     }
@@ -633,6 +786,12 @@ internal object ScoreTools {
     private const val CHOSEN = 0x2E1E88E5            // a selection's tint
     private const val CHOSEN_EDGE = 0xCC1E88E5.toInt()
     private const val NOW = 0x4043A047               // the bar playing
+    private const val GREEN = 0x2643A047             // Check: read surely
+    private const val GREEN_EDGE = 0xB043A047.toInt()
+    private const val YELLOW = 0x33FFB300            // worth a look
+    private const val YELLOW_EDGE = 0xD0FFB300.toInt()
+    private const val RED = 0x38E53935               // in doubt: to put right
+    private const val RED_EDGE = 0xE0E53935.toInt()
     private const val FOUND = 0x55FFB300             // the bar gone to
     private const val OFF = 0xE0D32F2F.toInt()       // a bar that sounded off
     private const val CUE = 0xD0455A64.toInt()       // cue notes: small, slate
@@ -646,7 +805,8 @@ internal object ScoreTools {
         val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
         val off = Listener.offBars.toSet()
         val cueHere = if (cues) cueCache[path].orEmpty() else emptyMap()
-        if (!underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
+        if (!colours && !underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
+        val fixed = if (colours) fixesOf(path).keys else emptySet()
         val key = path to page
         marksCache[key]?.let { (v, m) -> if (v == version) return m }
         val k = scaleOf(score, page, width) ?: return null
@@ -661,6 +821,24 @@ internal object ScoreTools {
             if (sel != null && numbers.any { it in sel }) {
                 out += PageMark.rect(left, top - sp * 2f, right, bottom + sp * 2f, CHOSEN)
                 out += PageMark.line(left, top - sp * 2.4f, right, top - sp * 2.4f, sp * 0.3f, CHOSEN_EDGE)
+            }
+            if (colours) {
+                // How sure the reading is, over the whole bar: the bar being put right outlined.
+                val c = if (numbers.first in fixed) com.inksheets.core.omr.Certainty.SURE else m.certainty
+                val (fill, edge) = when (c) {
+                    com.inksheets.core.omr.Certainty.SURE -> GREEN to GREEN_EDGE
+                    com.inksheets.core.omr.Certainty.LOOK -> YELLOW to YELLOW_EDGE
+                    com.inksheets.core.omr.Certainty.FIX -> RED to RED_EDGE
+                }
+                out += PageMark.rect(left + sp * 0.15f, top - sp * 1.5f, right - sp * 0.15f, bottom + sp * 1.5f, fill)
+                out += PageMark.line(left + sp * 0.15f, top - sp * 1.7f, right - sp * 0.15f, top - sp * 1.7f, sp * 0.45f, edge)
+                if (checking && checkBars.getOrNull(checkAt) == m.number) {
+                    val w = sp * 0.3f
+                    out += PageMark.line(left, top - sp * 2f, right, top - sp * 2f, w, CHOSEN_EDGE)
+                    out += PageMark.line(left, bottom + sp * 2f, right, bottom + sp * 2f, w, CHOSEN_EDGE)
+                    out += PageMark.line(left, top - sp * 2f, left, bottom + sp * 2f, w, CHOSEN_EDGE)
+                    out += PageMark.line(right, top - sp * 2f, right, bottom + sp * 2f, w, CHOSEN_EDGE)
+                }
             }
             if (live != null && live in numbers) out += PageMark.rect(left, top - sp * 2f, right, bottom + sp * 2f, NOW)
             if (flash != null && flash in numbers) out += PageMark.rect(left, top - sp * 2.5f, right, bottom + sp * 2.5f, FOUND)

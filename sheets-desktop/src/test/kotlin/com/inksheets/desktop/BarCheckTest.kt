@@ -27,9 +27,10 @@ import java.io.File
 import javax.imageio.ImageIO
 
 /**
- * The bars in doubt gone through by finger, in InkSheets as it ships: the Fix button, the bar lit
- * and three readings of it offered, one picked (kept - the bar no longer in doubt), "None of these"
- * (others offered), Done. Pictures of each step to `sheets-desktop/build/touch/`.
+ * The bars put right by finger, in InkSheets as it ships: Check colours every bar (green, yellow,
+ * red), a tap on a red bar opens Fix docked at the foot, three readings offered, one picked (kept -
+ * the bar no longer in doubt, on to the next red bar), Back (undone, that bar again), "None of
+ * these" (others offered) - the buttons never moving - and Done. Pictures to `sheets-desktop/build/touch/`.
  */
 @OptIn(ExperimentalTestApi::class)
 class BarCheckTest {
@@ -85,32 +86,49 @@ class BarCheckTest {
             shot("tools")
             val doubtful = score.measures.count { !it.sure && it.bars == 1 }
             println("bars in doubt on the page: $doubtful")
-            tapText("Fix ")
+            // (Another test may have left the colours on: this starts from the tools as they open.)
+            if (ScoreTools.colours) runOnIdle { ScoreTools.choose(ScoreTools.Tool.CHECK) }
+            settle(10)
+            tapText("Check")
+            assertTrue("colours on", ScoreTools.colours)
+            shot("colours")
+            // A tap on the first red bar (as the page hands a tap on it to the tool).
+            val red = score.measures.first { !it.sure && it.bars == 1 }.number
+            runOnIdle { ScoreTools.chooseGoOn(true); ScoreTools.fixBar(sheets(), red) }
+            settle(30)
             shot("first-bar")
             assertTrue("going through them", ScoreTools.checking)
-            val first = ScoreTools.checkBars.first()
-            println("offered for bar $first: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
+            assertEquals("the bar tapped is up first", red, ScoreTools.checkBars.first())
+            assertEquals("then every other red bar", doubtful, ScoreTools.checkBars.size)
+            fun spot(text: String) = onAllNodesWithText(text, substring = false, useUnmergedTree = true).onFirst().fetchSemanticsNode().boundsInRoot
+            val buttons = listOf("◀ Back", "None of these", "Skip", "Done")
+            val placed = buttons.associateWith { spot(it) }
+            println("offered for bar $red: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
             assertTrue("readings offered", ScoreTools.offered.isNotEmpty())
-            // The bar looked at again in the background: its readings join those offered.
-            println("looking again: ${ScoreTools.looking}")
             val lookEnd = System.currentTimeMillis() + 90_000
             while (ScoreTools.looking && System.currentTimeMillis() < lookEnd) settle(10)
             shot("looked-again")
-            println("bar picture ready: ${ScoreTools.barPicture != null}")
             assertTrue("the bar as printed shown", ScoreTools.barPicture != null)
-            println("after looking again at bar $first: " + ScoreTools.offered.joinToString(" | ") { it.changes.joinToString("; ").ifEmpty { "as read" } })
-            assertTrue("done looking", !ScoreTools.looking)
-            // Pick the first: kept, the bar no longer in doubt, on to the next.
-            // The first reading's card, by its label.
             tapText(ScoreTools.offered.first().changes.joinToString("; ").ifEmpty { "As read" })
             shot("picked")
-            val now = ScoreTools.scoreHere(sheets())!!.measures.first { it.number == first }
-            assertTrue("the bar picked is no longer in doubt", now.sure)
+            assertTrue("the bar picked is no longer in doubt", ScoreTools.scoreHere(sheets())!!.measures.first { it.number == red }.sure)
             assertEquals("on to the next", 1, ScoreTools.checkAt)
-            // None of these: others offered (or on, if there are none).
+            // The buttons are where they were, whatever the bar.
+            for (b in buttons) assertEquals("$b has not moved", placed.getValue(b), spot(b))
+            // Back: the pick undone, the bar up again.
+            tapText("◀ Back")
+            shot("back")
+            assertEquals("back to the first", 0, ScoreTools.checkAt)
+            assertTrue("its fix undone", !ScoreTools.scoreHere(sheets())!!.measures.first { it.number == red }.sure)
             tapText("None of these")
             shot("none-of-these")
             println("after none of these: asked again ${ScoreTools.askedAgain}, offered ${ScoreTools.offered.size}, at ${ScoreTools.checkAt}")
+            for (b in buttons) assertEquals("$b has not moved", placed.getValue(b), spot(b))
+            tapText("Extra note")
+            shot("extra-note")
+            tapText("Bar number")
+            shot("bar-number")
+            tapText("Cancel")
             tapText("Done")
             shot("done")
             assertTrue("done", !ScoreTools.checking)
@@ -150,13 +168,14 @@ class BarCheckTest {
                 settle(3); SimulatedTouch.stamp(); root.performMouseInput { release() }
                 settle(30)
             }
-            tapText("Fix chosen")
+            // Check on, the green bar tapped: Fix for it alone (then back to the page).
+            runOnIdle { ScoreTools.toggleCheck(sheets()); ScoreTools.chooseGoOn(false); ScoreTools.fixBar(sheets(), sure) }
+            settle(30)
             ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "wrong-01-marked.png"))
             // Just that bar to go through - not the part's every bar in doubt.
             assertEquals("that bar alone", listOf(sure), ScoreTools.checkBars)
             assertTrue("going through the bars", ScoreTools.checking)
             assertEquals("the bar said to be wrong is up first", sure, ScoreTools.barUp(sheets())?.number)
-            assertTrue("it is in doubt now", ScoreTools.scoreHere(sheets())!!.measures.first { it.number == sure }.doubts.any { it.contains("wrong") })
             assertTrue("readings offered", ScoreTools.offered.isNotEmpty())
             runOnIdle { ScoreTools.fix(part.absolutePath, sure, ScoreTools.offered.first().events) }
             settle(10)

@@ -53,116 +53,151 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.ui.unit.Dp
 
 /**
- * The bars in doubt, one at a time. At the top, the bar as it is printed (cut from the page, a
- * little of the bars either side dimmed, as high and low as its notes and slurs go), and
- * right under it three readings of it drawn the same way - black on white - to compare with it at
- * a glance and pick with a tap. "None of these" looks further; "Skip" leaves the bar as it is.
- * The panel sits in the half of the page away from the bar.
+ * Putting bars right, one at a time. The panel is docked along the foot of the screen and never
+ * moves or changes size from bar to bar - it may cover the music; the bar itself is shown in it,
+ * cut from the page. In it: the bar as printed, three readings of it to pick from with a tap (or
+ * put right by hand), and along its foot the same buttons in the same places every time - Back,
+ * None of these, Skip, Done - with a row of what can be wrong under them.
  */
 @Composable
 fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     if (!ScoreTools.checking) return
     val m = ScoreTools.barUp(state) ?: return
-    val score = ScoreTools.scoreHere(state)
-    // Where the bar is on its page: the panel goes to the other half.
-    val pageHeight = score?.pageWidths?.getOrNull(m.page)?.let { it * 1.3f } ?: 1f
-    val barLow = m.box.top > pageHeight * 0.5f
     val paper = Color.White
     val printInk = Color(0xFF111111)
     val total = ScoreTools.checkBars.size
-    // A short screen (a phone or a small tablet on its side): everything smaller, and where it is
-    // wide too, the bar as printed beside its readings rather than over them.
-    // (Putting a bar right by hand, or choosing its clef, key and time, wants more room than picking.)
-    val short = room < when { ScoreTools.editing != null -> 1000.dp; ScoreTools.sigDraft != null -> 900.dp; else -> 700.dp }
+    // Sized by the screen alone - never by what is in it - so nothing jumps between bars.
+    val short = room < 700.dp
     ScoreTools.compact = short
-    // A window over the music: between the strips where it fits, else they step aside (see Overlays).
+    val panelHeight = if (room == Dp.Infinity) 560.dp else (room * (if (short) 0.62f else 0.55f)).coerceIn(300.dp, 620.dp)
     Opened("Fix", if (short) 700.dp else 380.dp)
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
         tonalElevation = 4.dp,
-        shadowElevation = 6.dp,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f),
-        modifier = Modifier.align(if (barLow) Alignment.TopCenter else Alignment.BottomCenter)
-            .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp, top = 8.dp, bottom = 8.dp).widthIn(max = 900.dp)
-            // Never taller than the screen: what does not fit scrolls (see below).
-            .heightIn(max = if (room == Dp.Infinity) Dp.Infinity else (room - 16.dp).coerceAtLeast(160.dp))
+        shadowElevation = 8.dp,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.99f),
+        modifier = Modifier.align(Alignment.BottomCenter)
+            .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp)
+            .widthIn(max = 920.dp).fillMaxWidth().height(panelHeight)
     ) {
         BoxWithConstraints {
-            // (Side by side only where each side still has room: the editor's five lengths want 300 or so.)
-            val wide = short && maxWidth >= (if (ScoreTools.editing != null) 560.dp else 520.dp)
+            val wide = maxWidth >= 640.dp
             val pad = if (short) 10.dp else 14.dp
-            val gap = if (short) 6.dp else 10.dp
-            val pictureHeight = if (short) 92.dp else 140.dp
-            val header: @Composable () -> Unit = {
-                // Which bar, and how far through.
+            val gap = if (short) 6.dp else 8.dp
+            val pictureHeight = if (short) 84.dp else 150.dp
+            Column(Modifier.padding(start = pad, end = pad, top = 8.dp, bottom = pad)) {
+                // Which bar, how far through, and what happens after a fix.
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Bar ${m.number} · page ${m.page + 1}", style = if (short) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("${ScoreTools.checkAt + 1} of $total to check", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Bar ${m.number} · page ${m.page + 1}", style = if (short) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    if (total > 1) Text("${ScoreTools.checkAt + 1} of $total", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                    Spacer(Modifier.weight(1f))
+                    Text("Then", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    androidx.compose.material3.FilterChip(selected = ScoreTools.goOn, onClick = { ScoreTools.chooseGoOn(true) }, label = { Text("Next red bar", maxLines = 1) })
+                    androidx.compose.material3.FilterChip(selected = !ScoreTools.goOn, onClick = { ScoreTools.chooseGoOn(false) }, label = { Text("Close", maxLines = 1) })
                 }
-                LinearProgressIndicator(progress = { (ScoreTools.checkAt + 1f) / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().height(3.dp))
-            }
-            val printed: @Composable () -> Unit = {
-                // The bar as printed.
-                if (!short) Text("On the page", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxWidth().height(pictureHeight).clip(RoundedCornerShape(10.dp)).background(paper)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
-                ) {
-                    val pic = ScoreTools.barPicture
-                    if (pic != null) Image(pic, "Bar ${m.number} as printed", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(pictureHeight).padding(4.dp))
-                    else Text("Getting the bar from the page...", style = MaterialTheme.typography.bodySmall, color = Color(0xFF777777))
-                }
-                // Why it is asked about, and how to read the marks on the picture - and the clef, key and
-                // time it was read in, put right here where they are wrong. (Not while a narrow screen
-                // is given to putting the bar right by hand: the editor wants the room.)
-                if (ScoreTools.editing == null) {
+                LinearProgressIndicator(progress = { (ScoreTools.checkAt + 1f) / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().height(3.dp).padding(top = 2.dp))
+                Spacer(Modifier.height(gap))
+                // The work: the print and the readings (or the bar put right by hand, or its clef,
+                // key and time, or a rest's count) - in a space that scrolls, never pushing the
+                // buttons below it about.
+                val editing = ScoreTools.editing
+                val printed: @Composable () -> Unit = {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxWidth().height(pictureHeight).clip(RoundedCornerShape(10.dp)).background(paper)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp))
+                    ) {
+                        val pic = ScoreTools.barPicture
+                        if (pic != null) Image(pic, "Bar ${m.number} as printed", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(pictureHeight).padding(4.dp))
+                        else Text("Getting the bar from the page...", style = MaterialTheme.typography.bodySmall, color = Color(0xFF777777))
+                    }
                     Doubts(m)
-                    if (ScoreTools.sigDraft == null) SignatureRow(state, m)
                 }
-            }
-            val choosing: @Composable () -> Unit = {
-                if (m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") }) RestCount(state, m, short)
-                else if (ScoreTools.sigDraft != null) SignatureRow(state, m)
-                else {
-                    Text(when {
-                        ScoreTools.editing != null -> "Tap a note to choose it, then change it below."
-                        ScoreTools.looking && ScoreTools.askedAgain -> "Looking at it further..."
-                        ScoreTools.askedAgain -> "Looked further: is it one of these?"
-                        ScoreTools.looking -> "Which matches? Tap it. (Looking at it again more closely...)"
-                        else -> "Which matches? Tap it - or Edit the nearest."
-                    }, style = if (short) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium, maxLines = 2)
-                    val editing = ScoreTools.editing
-                    if (editing != null) BarEditor(state, m, editing, paper, printInk, short)
-                    else {
-                        Readings(state, m, paper, printInk, if (short) 70.dp else 104.dp)
-                        // Told what is off, the readings offered are all about it. (Side by side, under
-                        // the print instead: the readings' side has no room to spare.)
-                        if (ScoreTools.askedAgain && !short) WhatsOff(state, short)
-                        CheckButtons(state, short)
+                val work: @Composable () -> Unit = {
+                    when {
+                        m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") } -> RestCount(state, m, short)
+                        ScoreTools.sigDraft != null -> SignatureRow(state, m)
+                        ScoreTools.numbering -> BarNumber(state, m, short)
+                        editing != null -> BarEditor(state, m, editing, paper, printInk, short)
+                        else -> {
+                            Text(when {
+                                ScoreTools.looking && ScoreTools.askedAgain -> "Looking at it further..."
+                                ScoreTools.askedAgain -> "Looked further: is it one of these?"
+                                else -> "Which matches the print? Tap it - or Edit the nearest."
+                            }, style = MaterialTheme.typography.bodySmall, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Readings(state, m, paper, printInk, if (short) 64.dp else 128.dp)
+                        }
                     }
                 }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    if (wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(0.4f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { printed() }
+                        Column(Modifier.weight(0.6f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { work() }
+                    } else Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { printed(); work() }
+                }
+                Spacer(Modifier.height(gap))
+                FixFoot(state, m, short)
             }
-            val editing = ScoreTools.editing
-            if (wide && editing != null) Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(pad)) {
-                // Putting it right by hand: the print and the bar as it stands, one over the other, beside the buttons.
-                Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
-                    header(); printed(); BarEditor(state, m, editing, paper, printInk, short, buttons = false)
-                }
-                Column(Modifier.weight(0.58f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
-                    BarEditor(state, m, editing, paper, printInk, short, view = false)
-                }
-            } else if (wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(pad)) {
-                Column(Modifier.weight(0.42f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
-                    header(); printed()
-                }
-                Column(Modifier.weight(0.58f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { choosing() }
-            } else Column(Modifier.verticalScroll(rememberScrollState()).padding(pad), verticalArrangement = Arrangement.spacedBy(gap)) {
-                header(); printed(); choosing()
+        }
+    }
+}
+
+/**
+ * Fix's foot: the same buttons in the same places for every bar, so a player in a rhythm never
+ * has one move from under their finger - Back, None of these, Skip, Done; and under them what can
+ * be wrong, each telling it what to look for.
+ */
+@Composable
+private fun FixFoot(state: SheetsState, m: Measure, short: Boolean) {
+    val h = if (short) 40.dp else 46.dp
+    val pad = PaddingValues(horizontal = 6.dp)
+    val busy = ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { ScoreTools.back(state) }, enabled = ScoreTools.canGoBack, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("◀ Back", maxLines = 1) }
+            OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, enabled = !busy, contentPadding = pad, modifier = Modifier.weight(1.3f).height(h)) { Text("None of these", maxLines = 1) }
+            OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", maxLines = 1) }
+            Button(onClick = { ScoreTools.endCheck() }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Done", maxLines = 1) }
+        }
+        // What's wrong: always here, always in this order (scrolls sideways on a narrow screen).
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+        ) {
+            Text("Wrong:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            for (what in listOf("Pitch", "Length", "Extra note", "Missing note", "Rests", "Grace note")) {
+                val on = ScoreTools.focus == what
+                androidx.compose.material3.FilterChip(selected = on, enabled = !busy, onClick = { ScoreTools.narrow(state, if (on) null else what) }, label = { Text(what, maxLines = 1) })
             }
+            androidx.compose.material3.FilterChip(selected = ScoreTools.sigDraft != null, onClick = {
+                ScoreTools.sigDraft = if (ScoreTools.sigDraft != null) null else com.inksheets.core.omr.SigFix(m.clef, m.key.fifths, m.time.beats, m.time.beatType)
+            }, label = { Text("Clef, key, time", maxLines = 1) })
+            androidx.compose.material3.FilterChip(selected = ScoreTools.numbering, onClick = { ScoreTools.numbering = !ScoreTools.numbering }, label = { Text("Bar number", maxLines = 1) })
+            androidx.compose.material3.FilterChip(selected = false, enabled = !busy, onClick = { ScoreTools.notOneBar(state) }, label = { Text("Not one bar", maxLines = 1) })
+        }
+    }
+}
+
+/** The number printed at bar [m] (or the one it would have): it and every bar after it numbered on from it. */
+@Composable
+private fun BarNumber(state: SheetsState, m: Measure, short: Boolean) {
+    var n by androidx.compose.runtime.remember(m.number) { androidx.compose.runtime.mutableIntStateOf(m.number) }
+    val h = if (short) 40.dp else 48.dp
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        Text("Which bar is this on the page? Every bar after it is numbered on from it.", style = MaterialTheme.typography.bodySmall)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            FilledTonalButton(onClick = { n = (n - 1).coerceAtLeast(1) }, modifier = Modifier.height(h)) { Text("−") }
+            Text("Bar $n", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
+            FilledTonalButton(onClick = { n += 1 }, modifier = Modifier.height(h)) { Text("+") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { ScoreTools.numbering = false }, modifier = Modifier.weight(1f).height(h)) { Text("Cancel") }
+            Button(onClick = { ScoreTools.numbering = false; if (n != m.number) ScoreTools.setBarNumber(state, m.number, n) }, modifier = Modifier.weight(1.3f).height(h)) { Text("Number it $n", maxLines = 1) }
         }
     }
 }
@@ -214,36 +249,6 @@ private fun Readings(state: SheetsState, m: Measure, paper: Color, printInk: Col
                     }
                 }
             }
-        }
-    }
-}
-
-/** None of these, not one bar, skip, done: four in a row where there is room for their words; two by two where there is not. */
-@Composable
-private fun CheckButtons(state: SheetsState, short: Boolean) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val h = if (short) 40.dp else 48.dp
-        // (On a small screen, once turned down, it asks what is off - a menu, taking no more room.)
-        val none: @Composable (Modifier) -> Unit = { mod ->
-            if (short && ScoreTools.askedAgain) Box(mod) {
-                var open by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-                OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 8.dp)) { Text(ScoreTools.focus ?: "What's off?", maxLines = 1) }
-                androidx.compose.material3.DropdownMenu(open, onDismissRequest = { open = false }) {
-                    for (what in com.inksheets.core.omr.BarChoices.FOCUS.keys)
-                        androidx.compose.material3.DropdownMenuItem(text = { Text(what) }, onClick = { open = false; ScoreTools.narrow(state, what) })
-                    androidx.compose.material3.DropdownMenuItem(text = { Text("None of these, again") }, onClick = { open = false; ScoreTools.noneOfThese(state) })
-                }
-            } else OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("None of these", maxLines = 1) }
-        }
-        // The bright part of the picture is not one whole bar: a part of one, or two.
-        val notOne: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.notOneBar(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Not one bar", maxLines = 1) } }
-        val skip: @Composable (Modifier) -> Unit = { mod -> OutlinedButton(onClick = { ScoreTools.skip(state) }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Skip", maxLines = 1) } }
-        val done: @Composable (Modifier) -> Unit = { mod -> Button(onClick = { ScoreTools.endCheck() }, modifier = mod, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Done", maxLines = 1) } }
-        if (maxWidth >= 520.dp) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            none(Modifier.weight(1f).height(h)); notOne(Modifier.weight(1f).height(h)); skip(Modifier.weight(1f).height(h)); done(Modifier.weight(1f).height(h))
-        } else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { none(Modifier.weight(1f).height(h)); notOne(Modifier.weight(1f).height(h)) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) { skip(Modifier.weight(1f).height(h)); done(Modifier.weight(1f).height(h)) }
         }
     }
 }
@@ -481,24 +486,6 @@ private fun RestCount(state: SheetsState, m: Measure, short: Boolean) {
             OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", style = words, maxLines = 1) }
             OutlinedButton(onClick = { ScoreTools.endCheck() }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Done", style = words, maxLines = 1) }
             Button(onClick = { ScoreTools.setRestCount(state, m.number, count) }, contentPadding = pad, modifier = Modifier.weight(1.3f).height(h)) { Text("Use $count", style = words, maxLines = 1) }
-        }
-    }
-}
-
-/**
- * After "None of these": what is off with them - a note's pitch, how long its notes are, a note
- * too many or too few, its rests - and the readings offered again are all about that.
- */
-@Composable
-private fun WhatsOff(state: SheetsState, short: Boolean) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("What's off?", style = MaterialTheme.typography.labelLarge)
-        for (what in com.inksheets.core.omr.BarChoices.FOCUS.keys) {
-            val on = ScoreTools.focus == what
-            val mod = Modifier.weight(1f).height(if (short) 34.dp else 38.dp)
-            val pad = PaddingValues(horizontal = 2.dp)
-            if (on) Button(onClick = { ScoreTools.narrow(state, null) }, contentPadding = pad, modifier = mod) { Text(what, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
-            else OutlinedButton(onClick = { ScoreTools.narrow(state, what) }, contentPadding = pad, modifier = mod) { Text(what, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
         }
     }
 }

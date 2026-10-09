@@ -21,6 +21,9 @@ import java.io.File
 internal object Transcriber {
     /** What it is doing: "Reading page 2 of 4..." - null when idle. */
     var busy by mutableStateOf<String?>(null)
+
+    /** How far the reading in hand has got, 0 to 1 (null: none going on) - for the bar at the screen's side. */
+    var progress by mutableStateOf<Float?>(null)
         private set
 
     /** The part read last, for the notes panel. */
@@ -101,6 +104,26 @@ internal object Transcriber {
             runCatching { file.inputStream().buffered().use { input -> val buf = ByteArray(1 shl 16); while (true) { val n = input.read(buf); if (n < 0) break; crc.update(buf, 0, n) } } }
             "${java.lang.Long.toHexString(file.length())}-${java.lang.Long.toHexString(crc.value)}"
         }
+    }
+
+    /**
+     * What the player put right in [file]'s reading - bars fixed, rests counted, clefs and keys,
+     * bars said wrong, bars cleaned ([kind]) - kept beside the reading in the library, so it is
+     * there on every device and never lost with a device's settings. One file a device (two
+     * devices never write the same file); the newest is what holds. Null when none was kept here;
+     * an empty string when it was cleared.
+     */
+    internal fun keptEdit(state: SheetsState, file: File, kind: String): String? {
+        val dir = File(folder(state, file), "edits")
+        val newest = dir.listFiles { f -> f.name.startsWith("$kind-") && f.name.endsWith(".txt") }?.maxByOrNull { it.lastModified() } ?: return null
+        return runCatching { newest.readText() }.getOrNull()
+    }
+
+    /** Keep [value] as what the player put right of [kind] in [file]'s reading (null: none). */
+    internal fun keepEdit(state: SheetsState, file: File, kind: String, value: String?) {
+        val dir = File(folder(state, file), "edits").apply { mkdirs() }
+        val me = state.platform.deviceId.map { if (it.isLetterOrDigit() || it == '-') it else '_' }.joinToString("")
+        runCatching { File(dir, "$kind-$me.txt").writeText(value.orEmpty()) }
     }
 
     private fun pageFile(dir: File, page: Int) = File(dir, "p${page + 1}.json")
@@ -186,6 +209,7 @@ internal object Transcriber {
                 .onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
             state.platform.onMain {
                 busy = null
+                progress = null
                 if (score != null) shown = file to score
                 onDone(score)
             }
@@ -237,7 +261,7 @@ internal object Transcriber {
                 return pageInk(peek, p)
             }
             try { for ((i, p) in todo.withIndex()) {
-                state.platform.onMain { busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
+                state.platform.onMain { progress = i.toFloat() / todo.size.coerceAtLeast(1); busy = if (only == null) "Reading page ${p + 1} of ${peek.pageCount}..." else "Reading page ${p + 1}${if (todo.size > 1) " (${i + 1} of ${todo.size})" else ""}..." }
                 // A page following one just read, or read before, carries on from it: its clef, key,
                 // time and bar numbers. One on its own takes its numbers from the print.
                 if (p != last + 1) {

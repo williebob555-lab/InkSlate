@@ -28,14 +28,14 @@ change size. **No build until the very end** — commit locally, one `[build she
 ### L Listen (mic follow) — user has no trust
 - [ ] Must handle starting mid-page / anywhere; must show what it hears and where it thinks you are; honest when lost
 ### R Read the music (scanning)
-- [ ] Small progress bar at the side while a part is being read
-- [ ] One button replaces Clean / Clean up / Fix / Wrong: overlays bar colours — green sure, yellow less sure, red needs fixing
-- [ ] Tap any bar (even green) → Fix for that bar; choose close-after-fix or keep going (bulk)
-- [ ] Fix panel never moves on screen (may cover the music) — capture accurate and FAST; option buttons (None of these…) never move
-- [ ] Fix: Undo/back; ways to say what's wrong: bar number, grace notes, clef, key, time, "not a note"… (not just None of these)
+- [x] Small progress bar at the side while a part is being read
+- [x] One button replaces Clean / Clean up / Fix / Wrong: overlays bar colours — green sure, yellow less sure, red needs fixing
+- [x] Tap any bar (even green) → Fix for that bar; choose close-after-fix or keep going (bulk)
+- [x] Fix panel never moves on screen (may cover the music) — capture accurate and FAST; option buttons (None of these…) never move
+- [x] Fix: Undo/back; ways to say what's wrong: bar number, grace notes, clef, key, time, "not a note"… (not just None of these)
 - [ ] Clean view overhaul: match the piece's style, carry over every musical element
-- [ ] "Replace the whole page" = an overlay on the existing page (undoable), never a new document/duplicate files
-- [ ] Readings must persist — user keeps re-scanning the same parts (investigate cache keys/sync)
+- [x] "Replace the whole page" = an overlay on the existing page (undoable), never a new document/duplicate files
+- [x] Readings must persist — user keeps re-scanning the same parts (investigate cache keys/sync)
 - [ ] Band playback: option to include/exclude own part; read the band's parts in parallel
 ### P Playback engine
 - [ ] Expressive, planned performance: whole piece analysed before playing (phrasing, breath, momentum, dynamics shaping, articulation blend), human-sounding — a demo-quality interpretation, not a note machine
