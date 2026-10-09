@@ -416,6 +416,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         // Markings brought across from MobileSheets, handed to a part when it is opened.
         com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
+            // A page turned to (or a file opened) is drawn before any reading goes on.
+            com.inkslate.core.RenderGate.touch()
             Listener.pageChanged(this, path, page)
             PracticeLog.touch()
             // A whole read of this part cut off part way (the app closed) carries on.
