@@ -145,6 +145,9 @@ private fun ui() = application {
     }
     val shortcuts = remember { Shortcuts() }
     val navigation = remember { NavigationHooks() }
+    // Keys held down, and when each last sounded: the OS repeats a held key, and a held pedal
+    // must turn one page, as it does on Android.
+    val keysDown = remember { HashMap<Long, Long>() }
 
     Window(
         onCloseRequest = ::exitApplication,
@@ -158,7 +161,10 @@ private fun ui() = application {
             // Looked up rather than decided here. What a key does is a table now, on the same
             // terms as what a button does - see KeyBindingStore - so a shortcut can be moved, and
             // there is somewhere to look up what the shortcuts are.
-            if (event.type != KeyEventType.KeyDown) {
+            if (event.type == KeyEventType.KeyUp) {
+                keysDown.remove(event.key.keyCode)
+                false
+            } else if (event.type != KeyEventType.KeyDown) {
                 false
             } else if (event.isCtrlPressed && event.isShiftPressed && event.key in SIZE_KEYS) {
                 // Everything bigger or smaller, anywhere - the size in Settings.
@@ -177,7 +183,12 @@ private fun ui() = application {
                 )
                 val bound = KeyBindingStore.actionFor(stroke)
                 val perform = bound?.perform
-                if (perform != null) com.inkslate.core.Perform.run(perform) else when (bound) {
+                val now = System.currentTimeMillis()
+                // Still held (a release not seen long ago is forgotten, so a lost one never sticks).
+                val repeat = keysDown[event.key.keyCode]?.let { now - it < 1_500 } == true
+                keysDown[event.key.keyCode] = now
+                if (perform != null && repeat) true
+                else if (perform != null) com.inkslate.core.Perform.run(perform) else when (bound) {
                     KeyAction.SAVE -> shortcuts.fire(shortcuts.save)
                     KeyAction.UNDO -> shortcuts.fire(shortcuts.undo)
                     KeyAction.REDO -> shortcuts.fire(shortcuts.redo)

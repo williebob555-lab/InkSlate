@@ -64,6 +64,8 @@ class ControllerHub(private val state: SheetsState) {
         private set
     private var started = false
     private val taps = ArrayList<Long>()
+    /** Sequences going now. */
+    private val running: MutableSet<RemoteButton> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     /** Each switch on or off as last heard: for one done one way only. */
     private val switched = HashMap<ControlRef, Boolean>()
 
@@ -105,7 +107,10 @@ class ControllerHub(private val state: SheetsState) {
     }
 
     /** Listen for the control to do [action]: the next one pressed or moved. */
-    fun learn(action: RemoteButton) { learning = action; heard.clear(); heardAt.clear(); learned = null }
+    fun learn(action: RemoteButton) { learning = action; listeningSince = System.currentTimeMillis(); heard.clear(); heardAt.clear(); learned = null }
+
+    /** When learning or placing began: a mode left open (its dialog closed some other way) ends by itself. */
+    private var listeningSince = 0L
 
     fun cancelLearning() { learning = null; heard.clear(); heardAt.clear(); learned = null }
 
@@ -124,6 +129,7 @@ class ControllerHub(private val state: SheetsState) {
     fun place(spot: String) {
         val now = System.currentTimeMillis()
         listener = ControlListener(chatter = lastHeard.filterValues { now - it.first < 3000 }.keys.toSet())
+        listeningSince = now
         placingHeard.clear()
         placing = spot
     }
@@ -192,6 +198,8 @@ class ControllerHub(private val state: SheetsState) {
         val now = System.currentTimeMillis()
         lastHeard[e.control] = now to e.value
         lastAt = now
+        // Learning or placing, and forgotten: pedals must not stay swallowed till the app restarts.
+        if ((listener != null || learning != null) && now - listeningSince > LISTEN_MS) { cancelPlacing(); cancelLearning() }
         listener?.let { l ->
             // Placing a control on the picture: nothing fires till it is put there.
             l.hear(e, now)
@@ -212,7 +220,8 @@ class ControllerHub(private val state: SheetsState) {
         // A switch's press: a momentary one sends on (127) and, let go, off (0) moments later; one
         // that sends a single message a press (on one press, off the next - a POD Go footswitch set
         // to toggle) is taken at every message. Until a quick "off" follows, it is taken as that.
-        val letGo = (1 until heard.size).any { i -> heard[i - 1].value >= 64 && heard[i].value < 64 && heardAt[i] - heardAt[i - 1] < 3000 }
+        // (Held a good while before it is let go still counts: a toggle's second press is far from "let go".)
+        val letGo = (1 until heard.size).any { i -> heard[i - 1].value >= 64 && heard[i].value < 64 && heardAt[i] - heardAt[i - 1] < LET_GO_MS }
         learned = ControlBinding(
             control = e.control,
             action = action,
@@ -225,12 +234,16 @@ class ControllerHub(private val state: SheetsState) {
         val a = b.action
         when (a.kind) {
             RemoteButton.MACRO -> {
+                // A second press while the steps are still going is ignored: two would interleave.
+                if (!running.add(a)) return
                 // A step at a time, with a moment between: a song has to open before its page turns.
                 Thread({
-                    for (step in a.steps) {
-                        state.platform.onMain { act(step, null) }
-                        Thread.sleep(if (step.kind == RemoteButton.SONG || step.kind == RemoteButton.SETLIST) 900 else 300)
-                    }
+                    try {
+                        for (step in a.steps) {
+                            state.platform.onMain { act(step, null) }
+                            Thread.sleep(if (step.kind == RemoteButton.SONG || step.kind == RemoteButton.SETLIST) 900 else 300)
+                        }
+                    } finally { running.remove(a) }
                 }, "controller-steps").apply { isDaemon = true; start() }
             }
             RemoteButton.TAP -> {
@@ -252,6 +265,10 @@ class ControllerHub(private val state: SheetsState) {
     }
 
     companion object {
+        /** Learning or placing a control ends by itself after this long. */
+        private const val LISTEN_MS = 60_000L
+        /** A switch that sent on and then off within this is a momentary one, pressed and let go. */
+        private const val LET_GO_MS = 15_000L
         /** Kinds that open a list on a remote to pick from: nothing for a foot to do. */
         val PICKERS = setOf(RemoteButton.SONGS, RemoteButton.SET, RemoteButton.PARTS, RemoteButton.PROFILES,
             RemoteButton.BOOKMARKS, RemoteButton.MESSAGE_TYPE, RemoteButton.TOUCHPAD)

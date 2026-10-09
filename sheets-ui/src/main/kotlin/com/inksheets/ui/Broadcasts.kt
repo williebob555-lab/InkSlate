@@ -191,7 +191,7 @@ internal fun SendNoteDialog(state: SheetsState, onClose: () -> Unit) {
 
 /**
  * The leader's message, over the song where the music is not: beside a landscape page, opposite
- * the strip; under a portrait one. Gone after a few seconds, or at a tap.
+ * the strip; under a portrait one. A plain one is gone after a few seconds or at a tap; an urgent one stays until tapped.
  */
 @Composable
 internal fun BoxWithConstraintsScope.NotePopup(state: SheetsState) {
@@ -200,9 +200,18 @@ internal fun BoxWithConstraintsScope.NotePopup(state: SheetsState) {
     // Shown once: the state is the app's, not this page's, so a new song never brings it back.
     val shown = companion.noticeShowing
     LaunchedEffect(companion.noticeCount, shown) {
-        if (companion.notice == null || !shown) return@LaunchedEffect
-        delay(if (companion.notice?.urgent == true) 15_000 else 6_000)
-        companion.noticeShowing = false
+        val n = companion.notice
+        if (n == null || !shown) return@LaunchedEffect
+        // Counted from when it came. One that came while no song was up (Home) and was not seen
+        // in time is dropped, not put over the next song; an urgent one seen stays until tapped.
+        val window = if (n.urgent) 15_000L else 6_000L
+        val age = System.currentTimeMillis() - companion.noticeAt
+        if (!companion.noticeSeen && age > window) { companion.noticeShowing = false; return@LaunchedEffect }
+        companion.noticeSeen = true
+        if (!n.urgent) {
+            delay((window - age).coerceAtLeast(0L))
+            companion.noticeShowing = false
+        }
     }
     if (note?.urgent == true) {
         UrgentNote(note, shown) { companion.noticeShowing = false }
