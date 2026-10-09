@@ -256,6 +256,7 @@ object Perform {
 object QuickTools {
 
     private var savedPen: Triple<BrushType, Int, Float>? = null
+    private var beforeEraser: PerformAction? = null
 
     fun current(c: ToolConfig): PerformAction? = when {
         c.tool == Tool.ERASER -> PerformAction.ERASER
@@ -298,8 +299,12 @@ object QuickTools {
     fun toggle(pen: ToolConfig, hands: List<ToolConfig>, action: PerformAction) {
         if (hands.isNotEmpty() && hands.all { current(it) == action }) {
             hands.forEach { it.tool = Tool.PAN }
+            // The eraser switched off gives the pen back what it wrote with: nothing lit on the
+            // strip any more, so a pen still erasing would look like a pen that does nothing.
+            if (action == PerformAction.ERASER && pen.tool == Tool.ERASER) apply(pen, beforeEraser ?: PerformAction.PEN)
             return
         }
+        if (action == PerformAction.ERASER && pen.tool != Tool.ERASER) beforeEraser = current(pen)
         apply(pen, action)
         for (h in hands) {
             h.tool = pen.tool

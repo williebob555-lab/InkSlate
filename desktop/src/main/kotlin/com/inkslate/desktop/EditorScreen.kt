@@ -87,6 +87,8 @@ import com.inkslate.core.Tool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.withContext
@@ -231,7 +233,11 @@ fun EditorScreen(
     // Music fades in once it is in place, rather than appearing in one frame.
     val appear = remember(file) { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(positionRestored) {
-        if (positionRestored) appear.animateTo(1f, androidx.compose.animation.core.tween(220))
+        // Short: a song change is felt as a wait, not a flourish (MobileSheets is instant).
+        if (positionRestored) {
+            if (AppFlavor.turnAnimation == "none") appear.snapTo(1f)
+            else appear.animateTo(1f, androidx.compose.animation.core.tween(120))
+        }
     }
     var navOpen by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -270,7 +276,9 @@ fun EditorScreen(
     var fittedScale by remember { mutableStateOf(0f) }
     var layout by remember { mutableStateOf(if (AppFlavor.musicView) PageLayout.SINGLE else PageLayout.VERTICAL) }
     val density = androidx.compose.ui.platform.LocalDensity.current.density
-    var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
+    // Music shares one page colour across songs (AppFlavor.readingMode); a document has its own.
+    val pageFilterState = if (AppFlavor.musicView) AppFlavor.readingMode else remember { mutableStateOf(PageFilter.NONE) }
+    var pageFilter by pageFilterState
     var pressureCurveOpen by remember { mutableStateOf(false) }
     var benchRunning by remember { mutableStateOf(false) }
     var benchReport by remember { mutableStateOf<String?>(null) }
@@ -1528,10 +1536,25 @@ fun EditorScreen(
                 com.inkslate.core.PerformAction.HALF_PAGE_FORWARD, com.inkslate.core.PerformAction.HALF_PAGE_BACK -> {
                     // Half the window: the bottom half of what was showing moves to the top, so
                     // the next lines are there before the last ones have gone.
-                    val before = viewport.offset
-                    val sign = if (action == com.inkslate.core.PerformAction.HALF_PAGE_FORWARD) -1f else 1f
-                    viewport.panBy(0f, sign * viewport.viewSize.height * 0.5f)
-                    viewport.offset != before
+                    val forward = action == com.inkslate.core.PerformAction.HALF_PAGE_FORWARD
+                    fun turn() = if (forward) (page < count - 1).also { if (it) goToPage(page + 1) }
+                        else (page > 0).also { if (it) goToPage(page - 1) }
+                    val box = if (AppFlavor.musicView) paperBox(page) else null
+                    if (box != null) {
+                        // Music: within the page, never off it. A page that fits already, or
+                        // one at its end, turns - a second press must not skip the song.
+                        val visible = viewport.viewSize.height / viewport.scale
+                        if (box.height <= visible + 1f) turn() else {
+                            val y = (viewport.offset.y + (if (forward) 0.5f else -0.5f) * visible).coerceIn(box.top, box.bottom - visible)
+                            if (kotlin.math.abs(y - viewport.offset.y) < 1f) turn()
+                            else { viewport.panBy(0f, -(y - viewport.offset.y) * viewport.scale, freely = true); true }
+                        }
+                    } else {
+                        val before = viewport.offset
+                        val sign = if (forward) -1f else 1f
+                        viewport.panBy(0f, sign * viewport.viewSize.height * 0.5f)
+                        viewport.offset != before
+                    }
                 }
                 else -> false
             }
@@ -1546,6 +1569,9 @@ fun EditorScreen(
                 armedSettings != null -> armedSettings = null
                 tools.hasArmed -> closeTray()
                 selection.isNotEmpty() -> selection = emptySet()
+                // Music is not closed by a stray key: Escape only brings the tools and puts them
+                // away again. Home is one tap away on the tab row.
+                AppFlavor.musicView -> immersive = true
                 else -> leave()
             }
         }
@@ -1951,10 +1977,17 @@ fun EditorScreen(
                             if (AppFlavor.turnAnimation == "fade") {
                                 alpha = 1f - p * 0.9f
                             } else {
-                                translationX = turnDir * p * size.width * 0.45f
                                 alpha = 1f - p * 0.7f
                             }
                         }
+                    }.drawWithContent {
+                        // The slide is drawn, not laid out: a layer's translation moves where
+                        // presses land too, and a quick second tap on the right fell in the
+                        // middle third of a page still sliding away.
+                        val p = turnAnim.value
+                        if (p > 0f && AppFlavor.turnAnimation != "fade") {
+                            translate(left = turnDir * p * size.width * 0.45f) { this@drawWithContent.drawContent() }
+                        } else drawContent()
                     },
                     // A fitted page of music: a finger turns it rather than moving it.
                     // Music with its tools put away: a finger turns pages rather than moving them.

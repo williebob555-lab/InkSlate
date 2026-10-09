@@ -465,8 +465,13 @@ private fun DocumentTabChip(
                     onClick = { menuOpen = false; onCloseSplit() }
                 )
             }
-            DropdownMenuItem(text = { Text("Close") }, onClick = { menuOpen = false; onClose() })
-            DropdownMenuItem(text = { Text("Close other tabs") }, onClick = { menuOpen = false; onCloseOthers() })
+            // A setlist's songs have no X of their own and close together, from Home: one taken
+            // out of the row would leave a hole in the set.
+            val inSet = AppFlavor.musicView && tab.title != null
+            if (!inSet) {
+                DropdownMenuItem(text = { Text("Close") }, onClick = { menuOpen = false; onClose() })
+                DropdownMenuItem(text = { Text("Close other tabs") }, onClick = { menuOpen = false; onCloseOthers() })
+            }
             DropdownMenuItem(text = { Text("Close all tabs") }, onClick = { menuOpen = false; onCloseAll() })
         }
     }

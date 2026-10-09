@@ -69,6 +69,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -765,10 +767,23 @@ internal fun SheetDialog(
             // As wide as it wants on a tablet or laptop, and no wider than a phone's screen.
             modifier = Modifier.widthIn(max = if (wide) 640.dp else 440.dp).fillMaxWidth().padding(8.dp)
         ) {
-            Column(Modifier.padding(20.dp)) {
-                Text(title, style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.size(12.dp))
-                Box(Modifier.weight(1f, fill = false)) { content() }
+            Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 20.dp)) {
+                // Like every panel: an X at the top right, and the title swiped down closes it.
+                var pulled by remember { mutableStateOf(0f) }
+                Row(
+                    Modifier.fillMaxWidth().pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragStart = { pulled = 0f },
+                            onVerticalDrag = { _, dy -> pulled += dy; if (pulled > 80.dp.toPx()) { pulled = Float.NEGATIVE_INFINITY; onDismiss() } }
+                        )
+                    },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(top = 12.dp))
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
+                }
+                Spacer(Modifier.size(4.dp))
+                Box(Modifier.weight(1f, fill = false).padding(end = 12.dp)) { content() }
                 Spacer(Modifier.size(12.dp))
                 // Wrapping, so a phone puts a third button on a line of its own rather than
                 // squeezing "Close" into a column one letter wide.

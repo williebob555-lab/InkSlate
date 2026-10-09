@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tune
@@ -112,6 +113,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     var partMenu by remember { mutableStateOf(false) }
     // Folded away, the strip is one button in the corner and the page has the whole width.
     androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
+    val readingMode = state.platform.readingMode
+    androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
 
     // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
     // the bottom of a portrait one - so it sits in blank space and never over the music.
@@ -378,6 +381,12 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
                 onClick = { onDismiss(); state.switchAllSongs(profile.id) }
             )
         }
+        // Every song's full score (or whatever has every instrument), as Home offers it.
+        DropdownMenuItem(
+            text = { Text("All instruments") },
+            leadingIcon = { if (state.oneOff == null && state.profileId == null) Icon(Icons.Default.Check, null) },
+            onClick = { onDismiss(); state.switchAllSongs(null) }
+        )
         state.oneOff?.let { _ ->
             DropdownMenuItem(text = { Text(state.profile?.name ?: "") }, leadingIcon = { Icon(Icons.Default.Check, null) }, onClick = onDismiss)
         }
@@ -404,6 +413,21 @@ private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, 
             leadingIcon = { Icon(Icons.Default.CenterFocusStrong, null) },
             onClick = { onDismiss(); Perform.recentre?.invoke() }
         )
+        // Night for a dark pit or stage, Sepia for long reading: one choice for every song.
+        var colours by remember { mutableStateOf(false) }
+        val mode = state.platform.readingMode
+        DropdownMenuItem(
+            text = { Text("Page colour: " + mode.label + if (colours) "  ▾" else "  ▸") },
+            leadingIcon = { Icon(Icons.Default.Contrast, null) },
+            onClick = { colours = !colours }
+        )
+        if (colours) com.inkslate.core.ReadingMode.entries.forEach { m ->
+            DropdownMenuItem(
+                text = { Text((if (m == mode) "✓  " else "     ") + m.label) },
+                onClick = { state.platform.readingMode = m; onDismiss() },
+                modifier = Modifier.padding(start = 24.dp)
+            )
+        }
         if (state.playing != null) {
             DropdownMenuItem(
                 text = { Text("Next song") },

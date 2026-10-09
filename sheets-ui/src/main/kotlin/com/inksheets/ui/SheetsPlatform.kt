@@ -62,6 +62,11 @@ interface SheetsPlatform {
     /** Whether the strip is open down its side, so the page keeps room clear for it (true), or folded into its corner. */
     fun setStripLane(open: Boolean) {}
 
+    /** How every music page is coloured: Normal, Night, Sepia... (the editors draw it). */
+    var readingMode: com.inkslate.core.ReadingMode
+        get() = com.inkslate.core.ReadingMode.NONE
+        set(@Suppress("UNUSED_PARAMETER") v) {}
+
     /** Keep a lane clear for the music tools down the side away from the strip, or not. */
     fun setMusicLane(open: Boolean) {}
 

@@ -92,6 +92,10 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.musicLaneDp = if (open) 72f else 0f
     }
 
+    override var readingMode: com.inkslate.core.ReadingMode
+        get() = com.inkslate.AppFlavor.readingMode.value
+        set(v) { com.inkslate.AppFlavor.readingMode.value = v }
+
     override fun setStripLane(open: Boolean) {
         com.inkslate.ink.DrawingView.stripLaneDp = if (open) 64f else 0f
     }

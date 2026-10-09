@@ -109,12 +109,15 @@ object KeyBindingStore {
         KeyAction.NEXT_PAGE to listOf(
             KeyStroke(Key.PageDown.keyCode),
             KeyStroke(Key.DirectionRight.keyCode),
-            KeyStroke(Key.DirectionDown.keyCode)
+            KeyStroke(Key.DirectionDown.keyCode),
+            // A laptop on a music stand: the biggest key turns the page.
+            KeyStroke(Key.Spacebar.keyCode)
         ),
         KeyAction.PREVIOUS_PAGE to listOf(
             KeyStroke(Key.PageUp.keyCode),
             KeyStroke(Key.DirectionLeft.keyCode),
-            KeyStroke(Key.DirectionUp.keyCode)
+            KeyStroke(Key.DirectionUp.keyCode),
+            KeyStroke(Key.Spacebar.keyCode, shift = true)
         ),
         KeyAction.FIRST_PAGE to listOf(KeyStroke(Key.MoveHome.keyCode)),
         KeyAction.LAST_PAGE to listOf(KeyStroke(Key.MoveEnd.keyCode)),

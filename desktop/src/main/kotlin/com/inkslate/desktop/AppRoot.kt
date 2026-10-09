@@ -60,7 +60,7 @@ private const val PRELOAD_AFTER_TURN_MS = 700L
 private const val PRELOAD_BETWEEN_MS = 400L
 
 /** How long the song in front takes to fade out when turning to another. */
-private const val SONG_FADE_OUT_MS = 150f
+private const val SONG_FADE_OUT_MS = 60f
 
 /**
  * The application: a row of tabs across the top, each an open document, plus a pinned Home tab for
@@ -175,7 +175,7 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
 
     fun selectTab(id: String) {
         // Music: the song in front fades out, then the next one comes in (and fades in itself).
-        if (AppFlavor.musicView && !homeShown && primary != null && primary?.tabId != id && secondary == null) {
+        if (AppFlavor.musicView && AppFlavor.turnAnimation != "none" && !homeShown && primary != null && primary?.tabId != id && secondary == null) {
             songFading?.cancel()
             songFading = scope.launch {
                 val from = AppFlavor.songShown

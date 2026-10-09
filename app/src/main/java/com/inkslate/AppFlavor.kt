@@ -25,6 +25,12 @@ object AppFlavor {
     var musicView: Boolean = false
 
     /**
+     * How music pages are coloured (Night, Sepia...) - one choice for every song in every tab,
+     * kept by InkSheets, rather than each editor's own that reset with every song.
+     */
+    val readingMode = androidx.compose.runtime.mutableStateOf(com.inkslate.core.ReadingMode.NONE)
+
+    /**
      * Open a whole setlist as tabs, in order, each named by its song, with [focus] in front; and
      * put them all away again. Set by the workspace; used by InkSheets.
      */

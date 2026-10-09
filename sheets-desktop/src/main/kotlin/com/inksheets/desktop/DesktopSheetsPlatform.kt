@@ -165,16 +165,26 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.edgeTaps = on
     }
 
+    // The page is fitted beside the strip: a lane that opens, closes or changes side fits it again.
     override fun setStripSide(left: Boolean) {
+        if (com.inkslate.desktop.AppFlavor.stripOnLeft == left) return
         com.inkslate.desktop.AppFlavor.stripOnLeft = left
+        com.inkslate.core.Perform.recentre?.invoke()
     }
 
     override fun setMusicLane(open: Boolean) {
         com.inkslate.desktop.AppFlavor.musicLaneDp = if (open) 72f else 0f
     }
 
+    override var readingMode: com.inkslate.core.ReadingMode
+        get() = com.inkslate.desktop.AppFlavor.readingMode.value
+        set(v) { com.inkslate.desktop.AppFlavor.readingMode.value = v }
+
     override fun setStripLane(open: Boolean) {
-        com.inkslate.desktop.AppFlavor.stripLaneDp = if (open) 64f else 0f
+        val lane = if (open) 64f else 0f
+        if (com.inkslate.desktop.AppFlavor.stripLaneDp == lane) return
+        com.inkslate.desktop.AppFlavor.stripLaneDp = lane
+        com.inkslate.core.Perform.recentre?.invoke()
     }
 
     override fun setTurnStyle(style: String) {

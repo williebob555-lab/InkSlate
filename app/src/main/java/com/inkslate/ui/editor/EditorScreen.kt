@@ -214,7 +214,9 @@ fun EditorScreen(
     var selfWrites by remember { mutableStateOf(0) }
     /** A change the user chose to leave alone, so it is not raised again. */
     var ignoredStamp by remember { mutableStateOf("") }
-    var pageFilter by remember { mutableStateOf(PageFilter.NONE) }
+    // Music shares one page colour across songs (AppFlavor.readingMode); a document has its own.
+    val pageFilterState = if (com.inkslate.AppFlavor.musicView) com.inkslate.AppFlavor.readingMode else remember { mutableStateOf(PageFilter.NONE) }
+    var pageFilter by pageFilterState
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var searchHits by remember { mutableStateOf<List<SearchHit>>(emptyList()) }

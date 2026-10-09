@@ -151,6 +151,17 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     // ---- the strip, and a tap on the middle of the page -------------------------------
 
+    // One page colour (Night, Sepia...) for every song, remembered - whichever menu set it.
+    init {
+        platform.pref(K_PAGE_COLOUR)?.let { n -> com.inkslate.core.ReadingMode.entries.firstOrNull { it.name == n } }
+            ?.let { platform.readingMode = it }
+    }
+
+    /** Keep the page colour for next time (ActionStrip watches it change). */
+    fun keepReadingMode(mode: com.inkslate.core.ReadingMode) {
+        if (platform.pref(K_PAGE_COLOUR) != mode.name) platform.setPref(K_PAGE_COLOUR, mode.name)
+    }
+
     /** The strip folded down to its one button in the corner. Remembered. */
     var stripCollapsed: Boolean
         get() = stripCollapsedState
@@ -159,7 +170,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             platform.setPref(K_COLLAPSED, v.toString())
             platform.setStripLane(!v)
         }
-    private var stripCollapsedState by mutableStateOf(platform.pref(K_COLLAPSED) == "true")
+    // Folded until first asked for: the music is the whole screen, its corner button the way in.
+    private var stripCollapsedState by mutableStateOf(platform.pref(K_COLLAPSED)?.let { it == "true" } ?: true)
 
     /**
      * A tap on the middle third of the page. With everything put away it brings up the strip -
@@ -819,7 +831,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     }
 
     /** Play [profileId]'s parts in every song, from now on - picks made for single songs go. */
-    fun switchAllSongs(profileId: String) {
+    fun switchAllSongs(profileId: String?) {
         chooseProfile(profileId)
         savePicks(emptyMap())
         current?.let { showAgain(it) }
@@ -1402,6 +1414,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         )
         val DEFAULT_STRIP = listOf(
             com.inkslate.core.PerformAction.PEN,
+            com.inkslate.core.PerformAction.HIGHLIGHTER,
             com.inkslate.core.PerformAction.ERASER,
             com.inkslate.core.PerformAction.UNDO,
             com.inkslate.core.PerformAction.METRONOME
@@ -1412,5 +1425,6 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         private const val K_ENTRY_SORT = "sheets_entry_sort"
         private const val K_LISTEN = "sheets_listen_turns"
         private const val K_READ_MUSIC = "sheets_read_music"
+        private const val K_PAGE_COLOUR = "sheets_page_colour"
     }
 }
