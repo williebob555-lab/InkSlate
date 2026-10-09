@@ -206,7 +206,8 @@ private fun InstrumentEditor(state: SheetsState, instrument: Instrument, taught:
                     }
                 }
                 Text("Key, for the tuner", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 8.dp))
-                Row {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow {
                     for ((t, label) in listOf(0 to "C", 2 to "B♭", 7 to "F", 9 to "E♭", 14 to "B♭ (octave)")) {
                         FilterChip(selected = transpose == t, onClick = { transpose = t }, label = { Text(label) }, modifier = Modifier.padding(end = 6.dp))
                     }

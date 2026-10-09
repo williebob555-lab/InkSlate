@@ -82,7 +82,7 @@ internal fun ListenGauge(state: SheetsState) {
                 f == null -> Text(text, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
                 else -> {
                     val turned = System.currentTimeMillis() - f.turnedAt < 2_000
-                    if (f.turnMs != null && f.music && !turned) {
+                    if (f.turnMs != null && f.music && !turned && f.found && f.sure >= com.inksheets.core.WindowFollower.UNSURE) {
                         // The countdown, big: how long, and to which page.
                         val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)
                         Text(if (s < 1) "Now" else "${s}s", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
@@ -95,6 +95,11 @@ internal fun ListenGauge(state: SheetsState) {
                     if (f.turnMs != null) {
                         val span = (f.turnMs - f.pageFromMs).coerceAtLeast(1L)
                         Meter(((f.atMs - f.pageFromMs).toFloat() / span), if (soon) scheme.tertiary else scheme.primary, Modifier.fillMaxWidth(), tall = true)
+                    }
+                    // How sure it is of where the band is: a row of dots, empty to full.
+                    if (f.music) Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        val dots = if (!f.found) 0 else (f.sure * 4).toInt().coerceIn(0, 4) + 1
+                        repeat(5) { i -> Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(if (i < dots) scheme.primary else scheme.outlineVariant)) }
                     }
                     Text("Page ${f.page + 1} of ${f.pages}" + if (f.source == "guessed") "\nturns guessed" else "",
                         style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, textAlign = TextAlign.Center,

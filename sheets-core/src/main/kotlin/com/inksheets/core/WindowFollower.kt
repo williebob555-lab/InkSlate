@@ -28,7 +28,12 @@ class WindowFollower(
      */
     private val prior: Float = 0.0002f,
     /** How many times dearer a frame back is than a frame on. */
-    private val backCost: Float = 6f
+    private val backCost: Float = 6f,
+    /**
+     * Where the band may be starting, at the latest: the music can start anywhere from [startMs]
+     * to here (the page in front - the band may be anywhere on it) at no cost, until it is found.
+     */
+    startEndMs: Long = startMs
 ) {
     private val n = reference.size
     private val heard = ArrayList<Chroma.Frame>()
@@ -36,6 +41,23 @@ class WindowFollower(
     private var at = (startMs / Chroma.FRAME_MS).toInt().coerceIn(0, max(0, n - 1))
     /** Frames heard since the last line-up: the band has moved on by about that many since. */
     private var sinceLast = 0
+    /** Where the band may be, until it is first found: the page in front, moving on as time passes. */
+    private val windowLo = (startMs / Chroma.FRAME_MS).toInt()
+    private val windowHi = max(windowLo, (startEndMs / Chroma.FRAME_MS).toInt())
+    private var heardSinceStart = 0
+
+    /** Found: the music heard has been lined up surely at least once. Until then the place is a guess. */
+    var found = false
+        private set
+
+    /**
+     * How sure the last line-up was, 0-1: how much better the best place matched than the best
+     * place clearly elsewhere (four seconds or more away). Low means two places sound alike, or
+     * nothing sounds like what is heard - the band is not where it thinks.
+     */
+    var confidence = 0f
+        private set
+
     /** How fast the band goes against the music, from the last line-up (1 = as written). */
     var pace = 1.0
         private set
@@ -52,6 +74,7 @@ class WindowFollower(
         heard += frame
         if (heard.size > heardFrames * 2) heard.subList(0, heard.size - heardFrames).clear()
         sinceLast++
+        heardSinceStart++
         // (Not before five seconds are heard: two of an intro sound like half the song.)
         if (++sinceAlign >= every && heard.size >= 50) {
             sinceAlign = 0
@@ -73,6 +96,10 @@ class WindowFollower(
         val q = heard.takeLast(heardFrames)
         val m = q.size
         val predicted = (at + sinceLast * pace).toInt()
+        // Not found yet: anywhere on the page in front (moved on by what has been heard since) is
+        // as likely as anywhere else on it.
+        val winLo = windowLo + heardSinceStart
+        val winHi = windowHi + heardSinceStart
         // The whole of the music: a place lost is found again wherever it is.
         val lo = 0
         val hi = n - 1
@@ -110,24 +137,51 @@ class WindowFollower(
         // The best end: lowest cost per step, with a little cost for being far from where the band
         // should be by now (so two places alike are told apart by which follows on).
         var bestJ = -1; var bestCost = Float.MAX_VALUE
+        val raw = FloatArray(w) { Float.MAX_VALUE }
         for (jj in 0 until w) {
             if (prev[jj] >= inf) continue
             val per = prev[jj] / prevLen[jj]
             // Back costs more than on: repeats are already laid out in the music as played, so a band
             // goes back only when it starts again - and a passage a few parts carry alone (the rest
             // resting) sounds less like the band than an earlier tutti does, which must not pull it back.
-            val off = lo + jj - predicted
+            val off = if (!found) {
+                val j = lo + jj
+                when { j < winLo -> j - winLo; j > winHi -> j - winHi; else -> 0 }
+            } else lo + jj - predicted
             // (The less heard, the less it says: the pull to where the band should be is the stronger.)
-            val c = per + prior * heardFrames / m * (if (off < -20) -off * backCost else abs(off).toFloat())
+            // (Before it is found, the page in front is only a hint: the music heard decides.)
+            val pull = if (found) prior else prior * 0.3f
+            val c = per + pull * heardFrames / m * (if (off < -20) -off * backCost else abs(off).toFloat())
+            raw[jj] = per
             if (c < bestCost) { bestCost = c; bestJ = jj }
         }
         if (bestJ < 0) return null
+        // How sure: how much better the music heard matches here than anywhere clearly elsewhere -
+        // by the match alone, not by where the band was expected (a place chosen only because it
+        // was expected is not a place found).
+        var here = Float.MAX_VALUE
+        for (jj in max(0, bestJ - 5)..minOf(w - 1, bestJ + 5)) here = minOf(here, raw[jj])
+        var other = Float.MAX_VALUE
+        for (jj in 0 until w) if (abs(jj - bestJ) > 40 && raw[jj] < other) other = raw[jj]
+        val sure = if (other == Float.MAX_VALUE) 1f else ((other - here) / other.coerceAtLeast(1e-6f) * SHARPNESS).coerceIn(0f, 1f)
         val end = lo + bestJ
+        // An unsure line-up far from where the band should be is not believed: the place carries on
+        // at the band's pace instead - a moment's confusion must not throw the page about.
+        if (found && sure < UNSURE && abs(end - predicted) > 30) { confidence = sure; return null }
+        confidence = sure
+        if (sure >= UNSURE) found = true
         // The band's pace from how far the music moved since the last line-up.
         if (sinceLast > 0) {
             val moved = (end - at).toDouble() / sinceLast
             if (moved in 0.4..2.5) pace = 0.7 * pace + 0.3 * moved
         }
         return end
+    }
+
+    companion object {
+        /** Below this a line-up is unsure (see [confidence]). */
+        const val UNSURE = 0.35f
+        /** How a match's lead over the best elsewhere maps to [confidence]: a lead of an eighth of the cost is sure. */
+        private const val SHARPNESS = 8f
     }
 }

@@ -181,9 +181,7 @@ private fun LibraryHealth(state: SheetsState) {
             Column(Modifier.weight(1f)) {
                 Text("Play together over Bluetooth as well")
                 Text(
-                    "Nearby devices pass the leader's page and messages on to each other over Bluetooth, " +
-                        "for networks that stop devices reaching each other (school Wi-Fi, eduroam) and places with none. " +
-                        "Android only; every device playing together needs it on. Messages sent this way go to everyone.",
+                    "For Wi-Fi that keeps devices apart (school, eduroam). Android; on for every device playing.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -201,11 +199,9 @@ private fun LibraryHealth(state: SheetsState) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Listen and turn pages (experimental)")
+                Text("Listen and turn pages")
                 Text(
-                    "A Listen button on the toolbar for songs with a recording: pressed, it listens through the microphone, " +
-                        "follows along the recording, and turns the page as it comes - until the music stops. " +
-                        "Turns are guessed at first; play the recording and turn the pages yourself once to teach it where they fall.",
+                    "A Listen button: follows the band through the microphone and turns the page.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -218,11 +214,9 @@ private fun LibraryHealth(state: SheetsState) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Read the music off the page (experimental)")
+                Text("Read the music")
                 Text(
-                    "\"Read the music\" in a part's More menu: its notes read off the pages, the bars that may be read wrong " +
-                        "shown beside a clean redrawing, and the whole played or saved as a MIDI file. With Listen on too, " +
-                        "the page turns come from the music itself - no need to teach them.",
+                    "A Music button: the notes read off the page - checked, cleaned up, played, the band with you.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

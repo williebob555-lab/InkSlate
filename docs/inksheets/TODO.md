@@ -3,7 +3,9 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
+**Now:** (2026-10-09 03:15) Listen tuning vs PageTurnBench; then T5 (reading/music tools) + T6 (settings/UiAudit) testers; merge T4 fixer; clean-view overhaul; Android compile; final build.
+
+**Earlier:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
 
 **Was:** F3 mostly done (4ab8536). T1+T2 done; T3 (practice/listen) and T4 (remote/together) testing. Fixing F1 done (11d5e33), F2 partly, next F3 reading.
 
@@ -25,7 +27,7 @@ change size. **No build until the very end** — commit locally, one `[build she
 ### W Watch flicks (done: phone sends off on Home/background/screen-off; 20 s beat, 60 s quiet; one short tick per outage, gives up after 3; weak calibrations not put to use)
 - [x] Watch app closes itself when: no part is open, the device screen turns off, or the app is closed on the device
 - [x] No long/aggressive buzzing when it can't connect (normal short buzzes are liked)
-### L Listen (mic follow) — user has no trust
+### L Listen (mic follow) — user has no trust (in progress: page-wide start, raw-match confidence, one page/turn, catch-up jump, 2-min silence; PageTurnBench running)
 - [ ] Must handle starting mid-page / anywhere; must show what it hears and where it thinks you are; honest when lost
 ### R Read the music (scanning)
 - [x] Small progress bar at the side while a part is being read
@@ -81,10 +83,10 @@ change size. **No build until the very end** — commit locally, one `[build she
 - [x] Undo snackbar on every remove/delete (song, part, setlist, folder, set entry); Recently deleted reachable from Home, covering setlists/folders (T1-24/25/26)
 - [x] One search (Songs tab; `matches()` everywhere, accents/apostrophes folded, parts/instruments/notes) (T1-10)
 - [ ] "Needs attention" line replacing No tempo/No instrument/File missing chips + held-back removal (T1-11, T1-23); sort chips honest
-- [ ] Home top bar labelled; Add music findable (T1-12); right-click/two-finger menus; Enter confirms dialogs
+- [x] Home top bar labelled; Add music findable (T1-12); right-click/two-finger menus on songs; Enter confirms name dialogs
 - [ ] Select several (add to setlist / merge / remove); Move to… for setlists/folders; drag song onto setlist
-- [ ] Recording-only song (T1-13); dropped zip + files (T1-14); MS import cancel + idempotent (T1-32); share zip to temp + "only my parts" (T1-33)
-- [ ] Phone layouts: import review, incoming chips, add instrument (T1-27/28); walls of text (T1-29); bookmark rows (T1-30); empty states/default setlist name (T1-31)
+- [x] Recording-only song (T1-13); dropped zip + files queued (T1-14); MS import cancel (T1-32, idempotence open); share zip out of synced folder (T1-33; 'only my parts' open)
+- [x] Phone layouts: import review, incoming chips, add instrument (T1-27/28); walls of text in Experimental (T1-29 part); bookmark rows (T1-30); default setlist name + Enter (T1-31)
 - [ ] Recently added strip after arrivals; check-now from Home (T1-21)
 
 ### F3 Reading & playing (T2) — editor code is shared with InkSlate: gate on musicView

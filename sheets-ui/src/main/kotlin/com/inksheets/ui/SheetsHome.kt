@@ -70,6 +70,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
@@ -298,7 +299,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     IncomingDialog(state)
     PageViewer(state)
     // A zip shared or dropped from outside: straight to the bulk import's review.
-    state.downloadWaiting?.let { zip -> BulkImportDialog(state, onClose = { state.downloadWaiting = null }, start = zip) }
+    state.downloadWaiting?.let { zip -> BulkImportDialog(state, onClose = { state.downloadWaiting = null; state.nextOffered() }, start = zip) }
     backupToImport?.let { msb -> MobileSheetsDialog(state, onClose = { backupToImport = null; backupsLookedAt++ }, backup = msb) }
     if (openShared) OpenSharedDialog(state, onClose = { openShared = false })
     if (showDeleted) RecentlyDeletedDialog(state, onClose = { showDeleted = false })
@@ -573,6 +574,11 @@ private fun SongsPane(state: SheetsState) {
         )
     }
     recordingsFor?.let { song -> AudioDialog(state, song, onClose = { recordingsFor = null }) }
+    // A song with no music to show: its recordings if it has some, else its details (to add a part).
+    state.nothingToOpen?.let { song ->
+        if (song.audio.isNotEmpty()) AudioDialog(state, song, onClose = { state.nothingToOpen = null })
+        else SongEditorDialog(state, song, onClose = { state.nothingToOpen = null })
+    }
     addingToSetlist?.let { song ->
         SetlistChooserDialog(
             state,
@@ -584,7 +590,8 @@ private fun SongsPane(state: SheetsState) {
 
 /** Open the part of [song] for the instrument being played. */
 internal fun openSong(state: SheetsState, song: Song) {
-    val part = state.partFor(song) ?: return
+    // No sheet music in it (a recording dropped in alone): its recordings, or its details to add a part to.
+    val part = state.partFor(song) ?: run { state.nothingToOpen = song; return }
     state.current = song
     state.noteOpened(song)
     val file = state.partFile(song, part) ?: return
@@ -624,8 +631,24 @@ internal fun SongRow(
     trailing: (@Composable () -> Unit)? = null
 ) {
     val tint = song.color?.let { androidx.compose.ui.graphics.Color(it).copy(alpha = 0.10f) } ?: androidx.compose.ui.graphics.Color.Transparent
+    var menu by remember { mutableStateOf(false) }
+    val hasMenu = onEdit != null || onAddToSetlist != null || onDelete != null || onColour != null || onMerge != null
     Row(
-        Modifier.fillMaxWidth().background(tint).clickable(onClick = onOpen).padding(start = 6.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().background(tint)
+            // A right-click, or a two-finger click on a trackpad: the song's menu, as in Slate's Home.
+            .pointerInput(hasMenu) {
+                if (!hasMenu) return@pointerInput
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        if (e.type == androidx.compose.ui.input.pointer.PointerEventType.Press && e.buttons.isSecondaryPressed) {
+                            e.changes.forEach { it.consume() }
+                            menu = true
+                        }
+                    }
+                }
+            }
+            .clickable(onClick = onOpen).padding(start = 6.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         ColourBar(song.color)
@@ -684,7 +707,8 @@ internal fun SongRow(
                         onEdit?.let { TextButton(onClick = it) { Text("Edit parts") } }
                     }
                 }
-            } else if (instruments.isNotEmpty() || unsure) {
+            } else if ((instruments.isNotEmpty() || unsure) && note == null) {
+                // (A bookmark's row says its place instead: the song's every instrument is noise there.)
                 Text(
                     (instruments + if (unsure) listOf("parts not yet named") else emptyList()).joinToString(", "),
                     style = MaterialTheme.typography.labelSmall,
@@ -709,8 +733,7 @@ internal fun SongRow(
             )
         }
         trailing?.invoke()
-        if (onEdit != null || onAddToSetlist != null || onDelete != null || onColour != null || onMerge != null) {
-            var menu by remember { mutableStateOf(false) }
+        if (hasMenu) {
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Song options") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

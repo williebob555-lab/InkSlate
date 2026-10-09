@@ -123,7 +123,8 @@ internal fun ShareSetlistDialog(state: SheetsState, setlistId: String, onClose: 
                 val root = state.root!!
                 val lib = state.library!!
                 val name = lib.setlist(setlistId)!!.name.map { if (it in "\\/:*?\"<>|") ' ' else it }.joinToString("").trim()
-                val out = File(root, "Shared setlists/$name.${SetlistBundle.EXTENSION}")
+                // Out of the synced folder: a bundle is for sending, not for every device to receive and keep.
+                val out = File(state.platform.cacheFolder, "Shared setlists/$name.${SetlistBundle.EXTENSION}").apply { parentFile?.mkdirs() }
                 SetlistBundle.export(lib, root, setlistId, out)
                 out
             }
@@ -140,9 +141,8 @@ internal fun ShareSetlistDialog(state: SheetsState, setlistId: String, onClose: 
             else -> r.fold(
                 onSuccess = { file ->
                     Text(
-                        "Saved as ${file.name} in the music folder's \"Shared setlists\": the parts as " +
-                            "PDFs numbered in set order, the recordings, and the list of songs. Anyone can " +
-                            "open it; in InkSheets, Open a shared setlist brings it in whole.",
+                        "${file.name}: the parts in set order, the recordings and the list. In InkSheets, " +
+                            "Open a shared setlist brings it in whole.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 },

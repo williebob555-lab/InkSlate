@@ -90,7 +90,8 @@ internal fun IncomingDialog(state: SheetsState) {
     ) {
         Column {
             // All at once.
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (files.size > 1) {
                     AssistChip(onClick = {
                         // One song: the suggested one if any file has a match, else a new one.
@@ -122,14 +123,16 @@ internal fun IncomingDialog(state: SheetsState) {
                         Text(f.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(instrument, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         val fate = fates[i]
-                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Every choice in sight - wrapping on a phone rather than sliding Skip off the edge.
+                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             val newTitle = (fate as? Fate.NewSong)?.title ?: ImportPlan.titleOf(f.name)
                             FilterChip(selected = fate is Fate.NewSong, onClick = {
                                 if (fate is Fate.NewSong) renaming = i else fates[i] = Fate.NewSong(newTitle)
-                            }, label = { Text(if (fate is Fate.NewSong) "New song: ${fate.title}" else "New song") })
+                            }, label = { Text(if (fate is Fate.NewSong) "New song: ${fate.title}" else "New song", maxLines = 1, overflow = TextOverflow.Ellipsis) })
                             val target = (fate as? Fate.AddTo)?.songId?.let { id -> songs.firstOrNull { it.id == id } }
                             FilterChip(selected = fate is Fate.AddTo, onClick = { choosingFor = i },
-                                label = { Text(if (target != null) "Part of ${target.title}" else "Add to a song...") })
+                                label = { Text(if (target != null) "Part of ${target.title}" else "Add to a song...", maxLines = 1, overflow = TextOverflow.Ellipsis) })
                             FilterChip(selected = fate is Fate.Replace, onClick = { replacingFor = i },
                                 label = { Text(if (fate is Fate.Replace) "Replaces a part" else "Replace a part...") })
                             FilterChip(selected = fate == Fate.Skip, onClick = { fates[i] = Fate.Skip }, label = { Text("Skip") })

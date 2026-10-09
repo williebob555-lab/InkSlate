@@ -88,7 +88,8 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit, backup:
                     unpackBackup(state, s.backup) { note -> state.platform.onMain { step = MsStep.Unpacking(s.backup, note) } }
                 }
             }
-            SheetDialog(title = "Import from MobileSheets", onDismiss = {}, buttons = {}) {
+            // Reading only, nothing changed yet: it can be called off (bringing the songs across cannot).
+            SheetDialog(title = "Import from MobileSheets", onDismiss = onClose, buttons = { TextButton(onClick = onClose) { Text("Cancel") } }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(24.dp))
                     Spacer(Modifier.width(12.dp))
@@ -115,7 +116,8 @@ internal fun MobileSheetsDialog(state: SheetsState, onClose: () -> Unit, backup:
             LaunchedEffect(s.folder) {
                 step = withContext(Dispatchers.IO) { runImport(state, s.folder, { note -> state.platform.onMain { step = MsStep.Working(s.folder, note) } }) }
             }
-            SheetDialog(title = "Import from MobileSheets", onDismiss = {}, buttons = {}) {
+            // Reading only, nothing changed yet: it can be called off (bringing the songs across cannot).
+            SheetDialog(title = "Import from MobileSheets", onDismiss = onClose, buttons = { TextButton(onClick = onClose) { Text("Cancel") } }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(24.dp))
                     Spacer(Modifier.width(12.dp))

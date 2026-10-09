@@ -119,7 +119,9 @@ internal fun ImportReview(state: SheetsState, groups: SnapshotStateList<ReviewGr
                         g.items.forEach { item ->
                             Text(item.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        // Wrapping onto a second line on a phone, never squeezed to a letter a line.
+                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (g.items.size > 1) TextButton(onClick = {
                                 val parts = separate(g)
                                 groups.removeAt(i); groups.addAll(i, parts); picked.clear()

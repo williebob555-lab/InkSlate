@@ -115,7 +115,10 @@ internal fun AskName(title: String, initial: String, confirm: String, onDone: (S
         TextButton(onClick = onDismiss) { Text("Cancel") }
         TextButton(enabled = name.isNotBlank(), onClick = { onDone(name.trim()) }) { Text(confirm) }
     }) {
-        OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        // Enter confirms, as a name box should.
+        OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (name.isNotBlank()) onDone(name.trim()) }))
     }
 }
 
@@ -124,9 +127,11 @@ internal fun AskName(title: String, initial: String, confirm: String, onDone: (S
 @Composable
 internal fun SaveTabsDialog(state: SheetsState) {
     val files = state.savingTabs ?: return
-    var name by remember { mutableStateOf("") }
+    // Named for the day to start with ("Setlist 9 Oct"): a set saved in a hurry needs no typing.
+    var name by remember { mutableStateOf("Setlist " + java.text.SimpleDateFormat("d MMM", java.util.Locale.getDefault()).format(java.util.Date())) }
     var colour by remember { mutableStateOf<Int?>(null) }
     val songs = remember(files, state.version) { files.mapNotNull { state.songAt(it.absolutePath)?.title } }
+    fun save() { if (name.isNotBlank() && songs.isNotEmpty()) { state.setlistFromFiles(name.trim(), colour, files); state.savingTabs = null } }
     SheetDialog(
         title = "Save the open songs as a setlist",
         onDismiss = { state.savingTabs = null },
@@ -139,7 +144,9 @@ internal fun SaveTabsDialog(state: SheetsState) {
         }
     ) {
         Column {
-            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Setlist name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true, label = { Text("Setlist name") }, modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { save() }))
             Text("Colour", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp))
             @OptIn(ExperimentalLayoutApi::class)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

@@ -259,6 +259,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     /** The recordings panel, for the song opened last. */
     var audioOpen by mutableStateOf(false)
+
+    /** A song tapped that has no music to open: shown its recordings or details instead (Home). */
+    var nothingToOpen by mutableStateOf<com.inksheets.core.Song?>(null)
     var metronomeOpen by mutableStateOf(false)
 
     /** The window [action]'s button opens is open now: its button is lit, and closes it. */
@@ -1135,9 +1138,21 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             ext in com.inksheets.core.LibraryScan.MUSIC || ext in com.inksheets.core.LibraryScan.SOUND
         }
         platform.onMain {
-            zips.firstOrNull()?.let { downloadWaiting = it }
-            if (music.isNotEmpty()) incoming = music
+            // One at a time: each zip's review, then the other files - never two dialogs stacked.
+            waitingZips += zips
+            waitingMusic += music
+            nextOffered()
         }
+    }
+
+    private val waitingZips = ArrayList<File>()
+    private val waitingMusic = ArrayList<File>()
+
+    /** The next of what was dropped or shared: a zip's review, or the loose files once the zips are done. */
+    fun nextOffered() {
+        if (downloadWaiting != null || incoming != null) return
+        if (waitingZips.isNotEmpty()) { downloadWaiting = waitingZips.removeAt(0); return }
+        if (waitingMusic.isNotEmpty()) { incoming = waitingMusic.toList(); waitingMusic.clear() }
     }
 
     /**

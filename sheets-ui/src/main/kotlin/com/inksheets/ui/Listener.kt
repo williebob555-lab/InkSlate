@@ -45,7 +45,11 @@ internal object Listener {
         /** When it last turned a page itself (System time), so the turn can be shown as its own. */
         val turnedAt: Long = 0L,
         /** The page it turns to next (0-based) when that is not simply the next - a repeat going back. */
-        val nextPage: Int? = null
+        val nextPage: Int? = null,
+        /** Where it is has been found surely (until then it is listening for where the band is). */
+        val found: Boolean = true,
+        /** How sure it is of where it is now, 0-1. */
+        val sure: Float = 1f
     )
 
     var follow by mutableStateOf<Follow?>(null)
@@ -80,6 +84,8 @@ internal object Listener {
         val words = when {
             System.currentTimeMillis() - f.turnedAt < 2_000 -> "Turned to page ${f.page + 1}"
             !f.music -> "Waiting for the music"
+            !f.found -> "Finding where you are..."
+            f.sure < com.inksheets.core.WindowFollower.UNSURE -> "Not sure where - won't turn"
             f.turnMs == null -> "Last page - following"
             else -> {
                 val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)
@@ -154,8 +160,12 @@ internal object Listener {
             val plan = TurnPlan(learned ?: fromMusic ?: emptyList(), pages, reference.size * Chroma.FRAME_MS)
             val source = when { learned != null -> "learned"; fromMusic != null || goesBack -> "from the music"; else -> "guessed" }
             val startMs = if (page0 <= 0) 0L else plan.turnAt(page0 - 1) ?: 0L
-            val follower = com.inksheets.core.WindowFollower(reference, startMs)
-            val presence = MusicPresence()
+            // The band may be anywhere on the page in front: started part way down it, or mid-phrase.
+            val pageEndMs = plan.turnAt(page0) ?: (reference.size * Chroma.FRAME_MS)
+            val follower = com.inksheets.core.WindowFollower(reference, startMs, startEndMs = pageEndMs)
+            // Quiet is not the end: a fermata, a director talking, a rehearsal stopped and started
+            // again - Listen stays on, waiting, for two minutes of silence.
+            val presence = MusicPresence(quietForMs = 120_000)
             val stream = Chroma.Stream(rate)
             // Learned turns were made when the player turned, already a little early; following
             // the music itself (no recording) runs later, so it turns earlier.
@@ -166,6 +176,8 @@ internal object Listener {
             val check = if (recording == null && played != null && practice) com.inksheets.core.omr.NoteCheck(played, bpm, myTranspose) else null
             var turnedFrom = -1
             var turnedAt = 0L
+            var wantPage = -1
+            var wantSince = 0L
             var shownAt = 0L
             state.platform.log("Listen: following ${song.title} (${if (recording != null) "its recording" else if (practice) "its music as read" else "the band's music as read, ${band.size} other parts${if (bandToCome) ", more being read" else ""}"}) from ${startMs / 1000}s, turns $source" +
                 (fromMusic?.let { t -> " at " + t.joinToString { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) } + "s" } ?: ""))
@@ -184,14 +196,36 @@ internal object Listener {
                     if (goesBack && changes != null && path != null) {
                         // To whichever page comes next - on, or back for a repeat.
                         val c = changes.getOrNull(next)
-                        if (c != null && at >= c.first - lead) {
+                        if (c != null && at >= c.first - lead && follower.found && follower.confidence >= com.inksheets.core.WindowFollower.UNSURE && System.currentTimeMillis() - turnedAt > 2_500) {
                             next++
                             turnedAt = System.currentTimeMillis()
                             state.platform.onMain { if (run === me) Perform.jumpTo?.invoke(path, c.second) }
                         }
                     }
                     val turn = if (goesBack) changes?.getOrNull(next)?.first else plan.turnAt(page)
-                    if (!goesBack && turn != null && page != turnedFrom && at >= turn - lead) {
+                    // Turns only when it is sure where the band is - never on a guess - one page at
+                    // a time, and not twice in a breath: a false turn on stage is worse than none.
+                    val trusted = follower.found && follower.confidence >= com.inksheets.core.WindowFollower.UNSURE
+                    val calm = System.currentTimeMillis() - turnedAt > 2_500
+                    // Sure the band is on another page altogether - started part way through, a
+                    // rehearsal gone back to the top, the wrong page open - and sure of it for a
+                    // couple of seconds: that page is put up at once, not reached a page at a time.
+                    // The page the band is on, by what is heard.
+                    val want = (0 until pages - 1).count { i -> plan.turnAt(i)?.let { it - lead <= at } == true }.coerceIn(0, pages - 1)
+                    // Just the next page, its turn due now: an ordinary turn (below).
+                    val explained = want == page + 1 && turn != null && at < turn + 2_500
+                    if (!goesBack && trusted && calm && path != null) {
+                        if (want != page && !explained) {
+                            if (wantPage != want) { wantPage = want; wantSince = System.currentTimeMillis() }
+                            else if (System.currentTimeMillis() - wantSince > 2_000) {
+                                turnedFrom = want - 1
+                                turnedAt = System.currentTimeMillis()
+                                wantPage = -1
+                                state.platform.onMain { if (run === me) Perform.jumpTo?.invoke(path, want) }
+                            }
+                        } else wantPage = -1
+                    }
+                    if (!goesBack && turn != null && page != turnedFrom && at >= turn - lead && trusted && calm && (want == page + 1 || explained)) {
                         turnedFrom = page
                         turnedAt = System.currentTimeMillis()
                         state.platform.onMain { if (run === me) Perform.run(PerformAction.NEXT_PAGE) }
@@ -201,12 +235,13 @@ internal object Listener {
                         shownAt = now
                         val from = if (goesBack) changes?.getOrNull(next - 1)?.first ?: 0L else if (page <= 0) 0L else plan.turnAt(page - 1) ?: 0L
                         val shown = Follow(at, from, turn?.let { it - lead }, !presence.quiet(f), source, page, pages, turnedAt,
-                            nextPage = if (goesBack) changes?.getOrNull(next)?.second else null)
+                            nextPage = if (goesBack) changes?.getOrNull(next)?.second else null,
+                            found = follower.found, sure = follower.confidence)
                         state.platform.onMain { if (run === me) follow = shown }
                     }
                     val why = when {
                         state.current?.id != song.id -> "Stopped: another song"
-                        presence.stopped -> "The music stopped"
+                        presence.stopped -> "Two minutes without music - stopped"
                         at >= follower.lengthMs - 500 && presence.quiet(f) -> "The end of the recording"
                         else -> null
                     }
