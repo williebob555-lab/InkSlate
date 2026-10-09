@@ -605,6 +605,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         val file = song?.let { s -> part?.let { partFile(s, it) } }
         // A song turned to starts at its start, whatever page its tab was left on.
         if (file != null) com.inkslate.core.Perform.requestPage(file.absolutePath, (part?.firstPage ?: 1) - 1)
+        steppedAt = System.currentTimeMillis()
         if (entry != null && song != null && file != null && platform.focusSetTab(file)) {
             playing = setlistId to next
             frontEntry = entry.id
@@ -858,8 +859,14 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
      * Keep the set's place on the song in front, however it got there: a swipe past the last
      * page and a tap on a tab move to another song without going through [step].
      */
+    /** When a song was last stepped to: a tab coming forward from an earlier step is not followed. */
+    private var steppedAt = 0L
+
     private fun followInSet(song: com.inksheets.core.Song) {
         val (setlistId, index) = playing ?: return
+        // Steps made faster than tabs come forward (pedal, watch): the step is the truth, and a
+        // late tab from the step before must not pull the set back to it.
+        if (System.currentTimeMillis() - steppedAt < 1_000 && song.id != current?.id) return
         val at = placeInSet(setlistId, song.id, index)
         if (at != index) {
             playing = setlistId to at

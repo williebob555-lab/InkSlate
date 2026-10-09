@@ -200,6 +200,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                         continue
                     }
                     if ((action == PerformAction.RECORDINGS) && state.current == null) continue
+                    // With All tools out the toolbar has its own Undo and Redo: not a second pair here.
+                    if ((action == PerformAction.UNDO || action == PerformAction.REDO) && !fullscreen) continue
                     StripButton(iconOf(action, fullscreen), shortName(action, fullscreen), action.label, btn, named, lit) { Perform.run(action) }
                     // The tempo right under the button: one tap to change it, never a menu away.
                     if (action == PerformAction.METRONOME) {

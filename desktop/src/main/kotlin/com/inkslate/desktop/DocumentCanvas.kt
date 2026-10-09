@@ -609,11 +609,15 @@ fun DocumentCanvas(
                             // A quick flick, or on a fitted page any drag a good way across.
                             // Not when the finger moved the page with it (a zoomed page, panned): that was a pan.
                             val panned = abs(viewport.offset.x - startOffset.x) > abs(dx) * 0.3f
-                            val swiped = abs(dx) > 1.5f * abs(dy) && !panned &&
+                            // Music follows the tablet's rules (DrawingView): a flick more across
+                            // than down turns, a press up to 450 ms is still a tap, and with the
+                            // tools out a finger moves the page rather than turning it.
+                            val music = musicPath != null
+                            val swiped = abs(dx) > (if (music) 1f else 1.5f) * abs(dy) && !panned && (!music || fitted) &&
                                 ((quick && abs(dx) > SWIPE_MIN_DP.dp.toPx()) || (fitted && abs(dx) > w * FITTED_SWIPE_SHARE))
                             // A fingertip wobbles as it taps, the more pixels the denser the screen.
                             val slop = TAP_SLOP_DP.dp.toPx()
-                            val tapped = System.currentTimeMillis() - startedAt < TAP_MS && abs(dx) < slop && abs(dy) < slop
+                            val tapped = System.currentTimeMillis() - startedAt < (if (music) MUSIC_TAP_MS else TAP_MS) && abs(dx) < slop && abs(dy) < slop
                             if (turn != null && fingers == 1 && swiped) {
                                 turn(if (dx < 0) 1 else -1)
                             } else if (turn != null && fingers == 1 && tapped) {
@@ -1467,6 +1471,7 @@ private const val SWIPE_MS = 600L
 
 /** A tap that turns a page: this short, this still (dp), and in this share of the width at a side. */
 private const val TAP_MS = 300L
+private const val MUSIC_TAP_MS = 450L
 private const val TAP_SLOP_DP = 12f
 private const val EDGE_SHARE = 0.18f
 

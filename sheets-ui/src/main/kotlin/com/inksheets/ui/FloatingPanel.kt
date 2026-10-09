@@ -84,7 +84,20 @@ internal fun FloatingPanel(
                 Row(
                     Modifier.fillMaxWidth()
                         .pointerInput(title) {
-                            detectDragGestures(onDragStart = { at = shown }) { change, amount ->
+                            // A slow drag moves the window; a quick swipe down closes it, like
+                            // every other panel - and it opens again where it was.
+                            var from = Offset.Zero
+                            var startedAt = 0L
+                            detectDragGestures(
+                                onDragStart = { at = shown; from = shown; startedAt = System.currentTimeMillis() },
+                                onDragEnd = {
+                                    val moved = at - from
+                                    val quick = System.currentTimeMillis() - startedAt < 350
+                                    if (quick && moved.y > 90.dp.toPx() && kotlin.math.abs(moved.x) < moved.y) {
+                                        at = from; PanelSpots.at[title] = from; onClose()
+                                    }
+                                }
+                            ) { change, amount ->
                                 change.consume()
                                 at += amount
                                 PanelSpots.at[title] = at
