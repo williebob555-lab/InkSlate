@@ -1046,8 +1046,11 @@ internal object ScoreTools {
         // A drum part on the drums (unless asked to sound as something else).
         val shown = s.partShown()
         val drums = if (soundAs != null) null else com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(shown?.label, shown?.instrument, File(path).nameWithoutExtension).joinToString(" "))
+        // The metronome going: its click moves into the music - on the music's own beats, its
+        // ritardandos and fermatas too - instead of ticking on beside it on a clock of its own.
+        val click = takeClick(s)
         val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, Synth.patchFor(Midi.program(sounding)),
-            loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, order = order)
+            loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, click = click, order = order)
         player = p
         playing = Triple(range.first, start.toInt(), 0)
         syncTool()
@@ -1059,6 +1062,8 @@ internal object ScoreTools {
                     val now = Triple(p.bar, p.bpm.toInt(), p.round)
                     s.platform.onMain {
                         if (player !== p) return@onMain
+                        // The tempo changed (the metronome, a remote, a pedal): the music goes on at it, smoothly.
+                        if (!(ramp && loop) && kotlin.math.abs(SharedMetronome.bpm - p.bpm) > 0.01) p.setTempo(SharedMetronome.bpm)
                         if (p.finished) { stop(s); return@onMain }
                         if (playing != now) { playing = now; changed() }
                         // The page follows the music.
@@ -1166,7 +1171,7 @@ internal object ScoreTools {
             // This part too, where asked: to hear the whole, or to hear how it fits.
             val (myId, myTranspose) = instrumentOf(s)
             val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, Synth.patchFor(Midi.program(soundAs ?: myId))) to 1f else null
-            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order)
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
@@ -1179,6 +1184,7 @@ internal object ScoreTools {
                         s.platform.onMain {
                             if (ensemble !== p) return@onMain
                             if (p.finished) { stop(s); return@onMain }
+                            if (kotlin.math.abs(SharedMetronome.bpm - p.tempo) > 0.01) p.setTempo(SharedMetronome.bpm)
                             val now = Triple(p.bar + offset, SharedMetronome.bpm.toInt(), 0)
                             if (playing != now) { playing = now; changed() }
                             if (now.first != lastBar) {
@@ -1352,13 +1358,23 @@ internal object ScoreTools {
         playFromBar(s, target)
     }
 
-    /** The tempo [by] beats a minute faster (slower, negative): at once, from the bar it is in. */
+    /** The tempo [by] beats a minute faster (slower, negative): the music goes on at it, not started again. */
     fun nudgeTempo(s: SheetsState, by: Int) {
         SharedMetronome.bpm = (SharedMetronome.bpm + by).coerceIn(20.0, 320.0)
         // The metronome's own tempo with it, so the two never disagree.
         SharedMetronome.engine?.let { it.settings = it.settings.copy(bpm = SharedMetronome.bpm) }
-        val now = playing?.first
-        if (now != null) { if (bandMode) playBand(s, now) else play(s, now) }
+        player?.setTempo(SharedMetronome.bpm)
+        ensemble?.setTempo(SharedMetronome.bpm)
         changed()
+    }
+
+    /**
+     * Whether the music plays with the click: the metronome going when it starts (stopped, its
+     * click now the music's), or the click asked for with playback in the metronome's settings.
+     */
+    private fun takeClick(s: SheetsState): Boolean {
+        val going = SharedMetronome.running
+        if (going) Click.stop(s)
+        return going || Click.withPlayback(s)
     }
 }

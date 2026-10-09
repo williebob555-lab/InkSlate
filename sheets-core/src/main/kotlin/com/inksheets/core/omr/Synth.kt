@@ -80,6 +80,8 @@ class Synth(val sampleRate: Int) {
          */
         fun amplitude(level: Float): Float = (0.68 * kotlin.math.exp(2.8 * (level - 0.68))).toFloat()
         val STRINGS = Patch(FloatArray(12) { 1f / (it + 1) }, 0.08, 0.1, 0.9f, 0.12, vibratoHz = 5.5, vibratoCents = 12.0)
+        /** The metronome's click inside playback: short and bright, a wood block's tick. */
+        val CLICK = Patch(floatArrayOf(1f, 0.0f, 0.5f, 0.0f, 0.25f), 0.0008, 0.025, 0.0f, 0.015, fade = 0.02, gain = 0.3f)
         val MALLET = Patch(floatArrayOf(1f, 0.1f, 0.35f, 0.05f, 0.12f), 0.004, 0.2, 0.0f, 0.25, fade = 0.35)
         val PIANO = Patch(floatArrayOf(1f, 0.55f, 0.3f, 0.2f, 0.12f, 0.08f, 0.05f), 0.004, 0.3, 0.2f, 0.2, fade = 0.8)
         val BASS = Patch(floatArrayOf(1f, 0.6f, 0.3f, 0.15f, 0.08f), 0.006, 0.25, 0.3f, 0.08, fade = 0.9, gain = 0.3f)
@@ -139,7 +141,7 @@ class Synth(val sampleRate: Int) {
         val from: Int? = null
     )
 
-    private class Voice(val tone: Tone, val freq: Double, sampleRate: Int) {
+    private class Voice(var tone: Tone, val freq: Double, sampleRate: Int) {
         /** A spectral voice's harmonics: how many, and each one's strength at the note's start and end loudness. */
         private val most = if (tone.patch.spectral) max(1, kotlin.math.floor(SPECTRAL_TOP / freq).toInt().coerceAtMost(32)) else tone.patch.harmonics.size
         val amp0 = if (tone.patch.spectral) Spectra.spectrum(tone.patch, freq, tone.velocity, most) else null
@@ -171,6 +173,25 @@ class Synth(val sampleRate: Int) {
     fun add(tones: List<Tone>) {
         pending += tones
         pending.sortBy { it.start }
+    }
+
+    /**
+     * The tempo changed while playing: everything still to sound - and the rest of what is
+     * sounding - [ratio] times as long from now (2: half as fast). Nothing stops or starts again;
+     * the music carries straight on at the new pace, at the same pitch.
+     */
+    @Synchronized
+    fun retime(ratio: Double) {
+        if (ratio <= 0.0 || kotlin.math.abs(ratio - 1.0) < 1e-6) return
+        val now = position
+        fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
+        val moved = pending.map { t -> Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from) }
+        pending.clear(); pending += moved
+        for (v in voices) {
+            val t = v.tone
+            val end = t.start + t.length
+            if (end > now) v.tone = Tone(t.midi, t.start, (at(end) - t.start).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from)
+        }
     }
 
     /** Everything stopped at once, and the clock back to [to]. */
@@ -407,6 +428,8 @@ class ScorePlayer(
     private val rampStep: Double = 0.0,
     /** A drum part: played on the drums (see [DrumKind]). */
     private val drums: DrumKind? = null,
+    /** The metronome's click with the music, on its beats. */
+    private val click: Boolean = false,
     /** The bars to play, in order, where given (from a bar on, repeats and all: [PlayOrder.from]) - else those numbered [from] to [to]. */
     order: List<Measure>? = null
 ) {
@@ -435,10 +458,21 @@ class ScorePlayer(
     /** One pass through the bars, from sample [at]: played as a player would ([Performance]). */
     private fun schedule(at: Long) {
         passStart = at
-        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at, drums)
+        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at, drums, click)
         starts = played.barStarts; numbers = played.barNumbers
         passLength = played.length
         synth.add(played.tones)
+    }
+
+    /** The tempo set to [to] while playing: the music goes on from where it is, at that pace. */
+    fun setTempo(to: Double) {
+        if (to <= 0 || kotlin.math.abs(to - bpm) < 1e-6) return
+        val ratio = bpm / to
+        val into = synth.position - passStart
+        synth.retime(ratio)
+        for (i in starts.indices) if (starts[i] > into) starts[i] = into + ((starts[i] - into) * ratio).toLong()
+        if (passLength > into) passLength = into + ((passLength - into) * ratio).toLong()
+        bpm = to
     }
 
     /** The next samples into [buf]; keeps [bar] up to date and goes round again when looping. */
@@ -474,7 +508,9 @@ class EnsemblePlayer(
     /** Your own part, quietly, to play along with: its loudness (0 for none). */
     guide: Pair<Voice, Float>? = null,
     /** [mine]'s bars to play, in order, where given (see [PlayOrder.from]) - else those numbered [from] to [to]. */
-    order: List<Measure>? = null
+    order: List<Measure>? = null,
+    /** The metronome's click with the band, on the beats of [mine]. */
+    click: Boolean = false
 ) {
     /** One part: its notes, how far it is written above where it sounds, how it sounds. */
     class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch,
@@ -488,7 +524,21 @@ class EnsemblePlayer(
 
     private val starts: LongArray
     private val numbers: IntArray
-    private val length: Long
+    private var length: Long
+    /** The tempo now: changed while playing by [setTempo]. */
+    @Volatile var tempo: Double = bpm
+        private set
+
+    /** The tempo set to [to] while playing: the band goes on from where it is, at that pace. */
+    fun setTempo(to: Double) {
+        if (to <= 0 || kotlin.math.abs(to - tempo) < 1e-6) return
+        val ratio = tempo / to
+        val now = synth.position
+        synth.retime(ratio)
+        for (i in starts.indices) if (starts[i] > now) starts[i] = now + ((starts[i] - now) * ratio).toLong()
+        if (length > now) length = now + ((length - now) * ratio).toLong()
+        tempo = to
+    }
 
     init {
         val order = order ?: PlayOrder.unrolled(mine).measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
@@ -519,6 +569,7 @@ class EnsemblePlayer(
         }
         // Your own part as well, where wanted - at the loudness asked for.
         guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose, v.patch, 0L, base * g, v.drums) }
+        if (click) tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
         starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }
         this.numbers = numbers.toIntArray()
         length = (map.seconds(lead.totalQ) * synth.sampleRate).toLong()
