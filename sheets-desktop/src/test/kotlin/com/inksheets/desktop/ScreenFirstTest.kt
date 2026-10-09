@@ -62,7 +62,7 @@ class ScreenFirstTest {
         val t0 = System.currentTimeMillis()
         val quiet = Transcriber.readQuietly(state, file)!!
         println("quiet read: ${System.currentTimeMillis() - t0} ms")
-        val expected = Scores.encode(quiet)
+        val expected = Scores.encode(quiet.copy(readPages = null))
 
         // The screen's page, idle (warm: the renderer has been used already).
         screenDraws(file, 2, 1500, 0)
@@ -83,7 +83,7 @@ class ScreenFirstTest {
             println("$label: screen draws while reading (ms): $draws   [bound $bound]")
             assertTrue("the read did not finish", finished.await(300, java.util.concurrent.TimeUnit.SECONDS))
             val got = Transcriber.cached(state, file)!!
-            return draws to Scores.encode(got)
+            return draws to Scores.encode(got.copy(readPages = null))
         }
 
         val (off, offScore) = readWhileDrawing("gate off (before)", false)
