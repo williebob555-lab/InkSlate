@@ -17,7 +17,7 @@ object Performance {
     class Played(val tones: List<Synth.Tone>, val barStarts: LongArray, val barNumbers: IntArray, val length: Long)
 
     /** How loud each dynamic is played, 0-1 (mf 0.68). */
-    val LEVELS = mapOf("ppp" to 0.22f, "pp" to 0.32f, "p" to 0.44f, "mp" to 0.56f, "mf" to 0.68f, "f" to 0.82f, "ff" to 0.94f, "fff" to 1.04f)
+    val LEVELS = mapOf("ppp" to 0.2f, "pp" to 0.28f, "p" to 0.38f, "mp" to 0.54f, "mf" to 0.68f, "f" to 0.87f, "ff" to 0.98f, "fff" to 1.06f)
 
     /** A dynamic that strikes one note hard and then returns ("sfz"), or drops at once after ("fp"). */
     private val STRUCK = setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp", "sfzp")

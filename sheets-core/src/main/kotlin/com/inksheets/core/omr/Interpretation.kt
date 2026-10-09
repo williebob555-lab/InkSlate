@@ -102,7 +102,10 @@ object Interpretation {
                 breaks += Triple(start, 0.9f, false)
                 continue
             }
-            if ((m.showsKey || m.showsTime || m.repeatStart) && bi > 0) breaks += Triple(start, 1f, true)
+            // A new section: a repeat, or a key or time that is not the one before. A key or time merely
+            // printed again at the start of a new line (a system break) is no section - the music goes straight on.
+            val before = (bi - 1 downTo 0).firstNotNullOfOrNull { bars[it] }
+            if (bi > 0 && (m.repeatStart || (before != null && ((m.showsKey && m.key != before.key) || (m.showsTime && m.time != before.time))))) breaks += Triple(start, 1f, true)
             val sp = m.space
             val dyn = m.directions.filter { it.kind == "dynamic" }.sortedBy { it.x }
             val pins = m.directions.filter { it.kind == "cresc" || it.kind == "dim" }
@@ -159,11 +162,15 @@ object Interpretation {
                     when {
                         // Leant on, not shouted: the bite is in the attack (Synth's accent), the
                         // loudness only a little more - and never past fortissimo.
-                        "marcato" in e.articulations -> { p.accent = max(p.accent, 1f); p.level = min(p.level + 0.2f, max(v, 1.0f)) }
-                        "accent" in e.articulations -> { p.accent = max(p.accent, 0.8f); p.level = min(p.level + 0.14f, max(v, 0.98f)) }
-                        "sforzando" in e.articulations -> { p.accent = 1f; p.level = min(p.level + 0.22f, 1.02f) }
+                        "marcato" in e.articulations -> { p.accent = max(p.accent, 1f); p.level = min(p.level + 0.07f, max(v, 1.0f)) }
+                        "accent" in e.articulations -> { p.accent = max(p.accent, 0.8f); p.level = min(p.level + 0.05f, max(v, 0.98f)) }
+                        "sforzando" in e.articulations -> { p.accent = 1f; p.level = min(p.level + 0.1f, 1.02f) }
                     }
-                    p.slurred = slurs.any { s -> e.x >= s.x - sp * 0.5f && e.x < s.x2 - sp * 0.8f } || e.tie
+                    // Under a slur, all but the note it ends on (or all, where it runs on past the bar's edge into the next).
+                    p.slurred = slurs.any { s ->
+                        e.x >= s.x - sp * 0.5f && e.x <= s.x2 + sp * 0.5f &&
+                            (e.x < s.x2 - sp * 0.8f || (s.x2 >= m.box.right - sp && e === lastUnder(m, s, sp)))
+                    } || e.tie
                     // A tie carries on into the next note: one sound, not two.
                     if (e.tie) { p.slurred = true; p.tie = true }
                     notes += p
@@ -183,9 +190,32 @@ object Interpretation {
             }
         }
         val total = barQ.last()
+        slurGroups(notes, drums, breaks, if (barQ.size > 1) total / (barQ.size - 1) else 4.0)
         val phrases = phrasesOf(notes, breaks, barQ, total)
         shape(notes, phrases, barQ, bars, lengths)
         return Plan(notes, phrases, barQ, total, words.sortedBy { it.first })
+    }
+
+    /** The last note of [m] under slur [s]. */
+    private fun lastUnder(m: Measure, s: Direction, sp: Float): Note? =
+        m.events.filterIsInstance<Note>().lastOrNull { it.x >= s.x - sp * 0.5f && it.x <= s.x2 + sp * 0.5f }
+
+    /**
+     * Slurs that are ties, and slurs that are phrases. A slur joining just two notes of one pitch
+     * (over a barline, over a line's end) is a tie: one held sound. A slur carrying a line over a
+     * bar or more is a phrase: its end, a place to breathe.
+     */
+    private fun slurGroups(notes: List<Planned>, drums: DrumKind?, breaks: MutableList<Triple<Double, Float, Boolean>>, bar: Double) {
+        var i = 0
+        while (i < notes.size) {
+            if (!notes[i].slurred || (i > 0 && notes[i - 1].slurred && abs(notes[i - 1].q + notes[i - 1].len - notes[i].q) < 1e-6)) { i++; continue }
+            var j = i
+            while (j < notes.size - 1 && notes[j].slurred && abs(notes[j].q + notes[j].len - notes[j + 1].q) < 1e-6) j++
+            val first = notes[i]; val last = notes[j]
+            if (j == i + 1 && drums == null && !first.tie && first.keys.isNotEmpty() && first.keys.contentEquals(last.keys)) { first.tie = true }
+            else if (j > i && last.q + last.len - first.q >= bar * 0.9) breaks += Triple(last.q + last.len, 0.86f, false)
+            i = j + 1
+        }
     }
 
     /** The phrases: cut at the strongest breaks, none longer than about eight bars, none shorter than one. */
@@ -249,6 +279,7 @@ object Interpretation {
 
     /** Each note's loudness and length, from its phrase, its line and its beat. */
     private fun shape(notes: List<Planned>, phrases: List<Phrase>, barQ: DoubleArray, bars: List<Measure?>, lengths: DoubleArray) {
+        val at = HashMap<Planned, Int>().also { m -> notes.forEachIndexed { k, n -> m[n] = k } }
         for (ph in phrases) {
             val inside = notes.filter { it.q >= ph.startQ - 1e-6 && it.q < ph.endQ - 1e-6 }
             if (inside.isEmpty()) continue
@@ -259,6 +290,7 @@ object Interpretation {
             val span = (ph.endQ - ph.startQ).coerceAtLeast(1e-6)
             val peakU = ((ph.peakQ - ph.startQ) / span).coerceIn(0.25, 0.85)
             for (n in inside) {
+                val idx = at.getValue(n)
                 val u = (n.q - ph.startQ) / span
                 // An arch over the phrase: rising to its high point, easing away after it.
                 val arch = if (u <= peakU) (u / peakU) else (1.0 - (u - peakU) / (1.0 - peakU))
@@ -282,7 +314,9 @@ object Interpretation {
                     n.len > beat * 0.5 + 1e-6 -> 0.035f
                     else -> -0.02f
                 }
-                d += if (n.slurred && weight > 0) weight * 0.5f else weight
+                // Carried through by a slur: the line goes on over the beat and the barline.
+                val inSlur = n.slurred || (idx > 0 && notes[idx - 1].slurred && abs(notes[idx - 1].q + notes[idx - 1].len - n.q) < 1e-6)
+                d += if (inSlur && weight > 0) 0f else weight
                 // A phrase's last note: let go, not pushed.
                 if (n.phraseEnd) d -= 0.04f
                 n.level += d
@@ -444,11 +478,12 @@ object Interpretation {
             length = max(length, (rate * 0.03).toLong())
             // A hair of looseness - the same every time: a few milliseconds and a touch of weight.
             val seed = (n.q * 977 + i * 31).toLong()
-            val wobble = ((hash(seed + 7) - 0.5) * 0.04).toFloat()
-            val v = ((n.level + wobble) * balance * 1.1f).coerceIn(0.05f, 1.5f)
-            val vEnd = ((n.endLevel + wobble) * balance * 1.1f).coerceIn(0.03f, 1.5f)
             val prev = notes.getOrNull(i - 1)
             val joined = prev != null && prev.slurred && abs(prev.q + prev.len - n.q) < 1e-6
+            // A hair of looseness in weight - but not within a slur, where the line is one sound.
+            val wobble = if (joined || n.slurred) 0f else ((hash(seed + 7) - 0.5) * 0.04).toFloat()
+            val v = ((n.level + wobble) * balance * 1.1f).coerceIn(0.05f, 1.5f)
+            val vEnd = ((n.endLevel + wobble) * balance * 1.1f).coerceIn(0.03f, 1.5f)
             // Grace notes: quick, just before the beat.
             val each = min(rate * 0.055, nominal / 3.0).toLong().coerceAtLeast(1L)
             for ((gi, g) in n.graces.withIndex()) {
@@ -462,7 +497,7 @@ object Interpretation {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
-                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato)
+                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from)
                         continue
                     }
                 }
