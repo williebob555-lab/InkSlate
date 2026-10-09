@@ -38,13 +38,64 @@ internal object Transcriber {
     private fun folder(state: SheetsState, file: File): File {
         val root = state.root?.takeIf { file.absolutePath.startsWith(it.absolutePath) }
         val base = if (root != null) File(root, ".inksheets/readings") else File(state.platform.localFolder, "readings")
-        return File(base, "r$READER-${idOf(file)}")
+        val dir = File(base, "r$READER-${idOf(file)}")
+        // Read before this was keyed by the file's first revision: under the whole file's
+        // checksum. Taken over once, not read again.
+        if (!dir.isDirectory) {
+            val legacy = File(base, "r$READER-${wholeIdOf(file)}")
+            if (legacy != dir && legacy.isDirectory) runCatching { legacy.renameTo(dir) }
+        }
+        return dir
+    }
+
+    /**
+     * The same file read by an earlier reader: shown until it is read again, rather than the
+     * music going unread after every update of the reader. Null when there is none.
+     */
+    private fun olderFolder(state: SheetsState, file: File): File? {
+        val root = state.root?.takeIf { file.absolutePath.startsWith(it.absolutePath) }
+        val base = if (root != null) File(root, ".inksheets/readings") else File(state.platform.localFolder, "readings")
+        val ids = listOf(idOf(file), wholeIdOf(file)).distinct()
+        for (v in READER - 1 downTo 1) for (id in ids) {
+            val d = File(base, "r$v-$id")
+            if (d.listFiles { f -> PAGE_FILE.matches(f.name) }?.isNotEmpty() == true) return d
+        }
+        return null
     }
 
     private val ids = HashMap<String, String>()
 
-    /** [file]'s contents in a word: its size and a checksum of every byte. */
+    /**
+     * [file]'s music in a word - the same however it is marked. Handwriting is written into a PDF
+     * as an update appended to its end (see InkSlate's embedder), so the file's first revision -
+     * everything up to its first end-of-file mark - is the music as printed: its size and checksum.
+     * Marking a part never makes it a file to be read again.
+     */
     internal fun idOf(file: File): String = synchronized(ids) {
+        ids.getOrPut("first|${file.absolutePath}|${file.length()}|${file.lastModified()}") {
+            val bytes = runCatching { file.readBytes() }.getOrNull() ?: return@getOrPut wholeIdOf(file)
+            val end = if (file.extension.equals("pdf", ignoreCase = true)) firstRevisionEnd(bytes) else bytes.size
+            val crc = java.util.zip.CRC32()
+            crc.update(bytes, 0, end)
+            "${java.lang.Long.toHexString(end.toLong())}-${java.lang.Long.toHexString(crc.value)}"
+        }
+    }
+
+    /** Where a PDF's first revision ends: just past its first "%%EOF" (the whole file when there is none). */
+    internal fun firstRevisionEnd(bytes: ByteArray): Int {
+        val mark = "%%EOF".toByteArray()
+        var i = 0
+        outer@ while (i <= bytes.size - mark.size) {
+            for (j in mark.indices) if (bytes[i + j] != mark[j]) { i++; continue@outer }
+            var end = i + mark.size
+            while (end < bytes.size && (bytes[end] == '\r'.code.toByte() || bytes[end] == '\n'.code.toByte())) end++
+            return end
+        }
+        return bytes.size
+    }
+
+    /** The whole file's size and checksum: how readings were filed before [idOf]. */
+    private fun wholeIdOf(file: File): String = synchronized(ids) {
         ids.getOrPut("${file.absolutePath}|${file.length()}|${file.lastModified()}") {
             val crc = java.util.zip.CRC32()
             runCatching { file.inputStream().buffered().use { input -> val buf = ByteArray(1 shl 16); while (true) { val n = input.read(buf); if (n < 0) break; crc.update(buf, 0, n) } } }
@@ -79,7 +130,9 @@ internal object Transcriber {
 
     /** [file]'s notes as far as they have been read - here or on another device; null if none of it has. */
     fun cached(state: SheetsState, file: File): Score? {
-        val dir = folder(state, file)
+        val own = folder(state, file)
+        // Nothing read by this reader yet: an earlier reader's reading, until it is read again.
+        val dir = if (own.listFiles { f -> PAGE_FILE.matches(f.name) }?.isNotEmpty() == true) own else olderFolder(state, file) ?: own
         val now = System.currentTimeMillis()
         synchronized(known) { known[dir.path]?.let { if (now - it.at < 3000) return it.score } }
         // Only the pages' own files: not a copy a syncing program kept of one two devices wrote at
