@@ -53,6 +53,8 @@ object Engraver {
     }
 
     const val LINE = 0.13f
+    /** Where dynamics and hairpins under the staff sit: one height for a whole line, so a hairpin's slices meet. */
+    const val LOW = 6.6f
     const val STEM = 0.12f
     const val STEM_LENGTH = 3.5f
     const val BEAM = 0.5f
@@ -258,17 +260,24 @@ object Engraver {
                 }
                 "dynamic" -> {
                     var cx = x
-                    for (g in dynamicGlyphs(d.text) ?: continue) { marks += Symbol(g, cx, y); cx += MusicGlyphs[g].advance - 0.1f }
+                    for (g in dynamicGlyphs(d.text) ?: continue) { marks += Symbol(g, cx, if (d.above) y else max(LOW, below)); cx += MusicGlyphs[g].advance - 0.1f }
                 }
                 "cresc", "dim" -> {
                     // One wedge however many bars it crosses: closed end a point, open end a space
                     // apart, and this bar drawing its slice of it - as open at each edge as the
                     // whole wedge is there.
-                    val xa = at(d.x); val xb = at(d.x2)
+                    // Clear of the dynamics at its ends (ff < > p sit beside it, never on it); at one
+                    // height however many bars it crosses, each bar drawing its slice at the same place.
+                    var xa = at(d.x); var xb = at(d.x2)
+                    for (dd in m.directions) if (dd.kind == "dynamic") {
+                        val dx = at(dd.x); val dEnd = dx + (dynamicGlyphs(dd.text)?.sumOf { (MusicGlyphs[it].advance - 0.1f).toDouble() }?.toFloat() ?: 1f)
+                        if (dx <= xa + 0.5f && dEnd > xa - 0.2f) xa = dEnd + 0.3f
+                        if (dEnd >= xb - 0.5f && dx < xb + 0.2f) xb = dx - 0.3f
+                    }
                     val c0 = max(xa, from); val c1 = min(xb, width)
                     if (xb - xa > 0.5f && c1 - c0 > 0.05f) {
                         fun open(xx: Float) = (if (d.kind == "cresc") (xx - xa) else (xb - xx)) / (xb - xa) * 0.5f
-                        val yc = y - 0.2f
+                        val yc = if (d.above) y - 0.2f else max(LOW, below) - 0.2f
                         marks += Stroke(c0, yc - open(c0), c1, yc - open(c1), 0.1f)
                         marks += Stroke(c0, yc + open(c0), c1, yc + open(c1), 0.1f)
                     }

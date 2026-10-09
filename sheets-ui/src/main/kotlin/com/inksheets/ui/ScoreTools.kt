@@ -873,6 +873,13 @@ internal object ScoreTools {
                             r >= m.box.left && l <= m.box.right && b >= paperTop && t <= paperBottom
                         } }.map { i -> o.kept[i] to (o.keptShade.getOrNull(i) ?: 0) }
                     }
+                    // Paper under every kept shape first: the print under it hidden, so a word or a mark
+                    // drawn back is never seen twice, a pixel or two apart.
+                    for ((loop, _) in shapes) {
+                        var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+                        for (j in loop.indices step 2) { l = minOf(l, loop[j]); r = maxOf(r, loop[j]); t = minOf(t, loop[j + 1]); b = maxOf(b, loop[j + 1]) }
+                        if (l <= r) out += PageMark.rect((l - 2) * k, (t - 2) * k, (r + 2) * k, (b + 2) * k, PAPER)
+                    }
                     shapes.indices.groupBy { shapes[it].second / 32 }.forEach { (band, ids) ->
                         val grey = (band * 32 + 16).coerceAtMost(220).let { if (band == 0) 0 else it }
                         out += PageMark(PageMark.Kind.FILL, ids.map { i -> shapes[i].first.let { loop -> FloatArray(loop.size) { loop[it] * k } } },
@@ -904,6 +911,10 @@ internal object ScoreTools {
         if (m.bars > 1 && color != INK) return emptyList()
         val d = if (m.bars > 1) Engraver.multiRest(m) else Engraver.aligned(m)
         val out = ArrayList<PageMark>()
+        // The print's own weight: its staff lines as thick as printed, so every stroke drawn - stems,
+        // barlines, hairpins, ledger lines - is that much heavier or lighter than the engraver's own,
+        // and the redraw looks like the same hand as the page around it.
+        val weight = if (m.lineWidth > 0f && m.space > 0f) ((m.lineWidth / m.space) / Engraver.LINE).coerceIn(0.5f, 1.4f) else 1f
         // A point of the drawing (spaces from the bar's left, spaces down from its top line) on the page.
         fun px(xs: Float) = (m.box.left + xs * m.space) * k
         fun py(xs: Float, ys: Float): Float = m.yAt(ys, m.box.left + xs * m.space) * k
@@ -917,7 +928,7 @@ internal object ScoreTools {
                 // thick as it is printed, so the print either side runs straight on into it.
                 if (staffLine && color != INK) continue
                 // A scan's lines print grey and a little lighter than their dark core suggests.
-                val w = if (staffLine && m.lineWidth > 0f) m.lineWidth * k * 0.85f else (mark.w * spAt(mark.x1)).coerceAtLeast(0.4f)
+                val w = if (staffLine && m.lineWidth > 0f) m.lineWidth * k * 0.85f else (mark.w * weight * spAt(mark.x1)).coerceAtLeast(0.4f)
                 out += PageMark.line(px(mark.x1), py(mark.x1, mark.y1), px(mark.x2), py(mark.x2, mark.y2), w, if (staffLine) STAFF else color)
             }
             is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(spAt(mark.x) * mark.scale, px(mark.x), py(mark.x, mark.y)), color)
