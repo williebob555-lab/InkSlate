@@ -100,6 +100,13 @@ with the reason, so a borderline case can be judged. Newest process rules first.
 
 ## Automation (Listen, tempo follow, music reading, watch flicks)
 
+User's verdicts of 2026-10-09 (the bar for these features - "shocked by the improvement", not QOL):
+- Watch: close itself when no part is open, the screen goes off or the app closes; no long buzzing when it cannot connect (normal short buzzes are liked).
+- Listen: had no trust - must cope with starting mid-page and show it knows what it hears.
+- Reading: one colour-coded Check (green/yellow/red), tap any bar to fix, Fix never moves and its buttons never move (they work in a rhythm), Back/undo, richer "what's wrong" answers, clean view that matches the piece's style and carries every element, clean as an overlay never a new file, readings must persist, a progress bar at the side.
+- Playback: "a note machine" - wants a planned, expressive, human performance good enough to demo a piece; band with or without own part; band parts read in parallel.
+
+
 - **Visible or untrusted.** Every automation shows (1) that it runs and what it hears, (2) where
   it thinks you are and how sure, (3) what it will do next and when, (4) why it stopped. Silent
   failure looks like "waiting" and kills trust. Prove it acts in the real app, not just unit tests.
