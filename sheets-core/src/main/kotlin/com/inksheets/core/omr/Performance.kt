@@ -29,13 +29,32 @@ object Performance {
      */
     fun play(bars: List<Measure>, bpm: Double, rate: Int, transpose: Int, patch: Synth.Patch, at: Long = 0L,
              /** Drums: the drums each note is, in place of its pitches (see [DrumKind]). */
-             drums: DrumKind? = null): Played {
+             drums: DrumKind? = null,
+             /** The metronome's click with it, on the music's own beats (its ritardandos and fermatas too). */
+             click: Boolean = false): Played {
         val lengths = DoubleArray(bars.size) { bars[it].playedQuarters }
         val plan = Interpretation.analyse(bars, lengths, drums)
         val map = Interpretation.tempoMap(listOf(plan), bpm, ensemble = false)
-        val tones = Interpretation.tones(plan, map, rate, transpose, patch, at, 1f, drums)
+        val tones = ArrayList(Interpretation.tones(plan, map, rate, transpose, patch, at, 1f, drums))
+        if (click) tones += clicks(bars, plan.barQ, map, rate, at)
         val starts = LongArray(bars.size) { Math.round(map.seconds(plan.barQ[it]) * rate) }
         val numbers = IntArray(bars.size) { bars[it].number }
         return Played(tones, starts, numbers, Math.round(map.seconds(plan.totalQ) * rate))
+    }
+
+    /** A click on every beat of [bars] (higher on the bar's first), at the times [map] gives them. */
+    fun clicks(bars: List<Measure?>, barQ: DoubleArray, map: Interpretation.TempoMap, rate: Int, at: Long = 0L): List<Synth.Tone> {
+        val out = ArrayList<Synth.Tone>()
+        for (i in bars.indices) {
+            val time = bars[i]?.time ?: bars.take(i).lastOrNull { it != null }?.time ?: TimeSig(4, 4)
+            // Six-eight and its kind beat in dotted quarters; everything else in its written beat.
+            val beat = if (time.beatType == 8 && time.beats % 3 == 0 && time.beats > 3) 1.5 else 4.0 / time.beatType
+            var q = barQ[i]; var first = true
+            while (q < barQ[i + 1] - 1e-6) {
+                out += Synth.Tone(if (first) 88 else 81, at + Math.round(map.seconds(q) * rate), (rate * 0.03).toLong(), if (first) 0.9f else 0.6f, Synth.CLICK)
+                q += beat; first = false
+            }
+        }
+        return out
     }
 }

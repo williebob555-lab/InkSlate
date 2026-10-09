@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.DragHandle
@@ -118,13 +119,26 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
     // The music being read: a slim bar up the screen's edge filling as it goes - always in sight,
     // never over the music, whatever is open.
-    Transcriber.progress?.let { p ->
-        val shown by androidx.compose.animation.core.animateFloatAsState(p.coerceIn(0.03f, 1f))
-        Box(
-            Modifier.align(if (state.stripOnLeft) Alignment.CenterStart else Alignment.CenterEnd).padding(horizontal = 2.dp)
-                .width(5.dp).fillMaxHeight(0.5f).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+    // (The music tools show it in themselves while they are out.)
+    if (Transcriber.progress != null && !(ScoreTools.open && !state.stripCollapsed)) {
+        // Moving all the time while a part is read - the page in hand filling as pages take here.
+        var shown by remember { mutableStateOf(0f) }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) { Transcriber.smoothProgress()?.let { shown = it }; kotlinx.coroutines.delay(100) }
+        }
+        Column(
+            Modifier.align(if (state.stripOnLeft) Alignment.CenterEnd else Alignment.CenterStart).padding(horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(shown).background(MaterialTheme.colorScheme.primary))
+            Box(
+                Modifier.width(10.dp).fillMaxHeight(0.45f).clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f))
+            ) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(shown.coerceIn(0.02f, 1f)).background(MaterialTheme.colorScheme.primary))
+            }
+            Text("${(shown * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 3.dp)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.8f), RoundedCornerShape(4.dp)).padding(horizontal = 3.dp))
         }
     }
     // "End of the set": a small pill at the page's foot for two seconds - a turn that does nothing says why.
@@ -149,20 +163,30 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     BoxWithConstraints(Modifier.matchParentSize()) {
         // Always down a side: along the bottom, the buttons wrap into two rows and take more room.
         val side = true
-        // Every button has to be on screen at once - never a strip to scroll. The buttons shrink
-        // to fit a short screen, and only if that is not enough does the strip wrap to a second
-        // column (or row).
-        val visible = shown.count { a ->
+        // Every button on screen at once, in one column - never a second column, never a strip to
+        // scroll. The buttons shrink to fit a short screen; where even that is not enough, the
+        // last of them move into More (named there), and only on a very short screen do the
+        // names under the buttons go.
+        val wanted = shown.filter { a ->
             !((a == PerformAction.NEXT_SONG || a == PerformAction.PREVIOUS_SONG) && state.playing == null) &&
                 !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
         }
         val room = if (side) maxHeight else maxWidth
-        val named = state.stripLabels
-        val labelRoom = if (named && side) 12.dp else 0.dp
         val onStripPresets = if (state.companion.leading) state.presets.filter { it.onStrip } else emptyList()
-        val extras = 120.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp) +
+        // The fold button, the padding and the dividers; the page count and the tempo under their buttons.
+        val extras = 72.dp + (if (state.pageShown.second > 0) 26.dp else 0.dp) + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp) +
             34.dp * onStripPresets.size
-        val btn = ((room - extras) / (visible + 3).coerceAtLeast(1) - labelRoom).coerceIn(32.dp, 44.dp)
+        // File, Music and More are there besides the chosen buttons.
+        val fixed = 1 + (if (state.pageShown.second > 0) 1 else 0) + (if (state.readMusic && state.current != null) 1 else 0)
+        fun fitting(label: androidx.compose.ui.unit.Dp) = ((room - extras) / (32.dp + label + 2.dp)).toInt() - fixed
+        val named = state.stripLabels && fitting(12.dp) >= minOf(wanted.size, 6)
+        val labelRoom = if (named && side) 12.dp else 0.dp
+        val fits = fitting(labelRoom).coerceAtLeast(2)
+        // The last of them go first - but never the page turns, Undo or the tools' switch.
+        val keep = setOf(PerformAction.NEXT_PAGE, PerformAction.PREVIOUS_PAGE, PerformAction.UNDO, PerformAction.FULLSCREEN)
+        val overflow = if (wanted.size > fits) wanted.reversed().filter { it !in keep }.take(wanted.size - fits) else emptyList()
+        val visible = wanted.size - overflow.size
+        val btn = ((room - extras) / (visible + fixed).coerceAtLeast(1) - labelRoom - 2.dp).coerceIn(32.dp, 44.dp)
         val items: @Composable () -> Unit = {
             if (!collapsed) {
                 if (SelfRecorder.recording) {
@@ -171,19 +195,13 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 state.companion.status?.let { status ->
                     Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
                 }
-                // Which page, and the way to every page: the page editor, one tap away.
+                // Which page: words only. The file's pages (arranging, adding, taking out) are the
+                // File button under it.
                 val (page, count) = state.pageShown
                 if (count > 0) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { Perform.openPages?.invoke() }
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
-                    ) {
-                        Text("${page + 1}/$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        if (named) Text("Pages", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp)
-                    }
+                    Text("${page + 1}/$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                    StripButton(Icons.Default.Description, "File", "The file's pages: arrange, add, take out", btn, named) { Perform.openPages?.invoke() }
                 }
                 // Leading: a message to the band, one tap away.
                 if (state.companion.leading) {
@@ -202,6 +220,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 var lastGroup = -1
                 for (action in shown) {
+                    if (action in overflow) continue
                     val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
                     if (songAction && state.playing == null) continue
                     // Kept while a recording plays, whatever is in front now: there is always a way to stop it.
@@ -263,7 +282,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 Box {
                     StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }
-                    StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
+                    StripMenu(state, menu, overflow, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
                     // Another instrument's part, from More (when Part is not on the strip): opens where More was.
                     state.current?.let { song -> PartMenu(state, song, state.partShown(), partMenu, onDismiss = { partMenu = false }) }
                 }
@@ -297,8 +316,10 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             ) {
                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                 if (side) {
-                    androidx.compose.foundation.layout.FlowColumn(
-                        itemHorizontalAlignment = Alignment.CenterHorizontally,
+                    // One column, always: never a second one beside it. Where the buttons do not all
+                    // fit (a short screen, many buttons), the column scrolls instead.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.padding(vertical = 4.dp)
                     ) { items() }
                 } else {
@@ -426,10 +447,18 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
 }
 
 @Composable
-private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
+private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformAction>, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        // The strip's own buttons that did not fit on this screen, first, as they are on it.
+        val fullscreen = Perform.on(PerformAction.FULLSCREEN)
+        for (action in overflow) if (action != PerformAction.SWITCH_PART) DropdownMenuItem(
+            text = { Text(action.label) },
+            leadingIcon = { Icon(iconOf(action, fullscreen), null) },
+            onClick = { onDismiss(); Perform.run(action) }
+        )
+        if (overflow.isNotEmpty()) HorizontalDivider()
         // Only what is not on the strip already: one way to each thing.
-        val onStrip = state.strip
+        val onStrip = state.strip - overflow.toSet()
         if (PerformAction.SWITCH_PART !in onStrip) state.current?.let { _ ->
             val part = state.partShown()?.let { partName(it) }
             DropdownMenuItem(
@@ -661,6 +690,8 @@ internal fun StripButton(
     size: androidx.compose.ui.unit.Dp,
     named: Boolean,
     lit: Boolean = false,
+    /** Work in hand (a part being read): the button fills from left to right, 0 to 1. */
+    progress: Float? = null,
     onClick: () -> Unit
 ) {
     Column(
@@ -672,7 +703,14 @@ internal fun StripButton(
                 if (lit) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(12.dp)) else Modifier
             ),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, description) }
+        ) {
+            if (progress != null) Box(
+                Modifier.align(Alignment.CenterStart).fillMaxHeight().fillMaxWidth(progress.coerceIn(0.04f, 1f))
+                    .clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+            )
+            Icon(icon, description)
+        }
+        if (progress != null && named) Text("${(progress * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, color = MaterialTheme.colorScheme.primary)
         if (named) {
             Text(name, style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1, lineHeight = 11.sp)
         }

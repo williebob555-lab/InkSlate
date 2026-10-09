@@ -31,15 +31,42 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 
-/** Where each floating panel was left, so it opens there again. */
+/** Where each floating panel was left, so it opens there again - and where the open ones stand now. */
 private object PanelSpots {
     val at = HashMap<String, Offset>()
+    /** The panels open now, by title: where each is on screen, so the next one opens beside them. */
+    val open = HashMap<String, androidx.compose.ui.geometry.Rect>()
+
+    /**
+     * Where a panel [wide] by [tall] opens: [wanted] if nothing open is there, else beside the
+     * open ones - to their left, then below them - never on top of one (two opened one after the
+     * other, the metronome and the tuner, stand side by side).
+     */
+    fun free(title: String, wanted: Offset, wide: Float, tall: Float, lo: Float, hi: Float, bottom: Float, gap: Float): Offset {
+        val others = open.filterKeys { it != title }.values
+        fun clear(o: Offset) = others.none { it.overlaps(androidx.compose.ui.geometry.Rect(o.x, o.y, o.x + wide, o.y + tall)) }
+        if (clear(wanted)) return wanted
+        // Leftwards along the same line, then the same along each line lower down.
+        var y = wanted.y
+        while (y + 64f <= bottom) {
+            var x = hi
+            while (x >= lo - 0.5f) {
+                val o = Offset(x, y)
+                if (clear(o)) return o
+                val blocking = others.filter { it.overlaps(androidx.compose.ui.geometry.Rect(x, y, x + wide, y + tall)) }
+                x = (blocking.minOf { it.left } - gap - wide).coerceAtMost(x - gap)
+            }
+            y = others.filter { it.bottom > y }.minOfOrNull { it.bottom + gap } ?: break
+        }
+        return wanted
+    }
 }
 
 /**
@@ -68,16 +95,26 @@ internal fun FloatingPanel(
         Opened(title, panelWidth)
         val leftEdge = with(density) { (Overlays.left + 8.dp).toPx() }
         val rightEdge = room.x - with(density) { (Overlays.right + 8.dp).toPx() }
-        var at by remember { mutableStateOf(PanelSpots.at[title] ?: Offset(rightEdge - wide, with(density) { (if (maxHeight < 500.dp) 8.dp else 72.dp).toPx() })) }
         // Kept on screen, however the window has changed since - and clear of the strips, where there is room beside them.
         val (lo, hi) = if (rightEdge - leftEdge >= wide) leftEdge to rightEdge - wide else 0f to (room.x - wide).coerceAtLeast(0f)
+        var at by remember {
+            val wanted = PanelSpots.at[title] ?: Offset(rightEdge - wide, with(density) { (if (maxHeight < 500.dp) 8.dp else 72.dp).toPx() })
+            // Another panel open already where this one would go: this one opens beside it.
+            val tall = with(density) { 260.dp.toPx() }
+            mutableStateOf(PanelSpots.free(title, Offset(wanted.x.coerceIn(lo, hi), wanted.y), wide, tall, lo, hi, room.y, with(density) { 8.dp.toPx() }))
+        }
+        var size by remember { mutableStateOf(androidx.compose.ui.geometry.Size(wide, with(density) { 260.dp.toPx() })) }
+        androidx.compose.runtime.DisposableEffect(title) { onDispose { PanelSpots.open.remove(title) } }
         val shown = Offset(at.x.coerceIn(lo, hi), at.y.coerceIn(0f, (room.y - with(density) { 64.dp.toPx() }).coerceAtLeast(0f)))
+        // Where it stands now, for the next panel opened to stand clear of.
+        androidx.compose.runtime.SideEffect { PanelSpots.open[title] = androidx.compose.ui.geometry.Rect(shown, size) }
         Surface(
             shape = MaterialTheme.shapes.large,
             tonalElevation = 6.dp,
             shadowElevation = 8.dp,
             // No taller than the screen below where it stands: on a short screen it scrolls, never runs off the foot.
             modifier = Modifier.offset { IntOffset(shown.x.roundToInt(), shown.y.roundToInt()) }.width(panelWidth)
+                .onSizeChanged { size = androidx.compose.ui.geometry.Size(it.width.toFloat(), it.height.toFloat()) }
                 .heightIn(max = minOf(panelHeight, with(density) { (room.y - shown.y).toDp() } - 8.dp).coerceAtLeast(120.dp))
         ) {
             Column {

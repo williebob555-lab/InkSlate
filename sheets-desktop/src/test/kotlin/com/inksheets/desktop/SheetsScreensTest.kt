@@ -256,6 +256,34 @@ class SheetsScreensTest {
     }
 
     @Test
+    fun `the metronome and the tuner opened one after the other stand side by side`() {
+        val root = tmp.newFolder("Music")
+        val state = SheetsState(FakePlatform(root))
+        for ((w, h) in listOf(1400 to 900, 900 to 1200)) runDesktopComposeUiTest(width = w, height = h) {
+            setContent {
+                MaterialTheme {
+                    androidx.compose.foundation.layout.Box(
+                        androidx.compose.ui.Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFFF4F1EA))
+                    ) { ActionStrip(state) }
+                }
+            }
+            runOnIdle { state.metronomeOpen = true }
+            waitForIdle()
+            runOnIdle { state.tunerOpen = true }
+            waitForIdle()
+            // Each panel by its title bar's move handle: the panel is the first thing round it that is panel-wide.
+            val panels = onAllNodes(androidx.compose.ui.test.hasContentDescription("Move"), useUnmergedTree = true).fetchSemanticsNodes()
+                .map { n -> generateSequence(n) { it.parent }.first { it.size.width > 250 && it.size.height > 100 }.boundsInRoot }
+            assertEquals("two panels open", 2, panels.size)
+            val (a, b) = panels
+            shoot("metronome-and-tuner-${w}x$h", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+            assertFalse("${w}x$h: they overlap: $a and $b", a.overlaps(b))
+            runOnIdle { state.metronomeOpen = false; state.tunerOpen = false }
+            waitForIdle()
+        }
+    }
+
+    @Test
     fun `leading shows a code to scan, and the count of followers`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
