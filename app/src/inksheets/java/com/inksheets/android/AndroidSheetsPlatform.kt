@@ -413,12 +413,13 @@ private class TrackOut : AudioOut {
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build()
                     )
-                    // 40 ms held ahead at least: the smallest the device allows breaks up at any pause.
-                    .setBufferSizeInBytes(maxOf(min, sampleRate / 25 * 4))
-                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY)
+                    // 120 ms held ahead at least: the smallest the device allows breaks up at any pause, and
+                    // a loaded phone or tablet (xruns) needs room. (The instrument is also rendered ahead: see Sound.)
+                    .setBufferSizeInBytes(maxOf(min * 2, sampleRate * 12 / 100 * 4))
+                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_POWER_SAVING)
                     .build()
                 track.play()
-                val block = FloatArray(256)
+                val block = FloatArray(480)
                 while (running) {
                     fill(block)
                     track.write(block, 0, block.size, AudioTrack.WRITE_BLOCKING)
