@@ -62,6 +62,9 @@ interface SheetsPlatform {
     /** Whether the strip is open down its side, so the page keeps room clear for it (true), or folded into its corner. */
     fun setStripLane(open: Boolean) {}
 
+    /** The app is on screen: not in the background, the screen not turned off. */
+    val inForeground: Boolean get() = true
+
     /** How every music page is coloured: Normal, Night, Sepia... (the editors draw it). */
     var readingMode: com.inkslate.core.ReadingMode
         get() = com.inkslate.core.ReadingMode.NONE

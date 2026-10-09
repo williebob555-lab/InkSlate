@@ -98,9 +98,14 @@ class WatchFlicksTest {
         state.watch.turn(true)
         Thread.sleep(2_600)
         assertTrue("nothing open, nothing to listen for: ${fake.listens}", fake.listens.isEmpty())
-        javax.swing.SwingUtilities.invokeAndWait { state.currentPath = "x.pdf" }
+        javax.swing.SwingUtilities.invokeAndWait { state.currentPath = "x.pdf"; state.homeInFront = false }
         waitFor("the watch told to listen", 10_000) { fake.listens.isNotEmpty() }
         assertTrue(fake.listens.first(), fake.listens.first().startsWith("on:"))
+        // Home in front: no part to turn - the watch is told to stop at once, not left for minutes.
+        javax.swing.SwingUtilities.invokeAndWait { state.homeInFront = true }
+        waitFor("the watch told to stop on Home", 10_000) { fake.listens.last() == "off" }
+        javax.swing.SwingUtilities.invokeAndWait { state.homeInFront = false }
+        waitFor("the watch told to listen again", 10_000) { fake.listens.last().startsWith("on:") }
         javax.swing.SwingUtilities.invokeAndWait { state.watch.listen(false) }
         waitFor("the watch told to stop", 5_000) { fake.listens.last() == "off" }
         Thread.sleep(6_000)

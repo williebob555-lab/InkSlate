@@ -81,7 +81,13 @@ class WatchFlicks(private val state: SheetsState) {
     private var pausedUse = -1
     private val session: String get() = "$appRun-$useCount"
 
-    private fun inUseNow(): Boolean = state.remote.connected || state.currentPath != null
+    /**
+     * In use: the app on screen (not in the background, the screen not off) with a part in front
+     * - not Home - or this phone the remote of a device that has. Anything else and the watch is
+     * told to stop at once, not left listening (and holding its battery) for minutes.
+     */
+    private fun inUseNow(): Boolean = state.platform.inForeground &&
+        (state.remote.connected || (!state.homeInFront && state.currentPath != null))
 
     // ---- the calibration for the instrument of the part showing ------------------------------
 
@@ -130,6 +136,8 @@ class WatchFlicks(private val state: SheetsState) {
         follow()
         val now = inUseNow()
         if (now && !inUse) { useCount++; beatAt = 0L }
+        // Just stopped being in use: the watch stops now (one short buzz there), not in minutes.
+        if (!now && inUse && pausedUse != useCount) link?.send(WatchWire.LISTEN, "off".toByteArray())
         inUse = now
         if (!now || pausedUse == useCount) return
         if (System.currentTimeMillis() - beatAt >= BEAT_MS) {
@@ -391,7 +399,9 @@ class WatchFlicks(private val state: SheetsState) {
                         result = r
                         owner.report = r
                         if (gaps > 0) state.platform.log("Watch: calibration readings had $gaps gaps")
-                        r.model?.let { model ->
+                        // A calibration that cannot tell flicks from playing well enough is not
+                        // put to use: a false turn on stage is worse than none (see result.problem).
+                        r.model?.takeIf { r.problem == null }?.let { model ->
                             owner.active = name
                             state.platform.setPref(K_ACTIVE, name)
                             state.platform.setPref(K_MODEL, model.encode())
@@ -457,7 +467,7 @@ class WatchFlicks(private val state: SheetsState) {
         /** How long a cue stays up. */
         const val CUE_SHOWN_MS = 2_500L
         /** How often the watch is told to keep listening; it stops after [WatchWire.QUIET_MS] without. */
-        const val BEAT_MS = 60_000L
+        const val BEAT_MS = 20_000L
         /** How much of real time a calibration's second takes: 1, but less in tests, which cannot play for three minutes. */
         var timeScale = 1.0
 

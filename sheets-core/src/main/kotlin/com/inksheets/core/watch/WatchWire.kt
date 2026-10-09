@@ -34,7 +34,7 @@ object WatchWire {
      */
     const val LISTEN = "$ROOT/listen"
     /** The watch stops listening after this long without a word from the phone. */
-    const val QUIET_MS = 3 * 60_000L
+    const val QUIET_MS = 60_000L
 
     /** The watch's side of things, as it says it. */
     data class Hello(val listening: Boolean, val model: String?, val version: String, val calibrating: Boolean = false) {

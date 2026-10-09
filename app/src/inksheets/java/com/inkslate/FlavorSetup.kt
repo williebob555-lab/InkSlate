@@ -32,6 +32,17 @@ object FlavorSetup {
             return existing
         }
         val p = AndroidSheetsPlatform(activity) { f -> openFile?.invoke(f) }
+        // Whether the app is on screen: an activity started counts, one stopped (backgrounded,
+        // the screen turned off, the app closed) does not - for the watch to stop listening.
+        (activity.applicationContext as? android.app.Application)?.registerActivityLifecycleCallbacks(object : android.app.Application.ActivityLifecycleCallbacks {
+            override fun onActivityStarted(a: android.app.Activity) { p.started++ }
+            override fun onActivityStopped(a: android.app.Activity) { p.started = (p.started - 1).coerceAtLeast(0) }
+            override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
+            override fun onActivityResumed(a: android.app.Activity) {}
+            override fun onActivityPaused(a: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
+            override fun onActivityDestroyed(a: android.app.Activity) {}
+        })
         return SheetsState(p).also {
             state = it
             platform = p

@@ -36,7 +36,8 @@ import kotlin.math.abs
  * Listening for flicks: the gyroscope read a hundred times a second, with the screen off, for as
  * long as the player wants - a foreground service holding the processor awake. Each flick goes to
  * the phone, which turns the page (here, or on the tablet it is the remote of); the watch ticks
- * when it sends one, and buzzes long when the phone says the page did not turn.
+ * when it sends one. A flick the phone cannot answer gets one short double tick, then quiet until
+ * the phone answers again - and with no answer for a while, listening stops by itself.
  *
  * Calibrating, it sends the phone every reading instead, with the cues the phone gave noted among
  * them, and turns no pages.
@@ -137,7 +138,13 @@ class FlickService : Service(), SensorEventListener {
     }
 
     /** The phone's answer to flick [n]: turned, or why not. */
+    /** Flicks the phone has not answered since it last did, and when the first of them was. */
+    private var unanswered = 0
+    private var unansweredSince = 0L
+
     fun turned(n: Int, ok: Boolean, why: String?) = handler.post {
+        unanswered = 0
+        WatchState.phoneAt = System.currentTimeMillis()
         waiting.remove(n) ?: return@post
         if (!ok) failed(why ?: "The page did not turn")
     }
@@ -184,9 +191,18 @@ class FlickService : Service(), SensorEventListener {
     }
 
     private fun failed(why: String) {
-        buzz(this, longArrayOf(0, 700))
         WatchState.problem = why
         WatchState.changed()
+        // The first flick not answered: a short double tick (not a long buzz). The ones after it,
+        // nothing - and no answer to several over a minute: the phone is not there, so stop.
+        val now = System.currentTimeMillis()
+        if (unanswered == 0) { unansweredSince = now; buzz(this, longArrayOf(0, 40, 90, 40)) }
+        unanswered++
+        if (unanswered >= GIVE_UP_AFTER && now - unansweredSince < 60_000L) {
+            Log.i(TAG, "The phone answers nothing - stopping")
+            buzz(this, longArrayOf(0, 60, 100, 60))
+            stopSelf()
+        }
     }
 
     private fun notification(): Notification {
@@ -215,7 +231,8 @@ class FlickService : Service(), SensorEventListener {
         private const val K_MODEL = "model"
         private const val K_STOPPED = "stopped_session"
         private const val TAP_ID = 2
-        private const val QUIET_CHECK_MS = 30_000L
+        private const val QUIET_CHECK_MS = 10_000L
+        private const val GIVE_UP_AFTER = 3
 
         @Volatile var running: FlickService? = null
             private set

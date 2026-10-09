@@ -279,7 +279,11 @@ private fun CalibrationDialog(state: SheetsState, c: WatchFlicks.Calibration) {
                 }
                 "learning" -> Text("Learning your flicks...", style = MaterialTheme.typography.bodyLarge)
                 "done" -> c.result?.let { r ->
-                    Text(if (r.model != null) "In use now - the watch has it." else "Not learned.", style = MaterialTheme.typography.titleMedium)
+                    Text(when {
+                        r.model != null && r.problem == null -> "In use now - the watch has it."
+                        r.model != null -> "Not put to use yet: it could take playing for a flick. Calibrate again to add more."
+                        else -> "Not learned."
+                    }, style = MaterialTheme.typography.titleMedium)
                     ReportText(r)
                     Text(
                         "\"Calibrate again\" adds another recording to this one: the more playing it has heard, the surer it is.",

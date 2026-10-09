@@ -92,6 +92,10 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.musicLaneDp = if (open) 72f else 0f
     }
 
+    /** Set from the activities' lifecycle (FlavorSetup): false once none is started - backgrounded, or the screen off. */
+    @Volatile var started = 1
+    override val inForeground: Boolean get() = started > 0
+
     override var readingMode: com.inkslate.core.ReadingMode
         get() = com.inkslate.AppFlavor.readingMode.value
         set(v) { com.inkslate.AppFlavor.readingMode.value = v }

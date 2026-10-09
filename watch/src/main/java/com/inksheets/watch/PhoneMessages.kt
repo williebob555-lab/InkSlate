@@ -23,7 +23,12 @@ class PhoneMessages : WearableListenerService() {
                     WatchState.session = session
                     // Stopped by hand on the watch for this session: left stopped till the next.
                     if (FlickService.running == null && session != FlickService.stoppedSession(this)) FlickService.startFromPhone(this)
-                } else FlickService.stop(this)
+                } else if (FlickService.running != null) {
+                    // The phone is not in use any more (no part open, the screen off, the app
+                    // closed): stop now, with the same short buzz as stopping by itself.
+                    FlickService.buzz(this, longArrayOf(0, 60, 100, 60))
+                    FlickService.stop(this)
+                }
                 FlickService.sayHello(this)
             }
             WatchWire.CALIBRATE -> {

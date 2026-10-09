@@ -22,9 +22,9 @@ change size. **No build until the very end** — commit locally, one `[build she
 
 
 ## User feedback 2026-10-09 (experimental features) — the bar: "shocked by the level of improvement", not minor QOL
-### W Watch flicks
-- [ ] Watch app closes itself when: no part is open, the device screen turns off, or the app is closed on the device
-- [ ] No long/aggressive buzzing when it can't connect (normal short buzzes are liked)
+### W Watch flicks (done: phone sends off on Home/background/screen-off; 20 s beat, 60 s quiet; one short tick per outage, gives up after 3; weak calibrations not put to use)
+- [x] Watch app closes itself when: no part is open, the device screen turns off, or the app is closed on the device
+- [x] No long/aggressive buzzing when it can't connect (normal short buzzes are liked)
 ### L Listen (mic follow) — user has no trust
 - [ ] Must handle starting mid-page / anywhere; must show what it hears and where it thinks you are; honest when lost
 ### R Read the music (scanning)
