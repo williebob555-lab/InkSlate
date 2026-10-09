@@ -352,6 +352,7 @@ internal object ScoreTools {
 
     fun close(s: SheetsState) {
         stop(s)
+        if (checking) endCheck()
         open = false
         tool = Tool.NONE
         syncTool()

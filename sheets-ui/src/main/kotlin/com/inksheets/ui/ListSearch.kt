@@ -53,7 +53,7 @@ internal fun matches(query: String, vararg texts: String?): Boolean {
 /** Text as search compares it: lower case, accents off, one kind of apostrophe. */
 internal fun fold(text: String): String =
     java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD).replace(Regex("""\p{M}+"""), "")
-        .replace('’', '\'').replace('‘', '\'').replace('`', '\'').lowercase().trim()
+        .replace("’", "").replace("‘", "").replace("`", "").replace("'", "").lowercase().trim()
 
 /** An instrument found by its name, a name it is printed as, or a short form: "tpt", "euph". */
 internal fun matches(query: String, instrument: Instrument): Boolean {

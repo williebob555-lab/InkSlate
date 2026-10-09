@@ -260,6 +260,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** The recordings panel, for the song opened last. */
     var audioOpen by mutableStateOf(false)
 
+    /** Home is on a screen too short for its extras (a phone on its side). */
+    var lowScreen by mutableStateOf(false)
+
     /** A word for a moment at the foot of the page - "End of the set" - and when it was said. */
     var edgeNotice by mutableStateOf<String?>(null)
     var edgeNoticeAt = 0L
@@ -1041,6 +1044,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** Delete a setlist - with an Undo, and in Recently deleted for 30 days. */
     fun deleteSetlist(id: String) {
         val name = library?.setlist(id)?.name ?: return
+        // The set being played: put away, not left pointing at a list that is gone.
+        if (playing?.first == id) backToSetlist()
         change { deleteSetlist(id) }
         offerUndo("Deleted $name") { change { restoreSetlist(id) } }
     }

@@ -132,6 +132,9 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
         .then(if (state.remote.remoteOpen) Modifier.underCover() else Modifier)) {
     // On a phone the buttons need the whole bar; the name goes.
     val narrow = maxWidth < 520.dp
+    // A phone on its side: the list needs every line it can get (see SongsPane).
+    val low = maxHeight < 440.dp
+    androidx.compose.runtime.SideEffect { state.lowScreen = low }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = { if (!narrow) Text("InkSheets", maxLines = 1) },
@@ -460,8 +463,9 @@ private fun SongsPane(state: SheetsState) {
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
-        // How the list is ordered, then what it is narrowed to.
-        Row(
+        // How the list is ordered, then what it is narrowed to - not on a screen this short, where
+        // the list itself needs the room (the order last chosen stays).
+        if (!state.lowScreen) Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -510,7 +514,7 @@ private fun SongsPane(state: SheetsState) {
         }
         // Music that arrived lately (synced in, imported): said, so nothing comes in unseen - a tap lists it newest first.
         val fresh = remember(version) { state.library?.songs.orEmpty().count { System.currentTimeMillis() - it.created < 86_400_000L } }
-        if (fresh > 0 && sort != SongSort.ADDED && query.isBlank()) {
+        if (fresh > 0 && sort != SongSort.ADDED && query.isBlank() && !state.lowScreen) {
             Text(
                 "$fresh new in the last day  ·  show",
                 style = MaterialTheme.typography.labelLarge,
