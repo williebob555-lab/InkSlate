@@ -86,14 +86,23 @@ private fun BindingRow(state: SheetsState, b: ControlBinding, onRemove: () -> Un
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(actionName(state, b.action), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // A switch: tap to change when it counts - when pressed, at every message, or when let go.
             Text(
                 ControllerHub.name(b.control) + when {
                     b.continuous -> " · moved across its range"
-                    b.everyMessage -> " · every press"
-                    else -> ""
+                    b.everyMessage -> " · every message"
+                    b.whenOff -> " · when let go"
+                    else -> " · when pressed"
                 },
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = if (b.continuous) Modifier else Modifier.clickable {
+                    when {
+                        b.everyMessage -> state.controllers.setWhen(b, every = false, off = true)
+                        b.whenOff -> state.controllers.setWhen(b, every = false, off = false)
+                        else -> state.controllers.setWhen(b, every = true, off = false)
+                    }
+                }
             )
         }
         IconButton(onClick = onRemove) { Icon(Icons.Default.Close, contentDescription = "Remove") }

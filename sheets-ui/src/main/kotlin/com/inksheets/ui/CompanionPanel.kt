@@ -298,7 +298,37 @@ class Companion(private val state: SheetsState) {
      * The leader's message is on screen now. Once it has been up - timed out or tapped away - it
      * never comes back: the popup belongs to each page, and a song change makes a new one.
      */
-    var noticeShowing by mutableStateOf(false)
+    var noticeShowing: Boolean
+        get() = noticeUp
+        set(v) {
+            noticeUp = v
+            if (!v) showNextNotice()
+        }
+    private var noticeUp by mutableStateOf(false)
+
+    /** When the message in front was put up, and whether a page has shown it yet. One that nobody saw in time is not shown late. */
+    var noticeAt = 0L
+        private set
+    var noticeSeen = false
+
+    /** Messages that came while an urgent one was up: shown when it is tapped away, in order. */
+    private val waitingNotes = ArrayList<Pair<Long, CompanionLink.Note>>()
+
+    private fun putUp(n: CompanionLink.Note) {
+        notice = n
+        noticeAt = System.currentTimeMillis()
+        noticeSeen = false
+        noticeCount++
+        noticeUp = true
+    }
+
+    private fun showNextNotice() {
+        val now = System.currentTimeMillis()
+        while (waitingNotes.isNotEmpty()) {
+            val (at, n) = waitingNotes.removeAt(0)
+            if (n.urgent || now - at <= com.inksheets.core.CompanionLeader.NOTE_KEPT_MS) { putUp(n); return }
+        }
+    }
 
     /** The instruments this player reads: the part in front, and those chosen to play. */
     private fun myInstruments(): Set<String> {
@@ -489,14 +519,20 @@ class Companion(private val state: SheetsState) {
             }
             is CompanionLink.Line.Ink -> takeInk(line.share)
             is CompanionLink.Line.Message -> {
-                // Given again after a dropped link: shown once.
-                val id = "n" + line.note.at
-                if (!seenNotes.add(id)) return
-                meshNote(line.note, hops = 1)
-                if (CompanionLink.noteIsFor(line.note, myInstruments())) {
-                    notice = line.note
-                    noticeCount++
-                    noticeShowing = true
+                // Given again after a dropped link, or heard over both Wi-Fi and Bluetooth: shown once.
+                // A message has its own id; one without (an older leader, Bluetooth) is known by
+                // its second and words.
+                val n = line.note
+                val loose = (n.at / 1000).toString() + "|" + n.text
+                val withId = n.id.isNotBlank()
+                val fresh = "m$loose" !in seenNotes && if (withId) "i${n.id}" !in seenNotes else "w$loose" !in seenNotes
+                if (withId) { seenNotes += "i${n.id}"; seenNotes += "w$loose" } else seenNotes += "m$loose"
+                if (!fresh) return
+                meshNote(n, hops = 1)
+                if (CompanionLink.noteIsFor(n, myInstruments())) {
+                    // Never over an urgent one that has not been tapped away: after it.
+                    if (noticeUp && notice?.urgent == true) waitingNotes += System.currentTimeMillis() to n
+                    else putUp(n)
                 }
             }
             else -> Unit
@@ -679,7 +715,7 @@ internal fun CompanionDialog(state: SheetsState, onClose: () -> Unit) {
     DisposableEffect(Unit) {
         val scanner = CompanionScanner { leader ->
             state.platform.onMain {
-                if (leader.name != state.platform.deviceName && found.none { it.name == leader.name && it.port == leader.port }) found += leader
+                if (leader.host !in com.inksheets.core.RemoteClient.localAddresses() && found.none { it.host == leader.host && it.port == leader.port }) found += leader
             }
         }
         scanner.start()

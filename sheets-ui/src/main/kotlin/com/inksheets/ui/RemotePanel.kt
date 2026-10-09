@@ -182,9 +182,14 @@ class RemoteControl(private val state: SheetsState) {
         if (host != null) return true
         val name = state.platform.deviceName
         val h = RemoteHost(name, key, port)
-        h.onCommand = { c ->
+        h.onCommandReply = { c, reply ->
             state.platform.onMain {
-                runCatching { perform(c) }.onFailure { state.platform.log("Remote: ${c.action} failed - ${it.message}") }
+                val why = whyNot(c)
+                if (why != null) {
+                    // A tick means it was done: a press that could not be says so, on the remote.
+                    state.platform.log("Remote: ${c.action} did nothing - $why")
+                    reply(why)
+                } else runCatching { perform(c) }.onFailure { state.platform.log("Remote: ${c.action} failed - ${it.message}") }
             }
         }
         h.onLog = { line -> state.platform.log("Remote: $line") }
@@ -301,6 +306,22 @@ class RemoteControl(private val state: SheetsState) {
 
     /** A command made here - by a controller (a pedal, a fader) - done just as a remote's is. On the UI thread. */
     internal fun performHere(c: RemoteLink.Command) = runCatching { perform(c) }.onFailure { state.platform.log("Controller: ${c.action} failed - ${it.message}") }
+
+    /** Why [c] cannot be carried out here now, in a few words; null when it can. */
+    private fun whyNot(c: RemoteLink.Command): String? = when (c.action) {
+        RemoteLink.NOTE, RemoteButton.MESSAGE -> if (!state.companion.leading) "not leading" else null
+        RemoteLink.PRESET -> when {
+            !state.companion.leading -> "not leading"
+            c.index?.let { state.presets.getOrNull(it) } == null -> "no such message"
+            else -> null
+        }
+        RemoteButton.LEADER -> if (state.companion.following == null) "not following a leader" else null
+        RemoteButton.AUDIO_SEEK, RemoteButton.AUDIO_RESTART, RemoteButton.AUDIO_SPEED, RemoteButton.AUDIO_VOLUME,
+        RemoteButton.AUDIO_VOLUME_SET, RemoteButton.AUDIO_SPEED_SET -> if (Recording.player == null) "no recording playing" else null
+        RemoteButton.LISTEN -> if (!state.listenTurns) "Listen is off in Settings" else null
+        RemoteButton.PAGE, RemoteButton.PARTS, RemoteButton.READ_PAGE, RemoteButton.READ_PART -> if (state.currentPath == null) "no song open" else null
+        else -> null
+    }
 
     /** A remote's command, on the UI thread: just what a button here would do. */
     private fun perform(c: RemoteLink.Command) {
@@ -420,9 +441,13 @@ class RemoteControl(private val state: SheetsState) {
 
     private var client: RemoteClient? = null
 
+    /** When the device was last heard from, even by a heartbeat; 0 when not connected. */
+    val lastHeard: Long get() = client?.lastHeard ?: 0L
+
     fun connect(t: RemoteLink.Target) {
         client?.stop()
         answered.clear()
+        whys.clear()
         blocked = null
         refused = null
         shown = null
@@ -430,10 +455,10 @@ class RemoteControl(private val state: SheetsState) {
         target = t
         state.platform.setPref(K_LAST, RemoteLink.pairLink(t))
         val c = RemoteClient(state.platform.deviceName, myId) { line ->
-            if (line is RemoteLink.Line.Got) answered += line.seq
+            if (line is RemoteLink.Line.Got) { answered += line.seq; line.why?.let { whys[line.seq] = it } }
             state.platform.onMain {
                 when (line) {
-                    is RemoteLink.Line.Got -> lastPress?.takeIf { it.seq == line.seq }?.let { lastPress = it.copy(got = true) }
+                    is RemoteLink.Line.Got -> lastPress?.takeIf { it.seq == line.seq }?.let { lastPress = it.copy(got = true, why = line.why ?: it.why) }
                     is RemoteLink.Line.Shows -> shown = line.state
                     is RemoteLink.Line.Songs -> hostLibrary = line.library
                     RemoteLink.Line.Refused -> {
@@ -464,7 +489,7 @@ class RemoteControl(private val state: SheetsState) {
     }
 
     /** The last press on this remote: [got] null while waiting, then whether the device got it. */
-    data class Press(val name: String, val seq: Int, val got: Boolean?, val unanswered: Boolean = false)
+    data class Press(val name: String, val seq: Int, val got: Boolean?, val unanswered: Boolean = false, val why: String? = null)
 
     var lastPress by mutableStateOf<Press?>(null)
         private set
@@ -472,12 +497,29 @@ class RemoteControl(private val state: SheetsState) {
     /** Presses the device has said it got. */
     private val answered: MutableSet<Int> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
 
-    fun send(command: RemoteLink.Command, name: String = command.action) {
+    /** Why the device did nothing for a press, by its number - which can arrive before the press is shown. */
+    private val whys = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /** What a press is called when its button gave no name: words, not the action's code name. */
+    private fun friendly(c: RemoteLink.Command): String = when (c.action) {
+        RemoteLink.PRESET -> shown?.presets?.getOrNull(c.index ?: -1)?.text ?: "Message"
+        RemoteLink.NOTE, RemoteButton.MESSAGE -> "Message"
+        RemoteLink.SONG -> hostLibrary?.songs?.firstOrNull { it.id == c.id }?.title ?: "Song"
+        RemoteLink.SET_ENTRY -> shown?.set?.getOrNull(c.index ?: -1)?.title ?: "Song"
+        RemoteLink.SETLIST -> "Setlist"
+        RemoteButton.PARTS -> shown?.parts?.firstOrNull { it.id == c.id }?.title ?: "Part"
+        RemoteButton.PROFILES -> "Instrument"
+        RemoteButton.BOOKMARKS -> "Bookmark"
+        RemoteButton.TAP -> "Tap tempo"
+        else -> c.action.replace('_', ' ').replace('-', ' ').lowercase().replaceFirstChar { it.uppercase() }
+    }
+
+    fun send(command: RemoteLink.Command, name: String = friendly(command)) {
         val c = client ?: run { lastPress = Press(name, 0, false); return }
         Thread({
             val seq = c.send(command)
             state.platform.onMain {
-                val press = Press(name, seq, if (seq == 0) false else if (seq in answered) true else null)
+                val press = Press(name, seq, if (seq == 0) false else if (seq in answered) true else null, why = whys.remove(seq))
                 lastPress = press
                 if (seq != 0) java.util.Timer("remote-press", true).schedule(object : java.util.TimerTask() {
                     override fun run() = state.platform.onMain {
@@ -594,10 +636,18 @@ internal fun RemoteScreen(state: SheetsState, onClose: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text("Remote", style = MaterialTheme.typography.titleLarge)
                     remote.target?.let { t ->
+                        // The device pings every two seconds: three seconds of nothing is a link already gone.
+                        var now by remember { mutableStateOf(System.currentTimeMillis()) }
+                        androidx.compose.runtime.LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(1000); now = System.currentTimeMillis() } }
+                        val noSignal = remote.connected && remote.lastHeard.let { it > 0 && now - it > 3_500 }
                         Text(
-                            if (remote.connected) "Controlling ${t.name}" else "Reaching ${t.name}... (both on the same Wi-Fi)",
+                            when {
+                                noSignal -> "No signal from ${t.name}... trying again"
+                                remote.connected -> "Controlling ${t.name}"
+                                else -> "Reaching ${t.name}... (both on the same Wi-Fi)"
+                            },
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (remote.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                            color = if (remote.connected && !noSignal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                         )
                     }
                 }
@@ -608,7 +658,8 @@ internal fun RemoteScreen(state: SheetsState, onClose: () -> Unit) {
                 // swiping between them while the buttons are changed or the touchpad is out.
                 val editing = remember { mutableStateOf(false) }
                 val touchpad = remember { mutableStateOf(false) }
-                RemotePager(state, enabled = !editing.value && !touchpad.value) { RemoteDeck(state, editing, touchpad) }
+                val scrolls = remember { mutableStateOf(false) }
+                RemotePager(state, enabled = !editing.value && !touchpad.value, scrolls = { scrolls.value }) { RemoteDeck(state, editing, touchpad, scrolls) }
             } else RemoteSetup(state)
         }
     }
@@ -625,7 +676,7 @@ private fun RemoteSetup(state: SheetsState) {
     DisposableEffect(Unit) {
         val scanner = RemoteScanner { name, host, port ->
             state.platform.onMain {
-                if (name != state.platform.deviceName && nearby.none { it.first == name && it.second == host }) nearby += Triple(name, host, port)
+                if (host !in RemoteClient.localAddresses() && nearby.none { it.first == name && it.second == host }) nearby += Triple(name, host, port)
             }
         }
         scanner.start()
@@ -771,13 +822,19 @@ internal fun HostSection(state: SheetsState) {
 
 /** Connected: what the other device shows, and the buttons. */
 @Composable
-private fun RemoteDeck(state: SheetsState, editingState: androidx.compose.runtime.MutableState<Boolean>, touchpadState: androidx.compose.runtime.MutableState<Boolean>) {
+private fun RemoteDeck(
+    state: SheetsState,
+    editingState: androidx.compose.runtime.MutableState<Boolean>,
+    touchpadState: androidx.compose.runtime.MutableState<Boolean>,
+    scrolls: androidx.compose.runtime.MutableState<Boolean>
+) {
     val remote = state.remote
     val shown = remote.shown
     var editing by editingState
     var changing by remember { mutableStateOf<Int?>(null) }
     var picking by remember { mutableStateOf<String?>(null) }
     var typing by remember { mutableStateOf(false) }
+    var macroRunning by remember { mutableStateOf(false) }
     var touchpad by touchpadState
     val taps = remember { mutableStateListOf<Long>() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
@@ -800,12 +857,16 @@ private fun RemoteDeck(state: SheetsState, editingState: androidx.compose.runtim
                     remote.send(RemoteLink.Command(action = RemoteButton.TAP, value = kotlin.math.round(bpm).coerceIn(20.0, 300.0)))
                 }
             }
-            RemoteButton.MACRO -> scope.launch {
-                // A step at a time, with a moment between: a song has to open before its page turns.
-                for (step in b.steps) {
-                    send(step)
-                    kotlinx.coroutines.delay(if (step.kind == RemoteButton.SONG || step.kind == RemoteButton.SETLIST) 900 else 300)
-                }
+            // A second press while the steps are still going is ignored: two would interleave.
+            RemoteButton.MACRO -> if (!macroRunning) scope.launch {
+                macroRunning = true
+                try {
+                    // A step at a time, with a moment between: a song has to open before its page turns.
+                    for (step in b.steps) {
+                        send(step)
+                        kotlinx.coroutines.delay(if (step.kind == RemoteButton.SONG || step.kind == RemoteButton.SETLIST) 900 else 300)
+                    }
+                } finally { macroRunning = false }
             }
             else -> send(b)
         }
@@ -899,12 +960,12 @@ private fun RemoteDeck(state: SheetsState, editingState: androidx.compose.runtim
                 remote.lastPress?.let { p ->
                     Text(
                         when (p.got) {
-                            true -> "${p.name} ✓"
+                            true -> if (p.why != null) "${p.name} - did nothing: ${p.why}" else "${p.name} ✓"
                             null -> if (p.unanswered) "${p.name} - sent (update the other device to see it arrive)" else "${p.name}..."
                             false -> if (!remote.connected) "${p.name} - not sent: not connected" else "${p.name} - not received. Reconnecting..."
                         },
                         style = MaterialTheme.typography.labelMedium,
-                        color = if (p.got == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (p.got == false || p.why != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 4.dp, start = 4.dp)
                     )
@@ -933,6 +994,7 @@ private fun RemoteDeck(state: SheetsState, editingState: androidx.compose.runtim
                 val w = (maxWidth - gap * (grid.columns - 1)) / grid.columns
                 val fit = (maxHeight - gap * (grid.rows - 1)) / grid.rows
                 val h = if (fit < 56.dp) 56.dp else fit
+                androidx.compose.runtime.SideEffect { scrolls.value = fit < 56.dp }
                 cellSize = androidx.compose.ui.unit.DpSize(w, if (h > w * 1.4f) w * 1.4f else h)
                 val scroll = rememberScrollState()
                 Column(
@@ -1519,7 +1581,7 @@ private fun PickRemoteItem(
                 OutlinedTextField(query, { query = it }, placeholder = { Text("Find") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
             if (items.isEmpty()) Text(empty, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val shownItems = items.withIndex().filter { (_, it) -> query.isBlank() || it.title.contains(query.trim(), ignoreCase = true) }
+            val shownItems = items.withIndex().filter { (_, it) -> matches(query, it.title) }
             Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
                 shownItems.forEach { (i, item) ->
                     Row(

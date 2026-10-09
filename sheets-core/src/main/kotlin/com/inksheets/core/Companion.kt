@@ -85,7 +85,9 @@ object CompanionLink {
         /** Over the music, big, until tapped away: "Stop", or a word between songs. */
         val urgent: Boolean = false,
         /** The colour it covers the music in (ARGB), or null for the warning colour. */
-        val color: Int? = null
+        val color: Int? = null,
+        /** Tells this message from any other, even one sent in the same second. Empty from an older leader. */
+        val id: String = ""
     )
 
     /** Whether [note] is for a player of any of [mine]. */
@@ -94,12 +96,12 @@ object CompanionLink {
 
     /** What a follower says on joining, so the leader's log can name it. */
     @Serializable
-    data class Hello(val kind: String = "hello", val name: String = "")
+    data class Hello(val kind: String = "hello", val name: String = "", val id: String = "")
 
     sealed interface Line {
         data class Show(val showing: Showing) : Line
         data class Ink(val share: InkShare) : Line
-        data class Joined(val name: String) : Line
+        data class Joined(val name: String, val id: String = "") : Line
         data class Message(val note: Note) : Line
         /** The leader is still there. [seq] and [at] as for [Showing]; zero from older leaders. */
         data class Ping(val seq: Long = 0, val at: Long = 0) : Line
@@ -139,7 +141,7 @@ object CompanionLink {
         when (obj["kind"]?.jsonPrimitive?.contentOrNull) {
             null, "show" -> Line.Show(json.decodeFromJsonElement(Showing.serializer(), obj))
             "ink" -> Line.Ink(json.decodeFromJsonElement(InkShare.serializer(), obj))
-            "hello" -> Line.Joined(json.decodeFromJsonElement(Hello.serializer(), obj).name)
+            "hello" -> json.decodeFromJsonElement(Hello.serializer(), obj).let { Line.Joined(it.name, it.id) }
             "note" -> Line.Message(json.decodeFromJsonElement(Note.serializer(), obj))
             "ping", "pong" -> {
                 val seq = obj["seq"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0
@@ -265,6 +267,9 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     private class Follower(val socket: Socket) {
         val queue = LinkedBlockingDeque<String>()
         @Volatile var name: String = socket.inetAddress?.hostAddress ?: "?"
+        /** The device's own id from its hello; empty from an older version, which is then told apart by name. */
+        @Volatile var id = ""
+        val who: String get() = id.ifBlank { name }
         @Volatile var open = true
         val since = System.currentTimeMillis()
     }
@@ -278,7 +283,7 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     private val recentNotes = ArrayList<Pair<Long, String>>()
 
     /** Players following, each once however many links it has open while swapping to a new one. */
-    val followerCount: Int get() = followers.map { it.name }.distinct().size
+    val followerCount: Int get() = followers.map { it.who }.distinct().size
 
     /** Where the leader last said it was, numbered as it was sent. */
     val current: CompanionLink.Showing? get() = last
@@ -356,11 +361,12 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
             val outcome = runCatching {
                 BufferedReader(InputStreamReader(f.socket.getInputStream(), Charsets.UTF_8)).use { reader ->
                     while (f.open) {
-                        val line = reader.readLine() ?: break
+                        val line = reader.readLineBounded(MAX_LINE) ?: break
                         when (val got = CompanionLink.read(line)) {
                             is CompanionLink.Line.Joined -> {
                                 if (got.name.isNotBlank()) f.name = got.name
-                                val back = lastSeen[f.name]?.let { System.currentTimeMillis() - it < BACK_WITHIN_MS } == true
+                                f.id = got.id
+                                val back = lastSeen[f.who]?.let { System.currentTimeMillis() - it < BACK_WITHIN_MS } == true
                                 if (!back) onLog?.invoke("${f.name} is following ($followerCount now)")
                                 onFollowers?.invoke(followerCount)
                             }
@@ -389,12 +395,13 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
         runCatching { f.socket.close() }
         val secs = (System.currentTimeMillis() - f.since) / 1000
         val name = f.name
-        lastSeen[name] = System.currentTimeMillis()
+        val who = f.who
+        lastSeen[who] = System.currentTimeMillis()
         // Said only if it does not come straight back: a follower on a network that cuts links
         // swaps to a fresh one every few seconds, and that is not news.
         Thread({
             Thread.sleep(BACK_WITHIN_MS)
-            if (followers.none { it.name == name }) {
+            if (followers.none { it.who == who }) {
                 onLog?.invoke("$name $why after ${secs} s ($followerCount following)")
                 onFollowers?.invoke(followerCount)
             }
@@ -416,7 +423,10 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     /** A message to every follower; each shows it only if it is for its instrument. */
     fun note(note: CompanionLink.Note) {
         // Its time is its name, the same over Wi-Fi and over Bluetooth: kept if already given.
-        val sent = note.copy(from = name, at = if (note.at > 0) note.at else System.currentTimeMillis())
+        val sent = note.copy(
+            from = name, at = if (note.at > 0) note.at else System.currentTimeMillis(),
+            id = note.id.ifBlank { java.util.UUID.randomUUID().toString().take(8) }
+        )
         val line = CompanionLink.encode(sent)
         // Kept a while and given again to anyone who joins meanwhile: a tablet whose link dropped
         // for a moment still gets told. Each follower shows a message once, however often it comes.
@@ -451,6 +461,9 @@ class CompanionLeader(private val name: String, private val port: Int = Companio
     companion object {
         const val PING_EVERY_MS = 2_000L
 
+        /** The longest line a follower sends (a hello or a heartbeat answer). */
+        const val MAX_LINE = 4_096
+
         /** How long a message is given again to followers that join (or come back) after it. */
         const val NOTE_KEPT_MS = 30_000L
 
@@ -472,6 +485,9 @@ class CompanionFollower(
     private val myName: String,
     private val onLine: (CompanionLink.Line) -> Unit
 ) {
+    /** This follower's own id, the same on every connection it makes: the leader counts devices by it. */
+    private val myId = java.util.UUID.randomUUID().toString()
+
     @Volatile private var socket: Socket? = null
     @Volatile private var wanted: CompanionLink.Leader? = null
     @Volatile private var out: OutputStreamWriter? = null
@@ -528,7 +544,7 @@ class CompanionFollower(
                 socket = s
                 out = runCatching {
                     OutputStreamWriter(s.getOutputStream(), Charsets.UTF_8).apply {
-                        write(CompanionLink.encode(CompanionLink.Hello(name = myName)) + "\n"); flush()
+                        write(CompanionLink.encode(CompanionLink.Hello(name = myName, id = myId)) + "\n"); flush()
                     }
                 }.getOrNull()
                 first.complete(true)

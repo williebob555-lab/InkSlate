@@ -344,7 +344,7 @@ object RemoteLink {
     data class Hello(val kind: String = "hello", val name: String = "", val key: String = "", val id: String = "", val v: Int = 1)
 
     @Serializable
-    data class Got(val kind: String = "got", val seq: Int)
+    data class Got(val kind: String = "got", val seq: Int, val why: String? = null)
 
     const val SONG = "song"
     const val SETLIST = "setlist"
@@ -359,8 +359,11 @@ object RemoteLink {
         data class Do(val command: Command) : Line
         data class Joined(val hello: Hello) : Line
         data object Ping : Line
-        /** The device has the press numbered [seq]. */
-        data class Got(val seq: Int) : Line
+        /**
+         * The device has the press numbered [seq]; a second one with [why] says it could not do it
+         * ("not leading", "nothing playing"). An older device never sends [why].
+         */
+        data class Got(val seq: Int, val why: String? = null) : Line
         /** The key was wrong: this device was paired again, or the code was mistyped. */
         data object Refused : Line
     }
@@ -383,7 +386,7 @@ object RemoteLink {
             "do" -> Line.Do(json.decodeFromJsonElement(Command.serializer(), obj))
             "hello" -> Line.Joined(json.decodeFromJsonElement(Hello.serializer(), obj))
             "ping" -> Line.Ping
-            "got" -> Line.Got(json.decodeFromJsonElement(Got.serializer(), obj).seq)
+            "got" -> json.decodeFromJsonElement(Got.serializer(), obj).let { Line.Got(it.seq, it.why) }
             "refused" -> Line.Refused
             else -> null
         }
@@ -499,6 +502,24 @@ interface RemoteBluetooth {
     }
 }
 
+/**
+ * One line of at most [max] characters; null at the end of the stream. A longer line throws
+ * instead of being gathered into memory - whoever is on the network can send one.
+ */
+internal fun BufferedReader.readLineBounded(max: Int): String? {
+    val sb = StringBuilder()
+    while (true) {
+        val ch = read()
+        if (ch < 0) return if (sb.isEmpty()) null else sb.toString()
+        if (ch == 10) {
+            if (sb.isNotEmpty() && sb[sb.length - 1] == (13).toChar()) sb.setLength(sb.length - 1)
+            return sb.toString()
+        }
+        if (sb.length >= max) throw java.io.IOException("a line longer than $max characters")
+        sb.append(ch.toChar())
+    }
+}
+
 class RemoteHost(
     private val name: String,
     @Volatile var key: String,
@@ -532,6 +553,12 @@ class RemoteHost(
 
     /** A command from a remote, off the UI thread. */
     var onCommand: ((RemoteLink.Command) -> Unit)? = null
+
+    /**
+     * Like [onCommand], and used instead of it when set: also given a way to answer the remote
+     * that sent it - "did nothing: [reason]" - for a press that could not be carried out.
+     */
+    var onCommandReply: ((RemoteLink.Command, (String) -> Unit) -> Unit)? = null
 
     /** Remotes connecting and leaving, and every press; off the UI thread. */
     var onLog: ((String) -> Unit)? = null
@@ -590,7 +617,13 @@ class RemoteHost(
     fun take(pipe: RemotePipe) {
         if (!running) { pipe.close(); return }
         val c = Client(pipe)
-        clients += c
+        // Anyone on the network can open connections and say nothing: only so many that have
+        // not given the key are kept, the oldest let go first, so a real remote still gets in.
+        synchronized(clients) {
+            val waiting = clients.filter { !it.admitted && !it.refusing }.sortedBy { it.since }
+            if (waiting.size >= MAX_UNKNOWN) waiting.take(waiting.size - MAX_UNKNOWN + 1).forEach { drop(it) }
+            clients += c
+        }
         Thread({
             val out = runCatching { OutputStreamWriter(c.pipe.output, Charsets.UTF_8) }.getOrNull()
             var why = if (out == null) "could not send to it" else "closed"
@@ -607,7 +640,8 @@ class RemoteHost(
             val heard = runCatching {
                 val reader = BufferedReader(InputStreamReader(c.pipe.input, Charsets.UTF_8))
                 while (c.open) {
-                    val line = reader.readLine() ?: break
+                    // Until the key is right a line may only be short; after it, a command is small too.
+                    val line = reader.readLineBounded(if (c.admitted) MAX_LINE else MAX_LINE_UNKNOWN) ?: break
                     c.heard = System.currentTimeMillis()
                     when (val got = RemoteLink.read(line)) {
                         is RemoteLink.Line.Joined -> {
@@ -638,7 +672,10 @@ class RemoteHost(
                             val stream = cmd.action == RemoteButton.VIEW
                             if (cmd.seq != 0 && !stream) c.queue.offerFirst(RemoteLink.encode(RemoteLink.Got(seq = cmd.seq)))
                             if (!stream) onLog?.invoke("Remote ${c.name}: ${cmd.action}" + listOfNotNull(cmd.id, cmd.index, cmd.value).joinToString("") { " $it" })
-                            onCommand?.invoke(cmd)
+                            val reply = onCommandReply
+                            if (reply != null) reply(cmd) { why ->
+                                if (cmd.seq != 0 && c.open) c.queue.offerFirst(RemoteLink.encode(RemoteLink.Got(seq = cmd.seq, why = why)))
+                            } else onCommand?.invoke(cmd)
                         }
                         else -> Unit
                     }
@@ -690,7 +727,12 @@ class RemoteHost(
 
     companion object {
         const val PING_EVERY_MS = 2_000L
-        const val HELLO_WITHIN_MS = 10_000
+        const val HELLO_WITHIN_MS = 5_000
+        /** The longest line before the key is right, and after it. */
+        const val MAX_LINE_UNKNOWN = 4_096
+        const val MAX_LINE = 65_536
+        /** Connections that have not yet given the key, at most. */
+        const val MAX_UNKNOWN = 16
         /** Three missed pings. */
         const val SILENT_FOR_MS = 7_000L
     }
@@ -735,6 +777,10 @@ class RemoteClient(
 
     /** A connection to this address opened, then carried nothing: the network is in the way. Off the UI thread. */
     var onBlocked: ((address: String) -> Unit)? = null
+
+    /** When anything - a heartbeat too - last came from the device (this clock); 0 before. */
+    @Volatile var lastHeard: Long = 0L
+        private set
 
     /** How the device is reached now: an IP address, or `bt:...`. */
     @Volatile var via: String? = null
@@ -786,6 +832,7 @@ class RemoteClient(
                     while (wanted === target) {
                         val line = reader.readLine() ?: break
                         lastRead.set(System.currentTimeMillis())
+                        lastHeard = lastRead.get()
                         if (!heard) {
                             heard = true
                             lastGood = at

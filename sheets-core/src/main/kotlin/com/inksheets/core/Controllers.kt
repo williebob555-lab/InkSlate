@@ -77,7 +77,8 @@ data class ControlEvent(
                 if (b >= 0xF8) { i++; continue }               // real-time: clock, start, stop
                 if (b == 0xF0) { while (i < end && (bytes[i].toInt() and 0xFF) != 0xF7) i++; i++; continue }   // sysex
                 val status: Int
-                if (b >= 0x80) { status = b; running[0] = b; i++ } else status = running[0]
+                // (Only a channel message is repeated by running status; a system byte ends it - or a stray data byte after one never moved on.)
+                if (b >= 0x80) { status = b; running[0] = if (b < 0xF0) b else 0; i++ } else status = running[0]
                 if (status == 0) { i++; continue }
                 val type = status and 0xF0
                 val length = if (type == 0xC0 || type == 0xD0) 1 else if (status >= 0xF0) 0 else 2
@@ -95,7 +96,7 @@ data class ControlEvent(
 /** A control: which device ("" for any), what kind, its channel and number. */
 @Serializable
 data class ControlRef(val device: String, val kind: String, val channel: Int, val number: Int) {
-    fun matches(e: ControlEvent) = (device.isEmpty() || device == e.device) && kind == e.kind && channel == e.channel && number == e.number
+    fun matches(e: ControlEvent) = (device.isEmpty() || sameDevice(device, e.device)) && kind == e.kind && channel == e.channel && number == e.number
 
     fun short(): String = when (kind) {
         ControlEvent.NOTE -> "note $number"
@@ -104,6 +105,16 @@ data class ControlRef(val device: String, val kind: String, val channel: Int, va
         else -> "key $number"
     } + if (channel > 0) " (ch $channel)" else ""
 }
+
+/**
+ * Whether two device names are one device: Windows puts the USB port in front of the name
+ * ("2- T4 Pedal") and Linux a hardware address after it, so the same pedal in another port, or
+ * plugged in again, is still the pedal a control was given to.
+ */
+fun sameDevice(a: String, b: String): Boolean = a == b || deviceKey(a) == deviceKey(b)
+
+private fun deviceKey(name: String): String =
+    name.trim().replace(Regex("""^\d+\s*-\s*"""), "").replace(Regex("""\s*\[[^\]]*]$"""), "").lowercase()
 
 /**
  * What a control does: [action], one of the remote's. [continuous]: a fader or pedal sweeping a

@@ -123,9 +123,10 @@ internal enum class RemotePage(val title: String, val tab: String, val dx: Int, 
  * The remote's pages round [center] (the player's buttons): a swipe, or a tap on a page's tab at
  * the edge, goes to a page; from a page, a swipe any way (sideways only on the set, which scrolls
  * up and down) or its back button comes back. [enabled] off while the buttons are being changed.
+ * [scrolls]: the buttons scroll up and down, so a vertical swipe there is theirs, not a page's.
  */
 @Composable
-internal fun RemotePager(state: SheetsState, enabled: Boolean, center: @Composable () -> Unit) {
+internal fun RemotePager(state: SheetsState, enabled: Boolean, scrolls: () -> Boolean = { false }, center: @Composable () -> Unit) {
     var page by remember { mutableStateOf(RemotePage.CENTER) }
     val threshold = with(LocalDensity.current) { 64.dp.toPx() }
     Box(
@@ -146,7 +147,7 @@ internal fun RemotePager(state: SheetsState, enabled: Boolean, center: @Composab
                         if (fingers > 1) break
                         val dx = end.x - down.position.x; val dy = end.y - down.position.y
                         val sideways = abs(dx) > threshold && abs(dx) > abs(dy) * 1.4f
-                        val upright = abs(dy) > threshold && abs(dy) > abs(dx) * 1.4f
+                        val upright = abs(dy) > threshold && abs(dy) > abs(dx) * 1.4f && !(page == RemotePage.CENTER && scrolls())
                         val next = when {
                             page == RemotePage.CENTER && (sideways || upright) -> RemotePage.from(dx, dy)
                             page == RemotePage.SET && sideways -> RemotePage.CENTER
@@ -276,9 +277,9 @@ private fun SidePage(state: SheetsState, page: RemotePage, onBack: () -> Unit, c
         }
         state.remote.lastPress?.let { p ->
             Text(
-                when (p.got) { true -> "${p.name} ✓"; null -> "${p.name}..."; false -> "${p.name} - not received" },
+                when (p.got) { true -> if (p.why != null) "${p.name} - did nothing: ${p.why}" else "${p.name} ✓"; null -> "${p.name}..."; false -> "${p.name} - not received" },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (p.got == false) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                color = if (p.got == false || p.why != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, modifier = Modifier.padding(horizontal = 12.dp)
             )
         }
@@ -332,7 +333,8 @@ private fun SetPage(state: SheetsState, onChosen: () -> Unit) {
 
     // What is shown: (number in the set or -1, title, colour, what a tap sends).
     data class Tile(val number: Int, val title: String, val color: Int?, val now: Boolean, val next: Boolean, val tap: () -> Unit)
-    val tiles: List<Tile> = when (view) {
+    var query by remember(view) { mutableStateOf("") }
+    val allTiles: List<Tile> = when (view) {
         0 -> set.mapIndexed { i, it ->
             Tile(i + 1, it.title, it.color, i == shown?.setIndex, i == (shown?.setIndex ?: -2) + 1) {
                 send(state, RemoteLink.SET_ENTRY, it.title, index = i)
@@ -345,6 +347,8 @@ private fun SetPage(state: SheetsState, onChosen: () -> Unit) {
             Tile(-1, it.title, it.color, it.id == shown?.songId, false) { send(state, RemoteLink.SONG, it.title, id = it.id) }
         }
     }
+    // Found the way Home finds: every word, any case, accents aside.
+    val tiles = if (query.isBlank()) allTiles else allTiles.filter { matches(query, it.title) }
     val grid = rememberLazyGridState()
     // The song in front in view as the page opens.
     LaunchedEffect(view, az) {
@@ -359,6 +363,7 @@ private fun SetPage(state: SheetsState, onChosen: () -> Unit) {
             Chip("Setlists", view == 1, accent) { view = 1 }
             Chip("All songs", view == 2, accent) { view = 2 }
         }
+        ListSearch(allTiles.size, query, { query = it }, hint = "Find")
         // In what order, how big: the tiles as large as the player wants them to be found at a glance.
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) {
             if (view == 0) {
