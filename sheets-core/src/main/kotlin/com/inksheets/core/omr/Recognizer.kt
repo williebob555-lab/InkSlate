@@ -3421,7 +3421,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val home = measures.indices.firstOrNull { k2 -> measures[k2].staff == m.staff && measures[k2].page == m.page && cx >= measures[k2].box.left && cx < measures[k2].box.right } ?: mi
             all += Found(home, label, p, bx)
         }
-        if (System.getProperty("inksheets.omr.shapes") != null) for (f in all) println("  SHAPE staff ${measures[f.mi].staff} bar ${measures[f.mi].number} ${f.box.toList()} ${f.label} %.2f".format(f.p))
+        if (System.getProperty("inksheets.omr.shapes") != null) for (f in all) { val st = staves[measures[f.mi].staff]; val x = ((f.box[0] + f.box[2]) / 2).coerceIn(st.left, st.right); val sp = st.space
+            println("  SHAPE staff ${measures[f.mi].staff} bar ${measures[f.mi].number} ${f.box.toList()} ${f.label} %.2f  w %.2f h %.2f top %.1f bottom %.1f".format(f.p, (f.box[2] - f.box[0] + 1) / sp, (f.box[3] - f.box[1] + 1) / sp, (f.box[1] - st.lineY(0, x)) / sp, (f.box[3] - st.lineY(4, x)) / sp)) }
         // Words first, by how they lie: small shapes off the staff, side by side along one line,
         // three or more - whatever each letter alone was taken for (poco's "p" is no piano).
         fun small(f: Found): Boolean {
@@ -3480,7 +3481,32 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             w = if (isWord) v else w + 1
         }
-        val found = all.filter { it !in inWord && it.sure && it.label != "other" && it.label != "word" && it.label != "digit" }
+        // What the network is unsure of, taken by its geometry where it can only be one thing (see [rescue]).
+        val candidates = all.filter { it !in inWord && it.label != "word" && it.label != "digit" }
+        val found = ArrayList<Found>()
+        for (f in candidates) {
+            if (f.sure && f.label != "other") found += f
+            else rescue(f.label, f.p, f.box, measures[f.mi], staves[measures[f.mi].staff], ::density)?.let { found += Found(f.mi, it, 1f, f.box) }
+        }
+        // A dot a scan breaks into specks (two slivers a pixel or two apart): the specks of one dot taken together.
+        val specks = candidates.filter { f -> f.label in setOf("other", "staccato", "fermata", "tenuto") && f.box[2] - f.box[0] + 1 < measures[f.mi].space * 0.6f && f.box[3] - f.box[1] + 1 < measures[f.mi].space * 0.6f }
+        val used = HashSet<Found>()
+        for (a in specks) {
+            if (a in used) continue
+            val gap = max(2f, measures[a.mi].space * 0.2f)
+            val group = arrayListOf(a); used += a
+            var grew = true
+            while (grew) {
+                grew = false
+                for (b in specks) {
+                    if (b in used || b.mi != a.mi) continue
+                    if (group.any { g -> b.box[0] - g.box[2] <= gap && g.box[0] - b.box[2] <= gap && b.box[1] - g.box[3] <= gap && g.box[1] - b.box[3] <= gap }) { group += b; used += b; grew = true }
+                }
+            }
+            if (group.size < 2) continue
+            val union = intArrayOf(group.minOf { it.box[0] }, group.minOf { it.box[1] }, group.maxOf { it.box[2] }, group.maxOf { it.box[3] })
+            if (rescue("staccato", 1f, union, measures[a.mi], staves[measures[a.mi].staff], ::density) == "staccato") found += Found(a.mi, "staccato", 1f, union)
+        }
         // Dynamics: letters side by side, one word; letters run on into other letters are a word, not a dynamic.
         val letters = found.filter { it.label.startsWith("dyn_") }.sortedWith(compareBy({ measures[it.mi].staff }, { it.box[0] }))
         var i = 0
@@ -3492,7 +3518,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val word = (i..j).joinToString("") { letters[it].label.removePrefix("dyn_") }
             val x0 = letters[i].box[0]; val x1 = letters[j].box[2]
             val touchesOther = all.any { o -> o !in letters.subList(i, j + 1) && small(o) && measures[o.mi].staff == measures[letters[i].mi].staff &&
-                o.box[2] >= x0 - sp * 0.6f && o.box[0] <= x1 + sp * 0.6f && abs((o.box[1] + o.box[3]) - (letters[i].box[1] + letters[i].box[3])) < sp * 1.4f }
+                o.box[2] >= x0 - sp * 0.6f && o.box[0] <= x1 + sp * 0.6f && abs((o.box[1] + o.box[3]) - (letters[i].box[1] + letters[i].box[3])) < sp * 1.4f &&
+                    // (a speck inside the letter's own box is its part - an italic's serif - not another mark)
+                    !(o.box[0] >= x0 - 2 && o.box[2] <= x1 + 2 && o.box[1] >= (i..j).minOf { letters[it].box[1] } - 2 && o.box[3] <= (i..j).maxOf { letters[it].box[3] } + 2) }
             if (!touchesOther && (word in Performance.LEVELS || word in setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp"))) {
                 val m = measures[letters[i].mi]
                 add.getOrPut(letters[i].mi) { ArrayList() } += Direction("dynamic", x0.toFloat(), x1.toFloat(), word, above = letters[i].box[3] < m.box.top, seen = true)
@@ -3569,6 +3597,49 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             if (name in n.articulations) continue
             measures[f.mi] = m.copy(events = m.events.mapIndexed { idx, e -> if (idx == target.index) n.copy(articulations = n.articulations + name, marksSeen = true) else e })
         }
+    }
+
+    /**
+     * A shape the network is not sure of, taken for what only it can be by where it stands and how it
+     * is shaped, on a scan where old engraving and thick print confuse it: a small round dot just over
+     * or under a note's head (not beside it - that is a dotted note's) is a staccato; a thin arc a few
+     * spaces long over or under two notes or more is a slur; a big letter under the staff is a "p" (its
+     * descender only) or an "f" (ascender and descender). Null: leave it out, as before.
+     */
+    internal fun rescue(label: String, p: Float, box: IntArray, m: Measure, s: Staff, density: (IntArray) -> Float): String? {
+        val sp = m.space
+        val w = (box[2] - box[0] + 1) / sp; val h = (box[3] - box[1] + 1) / sp
+        val cx = (box[0] + box[2]) / 2f; val cy = (box[1] + box[3]) / 2f
+        val x = cx.coerceIn(s.left.toFloat(), s.right.toFloat())
+        val top = s.lineY(0, x.toInt()); val bottom = s.lineY(4, x.toInt())
+        val notes = m.events.filterIsInstance<Note>()
+        if (System.getProperty("inksheets.omr.rescue") != null && w < 0.6f && h < 0.6f) println("  RESCUE ${box.toList()} $label %.2f w %.2f h %.2f dens %.2f cy-top %.2f notes ${notes.map { "${it.x.toInt()}:${it.steps}" }}".format(p, w, h, density(box), (cy - top) / sp))
+        if (label == "staccato" || label == "other" || label == "fermata") {
+            // (The net's own staccato may be a thin, faint dot: three pixels across on a scan.)
+            val dot = if (label == "staccato") p >= 0.4f && w in 0.1f..0.6f && h in 0.12f..0.6f && w / h in 0.4f..2.5f && density(box) >= 0.3f
+                else w in 0.15f..0.55f && h in 0.15f..0.55f && w / h in 0.55f..1.8f && density(box) >= 0.5f
+            if (dot) for (n in notes) {
+                if (abs(n.x + sp * 0.6f - cx) > sp * 0.8f || n.steps.isEmpty()) continue
+                val hi = top + n.steps.min() * sp / 2; val lo = top + n.steps.max() * sp / 2
+                if ((cy < hi - sp * 0.6f && cy > hi - sp * 3.2f) || (cy > lo + sp * 0.6f && cy < lo + sp * 3.2f)) return "staccato"
+            }
+        }
+        if (label == "curve" || label == "accent" || label == "tenuto" || label == "marcato") {
+            if (label == "curve" && p < 0.65f) return null
+            if (label != "curve" && w < 2f) return null
+            if (w < 1.8f || w > 6f || h > w * 0.45f || h < 0.2f || density(box) > 0.5f) return null
+            if (box[3] < top - sp * 6 || box[1] > bottom + sp * 6) return null
+            val under = notes.count { it.x + sp * 0.6f >= box[0] - sp * 0.5f && it.x + sp * 0.6f <= box[2] + sp * 0.5f }
+            return if (under >= 2) "curve" else null
+        }
+        if (label == "dyn_p" || label == "dyn_f" || label == "dyn_m" || label == "other") {
+            if (label != "other" && p < 0.5f) return null
+            val off = box[1] > bottom - sp * 0.6f && box[1] < bottom + sp * 3.5f
+            if (!off || w !in 0.9f..2.6f) return null
+            if (label == "other") return if (h !in 1.7f..2.7f || w < 1.4f || density(box) < 0.25f) null else if (h < 2.1f) "dyn_p" else "dyn_f"
+            return if (h in 1.4f..3.0f) label else null
+        }
+        return null
     }
 
     /**
