@@ -87,6 +87,12 @@ object Perform {
 
     fun on(action: PerformAction): Boolean = isOn?.invoke(action) ?: false
 
+    /**
+     * The space bar, asked first: while music is playing (or paused) it pauses and plays on -
+     * true when it did - and only otherwise turns the page.
+     */
+    var playPause: (() -> Boolean)? = null
+
     // ---- opening at a page -------------------------------------------------------
 
     private val jumps = java.util.concurrent.ConcurrentHashMap<String, Int>()

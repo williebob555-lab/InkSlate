@@ -157,6 +157,12 @@ private fun ui() = application {
         // A music stand has no frame: no title bar and no border, ever. Quit and minimise are in
         // the app's own menu.
         undecorated = AppFlavor.alwaysFullscreen,
+        // Space while music plays pauses it - before any button that happens to have the focus
+        // takes the key for a press of its own.
+        onPreviewKeyEvent = { event ->
+            event.type == KeyEventType.KeyDown && event.key == Key.Spacebar && !event.isCtrlPressed && !event.isShiftPressed &&
+                com.inkslate.core.Perform.playPause?.invoke() == true
+        },
         onKeyEvent = { event ->
             // Looked up rather than decided here. What a key does is a table now, on the same
             // terms as what a button does - see KeyBindingStore - so a shortcut can be moved, and

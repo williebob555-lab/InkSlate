@@ -66,7 +66,9 @@ import java.io.File
  */
 @Composable
 fun BoxScope.MusicStrip(state: SheetsState) {
-    val open = ScoreTools.open
+    // Folded with the action strip (a tap in the middle of the page, its corner button) and back
+    // with it: the two strips go together. The tools stay as they were, only out of sight.
+    val open = ScoreTools.open && !state.stripCollapsed
     LaunchedEffect(open) {
         state.platform.setMusicLane(open)
         Perform.recentre?.invoke()
@@ -96,6 +98,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
             modifier = Modifier.align(if (state.stripOnLeft) Alignment.CenterEnd else Alignment.CenterStart).padding(6.dp).width(60.dp)
                 .reportWidth { w -> Overlays.musicOut = with(density) { w.toDp() } + 12.dp }
         ) {
+            // One column, always, never scrolling (a scrolling strip swallows taps): the buttons shrink to fit.
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -105,21 +108,39 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                 // time, just the passage being worked on.
                 val here = state.pageShown.first
                 val busy = Transcriber.busy
-                if (score == null || !score.hasRead(here)) {
-                    if (score == null) {
-                        // Nothing to work from yet: reading the part (or this page of it) is the one thing to do.
-                        StripButton(Icons.Default.MusicNote, "Read", "Read this part's music, every page", btn, named, lit = busy != null) {
-                            if (file != null && busy == null) Transcriber.read(state, file) { Perform.marksChanged() }
+                // Reading: the button pressed fills from left to right as it goes.
+                var filled by remember { mutableStateOf(0f) }
+                LaunchedEffect(Transcriber.progress != null) {
+                    while (Transcriber.progress != null) { Transcriber.smoothProgress()?.let { filled = it }; kotlinx.coroutines.delay(100) }
+                    filled = 0f
+                }
+                if (busy != null) {
+                    // Reading: one tile saying so - how far, on one line, with a bar - and Stop. No
+                    // buttons that look pressable and do nothing while it reads.
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)) {
+                        Text("Reading", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1)
+                        androidx.compose.material3.LinearProgressIndicator(progress = { filled }, modifier = Modifier.width(48.dp).padding(vertical = 3.dp))
+                        Text("${(filled * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, maxLines = 1,
+                            color = MaterialTheme.colorScheme.primary)
+                    }
+                    HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
+                    StripButton(Icons.Default.Stop, if (Transcriber.stopAsked) "Stopping" else "Stop", "Stop reading (the pages read are kept)", btn, named) {
+                        Transcriber.stopAsked = true
+                    }
+                } else if (score == null || !score.hasRead(here)) {
+                    if (score == null || score.readPages != null) {
+                        // Nothing to work from yet (or only some of it): reading the part (or this page of it) is the one thing to do.
+                        StripButton(Icons.Default.MusicNote, "Read", "Read this part's music, every page", btn, named) {
+                            if (file != null) Transcriber.read(state, file) { Perform.marksChanged() }
                         }
                     }
                     StripButton(Icons.Default.Description, "Page ${here + 1}", "Read just this page's music", btn, named) {
-                        if (file != null && busy == null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
+                        if (file != null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
                     }
-                    Text(busy ?: if (score == null) "Whole part, or this page" else "Not read yet",
-                        style = MaterialTheme.typography.labelSmall, fontSize = 9.sp,
-                        lineHeight = 10.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 4.dp))
                 }
-                if (score != null) {
+                // The tools only for a page that has been read: an unread page offers reading it,
+                // and nothing else - not tools with nothing to work on.
+                if (score != null && score.hasRead(here)) {
                     // Check: every bar coloured by how sure its reading is - green, yellow, red - and
                     // a tap on any bar puts it right. One button for what was Clean, Fix and Wrong.
                     val red = ScoreTools.redCount(state)
@@ -129,7 +150,8 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     // The whole part redrawn clean, laid over the page (nothing new made): on and off.
                     val whole = ScoreTools.cleanedWhole(state)
                     StripButton(Icons.Default.AutoFixHigh, "Clean", "Show the whole part redrawn clean, over the page", btn, named, lit = whole) {
-                        ScoreTools.cleanWhole(state, !whole)
+                        // Decided at the press, from how it is now - not from when the button was last drawn.
+                        ScoreTools.cleanWhole(state, !ScoreTools.cleanedWhole(state))
                     }
                     HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
                     StripButton(Icons.Default.SelectAll, "Select", "Select bars: press and drag across them", btn, named, lit = ScoreTools.tool == ScoreTools.Tool.SELECT) {

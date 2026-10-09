@@ -107,7 +107,10 @@ class PdfPageSource(private val file: File) : PageSource {
      * cache and a Compose UI that can fail, and an OOM here would take the whole app down while
      * simply opening a file - so allocation failures retry smaller rather than propagating.
      */
-    override fun renderPage(index: Int, targetWidthPx: Int): Bitmap? = synchronized(lock) {
+    override fun renderPage(index: Int, targetWidthPx: Int): Bitmap? =
+        com.inkslate.core.RenderGate.display { renderPageNow(index, targetWidthPx) }
+
+    private fun renderPageNow(index: Int, targetWidthPx: Int): Bitmap? = synchronized(lock) {
         // These two are bugs in the caller, not rendering failures, so they are thrown rather
         // than returned as null. Reporting "no bitmap" for a closed renderer once cost a long
         // debugging session over a page that silently showed blank.
@@ -227,6 +230,9 @@ class PdfPageSource(private val file: File) : PageSource {
         }
 
     override fun renderRegion(index: Int, region: RectF, targetWidthPx: Int): Bitmap? =
+        com.inkslate.core.RenderGate.display { renderRegionNow(index, region, targetWidthPx) }
+
+    private fun renderRegionNow(index: Int, region: RectF, targetWidthPx: Int): Bitmap? =
         synchronized(lock) {
             val r = renderer
             if (closed || r == null || index !in 0 until r.pageCount) return null

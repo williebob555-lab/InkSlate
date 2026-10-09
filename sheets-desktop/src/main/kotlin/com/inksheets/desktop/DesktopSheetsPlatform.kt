@@ -18,6 +18,11 @@ import javax.sound.sampled.TargetDataLine
 
 /** The desktop's side of [SheetsPlatform]: Java Sound for the metronome and tuner, PDFBox for text. */
 class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatform {
+    init {
+        // The laptop draws two of the reader's pages side by side (the page ahead while this one is read); a tablet, one.
+        com.inkslate.core.RenderGate.readerRenders = if (com.inksheets.core.omr.Workers.roomy) 2 else 1
+    }
+
 
     override val deviceId: String =
         DesktopPrefs.get(K_DEVICE) ?: ("desktop-" + UUID.randomUUID().toString().take(8)).also {
@@ -285,10 +290,11 @@ private class JavaSoundOut : AudioOut {
             runCatching {
                 val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
                 val line = AudioSystem.getSourceDataLine(format)
-                // 40 ms held ahead: a pause elsewhere (a page drawn, memory tidied) no longer cuts the sound.
-                line.open(format, sampleRate / 25 * 2)
+                // 100 ms held in the card's buffer: a pause elsewhere (a page drawn, memory tidied, a busy
+                // machine) no longer cuts the sound. (The instrument is also rendered ahead of this: see Sound.)
+                line.open(format, sampleRate / 10 * 2)
                 line.start()
-                val block = FloatArray(256)
+                val block = FloatArray(480)
                 val bytes = ByteArray(block.size * 2)
                 while (running) {
                     fill(block)

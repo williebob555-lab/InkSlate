@@ -65,6 +65,7 @@ class MusicStripShots {
         val state = SheetsState(Stand(root))
         state.readMusic = true
         state.listenTurns = true
+        state.stripCollapsed = false
         state.change { editSong(ensureSong("Tune").id) { parts = listOf(Part(id = com.inksheets.core.Library.partIdFor("Band/Tune - Trumpet.pdf"), file = "Band/Tune - Trumpet.pdf")) } }
         state.current = state.library!!.songs.first()
         val path = File(root, "Band/Tune - Trumpet.pdf").absolutePath

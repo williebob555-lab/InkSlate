@@ -74,7 +74,8 @@ internal object ScoreTools {
     var said by mutableStateOf<String?>(null)
 
     /** Bumped at every change, so the pages are drawn again and the marks made afresh. */
-    private var version = 0
+    // State, so what is shown from it (Clean lit, the bars' colours) follows every change at once.
+    private var version by androidx.compose.runtime.mutableIntStateOf(0)
     private val marksCache = HashMap<Pair<String, Int>, Pair<Int, List<PageMark>>>()
 
     private fun changed() {
@@ -329,6 +330,8 @@ internal object ScoreTools {
     /** Turn the colours on or off. */
     fun toggleCheck(s: SheetsState) {
         goOn = s.platform.pref(K_GO_ON) != "false"
+        // Checking and playing are one or the other: Check stops the music.
+        if (tool != Tool.CHECK && (playing != null || paused != null)) stop(s)
         if (tool == Tool.CHECK) { if (checking) endCheck(); choose(Tool.CHECK) } else choose(Tool.CHECK)
         changed()
     }
@@ -350,8 +353,18 @@ internal object ScoreTools {
 
     private const val K_GO_ON = "sheets_fix_goes_on"
 
+    /** Back to playing: Fix and Check put away, the tools and the strips folded, the page fitted. */
+    fun putAway(s: SheetsState) {
+        if (checking) endCheck()
+        if (tool == Tool.CHECK) choose(Tool.CHECK)
+        close(s)
+        s.stripCollapsed = true
+        Perform.recentre?.invoke()
+    }
+
     fun close(s: SheetsState) {
         stop(s)
+        if (checking) endCheck()
         open = false
         tool = Tool.NONE
         syncTool()
@@ -671,6 +684,7 @@ internal object ScoreTools {
 
     /** Whether the part in front is shown clean: most of its bars cleaned. */
     fun cleanedWhole(s: SheetsState): Boolean {
+        version   // (read, so the Clean button is redrawn when it changes)
         val path = s.currentPath ?: return false
         val n = scoreHere(s)?.measures?.size ?: return false
         return n > 0 && cleanedIn(path).size * 2 >= n
@@ -778,7 +792,9 @@ internal object ScoreTools {
                     return
                 }
                 if (kotlin.math.hypot(dx, dy) > space * 2f) return
-                val bar = bars.firstOrNull() ?: return
+                // A tap on no bar (blank paper): done checking - back to playing, everything put
+                // away, the page fitted.
+                val bar = bars.firstOrNull() ?: run { state?.let { putAway(it) }; return }
                 state?.let { fixBar(it, bar) }
             }
             Tool.NONE -> Unit
@@ -1003,8 +1019,12 @@ internal object ScoreTools {
      * Play the bars chosen - or, with none, from the page in front to the end - at the metronome's
      * tempo, as the part's instrument sounds (or [soundAs]).
      */
+    /** Playing and checking are one or the other: playing puts Check (and Fix) away. */
+    private fun leaveCheck() { if (checking) endCheck(); if (tool == Tool.CHECK) choose(Tool.CHECK) }
+
     fun play(s: SheetsState, from: Int? = null) {
         stop(s)
+        leaveCheck()
         val path = s.currentPath ?: return
         val score = scoreOf(path) ?: run { said = "Read the music first"; return }
         val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return }
@@ -1026,12 +1046,15 @@ internal object ScoreTools {
         // A drum part on the drums (unless asked to sound as something else).
         val shown = s.partShown()
         val drums = if (soundAs != null) null else com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(shown?.label, shown?.instrument, File(path).nameWithoutExtension).joinToString(" "))
+        // The metronome going: its click moves into the music - on the music's own beats, its
+        // ritardandos and fermatas too - instead of ticking on beside it on a clock of its own.
+        val click = takeClick(s)
         val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, Synth.patchFor(Midi.program(sounding)),
-            loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, order = order)
+            loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, click = click, order = order)
         player = p
         playing = Triple(range.first, start.toInt(), 0)
         syncTool()
-        Sound.play(s, WHO) { buf -> p.fill(buf) }
+        Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
         var lastBar = -1
         watcher = java.util.Timer("score-play", true).apply {
             schedule(object : java.util.TimerTask() {
@@ -1039,6 +1062,8 @@ internal object ScoreTools {
                     val now = Triple(p.bar, p.bpm.toInt(), p.round)
                     s.platform.onMain {
                         if (player !== p) return@onMain
+                        // The tempo changed (the metronome, a remote, a pedal): the music goes on at it, smoothly.
+                        if (!(ramp && loop) && kotlin.math.abs(SharedMetronome.bpm - p.bpm) > 0.01) p.setTempo(SharedMetronome.bpm)
                         if (p.finished) { stop(s); return@onMain }
                         if (playing != now) { playing = now; changed() }
                         // The page follows the music.
@@ -1119,6 +1144,7 @@ internal object ScoreTools {
     /** The band - every other part read - from the bars chosen or the page in front, without this part. */
     fun playBand(s: SheetsState, from: Int? = null) {
         stop(s)
+        leaveCheck()
         val path = s.currentPath ?: return
         val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
         // This part's own bars, numbered as the band's are - and back again for showing.
@@ -1145,12 +1171,12 @@ internal object ScoreTools {
             // This part too, where asked: to hear the whole, or to hear how it fits.
             val (myId, myTranspose) = instrumentOf(s)
             val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, Synth.patchFor(Midi.program(soundAs ?: myId))) to 1f else null
-            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order)
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
             syncTool()
-            Sound.play(s, WHO) { buf -> p.fill(buf) }
+            Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
             var lastBar = -1
             watcher = java.util.Timer("band-play", true).apply {
                 schedule(object : java.util.TimerTask() {
@@ -1158,6 +1184,7 @@ internal object ScoreTools {
                         s.platform.onMain {
                             if (ensemble !== p) return@onMain
                             if (p.finished) { stop(s); return@onMain }
+                            if (kotlin.math.abs(SharedMetronome.bpm - p.tempo) > 0.01) p.setTempo(SharedMetronome.bpm)
                             val now = Triple(p.bar + offset, SharedMetronome.bpm.toInt(), 0)
                             if (playing != now) { playing = now; changed() }
                             if (now.first != lastBar) {
@@ -1331,13 +1358,23 @@ internal object ScoreTools {
         playFromBar(s, target)
     }
 
-    /** The tempo [by] beats a minute faster (slower, negative): at once, from the bar it is in. */
+    /** The tempo [by] beats a minute faster (slower, negative): the music goes on at it, not started again. */
     fun nudgeTempo(s: SheetsState, by: Int) {
         SharedMetronome.bpm = (SharedMetronome.bpm + by).coerceIn(20.0, 320.0)
         // The metronome's own tempo with it, so the two never disagree.
         SharedMetronome.engine?.let { it.settings = it.settings.copy(bpm = SharedMetronome.bpm) }
-        val now = playing?.first
-        if (now != null) { if (bandMode) playBand(s, now) else play(s, now) }
+        player?.setTempo(SharedMetronome.bpm)
+        ensemble?.setTempo(SharedMetronome.bpm)
         changed()
+    }
+
+    /**
+     * Whether the music plays with the click: the metronome going when it starts (stopped, its
+     * click now the music's), or the click asked for with playback in the metronome's settings.
+     */
+    private fun takeClick(s: SheetsState): Boolean {
+        val going = SharedMetronome.running
+        if (going) Click.stop(s)
+        return going || Click.withPlayback(s)
     }
 }

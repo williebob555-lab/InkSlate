@@ -3,7 +3,7 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** (2026-10-09 ~08:30) Midterm test build pushed at the user's request (e49d2b2 [build sheets]) - confirm it published. Playback rebuilt twice (planning engine + spectral wind/brass synth): user to listen and judge. T6 (UI audit 12 sizes + regression) running. Then: triage T6, remaining open items below, final build.
+**Now:** (2026-10-09 evening) ONE heavy job at a time (user's laptop overloaded by 4 parallel Gradle runs): agents run `--max-workers=2`, targeted `--tests` only, never alongside each other. Running: playback-engine agent (pops/hiss, legato, ties, line breaks, accents, phrasing, xruns, Copprasch articulations/dynamics). Queued in order: (1) page-render starvation (worktree agent-ab3a18340232f1520 has a partial RenderGate fix + ScreenFirstTest, uncommitted), (2) Copprasch reader marks diagnosis (agent-a0faf07fb4100dc90 has MarksDiagnostic.kt), (3) DecentSampler/SFZ sampler support, (4) Listen locking. Lead (not agents) places UI; taste calls go to the user as options. User picked: reading tile "Reading 42%" + Stop; short screens keep names in small print, More only last resort. Uncompiled in main: those two + strips never scroll.
 
 **Earlier:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
 

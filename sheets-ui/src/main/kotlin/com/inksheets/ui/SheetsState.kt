@@ -260,6 +260,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** The recordings panel, for the song opened last. */
     var audioOpen by mutableStateOf(false)
 
+    /** Home is on a screen too short for its extras (a phone on its side). */
+    var lowScreen by mutableStateOf(false)
+
     /** A word for a moment at the foot of the page - "End of the set" - and when it was said. */
     var edgeNotice by mutableStateOf<String?>(null)
     var edgeNoticeAt = 0L
@@ -393,6 +396,15 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             }
         }
         com.inkslate.core.Perform.centreTap = { bottom -> centreTap(bottom) }
+        // Space while music plays: pause it, or play on - the music read, or the recording.
+        com.inkslate.core.Perform.playPause = {
+            when {
+                ScoreTools.playing != null -> { ScoreTools.pause(this); true }
+                ScoreTools.paused != null -> { ScoreTools.resume(this); true }
+                Recording.session -> { Recording.playPause(this); true }
+                else -> false
+            }
+        }
         ScoreTools.install(this)
         PracticeLog.start(this)
         // Whichever song is in front is "the song": the one the play button plays and the one a
@@ -404,6 +416,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         // Markings brought across from MobileSheets, handed to a part when it is opened.
         com.inkslate.core.Perform.importedInk = { path, pageSize -> ImportedInk.strokes(importedMarksFor(path), pageSize) }
         com.inkslate.core.Perform.onPage = { path, page ->
+            // A page turned to (or a file opened) is drawn before any reading goes on.
+            com.inkslate.core.RenderGate.touch()
             Listener.pageChanged(this, path, page)
             PracticeLog.touch()
             // A whole read of this part cut off part way (the app closed) carries on.
@@ -1041,6 +1055,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** Delete a setlist - with an Undo, and in Recently deleted for 30 days. */
     fun deleteSetlist(id: String) {
         val name = library?.setlist(id)?.name ?: return
+        // The set being played: put away, not left pointing at a list that is gone.
+        if (playing?.first == id) backToSetlist()
         change { deleteSetlist(id) }
         offerUndo("Deleted $name") { change { restoreSetlist(id) } }
     }
