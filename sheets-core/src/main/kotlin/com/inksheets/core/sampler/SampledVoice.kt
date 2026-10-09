@@ -72,7 +72,7 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
             if (loop) ls.toDouble() else (start + min(0.08 * zone.pcm.rate, (end - start) * 0.3))
         } else start.toDouble()
         private val level: Float = if (zone == null || group == null) 0f else
-            (dbToLinear(inst.masterDb + group.gainDb + zone.gainDb) * Synth.amplitude(tone.velocity) * gain * (1.0 + tone.accent * 0.3)).toFloat()
+            (dbToLinear(inst.masterDb + group.gainDb + zone.gainDb) * Synth.amplitude(tone.velocity) * gain).toFloat()
         var stage = 0
         var env = 0f
         private val sus = (group?.sustain ?: 1.0).toFloat()
@@ -90,7 +90,8 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
 
         fun release() {
             if (oneShot || stage == 3) return
-            val len = max(0.02, group?.release ?: 0.1) * rate
+            // A short clean release: the recording own tail would fill the silence between tongued notes.
+            val len = max(0.02, min(group?.release ?: 0.1, 0.06)) * rate
             relStep = env / len.toFloat()
             stage = 3
         }
@@ -98,9 +99,16 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
         fun crossfadeOut(len: Int) { if (!oneShot && fadeOutLen == 0) { fadeOutLen = max(1, len); fadeOutPos = 0 } }
 
         private fun swell(s: Long): Float {
-            if (tone.endVelocity == tone.velocity) return 1f
-            val u = ((s - tone.start).toDouble() / max(1L, tone.length)).coerceIn(0.0, 1.0).toFloat()
-            return Synth.amplitude(tone.velocity + (tone.endVelocity - tone.velocity) * u) / Synth.amplitude(tone.velocity)
+            // The one continuous line of loudness (a new dynamic arrives over a moment) and, on an accent, a
+            // gentle weight - 2 dB at most, rising and falling back over about a tenth of a second.
+            val t = (s - tone.start).toDouble()
+            var w = 1f
+            if (tone.endVelocity != tone.velocity || tone.ramp > 0) w = Synth.amplitude(tone.velocityAt(t)) / Synth.amplitude(tone.velocity)
+            if (tone.accent > 0f) {
+                val x = t / (0.11 * rate)
+                if (x > 0 && x < 1) { val h = sin(PI * x); w *= (1.0 + tone.accent * 0.25 * h * h).toFloat() }
+            }
+            return w
         }
 
         private fun get(i: Int): Float {
@@ -159,7 +167,8 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
     /** One block into [buf] from sample [from]; true when the voice has finished. */
     fun render(buf: FloatArray, from: Long): Boolean {
         val n = buf.size
-        val xf = (0.04 * rate).toInt()
+        // The move from one note to the next under a slur: a quick crossfade, no slide.
+        val xf = (com.inksheets.core.omr.Feel.now.dipMs.coerceIn(15.0, 40.0) / 1000 * rate).toInt()
         var i = max(0, (cur.start - from).toInt())
         while (i < n) {
             val s = from + i

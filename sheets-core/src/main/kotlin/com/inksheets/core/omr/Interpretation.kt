@@ -54,6 +54,13 @@ object Interpretation {
         var sectionEnd = false
         /** How much of its written time it sounds (1 = all of it; over 1 overlaps the next, legato). */
         var sounding = 1.0
+        /** A new dynamic is written at it: the loudness moves over to it in a moment (not a jump), from where the note before left it. */
+        var stepped = false
+        /** Its loudness before the phrase's shape is laid over it: at its start and at its end. */
+        var baseStart = 0.68f
+        var baseEnd = 0.68f
+        var fromLevel = 0.68f
+        var phrase: Phrase? = null
     }
 
     /** A phrase: from [startQ] to [endQ], its high point at [peakQ]. */
@@ -90,6 +97,7 @@ object Interpretation {
         val breaks = ArrayList<Triple<Double, Float, Boolean>>()
         var level = LEVELS.getValue("mf")
         var pendingStruck: String? = null
+        var stepNext = false
         val pinsDone = HashSet<String>()
         // A hairpin that runs to its bar's end (to the end of the line, often) goes on into the next
         // bar until a dynamic says where it got to: its change per bar, and bars left.
@@ -132,9 +140,10 @@ object Interpretation {
             for ((i, e) in m.events.withIndex()) {
                 if (q >= played - 1e-9) break
                 val len = min(e.duration.quarters, played - q)
+                var steppedHere = false
                 while (di < dyn.size && dyn[di].x <= e.x + sp) {
                     val t = dyn[di].text.lowercase()
-                    LEVELS[t]?.let { level = it }
+                    LEVELS[t]?.let { if (abs(it - level) > 0.01f) steppedHere = true; level = it }
                     if (t in STRUCK) pendingStruck = t
                     di++
                 }
@@ -158,13 +167,15 @@ object Interpretation {
                     }
                     p.level = v
                     if (p.endLevel == 0.68f) p.endLevel = v
-                    pendingStruck?.let { st -> p.accent = 1f; p.level = max(v + 0.3f, 0.95f); if (st.endsWith("p")) level = LEVELS.getValue("p"); pendingStruck = null }
+                    p.stepped = steppedHere || stepNext
+                    stepNext = false
+                    pendingStruck?.let { st -> p.accent = 1f; p.level = min(v + 0.04f, 1.05f); if (st.endsWith("p")) { level = LEVELS.getValue("p"); stepNext = true; p.endLevel = level }; pendingStruck = null }
+                    // Leant on, not shouted: a gentle weight in the sound (Synth's accent, 2 dB at most
+                    // over about a tenth of a second) - the level itself is the phrase's, no spike.
                     when {
-                        // Leant on, not shouted: the bite is in the attack (Synth's accent), the
-                        // loudness only a little more - and never past fortissimo.
-                        "marcato" in e.articulations -> { p.accent = max(p.accent, 1f); p.level = min(p.level + 0.07f, max(v, 1.0f)) }
-                        "accent" in e.articulations -> { p.accent = max(p.accent, 0.8f); p.level = min(p.level + 0.05f, max(v, 0.98f)) }
-                        "sforzando" in e.articulations -> { p.accent = 1f; p.level = min(p.level + 0.1f, 1.02f) }
+                        "marcato" in e.articulations -> p.accent = max(p.accent, 1f)
+                        "accent" in e.articulations -> p.accent = max(p.accent, 0.8f)
+                        "sforzando" in e.articulations -> p.accent = 1f
                     }
                     // Under a slur, all but the note it ends on (or all, where it runs on past the bar's edge into the next).
                     p.slurred = slurs.any { s ->
@@ -277,61 +288,41 @@ object Interpretation {
         }
     }
 
-    /** Each note's loudness and length, from its phrase, its line and its beat. */
+    /** The phrase's gentle arch at quarter [q]: rising to its high point, easing away after it. */
+    private fun archAt(ph: Phrase?, q: Double): Float {
+        if (ph == null) return 0f
+        val span = (ph.endQ - ph.startQ).coerceAtLeast(1e-6)
+        val u = ((q - ph.startQ) / span).coerceIn(0.0, 1.0)
+        val peakU = ((ph.peakQ - ph.startQ) / span).coerceIn(0.25, 0.85)
+        val arch = if (u <= peakU) (u / peakU) else (1.0 - (u - peakU) / (1.0 - peakU))
+        return (0.1 * arch.pow(1.3) - 0.04).toFloat()
+    }
+
+    /**
+     * Each note's loudness and length. The loudness is one continuous line through the music: the
+     * dynamics and hairpins, a gentle arch over each phrase - nothing per note. A note ends at the
+     * loudness the next one (joined to it) starts at, so a slurred line never steps, swells or
+     * balloons on a note; a new dynamic is moved to over a moment ([Planned.stepped]).
+     */
     private fun shape(notes: List<Planned>, phrases: List<Phrase>, barQ: DoubleArray, bars: List<Measure?>, lengths: DoubleArray) {
-        val at = HashMap<Planned, Int>().also { m -> notes.forEachIndexed { k, n -> m[n] = k } }
         for (ph in phrases) {
             val inside = notes.filter { it.q >= ph.startQ - 1e-6 && it.q < ph.endQ - 1e-6 }
             if (inside.isEmpty()) continue
             inside.first().phraseStart = true
             inside.last().phraseEnd = true
             inside.last().sectionEnd = ph.section
-            val mean = inside.flatMap { it.keys.toList() }.average()
-            val span = (ph.endQ - ph.startQ).coerceAtLeast(1e-6)
-            val peakU = ((ph.peakQ - ph.startQ) / span).coerceIn(0.25, 0.85)
-            for (n in inside) {
-                val idx = at.getValue(n)
-                val u = (n.q - ph.startQ) / span
-                // An arch over the phrase: rising to its high point, easing away after it.
-                val arch = if (u <= peakU) (u / peakU) else (1.0 - (u - peakU) / (1.0 - peakU))
-                var d = (0.13 * arch.pow(1.3) - 0.05).toFloat()
-                // The line: higher notes a little fuller, lower a little lighter.
-                val top = n.keys.maxOrNull() ?: mean.toInt()
-                d += ((top - mean) * 0.005).toFloat().coerceIn(-0.06f, 0.06f)
-                // The beat: the bar's first leant on, its strong beats a little, the off-beats light -
-                // unless a slur carries the line through them.
-                val m = bars.getOrNull(n.bar)
-                val beat = m?.time?.let { 4.0 / it.beatType } ?: 1.0
-                val beats = m?.time?.beats ?: 4
-                val inBeat = n.inBar / beat
-                val onBeat = abs(inBeat - Math.rint(inBeat)) < 1e-6
-                val weight = when {
-                    n.inBar < 1e-6 -> 0.05f
-                    onBeat && beats % 2 == 0 && abs(inBeat - beats / 2.0) < 1e-6 -> 0.025f
-                    onBeat && beats % 3 == 0 && (Math.rint(inBeat).toInt() % 3 == 0) -> 0.025f
-                    onBeat -> 0f
-                    // Off the beat and held over it: a syncopation, leant on.
-                    n.len > beat * 0.5 + 1e-6 -> 0.035f
-                    else -> -0.02f
-                }
-                // Carried through by a slur: the line goes on over the beat and the barline.
-                val inSlur = n.slurred || (idx > 0 && notes[idx - 1].slurred && abs(notes[idx - 1].q + notes[idx - 1].len - n.q) < 1e-6)
-                d += if (inSlur && weight > 0) 0f else weight
-                // A phrase's last note: let go, not pushed.
-                if (n.phraseEnd) d -= 0.04f
-                n.level += d
-                n.endLevel += d
-                // Long notes live: a swell toward the high point, a taper after it and at the end.
-                if (n.len >= 1.5 && abs(n.endLevel - n.level) < 1e-4f) {
-                    n.endLevel = when {
-                        n.phraseEnd -> n.level * 0.82f
-                        u < peakU -> n.level * 1.1f
-                        else -> n.level * 0.93f
-                    }
-                }
-            }
-            // A run of quick notes: driven - each beat's first a touch firmer.
-            for (n in inside) if (n.len <= 0.25 + 1e-9 && n.inBar % 1.0 < 1e-6) n.level += 0.03f
+            for (n in inside) n.phrase = ph
+        }
+        for (n in notes) { n.baseStart = n.level; n.baseEnd = n.endLevel; n.level = n.baseStart + archAt(n.phrase, n.q) }
+        for ((i, n) in notes.withIndex()) {
+            val next = notes.getOrNull(i + 1)
+            val contiguous = next != null && abs(n.q + n.len - next.q) < 1e-6
+            val own = n.baseEnd + archAt(n.phrase, n.q + n.len) - (if (n.phraseEnd) 0.04f else 0f)
+            n.endLevel = if (n.slurred && contiguous && !next!!.stepped) next.level else own
+        }
+        for ((i, n) in notes.withIndex()) {
+            val prev = notes.getOrNull(i - 1)
+            n.fromLevel = if (prev != null && prev.slurred && abs(prev.q + prev.len - n.q) < 1e-6) prev.endLevel else n.level
         }
         // How long each note sounds, from its articulation and where it is.
         for ((i, n) in notes.withIndex()) {
@@ -340,17 +331,21 @@ object Interpretation {
             val a = n.articulations
             n.sounding = when {
                 "staccatissimo" in a -> 0.28
-                "staccato" in a -> 0.48
-                "marcato" in a -> 0.72
-                "tenuto" in a -> 1.0
-                n.slurred && touching && !n.phraseEnd -> 1.0      // joined to the next, no gap
+                "staccato" in a -> 0.45
+                "marcato" in a -> 0.75
+                "tenuto" in a -> TENUTO
+                n.slurred && touching && !n.phraseEnd -> JOINED      // joined to the next, no gap
                 "accent" in a -> DETACHED_ACCENT
                 else -> DETACHED
             }
             n.level = n.level.coerceIn(0.08f, 1.25f)
             n.endLevel = n.endLevel.coerceIn(0.05f, 1.3f)
+            n.fromLevel = n.fromLevel.coerceIn(0.05f, 1.3f)
         }
     }
+
+    private const val TENUTO = -3.0
+    private const val JOINED = -4.0
 
     /** A plain note, and an accented one, let go a little before the next: see [tones]. */
     private const val DETACHED = -1.0
@@ -460,30 +455,40 @@ object Interpretation {
         for ((i, n) in notes.withIndex()) {
             val start = sample(n.q)
             val nominal = sample(n.q + n.len) - start
-            // Detached notes let go a moment before the next - a moment in time, not a share: a
-            // long note does not end a long way early, a quick one still sounds.
-            var length = when (n.sounding) {
-                DETACHED -> nominal - (nominal * 0.08).coerceIn(rate * 0.025, rate * 0.08).toLong()
-                DETACHED_ACCENT -> nominal - (nominal * 0.14).coerceIn(rate * 0.04, rate * 0.12).toLong()
-                else -> (nominal * n.sounding).toLong()
-            }
-            // Before a breath (marked, or between phrases): let go a breath early - a little, never most of the note.
             val next = notes.getOrNull(i + 1)
-            if ((n.breathAfter || (n.phraseEnd && next != null && abs(next.q - (n.q + n.len)) < 1e-6)) && "staccato" !in n.articulations)
-                length = min(length, max(nominal * 6 / 10, nominal - (rate * 0.13).toLong()))
-            // A fermata sounds over its hold.
-            if (n.fermata) length = sample(n.q + n.len) - start + (rate * (n.len * 0.5)).toLong()
-            // Staccato in seconds, not only a share: never a click, never a long note.
-            if ("staccato" in n.articulations) length = length.coerceIn((rate * 0.07).toLong(), (rate * 0.32).toLong())
-            length = max(length, (rate * 0.03).toLong())
-            // A hair of looseness - the same every time: a few milliseconds and a touch of weight.
-            val seed = (n.q * 977 + i * 31).toLong()
             val prev = notes.getOrNull(i - 1)
-            val joined = prev != null && prev.slurred && abs(prev.q + prev.len - n.q) < 1e-6
-            // A hair of looseness in weight - but not within a slur, where the line is one sound.
-            val wobble = if (joined || n.slurred) 0f else ((hash(seed + 7) - 0.5) * 0.04).toFloat()
-            val v = ((n.level + wobble) * balance * 1.1f).coerceIn(0.05f, 1.5f)
-            val vEnd = ((n.endLevel + wobble) * balance * 1.1f).coerceIn(0.03f, 1.5f)
+            val nextTouches = next != null && abs(n.q + n.len - next.q) < 1e-6
+            val joined = prev != null && (prev.sounding == JOINED || prev.tie) && abs(prev.q + prev.len - n.q) < 1e-6
+            val joinsNext = drums == null && n.sounding == JOINED && nextTouches
+            val feel = Feel.now
+            // A note's release is short and clean; what is heard of it ends [audible] after its start.
+            val rel = (if (sounds.fade > 0) rate * 0.1 else rate * feel.releaseMs / 1000).toLong()
+            var length: Long
+            if (joinsNext) {
+                // Joined to the next: held to it, the next note takes the sound over.
+                length = nominal
+            } else {
+                // Not joined: it ends with a silence before the next note is tongued - a moment in time,
+                // a share of the note, never most of it.
+                val gap = max(nominal * feel.gap, rate * feel.gapMinMs / 1000).coerceAtMost(nominal * 0.35)
+                var audible = when (n.sounding) {
+                    TENUTO -> nominal - (rate * 0.02).toLong()
+                    DETACHED, DETACHED_ACCENT, JOINED -> nominal - gap.toLong()
+                    else -> (nominal * n.sounding).toLong()
+                }
+                // Before a breath (marked, or between phrases): let go a breath early - a little, never most of the note.
+                if ((n.breathAfter || (n.phraseEnd && nextTouches)) && "staccato" !in n.articulations)
+                    audible = min(audible, max(nominal * 6 / 10, nominal - (rate * 0.13).toLong()))
+                // A fermata sounds over its hold.
+                if (n.fermata) audible = sample(n.q + n.len) - start + (rate * (n.len * 0.5)).toLong()
+                // Staccato in seconds, not only a share: never a click, never a long note.
+                if ("staccato" in n.articulations) audible = audible.coerceIn((rate * 0.06).toLong(), (rate * 0.32).toLong())
+                length = max(audible - rel, (rate * 0.02).toLong())
+            }
+            val v = (n.level * balance * 1.1f * (if (drums != null && n.inBar < 1e-6) 1.06f else 1f)).coerceIn(0.05f, 1.5f)
+            val vEnd = (n.endLevel * balance * 1.1f).coerceIn(0.03f, 1.5f)
+            val fromV = if (joined && n.stepped) (n.fromLevel * balance * 1.1f).coerceIn(0.05f, 1.5f) else v
+            val ramp = if (fromV != v) min(rate * 0.25, length.toDouble()).toLong() else 0L
             // Grace notes: quick, just before the beat.
             val each = min(rate * 0.055, nominal / 3.0).toLong().coerceAtLeast(1L)
             for ((gi, g) in n.graces.withIndex()) {
@@ -494,20 +499,20 @@ object Interpretation {
             val a = n.articulations
             val art = (if ("staccato" in a) Synth.ART_STACCATO else 0) or (if ("accent" in a) Synth.ART_ACCENT else 0) or
                 (if ("tenuto" in a) Synth.ART_TENUTO else 0) or (if ("marcato" in a) Synth.ART_MARCATO else 0)
-            val layer = ((n.level + wobble) * 1.1f).coerceIn(0.05f, 1.5f)
+            val layer = (n.level * 1.1f).coerceIn(0.05f, 1.5f)
             for ((ki, k) in keys.withIndex()) {
                 // Tied into: the sound carries on - its tone stretched to this note's end, not struck again.
                 if (drums == null && prev != null && prev.tie && joined && n.keys[ki] in prev.keys) {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
-                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.art, t.layer)
+                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
                         continue
                     }
                 }
                 // A slurred line, one note at a time: each moves over from the last, not struck anew.
                 val from = if (joined && drums == null && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
-                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, art = art, layer = layer)
+                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer)
             }
         }
         return out
