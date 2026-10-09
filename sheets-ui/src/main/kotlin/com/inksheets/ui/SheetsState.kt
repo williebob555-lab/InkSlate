@@ -260,6 +260,10 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /** The recordings panel, for the song opened last. */
     var audioOpen by mutableStateOf(false)
 
+    /** A word for a moment at the foot of the page - "End of the set" - and when it was said. */
+    var edgeNotice by mutableStateOf<String?>(null)
+    var edgeNoticeAt = 0L
+
     /** A song tapped that has no music to open: shown its recordings or details instead (Home). */
     var nothingToOpen by mutableStateOf<com.inksheets.core.Song?>(null)
     var metronomeOpen by mutableStateOf(false)
@@ -614,7 +618,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         val (setlistId, index) = playing ?: return false
         val size = library?.setlist(setlistId)?.entries?.size ?: return false
         val next = index + by
-        if (next !in 0 until size) return false
+        // Past either end of the set: said, for a moment, rather than nothing happening.
+        if (next !in 0 until size) { edgeNotice = if (by > 0) "End of the set" else "Start of the set"; edgeNoticeAt = System.currentTimeMillis(); return false }
         // The set's songs are open as tabs already: turn to the next one, rather than working out
         // every song's part and file again and handing the whole set over anew - which is what
         // made each turn to another song stop the screen.
@@ -977,6 +982,17 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         }
         finally { importing-- }
         change { }
+    }
+
+    /** Take several songs out of the library at once - one Undo puts them all back. */
+    fun removeSongs(songs: List<com.inksheets.core.Song>) {
+        if (songs.isEmpty()) return
+        val entries = ArrayList<com.inksheets.core.LibraryTrash.Entry>()
+        importing++
+        try { for (song in songs) runCatching { trash()?.remove(song) }.onSuccess { e -> e?.let { entries += it } }.onFailure { platform.log("Could not remove ${song.title}: ${it.message}") } }
+        finally { importing-- }
+        change { }
+        offerUndo("Removed ${songs.size} song${if (songs.size == 1) "" else "s"}") { entries.forEach { restore(it) } }
     }
 
     /** Take one part out of its song, its file to the library's Trash for 30 days. */

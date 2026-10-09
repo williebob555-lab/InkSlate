@@ -127,6 +127,13 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(shown).background(MaterialTheme.colorScheme.primary))
         }
     }
+    // "End of the set": a small pill at the page's foot for two seconds - a turn that does nothing says why.
+    state.edgeNotice?.let { text ->
+        androidx.compose.runtime.LaunchedEffect(state.edgeNoticeAt) { kotlinx.coroutines.delay(2_000); state.edgeNotice = null }
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.inverseSurface, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)) {
+            Text(text, color = MaterialTheme.colorScheme.inverseOnSurface, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
+        }
+    }
     // Playing along with the song's recording: its pages turn by themselves (PlayAlong).
     androidx.compose.runtime.LaunchedEffect(Unit) {
         PlayAlong.load(state)

@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -369,6 +370,9 @@ private fun SongsPane(state: SheetsState) {
     var query by rememberSaveable { mutableStateOf("") }
     var editing by remember { mutableStateOf<Song?>(null) }
     var addingToSetlist by remember { mutableStateOf<Song?>(null) }
+    // Songs chosen to act on together (a hold on one starts it, as in Slate's Home).
+    val picked = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    var addingPicked by remember { mutableStateOf(false) }
     var recordingsFor by remember { mutableStateOf<Song?>(null) }
     var sortName by rememberSaveable { mutableStateOf(SongSort.AZ.name) }
     val sort = SongSort.valueOf(sortName)
@@ -489,6 +493,21 @@ private fun SongsPane(state: SheetsState) {
                 }
             }.toList()
         }
+        // Several chosen: what can be done to them all, in one bar over the list.
+        if (picked.isNotEmpty()) {
+            Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalArrangement = Arrangement.Center) {
+                    Text("${picked.size} chosen", style = MaterialTheme.typography.titleSmall, modifier = Modifier.align(Alignment.CenterVertically).padding(end = 8.dp))
+                    TextButton(onClick = { addingPicked = true }) { Text("Add to a setlist...") }
+                    TextButton(onClick = {
+                        val songs = picked.mapNotNull { id -> state.library?.song(id) }
+                        state.removeSongs(songs); picked.clear()
+                    }) { Text("Remove", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = { picked.clear() }) { Text("Done") }
+                }
+            }
+        }
         val listState = androidx.compose.foundation.lazy.rememberLazyListState()
         val scope = androidx.compose.runtime.rememberCoroutineScope()
         // Where each group's heading sits in the list, for the letter strip to jump to.
@@ -512,14 +531,17 @@ private fun SongsPane(state: SheetsState) {
                         }
                     }
                     items(members, key = { it.first.id }) { (song, fit) ->
+                        fun toggle() { if (song.id in picked) picked.remove(song.id) else picked.add(song.id) }
                         SongRow(
                             song = song,
+                            chosen = song.id in picked,
+                            onHold = { toggle() },
                             unsure = fit == PartChoice.Fit.UNKNOWN,
                             standIn = if (fit == PartChoice.Fit.CLOSE) PartChoice.standIn(song, state.profile)?.let { Instruments.partName(it) } else null,
                             chosenPart = state.partFor(song),
                             onPart = { p -> state.stopPlaying(); state.pickPart(song, p); openSong(state, song) },
                             missing = song.id in counts.missing,
-                            onOpen = { state.stopPlaying(); openSong(state, song) },
+                            onOpen = { if (picked.isNotEmpty()) toggle() else { state.stopPlaying(); openSong(state, song) } },
                             onEdit = { editing = song },
                             onAddToSetlist = { addingToSetlist = song },
                             onRecordings = { recordingsFor = song },
@@ -579,6 +601,11 @@ private fun SongsPane(state: SheetsState) {
         if (song.audio.isNotEmpty()) AudioDialog(state, song, onClose = { state.nothingToOpen = null })
         else SongEditorDialog(state, song, onClose = { state.nothingToOpen = null })
     }
+    if (addingPicked) SetlistChooserDialog(
+        state,
+        onChosen = { setlist -> state.change { picked.forEach { id -> addToSetlist(setlist.id, id) } }; addingPicked = false; picked.clear() },
+        onDismiss = { addingPicked = false }
+    )
     addingToSetlist?.let { song ->
         SetlistChooserDialog(
             state,
@@ -628,9 +655,14 @@ internal fun SongRow(
     chosenPart: com.inksheets.core.Part? = null,
     /** Open the song at one of its parts, chosen from the list under its name. */
     onPart: ((com.inksheets.core.Part) -> Unit)? = null,
+    /** A hold on the row: choose it, to act on several songs at once. */
+    onHold: (() -> Unit)? = null,
+    /** Chosen among several (shown ticked). */
+    chosen: Boolean = false,
     trailing: (@Composable () -> Unit)? = null
 ) {
-    val tint = song.color?.let { androidx.compose.ui.graphics.Color(it).copy(alpha = 0.10f) } ?: androidx.compose.ui.graphics.Color.Transparent
+    val tint = if (chosen) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        else song.color?.let { androidx.compose.ui.graphics.Color(it).copy(alpha = 0.10f) } ?: androidx.compose.ui.graphics.Color.Transparent
     var menu by remember { mutableStateOf(false) }
     val hasMenu = onEdit != null || onAddToSetlist != null || onDelete != null || onColour != null || onMerge != null
     Row(
@@ -648,7 +680,10 @@ internal fun SongRow(
                     }
                 }
             }
-            .clickable(onClick = onOpen).padding(start = 6.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+            .then(
+                if (onHold != null) @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class) Modifier.combinedClickable(onClick = onOpen, onLongClick = onHold)
+                else Modifier.clickable(onClick = onOpen)
+            ).padding(start = 6.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         ColourBar(song.color)

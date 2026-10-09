@@ -150,7 +150,7 @@ class WindowFollower(
             } else lo + jj - predicted
             // (The less heard, the less it says: the pull to where the band should be is the stronger.)
             // (Before it is found, the page in front is only a hint: the music heard decides.)
-            val pull = if (found) prior else prior * 0.3f
+            val pull = if (found) prior else prior * EARLY_PULL
             val c = per + pull * heardFrames / m * (if (off < -20) -off * backCost else abs(off).toFloat())
             raw[jj] = per
             if (c < bestCost) { bestCost = c; bestJ = jj }
@@ -167,7 +167,7 @@ class WindowFollower(
         val end = lo + bestJ
         // An unsure line-up far from where the band should be is not believed: the place carries on
         // at the band's pace instead - a moment's confusion must not throw the page about.
-        if (found && sure < UNSURE && abs(end - predicted) > 30) { confidence = sure; return null }
+        if (REJECT && found && sure < UNSURE && abs(end - predicted) > 30) { confidence = sure; return null }
         confidence = sure
         if (sure >= UNSURE) found = true
         // The band's pace from how far the music moved since the last line-up.
@@ -182,6 +182,9 @@ class WindowFollower(
         /** Below this a line-up is unsure (see [confidence]). */
         const val UNSURE = 0.35f
         /** How a match's lead over the best elsewhere maps to [confidence]: a lead of an eighth of the cost is sure. */
-        private const val SHARPNESS = 8f
+        private val SHARPNESS = System.getProperty("inksheets.turns.sharp")?.toFloatOrNull() ?: 8f
+        /** Before it is found, how strongly the page in front pulls (against the found pull). */
+        private val EARLY_PULL = System.getProperty("inksheets.turns.early")?.toFloatOrNull() ?: 0.3f
+        private val REJECT = System.getProperty("inksheets.turns.reject") != "0"
     }
 }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.QueueMusic
@@ -70,6 +71,9 @@ internal fun SetlistsPane(state: SheetsState) {
     var openSetlist by state::setlistShown
     var naming by remember { mutableStateOf<Naming?>(null) }
     var sharing by remember { mutableStateOf<String?>(null) }
+    // Moving a setlist or a folder to another folder, at any depth - not only by dragging onto one in sight.
+    var movingSetlist by remember { mutableStateOf<com.inksheets.core.Setlist?>(null) }
+    var movingFolder by remember { mutableStateOf<Folder?>(null) }
     var colouring by remember { mutableStateOf<Setlist?>(null) }
     var colouringFolder by remember { mutableStateOf<Folder?>(null) }
     var clearing by remember { mutableStateOf<Folder?>(null) }
@@ -211,6 +215,7 @@ internal fun SetlistsPane(state: SheetsState) {
                             menu = listOf(
                                 "Rename" to { naming = Naming.RenameFolder(f) },
                                 "Colour..." to { colouringFolder = f },
+                                "Move to..." to { movingFolder = f },
                                 "Delete (keeps its setlists)" to { state.deleteFolder(f.id, withSetlists = false) },
                                 "Merge its setlists into one..." to { joiningFolder = f },
                                 "Delete with its setlists..." to { clearing = f }
@@ -248,6 +253,7 @@ internal fun SetlistsPane(state: SheetsState) {
                         "Colour..." to { colouring = s },
                         "Rename" to { naming = Naming.RenameSetlist(s) },
                         (if (s.date.isNullOrBlank()) "Concert date..." else "Change concert date...") to { naming = Naming.SetlistDate(s) },
+                        "Move to..." to { movingSetlist = s },
                         "Merge into another setlist..." to { joiningInto = s },
                         "Delete" to { state.deleteSetlist(s.id) }
                     )
@@ -260,6 +266,16 @@ internal fun SetlistsPane(state: SheetsState) {
     }
 
     sharing?.let { id -> ShareSetlistDialog(state, id, onClose = { sharing = null }) }
+    movingSetlist?.let { s ->
+        FolderChoiceDialog(state, "Move “${s.name}” to", current = s.folderId, exclude = null, onChosen = { to ->
+            state.change { editSetlist(s.id) { folderId = to } }; movingSetlist = null
+        }, onDismiss = { movingSetlist = null })
+    }
+    movingFolder?.let { f ->
+        FolderChoiceDialog(state, "Move “${f.name}” to", current = f.parentId, exclude = f.id, onChosen = { to ->
+            state.change { moveFolder(f.id, to) }; movingFolder = null
+        }, onDismiss = { movingFolder = null })
+    }
     // Every setlist in a folder (and its folders) as one, named for the folder, in the folder.
     joiningFolder?.let { f ->
         val lists = library.setlistsUnder(f.id)
@@ -694,4 +710,35 @@ internal fun sortEntries(
         { e -> songs[e.songId]?.title?.let { com.inksheets.core.Library.sortKey(it) } ?: "" }
     ))
     EntrySort.OPENED -> entries.sortedByDescending { e -> songs[e.songId]?.opened ?: 0L }
+}
+
+/**
+ * Where to put a setlist or folder: the top, or any folder at any depth, each under its parent -
+ * the one it is in now marked; [exclude] (a folder being moved) and what is inside it left out.
+ */
+@Composable
+private fun FolderChoiceDialog(state: SheetsState, title: String, current: String?, exclude: String?, onChosen: (String?) -> Unit, onDismiss: () -> Unit) {
+    val library = state.library ?: return
+    var query by remember { mutableStateOf("") }
+    val all = remember(state.version) {
+        library.folders.filter { f -> exclude == null || library.pathTo(f.id).none { it.id == exclude } }
+            .map { f -> f to library.pathTo(f.id) }.sortedBy { (_, path) -> path.joinToString("/") { it.name.lowercase() } }
+    }
+    SheetDialog(title = title, onDismiss = onDismiss) {
+        Column(Modifier.fillMaxWidth()) {
+            ListSearch(all.size, query, { query = it }, "Find a folder")
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                @Composable fun row(name: String, depth: Int, id: String?) = Row(
+                    Modifier.fillMaxWidth().clickable { onChosen(id) }.padding(start = (8 + depth * 18).dp, top = 10.dp, bottom = 10.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary)
+                    Text(name, modifier = Modifier.padding(start = 10.dp).weight(1f), maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    if (id == current) Text("here now", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (query.isBlank()) row("Setlists (the top)", 0, null)
+                for ((f, path) in all) if (matches(query, f.name, path.joinToString(" ") { it.name })) row(f.name, if (query.isBlank()) path.size else 0, f.id)
+            }
+        }
+    }
 }
