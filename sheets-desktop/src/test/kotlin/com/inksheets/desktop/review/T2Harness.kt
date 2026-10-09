@@ -261,7 +261,7 @@ fun resetFlavor() {
 @OptIn(ExperimentalTestApi::class)
 fun t2App(tag: String, w: Int = 1600, h: Int = 1000, profile: String? = "trombone", body: T2.() -> Unit) {
     val lib = T2Lib.build()
-    val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+    val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
     try {
         runDesktopComposeUiTest(width = w, height = h) {
             mainClock.autoAdvance = false

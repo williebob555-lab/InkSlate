@@ -135,10 +135,11 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
     }
     // Playing along with the song's recording: its pages turn by themselves (PlayAlong).
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        PlayAlong.load(state)
-        while (true) {
-            if (Recording.player != null) PlayAlong.tick(state)
+    // (Only while a recording is loaded: nothing ticks, nothing wakes, when there is none.)
+    androidx.compose.runtime.LaunchedEffect(Unit) { PlayAlong.load(state) }
+    androidx.compose.runtime.LaunchedEffect(Recording.loadedFile) {
+        while (Recording.loadedFile != null && Recording.player != null) {
+            PlayAlong.tick(state)
             kotlinx.coroutines.delay(100)
         }
     }
@@ -228,7 +229,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     }
                     if ((action == PerformAction.RECORDINGS) && state.current == null) continue
                     // With All tools out the toolbar has its own Undo and Redo: not a second pair here.
-                    if ((action == PerformAction.UNDO || action == PerformAction.REDO) && !fullscreen) continue
+                    if ((action == PerformAction.UNDO || action == PerformAction.REDO) && !fullscreen && Perform.isOn != null) continue
                     StripButton(iconOf(action, fullscreen), shortName(action, fullscreen), action.label, btn, named, lit) { Perform.run(action) }
                     // The tempo right under the button: one tap to change it, never a menu away.
                     if (action == PerformAction.METRONOME) {

@@ -62,7 +62,7 @@ class SheetsTouchTest {
         val part = File(lib, src.name).also { src.copyTo(it) }
 
         // The app exactly as it ships (see installInkSheets), its library pointed at the copy.
-        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
         val home = AppFlavor.home!!
         var openFile: ((File) -> Unit)? = null
         AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }

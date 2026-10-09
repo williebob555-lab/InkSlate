@@ -48,7 +48,7 @@ class SheetsScreensTest {
     private val opened = ArrayList<String>()
 
     private inner class FakePlatform(root: File) : SheetsPlatform {
-        private val prefs = HashMap<String, String?>().apply { put("sheets_library", root.absolutePath) }
+        private val prefs = HashMap<String, String?>().apply { put("sheets_library", root.absolutePath); put("sheets_strip_collapsed", "false") }
         override val deviceId = "test"
         override val startFolder = root
         override fun pref(key: String) = prefs[key]
@@ -339,7 +339,7 @@ class SheetsScreensTest {
     }
 
     private fun androidx.compose.ui.test.ComposeUiTest.onNodeWithContentDescriptionSafe(label: String) =
-        onNode(androidx.compose.ui.test.hasContentDescription(label)).performClick()
+        onNode(androidx.compose.ui.test.hasContentDescription(label) or androidx.compose.ui.test.hasText(label)).performClick()
 
     @Test
     fun `tab order and setlist order follow each other, and Home puts the set away`() {

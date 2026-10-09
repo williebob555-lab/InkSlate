@@ -80,7 +80,7 @@ class MusicStripShots {
                     waitForIdle()
                     runOnIdle { ScoreTools.open = true; ScoreTools.select(3..5) }
                     waitForIdle()
-                    for (d in listOf("Play the bars selected, or from this page", "Play the other parts, not yours", "Go to a bar by its number", "Put the music tools away")) {
+                    for (d in listOf("Play the bars selected, or from this page", "Play the other parts with yours, or without it", "Go to a bar by its number", "Put the music tools away")) {
                         val node = onNode(hasContentDescription(d)).fetchSemanticsNode()
                         val b = node.boundsInRoot
                         assertTrue("$name: $d on screen", b.top >= 0f && b.bottom <= h.toFloat() && b.left >= 0f && b.right <= w.toFloat())
