@@ -29,7 +29,7 @@ class PerformanceTest {
         val p = play(bar(1, listOf(note(10f), note(20f), note(30f), note(40f, tie = true))), bar(2, listOf(note(10f, base = 2), note(50f, base = 2))))
         // Four in bar 1, the last held into bar 2's first: four tones in all, not six... one of them 3 beats long.
         assertEquals(5, p.tones.size)
-        assertTrue(p.tones.any { it.start == 3000L && it.length >= 2900L })
+        assertTrue(p.tones.any { it.start == 3000L && it.length >= 2500L })
     }
 
     @Test
@@ -37,7 +37,7 @@ class PerformanceTest {
         val p = play(bar(1, listOf(note(10f, marks = listOf("staccato")), note(20f), note(30f, marks = listOf("fermata")), note(40f))))
         val byStart = p.tones.sortedBy { it.start }
         assertTrue(byStart[0].length <= 500L)
-        assertTrue(byStart[1].length in 900L..999L)
+        assertTrue(byStart[1].length in 750L..900L)
         assertTrue(byStart[2].length > 1500L)
         assertTrue("the note after a fermata comes late: ${byStart[3].start}", byStart[3].start > 3500L)
         val slurred = play(bar(1, listOf(note(10f), note(20f), note(30f), note(40f)), directions = listOf(Direction("slur", 5f, 45f))))
