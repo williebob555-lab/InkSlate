@@ -53,7 +53,7 @@ class UiAuditAppTest {
         for ((size, w, h) in UiAudit.SIZES) {
             if (only != null && size !in only) continue
             ScoreTools.scoreSource = { if (it == part.absolutePath) score else null }
-            val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+            val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
             val home = AppFlavor.home!!
             var openFile: ((File) -> Unit)? = null
             var openSettings: (() -> Unit)? = null
@@ -81,10 +81,10 @@ class UiAuditAppTest {
                 look("music-tools")
                 runOnIdle { ScoreTools.startCheck(s) }
                 settle(60)
-                look("fix", "Edit", "None of these", "Not one bar", "Skip", "Done", "Clef, key or time wrong?")
+                look("fix", "Edit", "None of these", "Not one bar", "Skip", "Close Fix", "Clef, key or time wrong?")
                 // "None of these": what is off with them, asked.
                 runOnIdle { ScoreTools.noneOfThese(s) }
-                look("fix-whatsoff", "What's off?", "Done")
+                look("fix-whatsoff", "None of these", "Close Fix")
                 // The bar put right by hand, and its clef, key and time chosen anew: every control there.
                 runOnIdle { ScoreTools.offered.firstOrNull()?.let { ScoreTools.startEdit(it) } }
                 look("fix-editing", "Up", "Down", "♭♭", "♭", "♯", "x", "Dot", "Quarter", "16th", "Triplet", "Remove", "Cancel", "Undo", "Use this")
@@ -94,7 +94,7 @@ class UiAuditAppTest {
                 // A rest of many bars said to be wrong: how many, chosen.
                 score.measures.firstOrNull { it.bars > 1 }?.let { r ->
                     runOnIdle { ScoreTools.markWrong(s, r.number..r.number) }
-                    look("fix-rest", "−10", "+10", "Skip", "Done", "Use")
+                    look("fix-rest", "−10", "+10", "Skip", "Close Fix", "Use")
                     runOnIdle { ScoreTools.endCheck() }
                 }
                 // Playing: the bar along the foot that steers it.
