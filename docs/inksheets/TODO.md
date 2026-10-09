@@ -3,7 +3,9 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** T1+T2 done; T3 (practice/listen) and T4 (remote/together) testing. Fixing F1 done (11d5e33), F2 partly, next F3 reading.
+**Now:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
+
+**Was:** F3 mostly done (4ab8536). T1+T2 done; T3 (practice/listen) and T4 (remote/together) testing. Fixing F1 done (11d5e33), F2 partly, next F3 reading.
 
 Trap: Python `open(..., 'w')` on Windows writes CRLF — use `newline=''`.
 
@@ -17,6 +19,26 @@ flicks) from development gimmicks into practical everyday tools; graduate them o
 only when beautifully incorporated. Borrow from Slate's new Home (folders you add, Move to…,
 Recently deleted 30 days with Undo, right-click/two-finger menus, select several). No limits on
 change size. **No build until the very end** — commit locally, one `[build sheets]` push at the end.
+
+
+## User feedback 2026-10-09 (experimental features) — the bar: "shocked by the level of improvement", not minor QOL
+### W Watch flicks
+- [ ] Watch app closes itself when: no part is open, the device screen turns off, or the app is closed on the device
+- [ ] No long/aggressive buzzing when it can't connect (normal short buzzes are liked)
+### L Listen (mic follow) — user has no trust
+- [ ] Must handle starting mid-page / anywhere; must show what it hears and where it thinks you are; honest when lost
+### R Read the music (scanning)
+- [ ] Small progress bar at the side while a part is being read
+- [ ] One button replaces Clean / Clean up / Fix / Wrong: overlays bar colours — green sure, yellow less sure, red needs fixing
+- [ ] Tap any bar (even green) → Fix for that bar; choose close-after-fix or keep going (bulk)
+- [ ] Fix panel never moves on screen (may cover the music) — capture accurate and FAST; option buttons (None of these…) never move
+- [ ] Fix: Undo/back; ways to say what's wrong: bar number, grace notes, clef, key, time, "not a note"… (not just None of these)
+- [ ] Clean view overhaul: match the piece's style, carry over every musical element
+- [ ] "Replace the whole page" = an overlay on the existing page (undoable), never a new document/duplicate files
+- [ ] Readings must persist — user keeps re-scanning the same parts (investigate cache keys/sync)
+- [ ] Band playback: option to include/exclude own part; read the band's parts in parallel
+### P Playback engine
+- [ ] Expressive, planned performance: whole piece analysed before playing (phrasing, breath, momentum, dynamics shaping, articulation blend), human-sounding — a demo-quality interpretation, not a note machine
 
 ## Phase 0 — setup
 - [x] Pull Slate's Home rebuild (df95372) — `library-ui/` shared source now exists
@@ -66,15 +88,15 @@ change size. **No build until the very end** — commit locally, one `[build she
 - [ ] Recently added strip after arrivals; check-now from Home (T1-21)
 
 ### F3 Reading & playing (T2) — editor code is shared with InkSlate: gate on musicView
-- [ ] T2-01 taps during the turn animation mis-aimed (translationX shifts pointer coords)
-- [ ] T2-05 half-page on a fitted page pushes it up / second press skips the song
-- [ ] T2-06 Space/Enter as next page; a second Escape must not close the song
-- [ ] T2-07 strip Eraser off leaves the stylus erasing
-- [ ] T2-08 FloatingPanel/SheetDialog: X top-right + swipe-down close everywhere
-- [ ] T2-09 Part menu: All instruments · T2-11 set tabs' right-click Close · T2-17 rapid opposite steps
-- [ ] T2-10 page colour (Night/Sepia…) remembered and on the strip's More
-- [ ] T2-12 duplicate Undo/Pen with All tools · T2-13 phone strip-left overlays the page · T2-14 strip folded on first open · T2-19 Highlighter on default strip
-- [ ] T2-15 song change near-black fade (~220 ms) → crossfade/short
+- [x] T2-01 taps during the turn animation mis-aimed (translationX shifts pointer coords)
+- [x] T2-05 half-page on a fitted page pushes it up / second press skips the song
+- [x] T2-06 Space/Enter as next page; a second Escape must not close the song
+- [x] T2-07 strip Eraser off leaves the stylus erasing
+- [~] T2-08 (SheetDialog done 4ab8536; FloatingPanel swipe-down open) FloatingPanel/SheetDialog: X top-right + swipe-down close everywhere
+- [x] T2-09 Part menu: All instruments · T2-11 set tabs' right-click Close · T2-17 rapid opposite steps
+- [x] T2-10 page colour (Night/Sepia…) remembered and on the strip's More
+- [~] (T2-13/14/19 done 4ab8536; T2-12 open) T2-12 duplicate Undo/Pen with All tools · T2-13 phone strip-left overlays the page · T2-14 strip folded on first open · T2-19 Highlighter on default strip
+- [x] T2-15 song change near-black fade (~220 ms) → crossfade/short
 - [ ] T2-02/03/04 desktop vs Android tap/flick/pan rules aligned
 - [ ] T2-16 end of set says so
 

@@ -115,6 +115,14 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
     val readingMode = state.platform.readingMode
     androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
+    // Playing along with the song's recording: its pages turn by themselves (PlayAlong).
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        PlayAlong.load(state)
+        while (true) {
+            if (Recording.player != null) PlayAlong.tick(state)
+            kotlinx.coroutines.delay(100)
+        }
+    }
 
     // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
     // the bottom of a portrait one - so it sits in blank space and never over the music.
@@ -674,6 +682,18 @@ private fun PlaybackColumn(state: SheetsState, btn: androidx.compose.ui.unit.Dp,
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 4.dp)) {
             val s = position / 1000
             Text("%d:%02d".format(s / 60, s % 60), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(4.dp))
+            // What the pages will do: count down to the next turn, learning, or off - tapped, on or off.
+            PlayAlong.hint?.let { hint ->
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontSize = 10.sp,
+                    lineHeight = 11.sp,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    color = if (PlayAlong.on && PlayAlong.learned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(btn + 8.dp).clip(RoundedCornerShape(6.dp)).clickable { PlayAlong.toggle(state) }.padding(2.dp)
+                )
+            }
             StripButton(Icons.Default.Replay, "Replay", "From the start again", btn, named) { Recording.replay(state) }
             StripButton(Icons.Default.FastRewind, "Back ${SKIP_S}s", "Back $SKIP_S seconds", btn, named) { Recording.skip(-SKIP_S.toDouble()) }
             StripButton(

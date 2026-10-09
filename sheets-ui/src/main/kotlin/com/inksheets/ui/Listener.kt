@@ -138,7 +138,8 @@ internal object Listener {
             val (page0, pages) = state.pageShown
             // Where the turns come from: learned by playing along; else from the music read (lined
             // up with the recording, or the music itself); else guessed.
-            val learned = track?.turnsMs.orEmpty().takeIf { pages > 1 && it.size >= pages - 1 }
+            val learned = track?.let { t -> state.library?.song(song.id)?.audio?.firstOrNull { it.file == t.file } ?: t }
+                ?.turnsFor(state.partShown()?.id, pages)
             // Every change of page from the music: with a repeat across a page break, some go back.
             val changes = if (learned == null && played != null && score != null) runCatching {
                 when {
@@ -240,35 +241,6 @@ internal object Listener {
         }, 5_000L)
     }
 
-    // ---- learning where the turns fall -----------------------------------------------------
-
-    private var lastPage = -1
-    private var lastPath: String? = null
-
-    /**
-     * The page in front changed. While a song's recording plays (and Listen is on in Settings),
-     * a turn on to the next page by hand is where that turn falls in the recording: kept with it.
-     */
-    fun pageChanged(state: SheetsState, path: String, page: Int) {
-        val was = if (lastPath == path) lastPage else -1
-        lastPath = path; lastPage = page
-        if (!state.listenTurns || active || !Recording.playing || page != was + 1 || was < 0) return
-        val song = state.songAt(path) ?: return
-        if (song.id != Recording.songId) return
-        val track = Recording.track ?: return
-        val at = Recording.player?.positionMs ?: return
-        state.change {
-            editSong(song.id) {
-                audio = audio.orEmpty().map { t ->
-                    if (t.file != track.file) t else {
-                        val turns = t.turnsMs.toMutableList()
-                        while (turns.size < was) turns += -1L
-                        if (turns.size == was) turns += at else turns[was] = at
-                        t.copy(turnsMs = turns)
-                    }
-                }
-            }
-        }
-        state.platform.log("Listen: learned the turn from page ${was + 1} at ${at / 1000.0}s in ${track.file.substringAfterLast('/')}")
-    }
+    /** The page in front changed: where the turns fall is learned by [PlayAlong], Listen or not. */
+    fun pageChanged(state: SheetsState, path: String, page: Int) = PlayAlong.pageChanged(state, path, page)
 }

@@ -69,9 +69,34 @@ data class AudioTrack(
     /**
      * Where in it each page is turned from, in ms: [turnsMs] (i) is the turn from page i to page
      * i + 1. Learned by playing it and turning the pages; followed by ear by the Listen button.
+     * The older, one-list form: kept for what was learned before [partTurns].
      */
-    val turnsMs: List<Long> = emptyList()
-)
+    val turnsMs: List<Long> = emptyList(),
+    /**
+     * The same, per part (by part id): the bass part's three pages turn at other moments than
+     * the trombone part's two. Turns not learned yet are -1.
+     */
+    val partTurns: Map<String, List<Long>> = emptyMap()
+) {
+    /**
+     * Where [partId]'s [pages] pages turn in this recording, when every turn is known; null
+     * while some are still to be learned. The old one-list form counts only when no part has
+     * its own yet and it has exactly this part's number of turns.
+     */
+    fun turnsFor(partId: String?, pages: Int): List<Long>? {
+        if (pages < 2) return null
+        val own = partId?.let { partTurns[it] } ?: turnsMs.takeIf { partTurns.isEmpty() && it.size == pages - 1 }
+        return own?.takeIf { t -> t.size >= pages - 1 && t.take(pages - 1).all { it >= 0 } }?.take(pages - 1)
+    }
+
+    /** This recording with the turn from [page] (0-based) to the next learned at [atMs] for [partId]. */
+    fun withTurn(partId: String, page: Int, atMs: Long): AudioTrack {
+        val turns = (partTurns[partId] ?: emptyList()).toMutableList()
+        while (turns.size <= page) turns += -1L
+        turns[page] = atMs
+        return copy(partTurns = partTurns + (partId to turns))
+    }
+}
 
 /** A place to jump to by name: "Letter C", "Coda". */
 @Serializable
