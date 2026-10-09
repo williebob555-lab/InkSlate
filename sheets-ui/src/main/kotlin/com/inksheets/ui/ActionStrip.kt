@@ -163,20 +163,30 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     BoxWithConstraints(Modifier.matchParentSize()) {
         // Always down a side: along the bottom, the buttons wrap into two rows and take more room.
         val side = true
-        // Every button has to be on screen at once - never a strip to scroll. The buttons shrink
-        // to fit a short screen, and only if that is not enough does the strip wrap to a second
-        // column (or row).
-        val visible = shown.count { a ->
+        // Every button on screen at once, in one column - never a second column, never a strip to
+        // scroll. The buttons shrink to fit a short screen; where even that is not enough, the
+        // last of them move into More (named there), and only on a very short screen do the
+        // names under the buttons go.
+        val wanted = shown.filter { a ->
             !((a == PerformAction.NEXT_SONG || a == PerformAction.PREVIOUS_SONG) && state.playing == null) &&
                 !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
         }
         val room = if (side) maxHeight else maxWidth
-        val named = state.stripLabels
-        val labelRoom = if (named && side) 12.dp else 0.dp
         val onStripPresets = if (state.companion.leading) state.presets.filter { it.onStrip } else emptyList()
-        val extras = 120.dp + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp) +
+        // The fold button, the padding and the dividers; the page count and the tempo under their buttons.
+        val extras = 72.dp + (if (state.pageShown.second > 0) 26.dp else 0.dp) + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp) +
             34.dp * onStripPresets.size
-        val btn = ((room - extras) / (visible + 3).coerceAtLeast(1) - labelRoom).coerceIn(32.dp, 44.dp)
+        // File, Music and More are there besides the chosen buttons.
+        val fixed = 1 + (if (state.pageShown.second > 0) 1 else 0) + (if (state.readMusic && state.current != null) 1 else 0)
+        fun fitting(label: androidx.compose.ui.unit.Dp) = ((room - extras) / (32.dp + label + 2.dp)).toInt() - fixed
+        val named = state.stripLabels && fitting(12.dp) >= minOf(wanted.size, 6)
+        val labelRoom = if (named && side) 12.dp else 0.dp
+        val fits = fitting(labelRoom).coerceAtLeast(2)
+        // The last of them go first - but never the page turns, Undo or the tools' switch.
+        val keep = setOf(PerformAction.NEXT_PAGE, PerformAction.PREVIOUS_PAGE, PerformAction.UNDO, PerformAction.FULLSCREEN)
+        val overflow = if (wanted.size > fits) wanted.reversed().filter { it !in keep }.take(wanted.size - fits) else emptyList()
+        val visible = wanted.size - overflow.size
+        val btn = ((room - extras) / (visible + fixed).coerceAtLeast(1) - labelRoom - 2.dp).coerceIn(32.dp, 44.dp)
         val items: @Composable () -> Unit = {
             if (!collapsed) {
                 if (SelfRecorder.recording) {
@@ -210,6 +220,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 var lastGroup = -1
                 for (action in shown) {
+                    if (action in overflow) continue
                     val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
                     if (songAction && state.playing == null) continue
                     // Kept while a recording plays, whatever is in front now: there is always a way to stop it.
@@ -271,7 +282,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 Box {
                     StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }
-                    StripMenu(state, menu, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
+                    StripMenu(state, menu, overflow, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
                     // Another instrument's part, from More (when Part is not on the strip): opens where More was.
                     state.current?.let { song -> PartMenu(state, song, state.partShown(), partMenu, onDismiss = { partMenu = false }) }
                 }
@@ -309,8 +320,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     // fit (a short screen, many buttons), the column scrolls instead.
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.heightIn(max = (room - 12.dp).coerceAtLeast(120.dp))
-                            .verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(vertical = 4.dp)
+                        modifier = Modifier.padding(vertical = 4.dp)
                     ) { items() }
                 } else {
                     androidx.compose.foundation.layout.FlowRow(
@@ -437,10 +447,18 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
 }
 
 @Composable
-private fun StripMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
+private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformAction>, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+        // The strip's own buttons that did not fit on this screen, first, as they are on it.
+        val fullscreen = Perform.on(PerformAction.FULLSCREEN)
+        for (action in overflow) if (action != PerformAction.SWITCH_PART) DropdownMenuItem(
+            text = { Text(action.label) },
+            leadingIcon = { Icon(iconOf(action, fullscreen), null) },
+            onClick = { onDismiss(); Perform.run(action) }
+        )
+        if (overflow.isNotEmpty()) HorizontalDivider()
         // Only what is not on the strip already: one way to each thing.
-        val onStrip = state.strip
+        val onStrip = state.strip - overflow.toSet()
         if (PerformAction.SWITCH_PART !in onStrip) state.current?.let { _ ->
             val part = state.partShown()?.let { partName(it) }
             DropdownMenuItem(
