@@ -73,15 +73,18 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     // Sized by the screen alone - never by what is in it - so nothing jumps between bars.
     val short = room < 700.dp
     ScoreTools.compact = short
-    val panelHeight = if (room == Dp.Infinity) 560.dp else (room * (if (short) 0.62f else 0.55f)).coerceIn(300.dp, 620.dp)
+    val panelHeight = if (room == Dp.Infinity) 560.dp else (room * (if (short) 0.7f else 0.55f)).coerceIn(300.dp, 620.dp)
     Opened("Fix", if (short) 700.dp else 380.dp)
+    BoxWithConstraints(Modifier.matchParentSize()) {
+    // A phone gives it the whole width (the strips step aside); wider screens keep clear of them.
+    val narrowScreen = maxWidth < 600.dp
     Surface(
         shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
         tonalElevation = 4.dp,
         shadowElevation = 8.dp,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.99f),
         modifier = Modifier.align(Alignment.BottomCenter)
-            .padding(start = Overlays.left + 8.dp, end = Overlays.right + 8.dp)
+            .padding(start = if (narrowScreen) 0.dp else Overlays.left + 8.dp, end = if (narrowScreen) 0.dp else Overlays.right + 8.dp)
             .widthIn(max = 920.dp).fillMaxWidth().height(panelHeight)
     ) {
         BoxWithConstraints {
@@ -95,9 +98,9 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                     Text("Bar ${m.number} · page ${m.page + 1}", style = if (short) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, maxLines = 1)
                     if (total > 1) Text("${ScoreTools.checkAt + 1} of $total", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     Spacer(Modifier.weight(1f))
-                    Text("Then", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    androidx.compose.material3.FilterChip(selected = ScoreTools.goOn, onClick = { ScoreTools.chooseGoOn(true) }, label = { Text("Next red bar", maxLines = 1) })
-                    androidx.compose.material3.FilterChip(selected = !ScoreTools.goOn, onClick = { ScoreTools.chooseGoOn(false) }, label = { Text("Close", maxLines = 1) })
+                    // What happens after a fix: one chip, tapped to change.
+                    androidx.compose.material3.AssistChip(onClick = { ScoreTools.chooseGoOn(!ScoreTools.goOn) },
+                        label = { Text(if (ScoreTools.goOn) "Then: next red" else "Then: close", maxLines = 1) })
                 }
                 LinearProgressIndicator(progress = { (ScoreTools.checkAt + 1f) / total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().height(3.dp).padding(top = 2.dp))
                 Spacer(Modifier.height(gap))
@@ -105,7 +108,7 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                 // key and time, or a rest's count) - in a space that scrolls, never pushing the
                 // buttons below it about.
                 val editing = ScoreTools.editing
-                val printed: @Composable () -> Unit = {
+                val picture: @Composable () -> Unit = {
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier.fillMaxWidth().height(pictureHeight).clip(RoundedCornerShape(10.dp)).background(paper)
@@ -115,8 +118,8 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                         if (pic != null) Image(pic, "Bar ${m.number} as printed", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().height(pictureHeight).padding(4.dp))
                         else Text("Getting the bar from the page...", style = MaterialTheme.typography.bodySmall, color = Color(0xFF777777))
                     }
-                    Doubts(m)
                 }
+                val printed: @Composable () -> Unit = { picture(); Doubts(m) }
                 val work: @Composable () -> Unit = {
                     when {
                         m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") } -> RestCount(state, m, short)
@@ -137,12 +140,14 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                     if (wide) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Column(Modifier.weight(0.4f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { printed() }
                         Column(Modifier.weight(0.6f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { work() }
-                    } else Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { printed(); work() }
+                    // One column: the print, then straight to the readings - why it was asked, after.
+                    } else Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) { picture(); work(); Doubts(m) }
                 }
                 Spacer(Modifier.height(gap))
                 FixFoot(state, m, short)
             }
         }
+    }
     }
 }
 
@@ -158,18 +163,19 @@ private fun FixFoot(state: SheetsState, m: Measure, short: Boolean) {
     val busy = ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { ScoreTools.back(state) }, enabled = ScoreTools.canGoBack, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("◀ Back", maxLines = 1) }
-            OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, enabled = !busy, contentPadding = pad, modifier = Modifier.weight(1.3f).height(h)) { Text("None of these", maxLines = 1) }
+            OutlinedButton(onClick = { ScoreTools.back(state) }, enabled = ScoreTools.canGoBack, contentPadding = pad, modifier = Modifier.weight(if (short) 0.7f else 1f).height(h)) { Text(if (short) "◀" else "◀ Back", maxLines = 1) }
+            OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, enabled = !busy, contentPadding = pad, modifier = Modifier.weight(1.6f).height(h)) { Text("None of these", maxLines = 1, softWrap = false) }
             OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", maxLines = 1) }
             Button(onClick = { ScoreTools.endCheck() }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Done", maxLines = 1) }
         }
-        // What's wrong: always here, always in this order (scrolls sideways on a narrow screen).
-        Row(
+        // What's wrong: always here, always in this order - wrapping onto more lines on a narrow
+        // screen, every answer in sight (the same lines for every bar, so nothing moves).
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Wrong:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Wrong:", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterVertically))
             for (what in listOf("Pitch", "Length", "Extra note", "Missing note", "Rests", "Grace note")) {
                 val on = ScoreTools.focus == what
                 androidx.compose.material3.FilterChip(selected = on, enabled = !busy, onClick = { ScoreTools.narrow(state, if (on) null else what) }, label = { Text(what, maxLines = 1) })

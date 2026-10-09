@@ -114,14 +114,26 @@ internal object Transcriber {
      * an empty string when it was cleared.
      */
     internal fun keptEdit(state: SheetsState, file: File, kind: String): String? {
-        val dir = File(folder(state, file), "edits")
-        val newest = dir.listFiles { f -> f.name.startsWith("$kind-") && f.name.endsWith(".txt") }?.maxByOrNull { it.lastModified() } ?: return null
-        return runCatching { newest.readText() }.getOrNull()
+        // In a folder of their own for the file, whatever reader read it: a better reader reads the
+        // music again, but what the player put right is theirs and stays. (Kept a while beside the
+        // reading itself: looked for there too.)
+        for (dir in listOf(editsFolder(state, file), File(folder(state, file), "edits"))) {
+            val newest = dir.listFiles { f -> f.name.startsWith("$kind-") && f.name.endsWith(".txt") }?.maxByOrNull { it.lastModified() } ?: continue
+            return runCatching { newest.readText() }.getOrNull()
+        }
+        return null
+    }
+
+    /** Where what the player put right in [file]'s reading is kept: by the file's music alone, not the reader. */
+    private fun editsFolder(state: SheetsState, file: File): File {
+        val root = state.root?.takeIf { file.absolutePath.startsWith(it.absolutePath) }
+        val base = if (root != null) File(root, ".inksheets/readings") else File(state.platform.localFolder, "readings")
+        return File(base, "edits-${idOf(file)}")
     }
 
     /** Keep [value] as what the player put right of [kind] in [file]'s reading (null: none). */
     internal fun keepEdit(state: SheetsState, file: File, kind: String, value: String?) {
-        val dir = File(folder(state, file), "edits").apply { mkdirs() }
+        val dir = editsFolder(state, file).apply { mkdirs() }
         val me = state.platform.deviceId.map { if (it.isLetterOrDigit() || it == '-') it else '_' }.joinToString("")
         runCatching { File(dir, "$kind-$me.txt").writeText(value.orEmpty()) }
     }

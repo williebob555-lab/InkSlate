@@ -91,6 +91,10 @@ object Interpretation {
         var level = LEVELS.getValue("mf")
         var pendingStruck: String? = null
         val pinsDone = HashSet<String>()
+        // A hairpin that runs to its bar's end (to the end of the line, often) goes on into the next
+        // bar until a dynamic says where it got to: its change per bar, and bars left.
+        var carry = 0f
+        var carryBars = 0
         for ((bi, m) in bars.withIndex()) {
             val start = barQ[bi]
             if (m == null || m.bars > 1 || m.events.all { it is Rest }) {
@@ -104,6 +108,11 @@ object Interpretation {
             val pins = m.directions.filter { it.kind == "cresc" || it.kind == "dim" }
             val slurs = m.directions.filter { it.kind == "slur" }
             val breaths = m.directions.filter { it.kind == "breath" }.map { it.x }
+            // A hairpin reaching the bar's end with no dynamic after it: carried into the next bar.
+            pins.firstOrNull { it.x2 >= m.box.right - sp * 1.5f && dyn.none { d -> d.x > it.x2 - sp } }?.let { h ->
+                carry = if (h.kind == "cresc") 0.12f else -0.12f
+                carryBars = 2
+            }
             for (d in m.directions.filter { it.kind == "text" }) tempoWord(d.text)?.let { w ->
                 val ev = m.events.firstOrNull { it.x >= d.x - sp } ?: m.events.lastOrNull()
                 var qq = 0.0
@@ -114,6 +123,9 @@ object Interpretation {
             var q = 0.0
             var di = 0
             val played = lengths[bi]
+            // Carried in from the bar before: spread over this one, unless it starts afresh.
+            val carrying = if (carryBars > 0 && dyn.none { it.x < m.box.left + sp * 6 } && pins.none { it.x < m.box.left + sp * 4 }) carry else 0f
+            if (carrying == 0f) carryBars = 0 else carryBars--
             for ((i, e) in m.events.withIndex()) {
                 if (q >= played - 1e-9) break
                 val len = min(e.duration.quarters, played - q)
@@ -127,6 +139,8 @@ object Interpretation {
                     val key = "${m.page}/${m.staff}/${h.x}/${h.x2}"
                     if (e.x > h.x2 && key !in pinsDone) { pinsDone += key; level = (level + if (h.kind == "cresc") 0.16f else -0.16f).coerceIn(0.15f, 1.05f) }
                 }
+                // The carried hairpin, this far through this bar.
+                if (carrying != 0f) level = (level + carrying * (len / played).toFloat()).coerceIn(0.15f, 1.05f)
                 if (e is Note) {
                     val keys = (drums?.keys(e) ?: e.pitches.map { it.midi }).toIntArray()
                     val nextX = m.events.getOrNull(i + 1)?.x ?: Float.MAX_VALUE
@@ -143,9 +157,11 @@ object Interpretation {
                     if (p.endLevel == 0.68f) p.endLevel = v
                     pendingStruck?.let { st -> p.accent = 1f; p.level = max(v + 0.3f, 0.95f); if (st.endsWith("p")) level = LEVELS.getValue("p"); pendingStruck = null }
                     when {
-                        "marcato" in e.articulations -> { p.accent = max(p.accent, 1f); p.level += 0.3f }
-                        "accent" in e.articulations -> { p.accent = max(p.accent, 0.85f); p.level += 0.24f }
-                        "sforzando" in e.articulations -> { p.accent = 1f; p.level += 0.3f }
+                        // Leant on, not shouted: the bite is in the attack (Synth's accent), the
+                        // loudness only a little more - and never past fortissimo.
+                        "marcato" in e.articulations -> { p.accent = max(p.accent, 1f); p.level = min(p.level + 0.2f, max(v, 1.0f)) }
+                        "accent" in e.articulations -> { p.accent = max(p.accent, 0.8f); p.level = min(p.level + 0.14f, max(v, 0.98f)) }
+                        "sforzando" in e.articulations -> { p.accent = 1f; p.level = min(p.level + 0.22f, 1.02f) }
                     }
                     p.slurred = slurs.any { s -> e.x >= s.x - sp * 0.5f && e.x < s.x2 - sp * 0.8f } || e.tie
                     // A tie carries on into the next note: one sound, not two.
@@ -157,8 +173,11 @@ object Interpretation {
                     // The end of a slur: the end of a breath, often.
                     if (slurs.any { s -> abs(e.x - (s.x2 - sp)) < sp * 1.5f }) breaks += Triple(start + q + len, SLUR_END, false)
                 } else {
-                    // A rest of half a beat or more: a break in the line.
-                    if (len >= 0.5) breaks += Triple(start + q, if (len >= 1.0) 0.85f else 0.5f, false)
+                    // A rest: a break in the line by how long it is - a bar's rest ends a phrase; a
+                    // beat's is a breath inside one (a figure repeated bar after bar is one line,
+                    // not a phrase a bar).
+                    val strength = when { len >= played - 1e-6 || len >= 3.0 -> 0.9f; len >= 1.0 -> 0.6f; len >= 0.5 -> 0.4f; else -> 0f }
+                    if (strength > 0f) breaks += Triple(start + q, strength, false)
                 }
                 q += len
             }
@@ -203,6 +222,14 @@ object Interpretation {
             chosen += best
         }
         chosen.sortBy { it.first }
+        // A phrase of less than a bar and a half is part of the one before it (a short figure
+        // after a rest is not a phrase of its own).
+        run {
+            var last = notes.first().q
+            val keep = ArrayList<Triple<Double, Float, Boolean>>()
+            for (c in chosen) { if (c.first - last >= bar * 1.5 - 1e-6 || c.third) { keep += c; last = c.first } }
+            chosen.clear(); chosen += keep
+        }
         val sections = chosen.filter { it.third }.map { it.first }.toSet()
         return spans().filter { (a, b) -> b - a > 1e-6 }.mapIndexed { i, (a, b) ->
             val inside = notes.filter { it.q >= a - 1e-6 && it.q < b - 1e-6 }
@@ -212,8 +239,9 @@ object Interpretation {
             val ease = when {
                 at == null -> 0f
                 at == BREATH || at == SLUR_END -> 0f
-                at >= 0.85f -> 1f
-                else -> 0.5f
+                at >= 0.95f -> 1f       // a fermata, a section
+                at >= 0.85f -> 0.6f     // a bar's rest: the rest is most of the breath
+                else -> 0.4f
             }
             Phrase(a, b, peak, sections.any { abs(it - b) < 1e-6 }, ease, last = i == chosen.size)
         }
@@ -234,10 +262,10 @@ object Interpretation {
                 val u = (n.q - ph.startQ) / span
                 // An arch over the phrase: rising to its high point, easing away after it.
                 val arch = if (u <= peakU) (u / peakU) else (1.0 - (u - peakU) / (1.0 - peakU))
-                var d = (0.09 * arch.pow(1.3) - 0.035).toFloat()
+                var d = (0.13 * arch.pow(1.3) - 0.05).toFloat()
                 // The line: higher notes a little fuller, lower a little lighter.
                 val top = n.keys.maxOrNull() ?: mean.toInt()
-                d += ((top - mean) * 0.004).toFloat().coerceIn(-0.05f, 0.05f)
+                d += ((top - mean) * 0.005).toFloat().coerceIn(-0.06f, 0.06f)
                 // The beat: the bar's first leant on, its strong beats a little, the off-beats light -
                 // unless a slur carries the line through them.
                 val m = bars.getOrNull(n.bar)
@@ -295,7 +323,8 @@ object Interpretation {
     private const val DETACHED_ACCENT = -2.0
 
     private fun tempoWord(text: String): Int? {
-        val w = text.lowercase().trim('.', ' ')
+        // "poco rit.", "molto rall.", "a little slower": the word that says it, wherever it comes.
+        val w = text.lowercase().trim('.', ' ').removePrefix("poco a poco ").removePrefix("poco ").removePrefix("molto ").removePrefix("più ").removePrefix("piu ")
         return when {
             w.startsWith("rit") || w.startsWith("rall") || w.startsWith("allarg") || w.startsWith("slower") || w.startsWith("morendo") || w.startsWith("calando") -> 1
             w.startsWith("accel") || w.startsWith("string") || w.startsWith("faster") -> -1
