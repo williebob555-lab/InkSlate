@@ -75,6 +75,7 @@ class Synth(val sampleRate: Int) {
         const val SPECTRAL_TOP = 9000.0
         private const val MAX_HARMONICS = 32
         private val LN2 = ln(2.0)
+        private const val TWO_PI = 2 * PI
         /** Samples between the points loudness and pitch are worked out at (the sound runs straight between them). */
         private const val CONTROL = 16
 
@@ -400,10 +401,15 @@ class Synth(val sampleRate: Int) {
             }
             var x = 0.0
             val w0 = twoPiOverSr * f
-            for (h in 0 until v.active) {
-                val ph = v.phase[h] + w0 * (h + 1)
-                v.phase[h] = if (ph > 2 * PI) ph - 2 * PI else ph
-                if (f * (h + 1) < nyquist) x += v.now[h] * sine(v.phase[h])
+            val top = min(v.active, (nyquist / f).toInt())
+            val phase = v.phase; val now = v.now
+            var w = w0
+            for (h in 0 until top) {
+                var ph = phase[h] + w
+                if (ph > TWO_PI) ph -= TWO_PI
+                phase[h] = ph
+                x += now[h] * sine(ph)
+                w += w0
             }
             // The start of the note: a reed's or a flute's chiff, and breath - faint soft noise
             // with the highs taken out, nothing like a click or a hiss.

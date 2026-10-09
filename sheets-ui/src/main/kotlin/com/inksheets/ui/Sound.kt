@@ -9,6 +9,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 internal object Sound {
     private val sources = ConcurrentHashMap<String, (FloatArray) -> Unit>()
+    /** Sources made ahead of the speaker (see RenderAhead): the instrument, not the metronome, whose clicks must be on time. */
+    private val ahead = ConcurrentHashMap<String, com.inksheets.core.RenderAhead>()
     private var out: AudioOut? = null
     @Volatile private var scratch = FloatArray(0)
 
@@ -17,9 +19,16 @@ internal object Sound {
 
     /** [who] is heard from now: [fill] writes its next samples into the buffer it is given. False with no output here. */
     @Synchronized
-    fun play(state: SheetsState, who: String, fill: (FloatArray) -> Unit): Boolean {
+    fun play(state: SheetsState, who: String, ahead: Boolean = false, fill: (FloatArray) -> Unit): Boolean {
         val o = state.platform.audioOut ?: return false
-        sources[who] = fill
+        this.ahead.remove(who)?.stop()
+        if (ahead) {
+            // Rendered on a thread of its own, 200 ms in front: a busy device cannot starve the speaker.
+            val made = com.inksheets.core.RenderAhead(o.sampleRate, 200, 480, fill)
+            made.start(prefillMs = 0)
+            this.ahead[who] = made
+            sources[who] = { buf -> made.read(buf) }
+        } else sources[who] = fill
         if (out == null) {
             out = o
             o.start { buf -> mix(buf) }
@@ -46,6 +55,7 @@ internal object Sound {
     @Synchronized
     fun stop(who: String) {
         sources.remove(who)
+        ahead.remove(who)?.stop()
         if (sources.isEmpty()) {
             out?.stop()
             out = null

@@ -285,10 +285,11 @@ private class JavaSoundOut : AudioOut {
             runCatching {
                 val format = AudioFormat(sampleRate.toFloat(), 16, 1, true, false)
                 val line = AudioSystem.getSourceDataLine(format)
-                // 40 ms held ahead: a pause elsewhere (a page drawn, memory tidied) no longer cuts the sound.
-                line.open(format, sampleRate / 25 * 2)
+                // 100 ms held in the card's buffer: a pause elsewhere (a page drawn, memory tidied, a busy
+                // machine) no longer cuts the sound. (The instrument is also rendered ahead of this: see Sound.)
+                line.open(format, sampleRate / 10 * 2)
                 line.start()
-                val block = FloatArray(256)
+                val block = FloatArray(480)
                 val bytes = ByteArray(block.size * 2)
                 while (running) {
                     fill(block)

@@ -1054,7 +1054,7 @@ internal object ScoreTools {
         player = p
         playing = Triple(range.first, start.toInt(), 0)
         syncTool()
-        Sound.play(s, WHO) { buf -> p.fill(buf) }
+        Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
         var lastBar = -1
         watcher = java.util.Timer("score-play", true).apply {
             schedule(object : java.util.TimerTask() {
@@ -1176,7 +1176,7 @@ internal object ScoreTools {
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
             syncTool()
-            Sound.play(s, WHO) { buf -> p.fill(buf) }
+            Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
             var lastBar = -1
             watcher = java.util.Timer("band-play", true).apply {
                 schedule(object : java.util.TimerTask() {
