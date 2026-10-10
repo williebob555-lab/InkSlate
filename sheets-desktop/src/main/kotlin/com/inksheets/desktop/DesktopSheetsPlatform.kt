@@ -259,6 +259,23 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         onResult(dialog.files.orEmpty().toList())
     }
 
+    override fun pickInstrument(onResult: (File?) -> Unit) {
+        if (com.inkslate.desktop.WindowsFileDialog.available) {
+            Thread({
+                val f = com.inkslate.desktop.WindowsFileDialog.files(
+                    "Add an instrument", downloadsFolder,
+                    listOf("Sampled instruments (DecentSampler, SFZ, or a zip of one)" to "*.dspreset;*.sfz;*.zip", "All files" to "*.*"),
+                    many = false
+                ).firstOrNull()
+                onMain { onResult(f) }
+            }, "add-instrument").apply { isDaemon = true; start() }
+            return
+        }
+        val dialog = java.awt.FileDialog(null as java.awt.Frame?, "Add an instrument", java.awt.FileDialog.LOAD).apply { directory = downloadsFolder.absolutePath }
+        dialog.isVisible = true
+        onResult(dialog.files.orEmpty().firstOrNull())
+    }
+
     override val canQuit: Boolean get() = com.inkslate.desktop.AppFlavor.quit != null
     override val canWindow: Boolean get() = true
     override val windowed: Boolean get() = com.inkslate.desktop.AppFlavor.windowed

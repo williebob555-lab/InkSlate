@@ -74,6 +74,8 @@ fun BoxScope.MusicStrip(state: SheetsState) {
         Perform.recentre?.invoke()
     }
     androidx.compose.runtime.SideEffect { if (!open) Overlays.musicOut = 0.dp }
+    // The player's own instruments, loading in the background before anything is played.
+    LaunchedEffect(state.root) { if (state.readMusic) SampledInstruments.ensure(state) }
     if (!open) return
     val file = state.currentPath?.let { File(it) }
     // Read again whenever what was read changes (a part just read).
@@ -286,10 +288,19 @@ private fun SpeedUpMenu(open: Boolean, onDismiss: () -> Unit) {
 @Composable
 private fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit) {
     DropdownMenu(open, onDismissRequest = onDismiss) {
-        DropdownMenuItem(text = { Text("The part's own instrument") }, onClick = { ScoreTools.soundAs = null; onDismiss() })
-        HorizontalDivider()
-        for ((id, name) in listOf("piano" to "Piano", "flute" to "Flute", "clarinet" to "Clarinet", "alto-sax" to "Alto sax", "tenor-sax" to "Tenor sax",
-            "trumpet" to "Trumpet", "horn" to "Horn", "trombone" to "Trombone", "tuba" to "Tuba", "violin" to "Violin", "cello" to "Cello", "electric-bass" to "Bass guitar")) {
+        DropdownMenuItem(text = { Text("The part's own instrument" + if (ScoreTools.soundAs == null) "  ✓" else "") }, onClick = { ScoreTools.soundAs = null; onDismiss() })
+        // The player's own sampled instruments first (see Settings, Instruments).
+        val yours = remember(open, SampledInstruments.version) { if (open) SampledInstruments.ensure(state).list().map { it.name } else emptyList() }
+        if (yours.isNotEmpty()) {
+            HorizontalDivider()
+            Text("Yours", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+            for (name in yours) {
+                val id = SampledInstruments.PICKED + name
+                DropdownMenuItem(text = { Text(name + if (ScoreTools.soundAs == id) "  ✓" else "") }, onClick = { ScoreTools.soundAs = id; onDismiss() })
+            }
+            Text("Built in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+        } else HorizontalDivider()
+        for ((id, name) in SampledInstruments.instruments) {
             DropdownMenuItem(text = { Text(name + if (ScoreTools.soundAs == id) "  ✓" else "") }, onClick = { ScoreTools.soundAs = id; onDismiss() })
         }
     }

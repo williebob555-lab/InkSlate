@@ -1049,7 +1049,7 @@ internal object ScoreTools {
         // The metronome going: its click moves into the music - on the music's own beats, its
         // ritardandos and fermatas too - instead of ticking on beside it on a clock of its own.
         val click = takeClick(s)
-        val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, Synth.patchFor(Midi.program(sounding)),
+        val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, SampledInstruments.patchFor(s, sounding),
             loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, click = click, order = order)
         player = p
         playing = Triple(range.first, start.toInt(), 0)
@@ -1158,7 +1158,7 @@ internal object ScoreTools {
                 val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
                 // A drum part on the drums: which drum each note is, from the part and where the note sits.
                 val drums = com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" "))
-                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, Synth.patchFor(Midi.program(id)), drums)
+                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, SampledInstruments.patchFor(s, id), drums)
             }
             if (voices.isEmpty()) { said = "No other parts of this song here to play"; return@readBand }
             val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
@@ -1170,7 +1170,7 @@ internal object ScoreTools {
             val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(mine, first) else null
             // This part too, where asked: to hear the whole, or to hear how it fits.
             val (myId, myTranspose) = instrumentOf(s)
-            val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, Synth.patchFor(Midi.program(soundAs ?: myId))) to 1f else null
+            val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, SampledInstruments.patchFor(s, soundAs ?: myId)) to 1f else null
             val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)

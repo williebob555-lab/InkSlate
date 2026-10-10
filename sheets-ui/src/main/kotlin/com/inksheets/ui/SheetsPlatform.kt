@@ -167,6 +167,9 @@ interface SheetsPlatform {
      */
     fun pickFiles(onResult: (List<File>) -> Unit) { onResult(emptyList()) }
 
+    /** Choose a sampled instrument: a .dspreset or .sfz (beside its samples), or a zip of one; null if cancelled. */
+    fun pickInstrument(onResult: (File?) -> Unit) = pickFiles { onResult(it.firstOrNull()) }
+
     /** Whether [scanPages] can photograph pages here. */
     val canScanPages: Boolean get() = false
 

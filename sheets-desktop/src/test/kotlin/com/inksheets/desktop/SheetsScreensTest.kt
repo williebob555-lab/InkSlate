@@ -284,6 +284,43 @@ class SheetsScreensTest {
     }
 
     @Test
+    fun `an instrument added in Settings plays the parts it is set to`() {
+        val root = tmp.newFolder("Music")
+        // An export as the sampler app writes it: a preset beside its samples folder.
+        val export = tmp.newFolder("My Euphonium")
+        File(export, "samples").mkdirs()
+        val rate = 44_100
+        val pcm = java.io.ByteArrayOutputStream()
+        repeat(rate / 2) { i -> val v = (Math.sin(2 * Math.PI * 233.08 * i / rate) * 12000).toInt(); pcm.write(v and 0xff); pcm.write((v shr 8) and 0xff) }
+        val data = pcm.toByteArray()
+        val wav = java.io.ByteArrayOutputStream()
+        fun le(n: Int, b: Int) { for (k in 0 until b) wav.write((n shr (8 * k)) and 0xff) }
+        wav.write("RIFF".toByteArray()); le(36 + data.size, 4); wav.write("WAVEfmt ".toByteArray()); le(16, 4); le(1, 2); le(1, 2)
+        le(rate, 4); le(rate * 2, 4); le(2, 2); le(16, 2); wav.write("data".toByteArray()); le(data.size, 4); wav.write(data)
+        File(export, "samples/Bb2.wav").writeBytes(wav.toByteArray())
+        val preset = File(export, "My Euphonium.dspreset").apply {
+            writeText("""<?xml version="1.0" encoding="UTF-8"?><DecentSampler minVersion="1.11.0"><groups volume="0dB">
+                <group name="Main" attack="0.01" decay="0.1" sustain="1" release="0.1">
+                <sample path="samples/Bb2.wav" rootNote="46" loNote="30" hiNote="70" loVel="1" hiVel="127" loopEnabled="true" loopStart="1000" loopEnd="20000" loopCrossfade="500" />
+                </group></groups></DecentSampler>""")
+        }
+        val state = SheetsState(FakePlatform(root))
+        state.readMusic = true
+        com.inksheets.ui.SampledInstrumentsTesting.add(state, preset)
+        runDesktopComposeUiTest(width = 900, height = 1400) {
+            setContent { MaterialTheme { Surface { com.inksheets.ui.SheetsSettings(state) } } }
+            waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("My Euphonium").fetchSemanticsNodes().isNotEmpty() }
+            onNodeWithText("Plays: nothing yet  ▾").performClick()
+            onNodeWithText("     Euphonium").performClick()
+            waitForIdle()
+            shoot("instruments", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
+        }
+        assertTrue("copied into the library", File(root, ".inksheets/instruments/My Euphonium/samples/Bb2.wav").isFile)
+        assertTrue("a euphonium part plays with it", com.inksheets.ui.SampledInstrumentsTesting.sampled(state, "euphonium-bc"))
+        assertFalse("a trumpet part keeps the built-in voice", com.inksheets.ui.SampledInstrumentsTesting.sampled(state, "trumpet"))
+    }
+
+    @Test
     fun `leading shows a code to scan, and the count of followers`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
