@@ -117,15 +117,27 @@ internal object ScoreTools {
         if (s.platform.pref(key) != null) s.platform.setPref(key, null)
     }
 
-    private fun scoreOf(path: String): Score? =
+    /** A part's reading with its bars numbered, rests counted and wrong bars marked - but no bar fixed, by hand or carried over. */
+    private fun baseOf(path: String): Score? =
         (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { read ->
             // Bars you said are wrong, though read as sure: in doubt, until fixed.
             val wrong = wrongOf(path)
             val marked = if (wrong.isEmpty()) read else read.copy(measures = read.measures.map { m ->
                 if (m.bars == 1 && m.number in wrong && WRONG !in m.doubts) m.copy(doubts = m.doubts + WRONG) else m })
-            // A clef, key or time put right laid over all (bars put right too: their pitches from it).
-            com.inksheets.core.omr.Signatures.apply(com.inksheets.core.omr.Scores.withFixes(renumbered(withRests(marked, restsOf(path)), numbersOf(path)), fixesOf(path)), sigsOf(path))
+            renumbered(withRests(marked, restsOf(path)), numbersOf(path))
         }
+
+    private fun scoreOf(path: String): Score? =
+        baseOf(path)?.let { base ->
+            // Bars carried over from the song's other parts under those put right here; then a clef,
+            // key or time put right laid over all (bars put right too: their pitches from it).
+            val carried = carriedFixes(path)
+            val laid = com.inksheets.core.omr.Scores.withFixes(if (carried.isEmpty()) base else com.inksheets.core.omr.Scores.withFixes(base, carried), fixesOf(path))
+            com.inksheets.core.omr.Signatures.apply(laid, sigsOf(path))
+        }
+
+    /** The part's reading before any bar was put right (clefs, keys and times as put right): what a fix is compared against. */
+    private fun asRead(path: String): Score? = baseOf(path)?.let { com.inksheets.core.omr.Signatures.apply(it, sigsOf(path)) }
 
     /**
      * Bar numbers put right, by part: from the bar read as [key] on, the bars are numbered from
@@ -256,8 +268,12 @@ internal object ScoreTools {
         val w = wrongOf(path)
         val f = fixesOf(path)
         for (n in bars) { w += n; f.remove(n) }
+        // Said wrong: a fix carried here from another part goes too.
+        if (carriedOf(path).removeAll { it.bar in bars }) saveCarried(path)
         saveWrong(path)
         keep(fixKey(path), path, com.inksheets.core.omr.Scores.encodeFixes(f))
+        // What those fixes had carried to the other parts goes back with them.
+        for (n in bars) carryOut(s, path, n)
         changed()
         // Just these bars to go through - not every bar in doubt in the part: done with them, done.
         startCheckOf(s, bars.toList())
@@ -279,7 +295,11 @@ internal object ScoreTools {
     fun anySure(s: SheetsState, bars: IntRange): Boolean =
         scoreHere(s)?.measures?.any { it.bars == 1 && it.number in bars && it.sure } == true
 
-    fun scoreHere(s: SheetsState): Score? = s.currentPath?.let { scoreOf(it) }
+    fun scoreHere(s: SheetsState): Score? {
+        // The part's sisters' fixes that are its own too (throttled; cheap when nothing changed).
+        runCatching { carryIn(s) }
+        return s.currentPath?.let { scoreOf(it) }
+    }
 
     // ---- the tools -----------------------------------------------------------------------------
 
@@ -389,7 +409,151 @@ internal object ScoreTools {
         keep(fixKey(path), path, com.inksheets.core.omr.Scores.encodeFixes(f))
         // Put right: no longer the bar you said was wrong.
         if (wrongOf(path).remove(number)) saveWrong(path)
+        // The same bar in the song's other parts, if it is the same measure: put right there too.
+        lastKept = path to number
+        lastCarried = state?.let { carryOut(it, path, number) }
         changed()
+    }
+
+    // ---- fixes carried to the song's other parts -------------------------------------------------
+
+    /**
+     * The parts that had this fix carried to them by the last bar kept (their names), or none; for
+     * tests and logs - carrying is quiet: those bars simply count as put right.
+     */
+    var lastCarried: List<String>? = null
+        private set
+    private var lastKept: Pair<String, Int>? = null
+
+    /** Bars carried over from other parts, by file: kept with the part's edits, apart from the part's own fixes. */
+    private val carried = HashMap<String, MutableList<com.inksheets.core.omr.CarriedFix>>()
+    private fun carriedKey(path: String) = "sheets_carried:" + (state?.relative(File(path)) ?: path)
+    private fun carriedOf(path: String): MutableList<com.inksheets.core.omr.CarriedFix> = carried.getOrPut(path) {
+        kept(carriedKey(path), path)?.let { com.inksheets.core.omr.Scores.decodeCarried(it).toMutableList() } ?: ArrayList()
+    }
+    private fun saveCarried(path: String) {
+        val list = carriedOf(path)
+        keep(carriedKey(path), path, if (list.isEmpty()) null else com.inksheets.core.omr.Scores.encodeCarried(list))
+    }
+    private fun carriedFixes(path: String): Map<Int, List<com.inksheets.core.omr.Event>> =
+        carriedOf(path).let { l -> if (l.isEmpty()) emptyMap() else l.filter { it.events.isNotEmpty() }.associate { it.bar to it.events } }
+
+    /** Where bar [number] of the part in front was put right from another part's fix: "put right from Flute", or null. */
+    fun carriedNote(s: SheetsState, number: Int): String? {
+        val path = s.currentPath ?: return null
+        if (fixesOf(path).containsKey(number)) return null
+        return carriedOf(path).lastOrNull { it.bar == number && it.events.isNotEmpty() }?.let { "put right from ${it.fromName}" }
+    }
+
+    /** A part of the song for carrying fixes between: its file, how far its instrument is written above where it sounds, its reading as read (its numbers from 1), and how far those are from the file's. */
+    private class Peer(val part: com.inksheets.core.Part, val path: String, val semis: Int, val read: Score, val offset: Int)
+
+    private fun peerOf(s: SheetsState, part: com.inksheets.core.Part, file: File): Peer? {
+        val semis = part.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }?.let { com.inksheets.core.Instruments.byId[it] }?.transpose ?: return null
+        val whole = asRead(file.absolutePath) ?: return null
+        val (local, offset) = Transcriber.partOf(whole, part)
+        return Peer(part, file.absolutePath, semis, local, offset)
+    }
+
+    /** The part with the music at [path] that is in front (else the song's first with that file), and the song's other parts. */
+    private fun peersAt(s: SheetsState, path: String): Pair<Peer, List<Peer>>? {
+        val song = s.current ?: return null
+        val shown = s.partShown()?.takeIf { s.fileOf(it.file)?.absolutePath == path }
+            ?: song.parts.firstOrNull { s.fileOf(it.file)?.absolutePath == path } ?: return null
+        val me = peerOf(s, shown, File(path)) ?: return null
+        val others = song.parts.filter { it.id != shown.id && !it.dup && !(it.label ?: "").contains("score", true) && it.instrument?.contains("score", true) != true }
+            .mapNotNull { p -> s.fileOf(p.file)?.takeIf { f -> f.isFile }?.let { p to it } }
+            .filter { (p, f) -> f.absolutePath != path || (p.firstPage != null && p.firstPage != shown.firstPage) }
+            .distinctBy { (p, f) -> f.absolutePath to p.firstPage }
+            .mapNotNull { (p, f) -> peerOf(s, p, f) }
+        return me to others
+    }
+
+    private fun localFixes(path: String, offset: Int): Map<Int, List<com.inksheets.core.omr.Event>> =
+        fixesOf(path).entries.associate { (it.key - offset) to it.value }
+
+    private fun hasOwnSay(path: String, fileBar: Int) = fixesOf(path).containsKey(fileBar) || fileBar in wrongOf(path)
+
+    /**
+     * Bar [number] of [path] has been put right (or set back): the same bar of the song's other
+     * parts put right the same way where it is the same measure (see CarryFix), and any it was
+     * carried to before taken back. Returns the names of the parts it was carried to.
+     */
+    private fun carryOut(s: SheetsState, path: String, number: Int): List<String> {
+        val (me, others) = peersAt(s, path) ?: return emptyList()
+        val bar = number - me.offset
+        val mine = localFixes(path, me.offset)
+        val names = ArrayList<String>()
+        for (o in others) {
+            val list = carriedOf(o.path)
+            val fileBar = bar + o.offset
+            var changed = list.removeAll { it.fromId == me.part.id && it.fromBar == number && it.bar == fileBar }
+            if (!hasOwnSay(o.path, fileBar) && list.none { it.bar == fileBar }) {
+                com.inksheets.core.omr.CarryFix.carry(me.read, mine, me.semis, bar, o.read, o.semis)?.let { c ->
+                    list += com.inksheets.core.omr.CarriedFix(fileBar, me.part.id, com.inksheets.core.Instruments.partName(me.part), number, c.events, c.confirmed)
+                    names += com.inksheets.core.Instruments.partName(o.part)
+                    changed = true
+                }
+            }
+            if (changed) saveCarried(o.path)
+        }
+        return names
+    }
+
+    /** The carried copies of the fix last kept taken back (Back does this too). */
+    fun undoCarried() {
+        val (path, number) = lastKept ?: return
+        val s = state ?: return
+        val (me, others) = peersAt(s, path) ?: return
+        for (o in others) {
+            // Left as an empty mark, so looking again for fixes to carry in does not bring it back.
+            val list = carriedOf(o.path)
+            var any = false
+            for (i in list.indices) if (list[i].fromId == me.part.id && list[i].fromBar == number && list[i].events.isNotEmpty()) { list[i] = list[i].copy(events = emptyList()); any = true }
+            if (any) saveCarried(o.path)
+        }
+        lastCarried = null
+        changed()
+    }
+
+    private val carryChecked = HashMap<String, Pair<Long, String>>()
+
+    /**
+     * Whatever the song's other parts have had put right that is the same measure in the part in
+     * front, put right here too - for a part read after its sisters' bars were fixed (or whose
+     * reading arrives from another device). Looked at only now and then, and again when a reading
+     * or a fix changes. Returns how many bars were put right.
+     */
+    fun carryIn(s: SheetsState, force: Boolean = false): Int {
+        val path = s.currentPath ?: return 0
+        val now = System.currentTimeMillis()
+        val before = carryChecked[path]
+        if (!force && before != null && now - before.first < 2_500) return 0
+        // Cheap first: has any reading or fix changed since last looked?
+        val files = (listOf(File(path)) + (s.current?.parts.orEmpty().mapNotNull { s.fileOf(it.file) })).distinctBy { it.absolutePath }
+        val stamp = files.joinToString(",") { f ->
+            val read = if (scoreSource != null) scoreSource?.invoke(f.absolutePath) else Transcriber.cached(s, f)
+            "${System.identityHashCode(read)}:${fixesOf(f.absolutePath).size}:${carriedOf(f.absolutePath).size}"
+        }
+        carryChecked[path] = now to stamp
+        if (!force && before?.second == stamp) return 0
+        val (me, others) = peersAt(s, path) ?: return 0
+        var added = 0
+        val list = carriedOf(path)
+        for (o in others) {
+            val theirs = localFixes(o.path, o.offset)
+            for (n in theirs.keys.sorted()) {
+                val fileBar = n + me.offset
+                val from = n + o.offset
+                if (hasOwnSay(path, fileBar) || list.any { it.bar == fileBar }) continue
+                com.inksheets.core.omr.CarryFix.carry(o.read, theirs, o.semis, n, me.read, me.semis)?.let { c ->
+                    list += com.inksheets.core.omr.CarriedFix(fileBar, o.part.id, com.inksheets.core.Instruments.partName(o.part), from, c.events, c.confirmed)
+                    added++
+                }
+            }
+        }
+        if (added > 0) { saveCarried(path); s.platform.onMain { changed() } }
+        return added
     }
 
     /**
@@ -509,6 +673,9 @@ internal object ScoreTools {
         val f = fixesOf(path)
         if (before == null) f.remove(number) else f[number] = before
         keep(fixKey(path), path, com.inksheets.core.omr.Scores.encodeFixes(f))
+        // What that fix carried to the other parts taken back with it (or carried again, as the fix before it was).
+        lastKept = null
+        lastCarried = carryOut(s, path, number).takeIf { it.isNotEmpty() }
         checkAt = index.coerceIn(0, checkBars.lastIndex.coerceAtLeast(0))
         changed()
         showBar(s)
@@ -830,7 +997,7 @@ internal object ScoreTools {
         val off = Listener.offBars.toSet()
         val cueHere = if (cues) cueCache[path].orEmpty() else emptyMap()
         if (!colours && !underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
-        val fixed = if (colours) fixesOf(path).keys else emptySet()
+        val fixed = if (colours) fixesOf(path).keys + carriedFixes(path).keys else emptySet()
         val key = path to page
         marksCache[key]?.let { (v, m) -> if (v == version) return m }
         val k = scaleOf(score, page, width) ?: return null

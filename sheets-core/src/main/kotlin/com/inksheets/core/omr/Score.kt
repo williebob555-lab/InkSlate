@@ -350,6 +350,12 @@ object Scores {
     fun encodeFixes(fixes: Map<Int, List<Event>>): String = json.encodeToString(fixesSerializer, fixes)
     fun decodeFixes(text: String): Map<Int, List<Event>> = runCatching { json.decodeFromString(fixesSerializer, text) }.getOrDefault(emptyMap())
 
+    private val carriedSerializer = kotlinx.serialization.builtins.ListSerializer(CarriedFix.serializer())
+
+    /** Bars put right from another part's fix (see [CarryFix]), as text to keep. */
+    fun encodeCarried(carried: List<CarriedFix>): String = json.encodeToString(carriedSerializer, carried)
+    fun decodeCarried(text: String): List<CarriedFix> = runCatching { json.decodeFromString(carriedSerializer, text) }.getOrDefault(emptyList())
+
     /**
      * [measures] (in page order) numbered so no number comes twice: a page whose numbers start again
      * at or before where the page before left off (read on its own, out of turn - a book read from the
