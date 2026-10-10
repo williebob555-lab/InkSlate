@@ -56,7 +56,7 @@ class PlaybackRound7Test {
             val widest = (0..200).maxOf { l.depthAt(it / 200.0 * l.span * 0.8) }
             val rates = (0..50).map { l.rateAt(it / 50.0 * l.span) }
             println("R7 line: widest ${widest.format()} cents, rate ${rates.min().format()}-${rates.max().format()} Hz")
-            assertTrue("widest $widest", widest in 5.0..19.0)
+            assertTrue("widest $widest", widest in 4.0..19.0)
             assertTrue("rate ${rates.min()}-${rates.max()}", rates.min() >= 4.0 && rates.max() <= 5.4)
         }
     }
@@ -167,6 +167,15 @@ class PlaybackRound7Test {
         val worst = rs.indices.maxOf { abs(rs[it] / r0[it] - 1) }
         println("R7 drift: rate differs from the drift-free by at most ${"%.4f".format(worst)}")
         assertTrue("drift $worst", worst in 0.0..0.045)
+    }
+
+    @Test
+    fun `a long held note quickens by about a tenth, and the rate does not stop short of it`() {
+        val l = distinct(plans(DemoPassages.lyrical())).first()
+        val cs = cycles(l, 0.4, 2.6)
+        val firstThird = cs.take(cs.size / 3).average(); val lastThird = cs.takeLast(cs.size / 3).average()
+        println("R7 acceleration: ${(1 / firstThird).format()} Hz at first, ${(1 / lastThird).format()} Hz after ${l.accelSecs.format()} s: ${((firstThird / lastThird - 1) * 100).format()}%")
+        assertTrue("quickens ${firstThird / lastThird}", firstThird / lastThird in 1.07..1.2)
     }
 
     @Test

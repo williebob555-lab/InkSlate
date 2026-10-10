@@ -78,7 +78,9 @@ class Vibrato(
      * [knotRate]), joined smoothly - the vibrato follows the phrase (louder, higher, nearer its high point: wider and quicker;
      * its end: narrower and slower), carried through a slur rather than starting again on each note.
      */
-    val knotTimes: DoubleArray = DoubleArray(0), val knotDepth: DoubleArray = DoubleArray(0), val knotRate: DoubleArray = DoubleArray(0)
+    val knotTimes: DoubleArray = DoubleArray(0), val knotDepth: DoubleArray = DoubleArray(0), val knotRate: DoubleArray = DoubleArray(0),
+    /** The rate quickens by [rateTrend] over this many seconds from the line's start, then holds. */
+    val accelSecs: Double = 2.0
 ) {
     private fun line(vs: DoubleArray, t: Double): Double {
         val ts = knotTimes
@@ -120,7 +122,7 @@ class Vibrato(
         val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
         // Slows a little as it tapers away, and quickens through a long note.
         val slow = if (taperSecs > 0) 1 - 0.06 * (1 - taperTo).coerceIn(0.0, 1.0) * smooth((t - (span - taperSecs)) / taperSecs) else 1.0
-        return (rate * (1 + rateTrend * smooth(u)) * line(knotRate, t) * slow * (1 + rateNoise * noise(2L, t / (corr * 0.9) + 7.0))).coerceAtLeast(2.0)
+        return (rate * (1 + rateTrend * smooth(t / accelSecs.coerceAtLeast(0.1))) * line(knotRate, t) * slow * (1 + rateNoise * noise(2L, t / (corr * 0.9) + 7.0))).coerceAtLeast(2.0)
     }
 }
 
@@ -259,7 +261,7 @@ class Synth(val sampleRate: Int) {
          * The euphonium, as recorded: [toneBlend] 1 the dry solo take's tone (the default), 0 the darker, lyrical one. Vibrato of
          * the dry take: 4.2 Hz, about 13 cents, coming in after about half a second.
          */
-        fun euphonium(toneBlend: Double = 1.0, vibratoCents: Double = 13.0) = Patch(FloatArray(1), 0.06, 0.14, 0.88f, 0.14, vibratoHz = 4.3, vibratoCents = vibratoCents, bloom = 0.5f, gain = 0.24f, breath = 0.004f,
+        fun euphonium(toneBlend: Double = 1.0, vibratoCents: Double = 10.3) = Patch(FloatArray(1), 0.06, 0.14, 0.88f, 0.14, vibratoHz = 4.3, vibratoCents = vibratoCents, bloom = 0.5f, gain = 0.24f, breath = 0.004f,
             spectral = true, slopeSoft = 0.6, slopeLoud = 0.13, formantHz = 430.0, formantGain = 1.8, scoop = 12.0, brass = true,
             cutoffSoft = 900.0, cutoffLoud = 3200.0, vibDelay = 0.5, slur = Slur.LIP, voicing = Voicing.EUPHONIUM, toneBlend = toneBlend)
         val LOW_BRASS = euphonium(1.0)
@@ -546,11 +548,11 @@ class Synth(val sampleRate: Int) {
         level = to
     }
 
-    /** Smooth past 0.95 (only a sliver ever gets there): no hard edge on a peak. */
+    /** Smooth past 0.9 and never past 0.97, however loud the mix: no hard edge on a peak, no clipping at the output. */
     private fun softClip(x: Float): Float {
         val a = kotlin.math.abs(x)
-        if (a <= 0.95f) return x
-        val y = 0.95f + 0.05f * kotlin.math.tanh((a - 0.95f) / 0.05f)
+        if (a <= 0.9f) return x
+        val y = 0.9f + 0.07f * kotlin.math.tanh((a - 0.9f) / 0.07f)
         return if (x < 0) -y else y
     }
 
