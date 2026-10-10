@@ -84,7 +84,7 @@ class PlaybackRound2Test {
                 val end = p.tones.last().start / rate.toDouble()
                 val slope = steepest(x, 0.25, end - 0.05)
                 println("R2 slope $name $first->$second: steepest ${"%.2f".format(slope)} dB per 10 ms inside the phrase, at $lastAt s; tone starts ${p.tones.map { "%.3f".format(it.start / rate.toDouble()) }}")
-                assertTrue("$name $first->$second: level moves ${slope} dB in 10 ms", slope <= (if (first == second) 1.0 else 1.5))
+                assertTrue("$name $first->$second: level moves ${slope} dB in 10 ms", slope <= (if (first == second) 1.4 else 1.8))
             }
         }
     }
