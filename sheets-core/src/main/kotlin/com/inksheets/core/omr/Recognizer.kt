@@ -3583,11 +3583,46 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             breathsSeen += f
             add.getOrPut(f.mi) { ArrayList() } += Direction("breath", cx.toFloat(), above = true, seen = true)
         }
+        // A heavy scan's small marks, by their geometry in the ink (see [ScanMarks]): slurs followed round the heads
+        // and stems they touch, hairpins, and staccato dots rebuilt from their slivers.
+        val covs = HashMap<Int, Coverage>()
+        val scan = ScanMarks(ink, staves, measures) { mi, x, y ->
+            val m = measures[mi]
+            covs.getOrPut(mi) { coverage(m, staves[m.staff]) }.covers(x.toFloat(), y.toFloat(), upright = true)
+        }
+        val ownArcs = scan.slurs()
+        for (arc in ownArcs) {
+            val m0 = measures[arc.mi]
+            // (The net's own slur over the same notes is replaced by this one, which has its ends.)
+            for (k in measures.indices) {
+                val m = measures[k]
+                if (m.staff != m0.staff || m.page != m0.page) continue
+                add[k]?.removeAll { it.kind == "slur" && min(it.x2, arc.x1) - max(it.x, arc.x0) > 0f && it.above == arc.above }
+            }
+        }
+        for (arc in ownArcs) {
+            val m0 = measures[arc.mi]
+            val d = Direction("slur", arc.x0, arc.x1, above = arc.above, seen = true)
+            for (k in measures.indices) {
+                val m = measures[k]
+                if (m.staff == m0.staff && m.page == m0.page && m.box.right > arc.x0 && m.box.left < arc.x1) add.getOrPut(k) { ArrayList() } += d
+            }
+        }
+        for (hw in scan.hairpins()) {
+            val m0 = measures[hw.mi]
+            val d = Direction(hw.kind, hw.x0, hw.x1, above = hw.above, seen = true)
+            for (k in measures.indices) {
+                val m = measures[k]
+                if (m.staff == m0.staff && m.page == m0.page && m.box.right > hw.x0 && m.box.left < hw.x1 &&
+                    add[k]?.none { it.kind == hw.kind && abs(it.x - hw.x0) < m0.space * 2 } != false) add.getOrPut(k) { ArrayList() } += d
+            }
+        }
+        val dotted = scan.staccatos().toSet()
         for ((k, ds) in add) measures[k] = measures[k].copy(directions = measures[k].directions + ds)
         // Articulations: to the note standing over or under them (not a breath mark's comma).
         for (f in found) {
             if (f in breathsSeen) continue
-            val name = when (f.label) { "accent", "staccato", "tenuto", "marcato", "fermata" -> f.label; else -> continue }
+            val name = when (f.label) { "accent", "tenuto", "marcato", "fermata" -> f.label; else -> continue }
             val m = measures[f.mi]
             val sp = m.space
             val cx = (f.box[0] + f.box[2]) / 2f
@@ -3596,6 +3631,11 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val n = target.value as Note
             if (name in n.articulations) continue
             measures[f.mi] = m.copy(events = m.events.mapIndexed { idx, e -> if (idx == target.index) n.copy(articulations = n.articulations + name, marksSeen = true) else e })
+        }
+        for ((mi, ei) in dotted) {
+            val m = measures[mi]; val n = m.events.getOrNull(ei) as? Note ?: continue
+            if ("staccato" in n.articulations) continue
+            measures[mi] = m.copy(events = m.events.mapIndexed { idx, e -> if (idx == ei) n.copy(articulations = n.articulations + "staccato", marksSeen = true) else e })
         }
     }
 
