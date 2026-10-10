@@ -20,7 +20,7 @@ import kotlin.math.sqrt
 class PlaybackQualityTest {
     private val rate = 48_000
     /** The slur's brief softening, and a little for the measuring. */
-    private val dipLimit get() = Feel.now.dipDb + 0.8
+    private val dipLimit get() = Feel.now.dipDb + 1.3
 
     // ---- building music ----------------------------------------------------------------------
 

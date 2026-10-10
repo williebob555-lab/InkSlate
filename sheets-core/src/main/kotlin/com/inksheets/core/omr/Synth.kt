@@ -48,6 +48,9 @@ object Feel {
 
     /** How expressive the vibrato is: 1 as measured from the recordings, more for wider swings of depth and rate, 0 for steady. */
     @Volatile var expression: Double = 1.0
+
+    /** A slow drift of the vibrato's depth and rate, as a share (0 none; 0.02 a hair, over seconds). */
+    @Volatile var drift: Double = 0.0
 }
 
 /**
@@ -68,9 +71,27 @@ class Vibrato(
     /** The last [taperSecs] ease depth down to [taperTo] of itself. */
     val taperSecs: Double, val taperTo: Double,
     val depthNoise: Double, val rateNoise: Double,
-    /** Seconds over which the wandering of depth and rate is correlated. */
-    val corr: Double = 0.3
+    /** Seconds over which the wandering of depth and rate is correlated (a slow drift of a couple of percent at most). */
+    val corr: Double = 0.3,
+    /**
+     * The intensity line the music draws, at [knotTimes] (s from the origin): depth and rate multipliers there ([knotDepth],
+     * [knotRate]), joined smoothly - the vibrato follows the phrase (louder, higher, nearer its high point: wider and quicker;
+     * its end: narrower and slower), carried through a slur rather than starting again on each note.
+     */
+    val knotTimes: DoubleArray = DoubleArray(0), val knotDepth: DoubleArray = DoubleArray(0), val knotRate: DoubleArray = DoubleArray(0)
 ) {
+    private fun line(vs: DoubleArray, t: Double): Double {
+        val ts = knotTimes
+        if (ts.isEmpty() || vs.size != ts.size) return 1.0
+        if (t <= ts[0]) return vs[0]
+        if (t >= ts[ts.size - 1]) return vs[vs.size - 1]
+        var k = 0
+        while (k < ts.size - 2 && t > ts[k + 1]) k++
+        val f = ((t - ts[k]) / (ts[k + 1] - ts[k]).coerceAtLeast(1e-6)).coerceIn(0.0, 1.0)
+        val u = f * f * (3 - 2 * f)
+        return vs[k] + (vs[k + 1] - vs[k]) * u
+    }
+
     private fun smooth(x: Double): Double { val u = x.coerceIn(0.0, 1.0); return u * u * (3 - 2 * u) }
 
     /** Smooth random curve in about -1..1 (sd about 0.9), [x] in units of the correlation time. */
@@ -91,13 +112,15 @@ class Vibrato(
     fun depthAt(t: Double): Double {
         val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
         val taper = if (taperSecs > 0) 1 + (taperTo - 1) * smooth((t - (span - taperSecs)) / taperSecs) else 1.0
-        return depth * smooth((t - delay) / swell) * (1 + growth * (u - 0.5)).coerceAtLeast(0.2) * taper * (1 + depthNoise * noise(1L, t / corr)).coerceAtLeast(0.15)
+        return depth * smooth((t - delay) / swell) * (1 + growth * (u - 0.5)).coerceAtLeast(0.2) * line(knotDepth, t) * taper * (1 + depthNoise * noise(1L, t / corr)).coerceAtLeast(0.15)
     }
 
     /** Rate (Hz) [t] seconds in. */
     fun rateAt(t: Double): Double {
         val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
-        return (rate * (1 + rateTrend * u) * (1 + rateNoise * noise(2L, t / (corr * 0.9) + 7.0))).coerceAtLeast(2.0)
+        // Slows a little as it tapers away, and quickens through a long note.
+        val slow = if (taperSecs > 0) 1 - 0.06 * (1 - taperTo).coerceIn(0.0, 1.0) * smooth((t - (span - taperSecs)) / taperSecs) else 1.0
+        return (rate * (1 + rateTrend * smooth(u)) * line(knotRate, t) * slow * (1 + rateNoise * noise(2L, t / (corr * 0.9) + 7.0))).coerceAtLeast(2.0)
     }
 }
 
@@ -236,7 +259,7 @@ class Synth(val sampleRate: Int) {
          * The euphonium, as recorded: [toneBlend] 1 the dry solo take's tone (the default), 0 the darker, lyrical one. Vibrato of
          * the dry take: 4.2 Hz, about 13 cents, coming in after about half a second.
          */
-        fun euphonium(toneBlend: Double = 1.0, vibratoCents: Double = 13.0) = Patch(FloatArray(1), 0.06, 0.14, 0.88f, 0.14, vibratoHz = 4.2, vibratoCents = vibratoCents, bloom = 0.5f, gain = 0.24f, breath = 0.004f,
+        fun euphonium(toneBlend: Double = 1.0, vibratoCents: Double = 13.0) = Patch(FloatArray(1), 0.06, 0.14, 0.88f, 0.14, vibratoHz = 4.3, vibratoCents = vibratoCents, bloom = 0.5f, gain = 0.24f, breath = 0.004f,
             spectral = true, slopeSoft = 0.6, slopeLoud = 0.13, formantHz = 430.0, formantGain = 1.8, scoop = 12.0, brass = true,
             cutoffSoft = 900.0, cutoffLoud = 3200.0, vibDelay = 0.5, slur = Slur.LIP, voicing = Voicing.EUPHONIUM, toneBlend = toneBlend)
         val LOW_BRASS = euphonium(1.0)

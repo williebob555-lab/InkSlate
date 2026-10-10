@@ -25,6 +25,7 @@ class PlaybackWavSet {
     fun `the passages to wav`() {
         val dir = System.getenv("INKSHEETS_WAV")?.takeIf { it.isNotBlank() } ?: return
         val prefix = System.getenv("INKSHEETS_PREFIX") ?: "D"
+        Feel.drift = System.getenv("INKSHEETS_DRIFT")?.toDoubleOrNull() ?: 0.0
         write(dir, "$prefix-legato", DemoPassages.legato(), 96.0, Synth.LOW_BRASS, 0)
         write(dir, "$prefix-copprasch", DemoPassages.copprasch(), 108.0, Synth.LOW_BRASS, 0)
         write(dir, "$prefix-accents", DemoPassages.accents(), 92.0, Synth.LOW_BRASS, 0)
