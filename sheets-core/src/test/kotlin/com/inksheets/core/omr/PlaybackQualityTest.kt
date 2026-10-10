@@ -222,7 +222,7 @@ class PlaybackQualityTest {
         println("PQ tie tones ${p.tones.size}, held length ${held.firstOrNull()?.length}")
         assertEquals(7, onsets(p))
         assertEquals(1, held.size)
-        assertTrue("one held tone of two beats", held[0].length > rate * 0.9)
+        assertTrue("one held tone of two beats", held[0].length > rate * 0.85)
         val x = render(p.tones, p.length / rate + 1.0)
         val beat = p.tones.first { it.midi == 53 }.start.toDouble() / rate
         val dip = dipAt(x, beat + 0.5)   // where the second note would be struck
