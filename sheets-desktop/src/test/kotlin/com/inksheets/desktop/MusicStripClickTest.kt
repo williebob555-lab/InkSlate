@@ -39,6 +39,7 @@ class MusicStripClickTest {
     fun reset() {
         SimulatedTouch.on = false
         ScoreTools.scoreSource = null
+        ScoreTools.open = false
         AppFlavor.onHomeShown = null; AppFlavor.onHome = null; AppFlavor.settingsSection = null
         AppFlavor.musicView = false; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
         AppFlavor.home = null; AppFlavor.paneOverlay = null
@@ -66,6 +67,9 @@ class MusicStripClickTest {
             while (System.currentTimeMillis() < until && sheets().pageShown.second == 0) settle(4)
             repeat(10) { settle() }
             SimulatedTouch.on = true
+            // From closed, whatever a test before this one left open (the tools are shared by the whole app).
+            runOnIdle { ScoreTools.open = false }
+            settle()
             val root = onAllNodes(isRoot()).onFirst()
             fun shot(name: String) { settle(); ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "strip-click-%02d-%s.png".format(++step, name))) }
             // What happened to the music tools' open state, and where each tap landed - said in full if a tap

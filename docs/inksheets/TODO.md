@@ -3,7 +3,7 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** (2026-10-10 afternoon) test.292 published (Listen rework, carried fixes). Running (user-approved long CPU job): marks-reader retraining for heavy scans in worktree `.claude/worktrees/agent-a96603f2af3f6688b` (uncommitted so far: copprash-marks.truth answer file + CopprashMarksTest, HeavyScan augmentation in MarkExport, marks.py changes; was running ReadingBenchmark with -Dinksheets.bench.heavy=2). If interrupted: resume that agent / pick up its worktree, keep the rules (torch 4 threads, --max-workers=2, no load tests), ship marknet.bin only if clean-PDF accuracy holds and the Copprash answer file improves; decide on a READER bump after. MusicStripClickTest now explains itself on failure (load test was blocked by permissions).
+**Now:** (2026-10-10 evening) Scan marks rebuilt (omr/ScanMarks.kt: dots from the ink near each head, slurs grown to their notes and joined, hairpin wedges, dynamics as whole shapes) - Copprash p3 staccato 39/39 (2 false), slurs 35/38, dynamics 21/22, hairpins 13/18; held-out p4 and dropped-staccato parts checked by eye. READER 13 -> 14 (older readings still show until a part is read again; fixes are kept by file id). Retrained marknet NOT shipped (worse on Copprash; kept in scratchpad mx/). MusicStripClickTest flake explained: ScoreTools.open left open by an earlier test - the test starts from closed now. Test build pushed with these.
 
 **Earlier:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
 
