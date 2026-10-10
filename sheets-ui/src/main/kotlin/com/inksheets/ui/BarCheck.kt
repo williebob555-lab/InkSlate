@@ -131,7 +131,7 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                         else Text("Getting the bar from the page...", style = MaterialTheme.typography.bodySmall, color = Color(0xFF777777))
                     }
                 }
-                val printed: @Composable () -> Unit = { picture(); Doubts(m) }
+                val printed: @Composable () -> Unit = { picture(); Doubts(m, ScoreTools.carriedNote(state, m.number)) }
                 val work: @Composable () -> Unit = {
                     when {
                         m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") } -> RestCount(state, m, short)
@@ -150,7 +150,7 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                 }
                 // The bar as printed on top, the choices under it - one column at every size.
                 Column(Modifier.weight(1f, fill = false).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
-                    picture(); if (!whole) Doubts(m); work()
+                    picture(); if (!whole) Doubts(m, ScoreTools.carriedNote(state, m.number)); work()
                 }
                 Spacer(Modifier.height(gap))
                 FixFoot(state, m, short)
@@ -588,9 +588,11 @@ private val CHANGED = Color(0x332962FF)
  * rest), a ring round a note seen and let go. A note on the print with no mark under it was missed.
  */
 @Composable
-private fun Doubts(m: Measure) {
+private fun Doubts(m: Measure, carried: String? = null) {
     val dark = MaterialTheme.colorScheme.onSurfaceVariant
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // Put right in another part of the song, the same bar there: said quietly, once.
+        carried?.let { Text(it.replaceFirstChar { c -> c.uppercase() }, style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D32), maxLines = 1) }
         if (m.doubts.isNotEmpty()) Text("Unsure: " + m.doubts.joinToString(" · "), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.error, maxLines = 2)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
