@@ -85,7 +85,8 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     // A phone on its side, a bar put right by hand: the editor takes the whole screen - tabs and
     // strips out of the way until it is done - so the print, the staff and every button fit.
     // (A small phone upright too: its panel cannot hold the editor's rows under the print.)
-    val whole = handWork && room < 620.dp
+    // A very short screen (a small phone on its side) gives Fix all of it, readings and all.
+    val whole = (handWork && room < 620.dp) || room < 360.dp
     val panel: @Composable (Modifier) -> Unit = { mod -> Surface(
         shape = if (whole) RoundedCornerShape(0.dp) else RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
         tonalElevation = 4.dp,
@@ -188,9 +189,10 @@ private fun FixFoot(state: SheetsState, m: Measure, short: Boolean) {
         BoxWithConstraints {
         // A phone's width: Back as its arrow alone, so every name fits whole.
         val tight = short || maxWidth < 420.dp
+        val narrowest = maxWidth < 360.dp
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = { ScoreTools.back(state) }, enabled = ScoreTools.canGoBack, contentPadding = pad, modifier = Modifier.weight(if (tight) 0.55f else 1f).height(h)) { Text(if (tight) "◀" else "◀ Back", maxLines = 1) }
-            OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, enabled = !busy, contentPadding = pad, modifier = Modifier.weight(1.6f).height(h)) { Text("None of these", maxLines = 1, softWrap = false) }
+            OutlinedButton(onClick = { ScoreTools.noneOfThese(state) }, enabled = !busy, contentPadding = pad, modifier = Modifier.weight(1.6f).height(h)) { Text("None of these", maxLines = 1, softWrap = false, style = if (narrowest) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge) }
             OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", maxLines = 1) }
             // Leaving Fix is not confirming anything: outlined, and named for what it does - the one
             // filled button in the panel is the one that keeps a bar ("Use this", "Use 4", a reading).
