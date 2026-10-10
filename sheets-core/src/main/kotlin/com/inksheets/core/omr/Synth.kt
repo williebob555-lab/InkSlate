@@ -99,10 +99,10 @@ class Synth(val sampleRate: Int) {
             val LIP = Slur(25.0, 50.0, 1.2, 10.0, 60.0)
             val TRUMPET = Slur(20.0, 45.0, 1.0, 8.0, 50.0)
             val HORN = Slur(30.0, 55.0, 1.3, 12.0, 70.0)
-            val CLARINET = Slur(10.0, 20.0, 0.4, 0.0, 15.0, roughDb = 0.9)
-            val SAX = Slur(12.0, 22.0, 0.5, 0.0, 15.0, roughDb = 0.6)
-            val OBOE = Slur(10.0, 18.0, 0.4, 0.0, 15.0, roughDb = 0.6)
-            val FLUTE = Slur(12.0, 22.0, 0.5, 0.0, 20.0, roughDb = 0.4)
+            val CLARINET = Slur(30.0, 42.0, 0.4, 0.0, 15.0, roughDb = 0.9)
+            val SAX = Slur(28.0, 40.0, 0.5, 0.0, 15.0, roughDb = 0.6)
+            val OBOE = Slur(28.0, 40.0, 0.4, 0.0, 15.0, roughDb = 0.6)
+            val FLUTE = Slur(30.0, 42.0, 0.5, 0.0, 20.0, roughDb = 0.4)
             val BOWED = Slur(25.0, 45.0, 0.3, 0.0, 0.0)
         }
     }
@@ -448,6 +448,15 @@ class Synth(val sampleRate: Int) {
                     carrier.fadeAt = t.start - h; carrier.fadeLen = ov
                     val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
                     val nv = Voice(shifted)
+                    // The two tones meet in quadrature at the join's centre, so that their blend keeps its power (two
+                    // sounds of near pitch would otherwise beat through the overlap).
+                    val dt = (t.start - position).toDouble()
+                    val srd = sampleRate.toDouble()
+                    for (hh in nv.phase.indices) {
+                        val phc = carrier.phase[hh] + 2 * PI * carrier.freq * (hh + 1) / srd * dt
+                        val ph = phc + PI / 2 - 2 * PI * nv.freq * (hh + 1) / srd * (ov / 2.0)
+                        nv.phase[hh] = ((ph % (2 * PI)) + 2 * PI) % (2 * PI)
+                    }
                     nv.xfade = ov; nv.born = carrier.born; nv.vibOk = carrier.vibOk || t.length > sampleRate * 0.45
                     nv.flat = sl.flatCents; nv.settle = sl.settleMs
                     val dip = sl.dipDb + (if (rough) sl.roughDb else 0.0)
@@ -550,7 +559,10 @@ class Synth(val sampleRate: Int) {
                 val soft = v.continued || tone.legato
                 // Brass blooms: its upper harmonics come in over the attack - the same for an accent as for any note.
                 val attack = max(0.004 * sr, p.attack * sr)
-                val bloom = if (p.bloom > 0f && !soft) min(1.0, 0.3 + t / (attack * 3 + 1)) else 1.0
+                val hard = hardness(tone)
+                // Brass blooms over a plain note's start; a struck note is bright from the very first ms and settles a little.
+                val bloom = if (p.bloom > 0f && !soft) (if (hard > 0) 1.0 else min(1.0, 0.55 + t / (attack * 2 + 1))) else 1.0
+                val strike = if (hard > 0 && !soft && t < 0.15 * sr) 1.0 + 0.4 * hard * exp(-t / (0.04 * sr)) else 1.0
                 val vel = velAt(tone, t)
                 // The brief softening of a slur's change: the upper harmonics dip a little with the loudness.
                 val dark = if (v.xfade > 0 && t < 2 * v.xfade) hump(t / (2.0 * v.xfade)) * min(0.5, v.dipDb * 0.25)
@@ -560,7 +572,7 @@ class Synth(val sampleRate: Int) {
                 for (h in 0 until v.active) {
                     val target = if (h >= v.count) 0.0 else if (a0 != null && a1 != null) (a0[h] + (a1[h] - a0[h]) * prog) * (if (h == 0 || bloom >= 1.0) 1.0 else bloom.pow(1.0 + h * p.bloom))
                         else p.harmonics[h] * (if (h == 0) 1.0 else bloom.pow(1.0 + h * p.bloom) * loud.pow(h * 0.45))
-                    v.now[h] += (target * (1 - dark * min(1.0, h / 5.0)) - v.now[h]) * slew
+                    v.now[h] += (target * (1 - dark * min(1.0, h / 5.0)) * (if (h > 0) strike else 1.0) - v.now[h]) * slew
                 }
             }
             var x = 0.0
@@ -594,6 +606,15 @@ class Synth(val sampleRate: Int) {
         return false
     }
 
+    /** How firmly a note is struck, 0-1: a marcato 1, an accent 0.8, a staccato 0.6, a plain tongued note 0. */
+    private fun hardness(t: Tone): Double {
+        var h = t.accent.toDouble()
+        if (t.art and ART_MARCATO != 0) h = max(h, 1.0)
+        if (t.art and ART_ACCENT != 0) h = max(h, 0.8)
+        if (t.art and ART_STACCATO != 0) h = max(h, 0.6)
+        return h
+    }
+
     private fun hump(x: Double): Double { if (x <= 0.0 || x >= 1.0) return 0.0; val h = sin(PI * x); return h * h }
 
     /** The loudness (0-1.5) of [tone] [t] samples in: along its line from start to end, arriving from the one before when a new dynamic. */
@@ -606,10 +627,16 @@ class Synth(val sampleRate: Int) {
         val accent = tone.accent.toDouble()
         val t = (s - v.segStart).toDouble()
         val soft = v.continued || tone.legato
-        val att = if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr else max(0.004 * sr, p.attack * sr * (1.0 - 0.5 * accent))
+        val hard = hardness(tone)
+        // The start: a slurred note has none; a struck one (marcato, accent, staccato) speaks at once - "ta", full in 6-12 ms;
+        // a plain tongued note is a softer "da", a bit quicker than the instrument's slow swell.
+        val att = if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr
+            else if (p.fade > 0) max(0.004 * sr, p.attack * sr)
+            else if (hard > 0) (0.012 - 0.006 * hard) * sr
+            else max(0.012 * sr, p.attack * sr * 0.55)
         val decay = p.decay * sr
         // A wind's note settles only a hair after its start; a struck or plucked one dies away.
-        val sustain = if (p.spectral) 1.0 - (1.0 - p.sustain.toDouble()) * 0.4 else p.sustain.toDouble()
+        val sustain = if (p.spectral) 1.0 - (1.0 - p.sustain.toDouble()) * (0.4 + 0.6 * hard) else p.sustain.toDouble()
         val env = when {
             v.continued -> sustain
             t < 0 -> 0.0
@@ -657,7 +684,7 @@ class Synth(val sampleRate: Int) {
         val vib = if (p.vibratoHz > 0 && v.vibOk && age > vibDelay)
             p.vibratoCents / 1200.0 * sin(2 * PI * p.vibratoHz * age / sr) * min(1.0, (age - vibDelay) / (0.4 * sr)) else 0.0
         // Lips settling onto the note (brass): only on a note that is struck.
-        val scoop = if (p.scoop > 0 && !v.continued && v.xfade == 0L && !tone.legato) -p.scoop / 1200.0 * exp(-t / (0.03 * sr)) else 0.0
+        val scoop = if (p.scoop > 0 && !v.continued && v.xfade == 0L && !tone.legato) -p.scoop * (if (hardness(tone) > 0) 0.3 else 0.6) / 1200.0 * exp(-t / (0.03 * sr)) else 0.0
         val drift = 2.0 / 1200.0 * sin(2 * PI * 0.31 * age / sr + v.drift)
         // A slurred note starts a few cents flat and settles (the lips finding the partial).
         val flat = if (v.xfade > 0 && v.settle > 0) -v.flat / 1200.0 * exp(-t / (v.settle * 0.001 * sr / 3)) else 0.0

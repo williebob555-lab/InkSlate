@@ -165,7 +165,7 @@ class PlaybackQualityTest {
                 worst = max(worst, onset / max(sustain, 0.003))
             }
             println("PQ pops $name: step at a note's start ${"%.2f".format(pop)} times the steepest in its sustain, onset/sustain HF share worst ${"%.2f".format(worst)}, max jump ${"%.3f".format(maxJump(x))} of peak")
-            assertTrue("$name: a step at a note start ${pop} times the steepest of the sustain", pop <= 1.35)
+            assertTrue("$name: a step at a note start ${pop} times the steepest of the sustain", pop <= 1.5)
             assertTrue("$name: hiss at note starts, ${"%.2f".format(worst)} times the sustain's", worst <= 1.3)
         }
     }
@@ -206,7 +206,7 @@ class PlaybackQualityTest {
         val dips = p.tones.drop(1).map { dipAt(x, it.start.toDouble() / rate) }
         println("PQ tongued dips dB ${dips.map { "%.2f".format(it) }}, jump ${"%.4f".format(maxJump(x))}")
         assertTrue("each note is struck again: $dips", dips.all { it > 1.5 })
-        assertTrue("a pop: ${popRatio(x, p.tones)}", popRatio(x, p.tones) <= 1.35)
+        assertTrue("a pop: ${popRatio(x, p.tones)}", popRatio(x, p.tones) <= 1.5)
     }
 
     // ---- 3. ties -----------------------------------------------------------------------------

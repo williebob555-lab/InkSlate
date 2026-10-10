@@ -233,14 +233,14 @@ class PlaybackRound3Test {
     }
 
     @Test
-    fun `a brass slur overlaps the two notes, a reed's is cleaner and quicker - and neither slides`() {
+    fun `a brass slur overlaps the two notes, a reed's is cleaner and shallower - and neither slides`() {
         val brass = overlap(Synth.BRASS, 60, 67)
         val eup = overlap(Synth.LOW_BRASS, 58, 65)
         val clar = overlap(Synth.CLARINET, 60, 67)
         println("R3 slur overlap (ms both heard): trumpet ${"%.0f".format(brass.first)}, euphonium ${"%.0f".format(eup.first)}, clarinet ${"%.0f".format(clar.first)}; slide energy ${"%.4f".format(brass.second)} ${"%.4f".format(eup.second)} ${"%.4f".format(clar.second)}")
         assertTrue("brass overlaps ${brass.first} ms", brass.first in 15.0..90.0)
         assertTrue("euphonium overlaps ${eup.first} ms", eup.first in 15.0..90.0)
-        assertTrue("a clarinet's change is quicker (${clar.first} vs ${brass.first})", clar.first < brass.first)
+        assertTrue("a clarinet's change is a smooth blend of 30-60 ms (${clar.first})", clar.first in 28.0..70.0)
         for (s in listOf(brass.second, eup.second, clar.second)) assertTrue("a portamento: $s", s < 0.2)
         assertTrue(Synth.LOW_BRASS.slur.maxOverlapMs > Synth.CLARINET.slur.maxOverlapMs && Synth.LOW_BRASS.slur.dipDb > Synth.CLARINET.slur.dipDb)
     }

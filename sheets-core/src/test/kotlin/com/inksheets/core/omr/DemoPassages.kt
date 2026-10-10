@@ -41,4 +41,12 @@ object DemoPassages {
         }
         return listOf(b(1, 0, "p"), b(2, 2, "f"), b(3, 0, null), b(4, 2, "p"))
     }
+
+    /** Plain, accent, marcato, staccato, in turn, on one pitch then another: to hear how each begins. 92 bpm. */
+    fun accents(): List<Measure> {
+        val arts = mapOf(1 to listOf("accent"), 2 to listOf("marcato"), 3 to listOf("staccato"))
+        fun b(n: Int, m: Int, order: List<Int>): Measure =
+            bar(n, order.map { m }, 4, order.mapIndexed { i, a -> i to listOf(listOf("", "accent", "marcato", "staccato")[a]).filter { it.isNotEmpty() } }.toMap(), emptyList())
+        return listOf(b(1, 46, listOf(0, 1, 2, 3)), b(2, 50, listOf(0, 1, 2, 3)), b(3, 53, listOf(3, 2, 1, 0)), b(4, 46, listOf(0, 3, 1, 2)))
+    }
 }
