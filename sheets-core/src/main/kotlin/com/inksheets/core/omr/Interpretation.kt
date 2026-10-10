@@ -471,6 +471,7 @@ object Interpretation {
             val secs = if (n.subito) 0.12 else max(max(0.6, dB / 14.0), min(3.0, noteSecs))
             ramps += Ramp(sample(n.q), (secs * rate).toLong(), ref)
         }
+        val vibrato = vibratoPlans(plan, notes, map, rate, at, sounds, drums, ::sample)
         for ((i, n) in notes.withIndex()) {
             val start = sample(n.q)
             val nominal = sample(n.q + n.len) - start
@@ -535,17 +536,78 @@ object Interpretation {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
-                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
+                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
                         continue
                     }
                 }
                 // A slurred line, one note at a time: each moves over from the last, not struck anew.
                 val from = if (joined && drums == null && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
-                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer)
+                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer, vib = vibrato[i])
             }
         }
         return out
     }
+
+    /**
+     * The vibrato of each note, planned a slurred line at a time (it goes on through a slur rather than starting again on every
+     * note): how much and how fast from where it is in the phrase - more, a little faster, toward the high point, a crescendo, a
+     * long climactic note, a high or loud note; less and slower at a phrase's end, none on short notes, easing away before a
+     * rest and on the last note dying away - with its own wandering of depth and rate ([Vibrato]), a different one each time but
+     * the same on every play. [Feel.expression] scales how far all of it swings.
+     */
+    private fun vibratoPlans(plan: Plan, notes: List<Planned>, map: TempoMap, rate: Int, at: Long, patch: Synth.Patch, drums: DrumKind?,
+                             sample: (Double) -> Long): Array<Vibrato?> {
+        val out = arrayOfNulls<Vibrato>(notes.size)
+        if (drums != null || patch.sampled != null || patch.vibratoCents <= 0.0 || patch.drum) return out
+        val e = Feel.expression
+        var i = 0
+        while (i < notes.size) {
+            // The line: this note and those slurred or tied on to it.
+            var j = i
+            while (j < notes.size - 1 && (notes[j].sounding == JOINED || notes[j].tie) && abs(notes[j].q + notes[j].len - notes[j + 1].q) < 1e-6) j++
+            val first = notes[i]; val last = notes[j]
+            val startS = sample(first.q); val endS = sample(last.q + last.len)
+            val span = (endS - startS) / rate.toDouble()
+            val seed = hashLong((first.q * 977).toLong() + i * 7919L + 31)
+            fun g(k: Int): Double = ((hash(seed + k) - 0.5) * 3.4).coerceIn(-1.7, 1.7)   // roughly a normal deviate
+            // Short lines get little or none: it takes a moment to start.
+            val room = smooth01((span - 0.35) / 0.45)
+            // How intense: loud, high, near the phrase's high point.
+            val level = (first.level + last.endLevel) / 2
+            val pitch = (first.keys.maxOrNull() ?: 55)
+            var amount = 1.0
+            amount += e * 0.5 * (level - 0.68)
+            amount += e * (pitch - 55).coerceIn(-10, 12) * 0.02
+            val ph = first.phrase
+            var peaky = 0.0
+            if (ph != null) {
+                val mid = (first.q + last.q + last.len) / 2
+                val spanQ = (ph.endQ - ph.startQ).coerceAtLeast(1e-6)
+                peaky = (1 - abs(mid - ph.peakQ) / (0.35 * spanQ + 1.0)).coerceAtLeast(0.0)
+                amount += e * 0.35 * peaky
+            }
+            val phraseEnds = notes.subList(i, j + 1).any { it.phraseEnd }
+            val nextAfter = notes.getOrNull(j + 1)
+            val toRest = nextAfter == null || nextAfter.q - (last.q + last.len) > 1e-6
+            val finalNote = nextAfter == null
+            if (phraseEnds) amount -= e * 0.3
+            val rising = last.endLevel - first.level > 0.03
+            val long = span > 1.6
+            val depth = patch.vibratoCents * amount.coerceIn(0.3, 1.9) * (1 + 0.28 * e * g(1)) * (if (finalNote) 1 - 0.2 * e else 1.0) * room
+            val rateHz = patch.vibratoHz * (1 + 0.11 * e * g(2)) * (1 + e * 0.04 * peaky) * (if (phraseEnds) 1 - 0.05 * e else 1.0)
+            val growth = e * (0.25 + (if (long) 0.2 else 0.0) + (if (rising) 0.3 else 0.0) - (if (phraseEnds) 0.2 else 0.0))
+            val taperTo = if (finalNote) 1 - 0.8 * e else if (toRest || phraseEnds) 1 - 0.45 * e else 1.0
+            val plan1 = Vibrato(startS, seed, depth, rateHz, delay = patch.vibDelay * 0.4 * (1 + 0.4 * g(3)), swell = 0.45 * (1 + 0.3 * g(4)),
+                span = span, growth = growth, rateTrend = e * 0.18 + 0.02, taperSecs = if (taperTo < 1.0) 0.3 else 0.0, taperTo = taperTo.coerceAtLeast(0.0),
+                depthNoise = 0.45 * e, rateNoise = 0.18 * e, corr = 0.3)
+            if (depth > 0.2) for (k in i..j) out[k] = plan1
+            i = j + 1
+        }
+        return out
+    }
+
+    private fun smooth01(x: Double): Double { val u = x.coerceIn(0.0, 1.0); return u * u * (3 - 2 * u) }
+    private fun hashLong(x: Long): Long { var z = x * -0x61c8864680b583ebL; z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L; return z xor (z ushr 31) }
 
     private fun sound(k: Int, transpose: Int, drums: DrumKind?) = if (drums != null) k else (k - transpose).coerceIn(12, 115)
 

@@ -38,6 +38,6 @@ class PlaybackWavTone {
         val rate = 44_100
         val p = Performance.play(DemoPassages.lyrical(), 66.0, rate, 0, Synth.LOW_BRASS_DARK)
         val synth = Synth(rate); synth.add(p.tones)
-        wavOf(java.io.File(dir, "F-dark-lyrical.wav"), rate, p.length / rate.toDouble() + 1.5, synth)
+        wavOf(java.io.File(dir, (System.getenv("INKSHEETS_PREFIX") ?: "F") + "-dark-lyrical.wav"), rate, p.length / rate.toDouble() + 1.5, synth)
     }
 }

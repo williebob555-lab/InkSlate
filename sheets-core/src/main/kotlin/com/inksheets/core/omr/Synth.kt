@@ -45,6 +45,60 @@ object Feel {
      * D - C plus an air "t": 10 ms of soft noise, low-passed, 30 dB under the note, on accents, marcatos and staccatos.
      */
     @Volatile var onset: Char = 'D'
+
+    /** How expressive the vibrato is: 1 as measured from the recordings, more for wider swings of depth and rate, 0 for steady. */
+    @Volatile var expression: Double = 1.0
+}
+
+/**
+ * A vibrato as a player plays it, planned over a note or a slurred line of notes: it comes in after a moment and swells, may
+ * grow or ease through the note, tapers before it lets go, and is never steady - its depth and its rate wander (smooth random
+ * curves from [seed], so a render repeats). Depth in cents (peak), rate in Hz, times in seconds from [origin] (a sample).
+ * The statistics are those of recorded euphonium playing: rate 4.8 Hz +/- 11% between notes and 15% within, depth 12 cents
+ * +/- 28% between notes and 40% within, a first cycle 0.2 s in, depth growing through a held note.
+ */
+class Vibrato(
+    val origin: Long, val seed: Long,
+    val depth: Double, val rate: Double,
+    val delay: Double, val swell: Double,
+    /** From the origin to the end of the line (s). */
+    val span: Double,
+    /** Depth is x(1 + growth (u - 0.5)) through the line (u 0-1); rate x(1 + rateTrend u). */
+    val growth: Double, val rateTrend: Double,
+    /** The last [taperSecs] ease depth down to [taperTo] of itself. */
+    val taperSecs: Double, val taperTo: Double,
+    val depthNoise: Double, val rateNoise: Double,
+    /** Seconds over which the wandering of depth and rate is correlated. */
+    val corr: Double = 0.3
+) {
+    private fun smooth(x: Double): Double { val u = x.coerceIn(0.0, 1.0); return u * u * (3 - 2 * u) }
+
+    /** Smooth random curve in about -1..1 (sd about 0.9), [x] in units of the correlation time. */
+    private fun noise(salt: Long, x: Double): Double {
+        val k = Math.floor(x).toLong(); val f = x - k
+        fun at(i: Long): Double {
+            var z = (seed + salt) * -0x61c8864680b583ebL + i * 0x2545F4914F6CDD1DL
+            z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L
+            z = (z xor (z ushr 27)) * -0x6b2fb644ecceee15L
+            z = z xor (z ushr 31)
+            return ((z ushr 11).toDouble() / (1L shl 53).toDouble()) * 2 - 1
+        }
+        val u = f * f * (3 - 2 * f)
+        return (at(k) + (at(k + 1) - at(k)) * u) * 1.9
+    }
+
+    /** Depth (cents) [t] seconds in. */
+    fun depthAt(t: Double): Double {
+        val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
+        val taper = if (taperSecs > 0) 1 + (taperTo - 1) * smooth((t - (span - taperSecs)) / taperSecs) else 1.0
+        return depth * smooth((t - delay) / swell) * (1 + growth * (u - 0.5)).coerceAtLeast(0.2) * taper * (1 + depthNoise * noise(1L, t / corr)).coerceAtLeast(0.15)
+    }
+
+    /** Rate (Hz) [t] seconds in. */
+    fun rateAt(t: Double): Double {
+        val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
+        return (rate * (1 + rateTrend * u) * (1 + rateNoise * noise(2L, t / (corr * 0.9) + 7.0))).coerceAtLeast(2.0)
+    }
 }
 
 class Synth(val sampleRate: Int) {
@@ -304,7 +358,9 @@ class Synth(val sampleRate: Int) {
         /** Which articulations the note carries ([ART_STACCATO] ...), for sampled instruments. */
         val art: Int = 0,
         /** The loudness the player meant, before the band's balance (picks a sampled instrument's velocity layer); -1: as [velocity]. */
-        val layer: Float = -1f
+        val layer: Float = -1f,
+        /** The planned vibrato this note takes part in (see [Vibrato]); null: the patch's own steady one. */
+        val vib: Vibrato? = null
     ) {
         /** The loudness [t] samples into the tone: along its line from start to end, arriving from the note before over [ramp] when a new dynamic. */
         fun velocityAt(t: Double): Float {
@@ -343,6 +399,9 @@ class Synth(val sampleRate: Int) {
         var dipDb = 0.0
         var flat = 0.0
         var settle = 0.0
+        /** The planned vibrato's phase (radians) and the sample it was worked out at: its rate varies, so it is added up. */
+        var vibPhase = 0.0
+        var vibLast = Long.MIN_VALUE
         var vibOk = tone.length > 0
         /** How far (octaves) the pitch started from the note's, closing over a few tens of ms. */
         var glideOct = 0.0
@@ -404,7 +463,7 @@ class Synth(val sampleRate: Int) {
         if (ratio <= 0.0 || kotlin.math.abs(ratio - 1.0) < 1e-6) return
         val now = position
         fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
-        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
+        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
         val shifted = pending.map { moved(it) }
         pending.clear(); pending += shifted
         for (v in voices) {
@@ -510,7 +569,7 @@ class Synth(val sampleRate: Int) {
                     val ov = max(8L, (ms * 0.001 * sampleRate).toLong())
                     val h = ov / 2
                     carrier.fadeAt = t.start - h; carrier.fadeLen = ov
-                    val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
+                    val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
                     val nv = Voice(shifted)
                     // The two tones meet in quadrature at the join's centre, so that their blend keeps its power (two
                     // sounds of near pitch would otherwise beat through the overlap).
@@ -520,6 +579,12 @@ class Synth(val sampleRate: Int) {
                         val phc = carrier.phase[hh] + 2 * PI * carrier.freq * (hh + 1) / srd * dt
                         val ph = phc + PI / 2 - 2 * PI * nv.freq * (hh + 1) / srd * (ov / 2.0)
                         nv.phase[hh] = ((ph % (2 * PI)) + 2 * PI) % (2 * PI)
+                    }
+                    if (shifted.vib != null && carrier.tone.vib != null) {
+                        // The vibrato goes straight on across the slur: the new voice takes up the old one's phase.
+                        val ahead = max(0L, shifted.start - (if (carrier.vibLast == Long.MIN_VALUE) shifted.start else carrier.vibLast))
+                        nv.vibPhase = carrier.vibPhase + 2 * PI * carrier.tone.vib!!.rateAt((shifted.start - carrier.tone.vib!!.origin) / sampleRate.toDouble()) * ahead / sampleRate
+                        nv.vibLast = Long.MIN_VALUE
                     }
                     nv.xfade = ov; nv.born = carrier.born; nv.vibOk = carrier.vibOk || t.length > sampleRate * 0.45
                     nv.flat = sl.flatCents; nv.settle = sl.settleMs
@@ -781,7 +846,15 @@ class Synth(val sampleRate: Int) {
         val t = (s - v.segStart).toDouble()
         val age = (s - v.born).toDouble()
         val vibDelay = p.vibDelay * sr
-        val vib = if (p.vibratoHz > 0 && v.vibOk && age > vibDelay)
+        val plan = tone.vib
+        val vib = if (plan != null) {
+            // The planned vibrato: depth and rate wander, the phase added up so it never jumps.
+            val ts = (s - plan.origin) / sr
+            if (v.vibLast == Long.MIN_VALUE) v.vibLast = s
+            v.vibPhase += 2 * PI * plan.rateAt(ts) * max(0L, s - v.vibLast) / sr
+            v.vibLast = max(v.vibLast, s)
+            plan.depthAt(ts) / 1200.0 * sin(v.vibPhase)
+        } else if (p.vibratoHz > 0 && v.vibOk && age > vibDelay)
             p.vibratoCents / 1200.0 * sin(2 * PI * p.vibratoHz * age / sr) * min(1.0, (age - vibDelay) / (0.4 * sr)) else 0.0
         // Lips settling onto the note (brass): only on a note that is struck.
         val scoop = if (p.scoop > 0 && !v.continued && v.xfade == 0L && !tone.legato) -p.scoop * (if (hardness(tone) > 0) 0.3 else 0.6) / 1200.0 * exp(-t / (0.03 * sr)) else 0.0

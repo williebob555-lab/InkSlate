@@ -29,6 +29,13 @@ class PlaybackWavSet {
         write(dir, "$prefix-copprasch", DemoPassages.copprasch(), 108.0, Synth.LOW_BRASS, 0)
         write(dir, "$prefix-accents", DemoPassages.accents(), 92.0, Synth.LOW_BRASS, 0)
         write(dir, "$prefix-lyrical", DemoPassages.lyrical(), 66.0, Synth.LOW_BRASS, 0)
+        if (System.getenv("INKSHEETS_EXPRESSIONS") == "1") {
+            // How much the vibrato (and its swings) is: x1.5 and x0.6.
+            try {
+                Feel.expression = 1.5; write(dir, "$prefix-lyrical-more", DemoPassages.lyrical(), 66.0, Synth.LOW_BRASS, 0)
+                Feel.expression = 0.6; write(dir, "$prefix-lyrical-less", DemoPassages.lyrical(), 66.0, Synth.LOW_BRASS, 0)
+            } finally { Feel.expression = 1.0 }
+        }
         if (System.getenv("INKSHEETS_FAMILIES") == "1") {
             write(dir, "$prefix-trumpet-legato", DemoPassages.legato(), 96.0, Synth.BRASS, -12)
             write(dir, "$prefix-clarinet-legato", DemoPassages.legato(), 96.0, Synth.CLARINET, -12)
