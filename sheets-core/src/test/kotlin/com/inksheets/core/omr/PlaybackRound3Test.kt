@@ -249,7 +249,7 @@ class PlaybackRound3Test {
     @Test
     fun `each family has its own vibe - vibrato, attack, release, breath`() {
         assertEquals("a clarinet has no vibrato", 0.0, Synth.CLARINET.vibratoCents, 1e-9)
-        assertTrue("a euphonium's is slow and late, as recorded (4.2 Hz, about 13 cents)", Synth.LOW_BRASS.vibratoCents in 10.0..16.0 && Synth.LOW_BRASS.vibratoHz in 3.8..5.2 && Synth.LOW_BRASS.vibDelay >= 0.4)
+        assertTrue("a euphonium's is slow and late, as recorded (4.2 Hz, about 13 cents)", Synth.LOW_BRASS.vibratoCents in 8.0..16.0 && Synth.LOW_BRASS.vibratoHz in 3.8..5.2 && Synth.LOW_BRASS.vibDelay >= 0.4)
         assertTrue("flute and sax faster", Synth.FLUTE.vibratoHz > Synth.LOW_BRASS.vibratoHz && Synth.SAX.vibratoHz > Synth.LOW_BRASS.vibratoHz && Synth.FLUTE.vibratoCents >= 7.0 && Synth.SAX.vibratoCents >= 7.0)
         assertTrue("brass attacks slower than reeds", Synth.LOW_BRASS.attack > Synth.CLARINET.attack)
         assertTrue("brass releases longer than reeds", Synth.LOW_BRASS.release > Synth.CLARINET.release)

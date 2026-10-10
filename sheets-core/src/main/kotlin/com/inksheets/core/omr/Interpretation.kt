@@ -610,7 +610,7 @@ object Interpretation {
             val longNote = span > 1.6
             val vib = Vibrato(startS, seed, patch.vibratoCents * room, patch.vibratoHz,
                 delay = patch.vibDelay * 0.4, swell = 0.5, span = span,
-                growth = if (longNote) 0.2 else 0.1, rateTrend = 0.12,
+                growth = if (longNote) 0.2 else 0.1, rateTrend = 0.14,
                 taperSecs = if (taper) 0.4 else 0.0, taperTo = taperTo,
                 depthNoise = drift, rateNoise = drift, corr = 3.0,
                 knotTimes = times.toDoubleArray(), knotDepth = depthK.map { it.coerceIn(0.4, 1.3) }.toDoubleArray(), knotRate = rateK2)
