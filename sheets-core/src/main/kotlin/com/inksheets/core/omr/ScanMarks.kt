@@ -11,7 +11,7 @@ import kotlin.math.min
  * staccato dots over or under a note's head, slurs (arcs followed round the heads they touch, pieces
  * joined), hairpins (a wedge of two thin lines, one end open). Used only on scans ([Recognizer.readMarks]).
  */
-internal class ScanMarks(private val ink: Ink, private val staves: List<Recognizer.Staff>, private val measures: List<Measure>,
+internal class ScanMarks(private val ink: Ink, private val grey: IntArray, private val staves: List<Recognizer.Staff>, private val measures: List<Measure>,
                          private val covered: (Int, Int, Int) -> Boolean) {
 
     private val DEBUG = System.getProperty("inksheets.omr.scanmarks") != null
@@ -169,6 +169,61 @@ internal class ScanMarks(private val ink: Ink, private val staves: List<Recogniz
                     if (under.size < 2) continue
                     val mi = owner(((x0 + x1) / 2)) ?: first
                     out += Arc(mi, under.first(), under.last(), above)
+                }
+            }
+        }
+        return out
+    }
+
+    // ---- dynamics -------------------------------------------------------------------------------
+
+    class Dyn(val mi: Int, val text: String, val x0: Float, val x1: Float, val above: Boolean)
+
+    /**
+     * Dynamics' letters (p, f, m...) found as shapes of ink under or over each staff and asked of the mark
+     * reader, whole - where the bar's kept shapes have them cut by a stem's box or run into a fingering.
+     */
+    fun dynamics(): List<Dyn> {
+        val out = ArrayList<Dyn>()
+        val sets = setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp")
+        for ((key, group) in groups()) {
+            val s = staves.getOrNull(key.second) ?: continue
+            val sp = measures[group.first()].space
+            val lo = group.minOf { measures[it].box.left }; val hi = group.maxOf { measures[it].box.right }
+            val mid = (lo + hi) / 2
+            val owner = { x: Int -> group.firstOrNull { x >= measures[it].box.left && x < measures[it].box.right } }
+            for (above in listOf(false, true)) {
+                val top = s.lineY(0, mid); val bottom = s.lineY(4, mid)
+                val y0 = if (above) (top - sp * 4.5f).toInt() else (bottom + sp * 0.3f).toInt()
+                val y1 = if (above) (top - sp * 0.3f).toInt() else (bottom + sp * 4.5f).toInt()
+                val comps = components(lo, y0, hi, y1, 2) { x, y -> ink[x, y] }.map { box(it) }
+                class Letter(val bx: IntArray, val c: Char)
+                val letters = ArrayList<Letter>()
+                for (bx in comps) {
+                    val w = (bx[2] - bx[0] + 1) / sp; val h = (bx[3] - bx[1] + 1) / sp
+                    if (w !in 0.8f..2.8f || h !in 1.2f..3.2f) continue
+                    val cx = (bx[0] + bx[2]) / 2
+                    val (label, p) = MarkReader.read(grey, ink.width, ink.height, bx, sp, s.lineY(0, cx.coerceIn(s.left, s.right))) ?: continue
+                    if (p < 0.9f || !label.startsWith("dyn_")) continue
+                    letters += Letter(bx, label.removePrefix("dyn_")[0])
+                }
+                letters.sortBy { it.bx[0] }
+                var i = 0
+                while (i < letters.size) {
+                    var j = i
+                    while (j + 1 < letters.size && letters[j + 1].bx[0] - letters[j].bx[2] < sp * 0.7f && abs(letters[j + 1].bx[1] + letters[j + 1].bx[3] - letters[i].bx[1] - letters[i].bx[3]) < sp * 1.6f) j++
+                    val word = (i..j).joinToString("") { letters[it].c.toString() }
+                    val x0 = letters[i].bx[0]; val x1 = letters[j].bx[2]
+                    val y0b = (i..j).minOf { letters[it].bx[1] }; val y1b = (i..j).maxOf { letters[it].bx[3] }
+                    // Run on into other letters (a word's): another shape a hair away.
+                    val runOn = comps.any { o -> (o[2] - o[0] + 1) * (o[3] - o[1] + 1) >= 6 && !(o[0] >= x0 && o[2] <= x1) &&
+                        o[1] <= y1b && o[3] >= y0b && (o[0] in x1 + 1..x1 + (sp * 0.35f).toInt() || o[2] in x0 - (sp * 0.35f).toInt() until x0) && letters.none { it.bx.contentEquals(o) } }
+                    if (DEBUG) println("  DYN? staff ${key.second} '$word' x $x0..$x1 y $y0b..$y1b runOn $runOn")
+                    val cyL = (y0b + y1b) / 2f
+                    val here = if (above) abs(cyL - s.lineY(0, mid)) else abs(cyL - s.lineY(4, mid))
+                    val nearer = staves.indices.any { o -> o != key.second && staves[o].let { st -> minOf(abs(cyL - st.lineY(0, mid)), abs(cyL - st.lineY(4, mid))) } < here }
+                    if (!runOn && !nearer && (word in Performance.LEVELS || word in sets)) out += Dyn(owner((x0 + x1) / 2) ?: group.first(), word, x0.toFloat(), x1.toFloat(), above)
+                    i = j + 1
                 }
             }
         }
