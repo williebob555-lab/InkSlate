@@ -92,6 +92,8 @@ class T4FixesTest {
         val follower = CompanionFollower("Tablet") { line -> (line as? CompanionLink.Line.Message)?.let { got += it.note } }
         try {
             assertTrue(follower.start(CompanionLink.Leader("Leader", listOf("127.0.0.1"), port)))
+            // The leader counts the follower in before it is sent anything (a busy machine is slower to).
+            assertTrue("the follower is counted", waitFor { leader.followerCount == 1 })
             leader.note(CompanionLink.Note(text = "STOP", urgent = true, at = 1_700_000_000_100))
             leader.note(CompanionLink.Note(text = "Look up", at = 1_700_000_000_100))
             val a = got.poll(3, TimeUnit.SECONDS)!!

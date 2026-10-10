@@ -3,7 +3,7 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** (2026-10-09 late) Merged today: strip one column never scrolling (taps fixed), short screens small names; reading tile + Stop; metronome/tuner side by side; Fix full-screen editor on phones sideways, four long rows on wide screens; RenderGate (screen pages before reader); playback rounds 1-3 (no pops, legato, ties, line breaks, brass spectra, gradual dynamics, natural releases, per-family slurs); sampler engine + Settings Instruments + Sound menu "Yours"; Copprasch scan marks (dynamics all, staccato ~half, slurs partial; existing readings need "Read again"); tests silent (OutLine). Running: playback round 4 ("ta" articulations, smoother clarinet slurs -> build/listen/round4), Listen lock/follow agent. User listens and picks; never play sound through the laptop. Then: retrain marknet on heavy scans (CPU-heavy, ask first), final [build sheets] build + verify.
+**Now:** (2026-10-10) Test build pushed with the playback settled by ear (onset D, euphonium tone from the user's reference, planned vibrato I), sampler instruments, Fix full-screen editor, strip fixes, RenderGate. Listen rework NOT in it (agent worktree agent-a295ba5308f80708e: WIP, locks fast but locks wrong with own-part reference; resume later). Next: the user's idea - a bar put right in one part fixes the same bar in the song's other parts where it was read the same (unisons, doublings, transposed copies). No load tests without asking.
 
 **Earlier:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
 
