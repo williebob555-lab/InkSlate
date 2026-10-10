@@ -29,6 +29,11 @@ with the reason, so a borderline case can be judged. Newest process rules first.
   ever *read* (copy files out to a temp library to act on them).
 - **Never poll api.github.com in loops** (shares the 60/h limit with the user's in-app updater);
   one watcher at most, prefer the releases HTML page.
+- **Taste calls go to the user as options** (2026-10-09): sound and layout are picked by the user
+  from 2–4 concrete versions (rendered WAVs; mockup previews). UI placement is decided by the lead,
+  never delegated to cheaper agents ("lower agents can't do that well"); agents do the coding.
+- **Never sound through the laptop.** Tests are silent (`-Dinksheets.silent=1`, `OutLine`); agents
+  render WAVs. At most ~2 heavy Gradle jobs at once, each `--max-workers=2`.
 - **Freedom:** 2026-10-08 the user said "surprise me — no limits" on the size of changes; they can
   ask for a reversal. Experimental features may *graduate* out of Settings › Experimental only when
   beautifully incorporated into the normal flow.
@@ -105,6 +110,21 @@ User's verdicts of 2026-10-09 (the bar for these features - "shocked by the impr
 - Listen: had no trust - must cope with starting mid-page and show it knows what it hears.
 - Reading: one colour-coded Check (green/yellow/red), tap any bar to fix, Fix never moves and its buttons never move (they work in a rhythm), Back/undo, richer "what's wrong" answers, clean view that matches the piece's style and carries every element, clean as an overlay never a new file, readings must persist, a progress bar at the side.
 - Playback: "a note machine" - wants a planned, expressive, human performance good enough to demo a piece; band with or without own part; band parts read in parallel.
+
+Playback, settled with the user by ear 2026-10-09 (rounds in `build/listen/roundN`):
+- No pops or hiss at note starts; slurs are one continuous line, never a keyboard glissando (brass:
+  the two notes overlap ~25–50 ms like a lip slur; woodwinds ~30–45 ms, not snappy); ties held;
+  bars on a new line play straight on.
+- Volume never jumps: dynamics arrive over the first note or two (S-curve), hairpins over their span.
+- Notes decay naturally (no cut-offs); tongued notes are separated by the release plus a real gap.
+- Note starts: onset model **D** (the buzz blooms dark into its tone; a soft dark air "t" under
+  accent / marcato / staccato) — "a block smacking on a surface" was the earlier verdict.
+- Euphonium tone is fitted to the user's dry reference ("All Things Bright and Beautiful",
+  unaccompanied); "Song for Ina" is the dark end (`Patch.toneBlend`). Barely brightens when loud.
+- Vibrato: planned from the music, controlled — straight start, even bloom, wider and quicker into
+  climaxes and crescendos, narrower and slower at phrase ends, continuous through slurs. Random
+  wander was judged "lack of control"; a fixed wobble "dead consistency is not expression".
+- Their own sampled instruments (DecentSampler/SFZ from `C:\Sampler App`) can replace any voice.
 
 
 - **Visible or untrusted.** Every automation shows (1) that it runs and what it hears, (2) where

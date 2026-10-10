@@ -471,6 +471,7 @@ object Interpretation {
             val secs = if (n.subito) 0.12 else max(max(0.6, dB / 14.0), min(3.0, noteSecs))
             ramps += Ramp(sample(n.q), (secs * rate).toLong(), ref)
         }
+        val vibrato = vibratoPlans(plan, notes, map, rate, at, sounds, drums, ::sample)
         for ((i, n) in notes.withIndex()) {
             val start = sample(n.q)
             val nominal = sample(n.q + n.len) - start
@@ -535,17 +536,93 @@ object Interpretation {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
-                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
+                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
                         continue
                     }
                 }
                 // A slurred line, one note at a time: each moves over from the last, not struck anew.
                 val from = if (joined && drums == null && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
-                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer)
+                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer, vib = vibrato[i])
             }
         }
         return out
     }
+
+    /**
+     * The vibrato of each note, planned a slurred line at a time (it goes on through a slur rather than starting again on every
+     * note), and only from the music: there is nothing random in it. One intensity line follows the phrase - wider and a little
+     * quicker with the dynamic, with higher notes, toward the phrase's high point and in a crescendo; narrower and slower toward a
+     * phrase's end - drawn through the middle of each note and joined smoothly. Within a line it is straight for a moment, then
+     * blooms evenly to its depth, quickens a little through a long note, and eases to straight before the release (the last note of a
+     * phrase, a note before a rest, the last note of all). Short lines get none. [Feel.expression] scales how far it swings
+     * from the plain middle; [Feel.drift] adds a slow wander of a couple of percent at most (none by default).
+     */
+    private fun vibratoPlans(plan: Plan, notes: List<Planned>, map: TempoMap, rate: Int, at: Long, patch: Synth.Patch, drums: DrumKind?,
+                             sample: (Double) -> Long): Array<Vibrato?> {
+        val out = arrayOfNulls<Vibrato>(notes.size)
+        if (drums != null || patch.sampled != null || patch.vibratoCents <= 0.0 || patch.drum) return out
+        val e = Feel.expression
+        val drift = Feel.drift
+        /** How intense the vibrato wants to be at note [n]'s middle, 1 the plain middle. */
+        fun want(n: Planned): Double {
+            val level = (n.level + n.endLevel) / 2
+            val pitch = n.keys.maxOrNull() ?: 55
+            var a = 1.0
+            a += 0.6 * (level - 0.68)                                   // louder: wider
+            a += (pitch - 55).coerceIn(-10, 12) * 0.015                  // higher: wider
+            a += (n.endLevel - n.level) * 1.2                            // a crescendo: wider, a diminuendo: narrower
+            val ph = n.phrase
+            if (ph != null) {
+                val mid = n.q + n.len / 2
+                val spanQ = (ph.endQ - ph.startQ).coerceAtLeast(1e-6)
+                val toPeak = (1 - abs(mid - ph.peakQ) / (0.35 * spanQ + 1.0)).coerceAtLeast(0.0)
+                a += 0.3 * toPeak * toPeak * (3 - 2 * toPeak)             // toward the high point
+                val u = ((mid - ph.startQ) / spanQ).coerceIn(0.0, 1.0)
+                a -= 0.3 * smooth01((u - 0.7) / 0.3)                      // toward the phrase's end
+            }
+            return 1 + (a - 1) * e
+        }
+        var i = 0
+        while (i < notes.size) {
+            // The line: this note and those slurred or tied on to it.
+            var j = i
+            while (j < notes.size - 1 && (notes[j].sounding == JOINED || notes[j].tie) && abs(notes[j].q + notes[j].len - notes[j + 1].q) < 1e-6) j++
+            val first = notes[i]; val last = notes[j]
+            val startS = sample(first.q); val endS = sample(last.q + last.len)
+            val span = (endS - startS) / rate.toDouble()
+            val seed = hashLong((first.q * 977).toLong() + i * 7919L + 31)
+            val room = smooth01((span - 0.35) / 0.45)          // short lines: little or none
+            val phraseEnds = notes.subList(i, j + 1).any { it.phraseEnd }
+            val nextAfter = notes.getOrNull(j + 1)
+            val toRest = nextAfter == null || nextAfter.q - (last.q + last.len) > 1e-6
+            val finalNote = nextAfter == null
+            // The intensity line, through the middle of each note, joined smoothly.
+            val times = ArrayList<Double>(); val depthK = ArrayList<Double>(); val rateK = ArrayList<Double>()
+            times += 0.0; depthK += want(first); rateK += 1 + 0.35 * (want(first) - 1)
+            for (k in i..j) {
+                val mid = (sample(notes[k].q + notes[k].len / 2) - startS) / rate.toDouble()
+                if (mid > times.last() + 0.05) { times += mid; depthK += want(notes[k]); rateK += 1 + 0.35 * (want(notes[k]) - 1) }
+            }
+            if (span > times.last() + 0.05) { times += span; depthK += depthK.last(); rateK += rateK.last() }
+            val rateK2 = rateK.map { it.coerceIn(0.97, 1.08) }.toDoubleArray()
+            val taper = finalNote || phraseEnds || toRest
+            val taperTo = if (finalNote || phraseEnds) 0.0 else 0.5
+            val longNote = span > 1.6
+            val vib = Vibrato(startS, seed, patch.vibratoCents * room, patch.vibratoHz,
+                delay = patch.vibDelay * 0.4, swell = 0.5, span = span,
+                growth = if (longNote) 0.2 else 0.1, rateTrend = 0.14,
+                taperSecs = if (taper) 0.4 else 0.0, taperTo = taperTo,
+                depthNoise = drift, rateNoise = drift, corr = 3.0,
+                knotTimes = times.toDoubleArray(), knotDepth = depthK.map { it.coerceIn(0.4, 1.3) }.toDoubleArray(), knotRate = rateK2)
+            val capped = vib
+            if (capped.depth > 0.2) for (k in i..j) out[k] = capped
+            i = j + 1
+        }
+        return out
+    }
+
+    private fun smooth01(x: Double): Double { val u = x.coerceIn(0.0, 1.0); return u * u * (3 - 2 * u) }
+    private fun hashLong(x: Long): Long { var z = x * -0x61c8864680b583ebL; z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L; return z xor (z ushr 31) }
 
     private fun sound(k: Int, transpose: Int, drums: DrumKind?) = if (drums != null) k else (k - transpose).coerceIn(12, 115)
 

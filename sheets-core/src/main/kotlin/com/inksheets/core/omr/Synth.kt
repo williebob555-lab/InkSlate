@@ -33,6 +33,97 @@ object Feel {
     val C = Setting(pitchBreakMs = 8.0, dipDb = 1.5, dipMs = 30.0, gap = 0.12, releaseMs = 25.0, gapMinMs = 40.0)
 
     @Volatile var now: Setting = C
+
+    /**
+     * How a tongued or articulated note begins (a taste call, to listen to):
+     * A - a fast raised-cosine attack (marcato 6 ms .. accent 7 ms, staccato 8 ms, plain a quick "da"), bright from the first
+     *     millisecond with a strike boost on the upper harmonics settling over 40 ms.
+     * B - no strike boost; attacks 12-18 ms (accents), 25 ms plain; harmonic n enters 1.75 ms x (n-1) after the first (at most
+     *     20 ms); a +1.5 dB overshoot peaking at 35 ms, settled by 120 ms, on accents and marcatos.
+     * C - brass physics: the buzz grows over 30 ms (15 ms for a marcato) and each upper partial n follows the instantaneous
+     *     amplitude as amp^(0.35 (n-1)): every note starts dark and blooms; firmness is faster growth and a touch more level.
+     * D - C plus an air "t": 10 ms of soft noise, low-passed, 30 dB under the note, on accents, marcatos and staccatos.
+     */
+    @Volatile var onset: Char = 'D'
+
+    /** How expressive the vibrato is: 1 as measured from the recordings, more for wider swings of depth and rate, 0 for steady. */
+    @Volatile var expression: Double = 1.0
+
+    /** A slow drift of the vibrato's depth and rate, as a share (0 none; 0.02 a hair, over seconds). */
+    @Volatile var drift: Double = 0.0
+}
+
+/**
+ * A vibrato as a player plays it, planned over a note or a slurred line of notes: it comes in after a moment and swells, may
+ * grow or ease through the note, tapers before it lets go, and is never steady - its depth and its rate wander (smooth random
+ * curves from [seed], so a render repeats). Depth in cents (peak), rate in Hz, times in seconds from [origin] (a sample).
+ * The statistics are those of recorded euphonium playing: rate 4.8 Hz +/- 11% between notes and 15% within, depth 12 cents
+ * +/- 28% between notes and 40% within, a first cycle 0.2 s in, depth growing through a held note.
+ */
+class Vibrato(
+    val origin: Long, val seed: Long,
+    val depth: Double, val rate: Double,
+    val delay: Double, val swell: Double,
+    /** From the origin to the end of the line (s). */
+    val span: Double,
+    /** Depth is x(1 + growth (u - 0.5)) through the line (u 0-1); rate x(1 + rateTrend u). */
+    val growth: Double, val rateTrend: Double,
+    /** The last [taperSecs] ease depth down to [taperTo] of itself. */
+    val taperSecs: Double, val taperTo: Double,
+    val depthNoise: Double, val rateNoise: Double,
+    /** Seconds over which the wandering of depth and rate is correlated (a slow drift of a couple of percent at most). */
+    val corr: Double = 0.3,
+    /**
+     * The intensity line the music draws, at [knotTimes] (s from the origin): depth and rate multipliers there ([knotDepth],
+     * [knotRate]), joined smoothly - the vibrato follows the phrase (louder, higher, nearer its high point: wider and quicker;
+     * its end: narrower and slower), carried through a slur rather than starting again on each note.
+     */
+    val knotTimes: DoubleArray = DoubleArray(0), val knotDepth: DoubleArray = DoubleArray(0), val knotRate: DoubleArray = DoubleArray(0),
+    /** The rate quickens by [rateTrend] over this many seconds from the line's start, then holds. */
+    val accelSecs: Double = 2.0
+) {
+    private fun line(vs: DoubleArray, t: Double): Double {
+        val ts = knotTimes
+        if (ts.isEmpty() || vs.size != ts.size) return 1.0
+        if (t <= ts[0]) return vs[0]
+        if (t >= ts[ts.size - 1]) return vs[vs.size - 1]
+        var k = 0
+        while (k < ts.size - 2 && t > ts[k + 1]) k++
+        val f = ((t - ts[k]) / (ts[k + 1] - ts[k]).coerceAtLeast(1e-6)).coerceIn(0.0, 1.0)
+        val u = f * f * (3 - 2 * f)
+        return vs[k] + (vs[k + 1] - vs[k]) * u
+    }
+
+    private fun smooth(x: Double): Double { val u = x.coerceIn(0.0, 1.0); return u * u * (3 - 2 * u) }
+
+    /** Smooth random curve in about -1..1 (sd about 0.9), [x] in units of the correlation time. */
+    private fun noise(salt: Long, x: Double): Double {
+        val k = Math.floor(x).toLong(); val f = x - k
+        fun at(i: Long): Double {
+            var z = (seed + salt) * -0x61c8864680b583ebL + i * 0x2545F4914F6CDD1DL
+            z = (z xor (z ushr 30)) * -0x40a7b892e31b1a47L
+            z = (z xor (z ushr 27)) * -0x6b2fb644ecceee15L
+            z = z xor (z ushr 31)
+            return ((z ushr 11).toDouble() / (1L shl 53).toDouble()) * 2 - 1
+        }
+        val u = f * f * (3 - 2 * f)
+        return (at(k) + (at(k + 1) - at(k)) * u) * 1.9
+    }
+
+    /** Depth (cents) [t] seconds in. */
+    fun depthAt(t: Double): Double {
+        val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
+        val taper = if (taperSecs > 0) 1 + (taperTo - 1) * smooth((t - (span - taperSecs)) / taperSecs) else 1.0
+        return depth * smooth((t - delay) / swell) * (1 + growth * (u - 0.5)).coerceAtLeast(0.2) * line(knotDepth, t) * taper * (1 + depthNoise * noise(1L, t / corr)).coerceAtLeast(0.15)
+    }
+
+    /** Rate (Hz) [t] seconds in. */
+    fun rateAt(t: Double): Double {
+        val u = (t / span.coerceAtLeast(0.05)).coerceIn(0.0, 1.0)
+        // Slows a little as it tapers away, and quickens through a long note.
+        val slow = if (taperSecs > 0) 1 - 0.06 * (1 - taperTo).coerceIn(0.0, 1.0) * smooth((t - (span - taperSecs)) / taperSecs) else 1.0
+        return (rate * (1 + rateTrend * smooth(t / accelSecs.coerceAtLeast(0.1))) * line(knotRate, t) * slow * (1 + rateNoise * noise(2L, t / (corr * 0.9) + 7.0))).coerceAtLeast(2.0)
+    }
 }
 
 class Synth(val sampleRate: Int) {
@@ -84,8 +175,53 @@ class Synth(val sampleRate: Int) {
         /** Seconds before vibrato comes in on a held note. */
         val vibDelay: Double = 0.28,
         /** How a slur sounds on this family of instrument. */
-        val slur: Slur = Slur.LIP
+        val slur: Slur = Slur.LIP,
+        /** Harmonic levels measured from recordings, by register and loudness (see [Voicing]); then the brass law above is not used. */
+        val voicing: Voicing? = null,
+        /** Between the two recordings [voicing] holds: 0 the dark, lyrical one, 1 the sweet-spot one (the default). */
+        val toneBlend: Double = 1.0
     )
+
+    /**
+     * An instrument's tone as measured: harmonic 1-10 levels (dB re the fundamental) of two recordings of a euphonium
+     * played through the same range - [dark] ("Song for Ina", accompanied, lyrical) and [bright] (a dry solo take, the sweet
+     * spot) - by register (low, mid, high at [REGISTERS] MIDI) and loudness (soft, mid, loud). Harmonics above the tenth go on
+     * falling at 6 dB each. Loudness changes the spectrum very little, as in both recordings.
+     */
+    class Voicing(val dark: Array<Array<DoubleArray>>, val bright: Array<Array<DoubleArray>>) {
+        /** Harmonic [h] (0 = the fundamental) in dB re the fundamental, for a note at [midi], loudness [level] (0-1.5), tone [blend]. */
+        fun db(h: Int, midi: Double, level: Double, blend: Double): Double {
+            val r = when { midi <= REGISTERS[0] -> 0.0; midi >= REGISTERS[2] -> 2.0; midi <= REGISTERS[1] -> (midi - REGISTERS[0]) / (REGISTERS[1] - REGISTERS[0]); else -> 1 + (midi - REGISTERS[1]) / (REGISTERS[2] - REGISTERS[1]) }
+            val l = when { level <= 0.45 -> 0.0; level <= 0.75 -> (level - 0.45) / 0.30; else -> 1.0 + (level - 0.75) / 0.25 }.coerceIn(0.0, 2.5)
+            fun at(t: Array<Array<DoubleArray>>): Double {
+                fun lev(reg: Int): Double {
+                    val rows = t[reg]
+                    fun v(i: Int) = if (h < 10) rows[i][h] else rows[i][9] - 6.0 * (h - 9)
+                    return if (l <= 2.0) { val i = l.toInt().coerceAtMost(1); v(i) + (v(i + 1) - v(i)) * (l - i) } else v(2) + (v(2) - v(1)) * 0.5 * (l - 2.0)
+                }
+                val i = r.toInt().coerceAtMost(1)
+                return lev(i) + (lev(i + 1) - lev(i)) * (r - i)
+            }
+            val d = at(dark); val b = at(bright)
+            return d + (b - d) * blend
+        }
+
+        companion object {
+            val REGISTERS = doubleArrayOf(48.0, 56.0, 63.0)
+            private fun t(vararg rows: DoubleArray) = arrayOf(*rows)
+            private fun r(vararg v: Double) = v
+            val EUPHONIUM = Voicing(
+                dark = arrayOf(
+                    // low (no clean recording: the mid register's shape), mid, high
+                    t(r(0.0, -0.3, -3.8, -16.5, -24.0, -37.6, -47.9, -57.8, -63.0, -64.6), r(0.0, 1.7, -2.5, -12.8, -20.5, -28.3, -40.7, -44.8, -53.6, -56.8), r(0.0, 6.6, -0.2, -5.5, -16.1, -12.9, -31.3, -25.9, -37.5, -36.6)),
+                    t(r(0.0, -0.3, -3.8, -16.5, -24.0, -37.6, -47.9, -57.8, -63.0, -64.6), r(0.0, 1.7, -2.5, -12.8, -20.5, -28.3, -40.7, -44.8, -53.6, -56.8), r(0.0, 6.6, -0.2, -5.5, -16.1, -12.9, -31.3, -25.9, -37.5, -36.6)),
+                    t(r(0.0, 6.7, -3.0, -11.5, -28.9, -40.1, -48.1, -51.5, -61.7, -65.5), r(0.0, 6.3, -3.9, -8.4, -22.3, -32.7, -46.1, -47.1, -53.5, -64.3), r(0.0, 5.0, -4.0, -6.0, -17.0, -26.0, -38.0, -40.0, -47.0, -55.0))),
+                bright = arrayOf(
+                    t(r(0.0, 4.4, 3.9, -4.0, -10.9, -17.1, -27.7, -36.2, -40.1, -42.6), r(0.0, 3.9, 4.5, -6.3, -9.5, -16.8, -29.6, -36.4, -37.7, -38.8), r(0.0, 3.6, 4.1, -6.6, -9.9, -20.3, -23.1, -34.3, -36.3, -36.3)),
+                    t(r(0.0, -1.6, -5.6, -16.3, -27.8, -41.8, -48.1, -54.9, -56.1, -58.6), r(0.0, -0.3, -5.3, -14.0, -27.0, -39.0, -45.6, -47.3, -49.3, -55.1), r(0.0, -2.6, -10.1, -16.0, -30.3, -39.0, -43.1, -47.8, -55.0, -53.6)),
+                    t(r(0.0, -1.9, -12.7, -27.2, -41.7, -51.9, -54.0, -59.2, -64.8, -64.9), r(0.0, -1.9, -12.7, -27.2, -41.7, -51.9, -54.0, -59.2, -64.8, -64.9), r(0.0, -0.1, -10.9, -24.5, -35.9, -46.2, -49.5, -55.3, -62.3, -65.5))))
+        }
+    }
 
     /**
      * How a slur is made on a family of instrument: the old note fades as the new speaks, over [minOverlapMs]
@@ -99,10 +235,10 @@ class Synth(val sampleRate: Int) {
             val LIP = Slur(25.0, 50.0, 1.2, 10.0, 60.0)
             val TRUMPET = Slur(20.0, 45.0, 1.0, 8.0, 50.0)
             val HORN = Slur(30.0, 55.0, 1.3, 12.0, 70.0)
-            val CLARINET = Slur(10.0, 20.0, 0.4, 0.0, 15.0, roughDb = 0.9)
-            val SAX = Slur(12.0, 22.0, 0.5, 0.0, 15.0, roughDb = 0.6)
-            val OBOE = Slur(10.0, 18.0, 0.4, 0.0, 15.0, roughDb = 0.6)
-            val FLUTE = Slur(12.0, 22.0, 0.5, 0.0, 20.0, roughDb = 0.4)
+            val CLARINET = Slur(30.0, 42.0, 0.4, 0.0, 15.0, roughDb = 0.9)
+            val SAX = Slur(28.0, 40.0, 0.5, 0.0, 15.0, roughDb = 0.6)
+            val OBOE = Slur(28.0, 40.0, 0.4, 0.0, 15.0, roughDb = 0.6)
+            val FLUTE = Slur(30.0, 42.0, 0.5, 0.0, 20.0, roughDb = 0.4)
             val BOWED = Slur(25.0, 45.0, 0.3, 0.0, 0.0)
         }
     }
@@ -121,9 +257,16 @@ class Synth(val sampleRate: Int) {
             spectral = true, slopeSoft = 0.62, slopeLoud = 0.1, formantHz = 1250.0, formantGain = 1.9, scoop = 14.0, brass = true,
             cutoffSoft = 1600.0, cutoffLoud = 5500.0, vibDelay = 0.4, slur = Slur.TRUMPET)
         /** Euphonium, baritone, tuba (and trombone) - a conical bore: dark, round, strong fundamental and second partial. */
-        val LOW_BRASS = Patch(FloatArray(1), 0.05, 0.14, 0.88f, 0.13, vibratoHz = 4.4, vibratoCents = 3.5, bloom = 0.5f, gain = 0.24f, breath = 0.006f,
+        /**
+         * The euphonium, as recorded: [toneBlend] 1 the dry solo take's tone (the default), 0 the darker, lyrical one. Vibrato of
+         * the dry take: 4.2 Hz, about 13 cents, coming in after about half a second.
+         */
+        fun euphonium(toneBlend: Double = 1.0, vibratoCents: Double = 10.3) = Patch(FloatArray(1), 0.06, 0.14, 0.88f, 0.14, vibratoHz = 4.3, vibratoCents = vibratoCents, bloom = 0.5f, gain = 0.24f, breath = 0.004f,
             spectral = true, slopeSoft = 0.6, slopeLoud = 0.13, formantHz = 430.0, formantGain = 1.8, scoop = 12.0, brass = true,
-            cutoffSoft = 900.0, cutoffLoud = 3200.0, vibDelay = 0.5, slur = Slur.LIP)
+            cutoffSoft = 900.0, cutoffLoud = 3200.0, vibDelay = 0.5, slur = Slur.LIP, voicing = Voicing.EUPHONIUM, toneBlend = toneBlend)
+        val LOW_BRASS = euphonium(1.0)
+        /** The euphonium toward the dark, lyrical end. */
+        val LOW_BRASS_DARK = euphonium(0.0)
         /** Trombone: a cylindrical bore, brighter than the euphonium. */
         val TROMBONE = Patch(FloatArray(1), 0.045, 0.13, 0.88f, 0.12, vibratoHz = 4.8, vibratoCents = 4.0, bloom = 0.5f, gain = 0.23f, breath = 0.005f,
             spectral = true, slopeSoft = 0.52, slopeLoud = 0.1, formantHz = 500.0, formantGain = 1.9, scoop = 12.0, brass = true,
@@ -240,7 +383,9 @@ class Synth(val sampleRate: Int) {
         /** Which articulations the note carries ([ART_STACCATO] ...), for sampled instruments. */
         val art: Int = 0,
         /** The loudness the player meant, before the band's balance (picks a sampled instrument's velocity layer); -1: as [velocity]. */
-        val layer: Float = -1f
+        val layer: Float = -1f,
+        /** The planned vibrato this note takes part in (see [Vibrato]); null: the patch's own steady one. */
+        val vib: Vibrato? = null
     ) {
         /** The loudness [t] samples into the tone: along its line from start to end, arriving from the note before over [ramp] when a new dynamic. */
         fun velocityAt(t: Double): Float {
@@ -279,6 +424,9 @@ class Synth(val sampleRate: Int) {
         var dipDb = 0.0
         var flat = 0.0
         var settle = 0.0
+        /** The planned vibrato's phase (radians) and the sample it was worked out at: its rate varies, so it is added up. */
+        var vibPhase = 0.0
+        var vibLast = Long.MIN_VALUE
         var vibOk = tone.length > 0
         /** How far (octaves) the pitch started from the note's, closing over a few tens of ms. */
         var glideOct = 0.0
@@ -310,7 +458,7 @@ class Synth(val sampleRate: Int) {
             amp0 = if (p.spectral) Spectra.spectrum(p, freq, t.velocity, most) else null
             amp1 = if (p.spectral) Spectra.spectrum(p, freq, t.endVelocity, most) else null
             val a0 = amp0; val a1 = amp1
-            count = if (a0 == null || a1 == null) most else (most - 1 downTo 0).firstOrNull { maxOf(a0[it], a1[it]) > 0.004 }?.plus(1) ?: 1
+            count = if (a0 == null || a1 == null) most else (most - 1 downTo 0).firstOrNull { maxOf(a0[it], a1[it]) > (if (p.voicing != null) 0.0006 else 0.004) }?.plus(1) ?: 1
             active = max(active, count)
         }
     }
@@ -340,7 +488,7 @@ class Synth(val sampleRate: Int) {
         if (ratio <= 0.0 || kotlin.math.abs(ratio - 1.0) < 1e-6) return
         val now = position
         fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
-        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
+        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
         val shifted = pending.map { moved(it) }
         pending.clear(); pending += shifted
         for (v in voices) {
@@ -400,11 +548,11 @@ class Synth(val sampleRate: Int) {
         level = to
     }
 
-    /** Smooth past 0.95 (only a sliver ever gets there): no hard edge on a peak. */
+    /** Smooth past 0.9 and never past 0.97, however loud the mix: no hard edge on a peak, no clipping at the output. */
     private fun softClip(x: Float): Float {
         val a = kotlin.math.abs(x)
-        if (a <= 0.95f) return x
-        val y = 0.95f + 0.05f * kotlin.math.tanh((a - 0.95f) / 0.05f)
+        if (a <= 0.9f) return x
+        val y = 0.9f + 0.07f * kotlin.math.tanh((a - 0.9f) / 0.07f)
         return if (x < 0) -y else y
     }
 
@@ -446,8 +594,23 @@ class Synth(val sampleRate: Int) {
                     val ov = max(8L, (ms * 0.001 * sampleRate).toLong())
                     val h = ov / 2
                     carrier.fadeAt = t.start - h; carrier.fadeLen = ov
-                    val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer)
+                    val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
                     val nv = Voice(shifted)
+                    // The two tones meet in quadrature at the join's centre, so that their blend keeps its power (two
+                    // sounds of near pitch would otherwise beat through the overlap).
+                    val dt = (t.start - position).toDouble()
+                    val srd = sampleRate.toDouble()
+                    for (hh in nv.phase.indices) {
+                        val phc = carrier.phase[hh] + 2 * PI * carrier.freq * (hh + 1) / srd * dt
+                        val ph = phc + PI / 2 - 2 * PI * nv.freq * (hh + 1) / srd * (ov / 2.0)
+                        nv.phase[hh] = ((ph % (2 * PI)) + 2 * PI) % (2 * PI)
+                    }
+                    if (shifted.vib != null && carrier.tone.vib != null) {
+                        // The vibrato goes straight on across the slur: the new voice takes up the old one's phase.
+                        val ahead = max(0L, shifted.start - (if (carrier.vibLast == Long.MIN_VALUE) shifted.start else carrier.vibLast))
+                        nv.vibPhase = carrier.vibPhase + 2 * PI * carrier.tone.vib!!.rateAt((shifted.start - carrier.tone.vib!!.origin) / sampleRate.toDouble()) * ahead / sampleRate
+                        nv.vibLast = Long.MIN_VALUE
+                    }
                     nv.xfade = ov; nv.born = carrier.born; nv.vibOk = carrier.vibOk || t.length > sampleRate * 0.45
                     nv.flat = sl.flatCents; nv.settle = sl.settleMs
                     val dip = sl.dipDb + (if (rough) sl.roughDb else 0.0)
@@ -550,7 +713,16 @@ class Synth(val sampleRate: Int) {
                 val soft = v.continued || tone.legato
                 // Brass blooms: its upper harmonics come in over the attack - the same for an accent as for any note.
                 val attack = max(0.004 * sr, p.attack * sr)
-                val bloom = if (p.bloom > 0f && !soft) min(1.0, 0.3 + t / (attack * 3 + 1)) else 1.0
+                val hard = hardness(tone)
+                // Brass blooms over a plain note's start; a struck note is bright from the very first ms and settles a little.
+                val onset = Feel.onset
+                val bloom = if (p.bloom > 0f && !soft) (if (hard > 0 || onset != 'A') 1.0 else min(1.0, 0.55 + t / (attack * 2 + 1))) else 1.0
+                val strike = if (onset == 'A' && hard > 0 && !soft && t < 0.15 * sr) 1.0 + 0.4 * hard * exp(-t / (0.04 * sr)) else 1.0
+                // C, D: the upper partials follow the buzz's own amplitude, so a note starts dark and blooms as it speaks.
+                val ampNow = if ((onset == 'C' || onset == 'D') && !soft && p.fade <= 0) {
+                    val att = attackSamples(v, sr, hard, onset)
+                    if (t >= att) 1.0 else 0.5 * (1 - kotlin.math.cos(PI * t / att))
+                } else 1.0
                 val vel = velAt(tone, t)
                 // The brief softening of a slur's change: the upper harmonics dip a little with the loudness.
                 val dark = if (v.xfade > 0 && t < 2 * v.xfade) hump(t / (2.0 * v.xfade)) * min(0.5, v.dipDb * 0.25)
@@ -560,7 +732,10 @@ class Synth(val sampleRate: Int) {
                 for (h in 0 until v.active) {
                     val target = if (h >= v.count) 0.0 else if (a0 != null && a1 != null) (a0[h] + (a1[h] - a0[h]) * prog) * (if (h == 0 || bloom >= 1.0) 1.0 else bloom.pow(1.0 + h * p.bloom))
                         else p.harmonics[h] * (if (h == 0) 1.0 else bloom.pow(1.0 + h * p.bloom) * loud.pow(h * 0.45))
-                    v.now[h] += (target * (1 - dark * min(1.0, h / 5.0)) - v.now[h]) * slew
+                    // B: the upper harmonics enter a little after the lower ones.
+                    val enter = if (onset == 'B' && !soft && p.fade <= 0 && h > 0) smooth((t - min(0.020, 0.00175 * h) * sr) / (0.004 * sr)) else 1.0
+                    val follow = if (ampNow < 1.0 && h > 0) ampNow.pow(0.35 * h) else 1.0
+                    v.now[h] += (target * (1 - dark * min(1.0, h / 5.0)) * (if (h > 0) strike else 1.0) * enter * follow - v.now[h]) * slew
                 }
             }
             var x = 0.0
@@ -589,9 +764,43 @@ class Synth(val sampleRate: Int) {
                     x += b * nz * 0.6
                 }
             }
-            buf[i] += (x * g).toFloat()
+            // D: an air "t" under the start of a struck note - soft, low-passed, 30 dB below the note, 10 ms.
+            var air = 0.0
+            if (Feel.onset == 'D' && hardness(tone) > 0 && !v.continued && !tone.legato && v.xfade == 0L && t < 0.010 * sr) {
+                if (!(p.chiff > 0f || p.breath > 0f)) { v.lo1 += (noiseSample() - v.lo1) * 0.12; v.lo2 += (v.lo1 - v.lo2) * 0.12 }
+                val vv = velAt(tone, t)
+                val nominal = p.gain * (if (p.spectral) amplitude(vv) else vv)
+                val win = sin(PI * t / (0.010 * sr)).let { it * it }
+                air = v.lo2 * 5 * 0.07 * nominal * win
+            }
+            buf[i] += (x * g + air).toFloat()
         }
         return false
+    }
+
+    /**
+     * How long the start of the note takes: a slurred note has none; otherwise by the [Feel.onset] model - see there.
+     */
+    private fun attackSamples(v: Voice, sr: Double, hard: Double, onset: Char): Double {
+        val tone = v.tone
+        val p = tone.patch
+        return if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr
+        else if (p.fade > 0) max(0.004 * sr, p.attack * sr)
+        else when (onset) {
+            'B' -> (if (hard > 0) 0.018 - 0.006 * hard else 0.025) * sr
+            // (a plain note after a rest grows as slowly as the instrument does; a struck one is quicker)
+            'C', 'D' -> (if (hard > 0) 0.030 - 0.015 * hard else max(0.030, p.attack)) * sr
+            else -> if (hard > 0) (0.012 - 0.006 * hard) * sr else max(0.012 * sr, p.attack * sr * 0.55)
+        }
+    }
+
+    /** How firmly a note is struck, 0-1: a marcato 1, an accent 0.8, a staccato 0.6, a plain tongued note 0. */
+    private fun hardness(t: Tone): Double {
+        var h = t.accent.toDouble()
+        if (t.art and ART_MARCATO != 0) h = max(h, 1.0)
+        if (t.art and ART_ACCENT != 0) h = max(h, 0.8)
+        if (t.art and ART_STACCATO != 0) h = max(h, 0.6)
+        return h
     }
 
     private fun hump(x: Double): Double { if (x <= 0.0 || x >= 1.0) return 0.0; val h = sin(PI * x); return h * h }
@@ -606,10 +815,12 @@ class Synth(val sampleRate: Int) {
         val accent = tone.accent.toDouble()
         val t = (s - v.segStart).toDouble()
         val soft = v.continued || tone.legato
-        val att = if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr else max(0.004 * sr, p.attack * sr * (1.0 - 0.5 * accent))
+        val hard = hardness(tone)
+        val onset = Feel.onset
+        val att = attackSamples(v, sr, hard, onset)
         val decay = p.decay * sr
         // A wind's note settles only a hair after its start; a struck or plucked one dies away.
-        val sustain = if (p.spectral) 1.0 - (1.0 - p.sustain.toDouble()) * 0.4 else p.sustain.toDouble()
+        val sustain = if (p.spectral) 1.0 - (1.0 - p.sustain.toDouble()) * (0.4 + 0.6 * hard) else p.sustain.toDouble()
         val env = when {
             v.continued -> sustain
             t < 0 -> 0.0
@@ -620,7 +831,13 @@ class Synth(val sampleRate: Int) {
             else -> sustain
         }
         // An accent: a gentle weight on the note - up to 2 dB, rising and falling back over about a tenth of a second.
-        val boost = 1.0 + accent * 0.25 * hump(t / (0.11 * sr))
+        val boost = when (onset) {
+            // B: a small overshoot, +1.5 dB at most, peaking at 35 ms and settled by 120 ms (accent and marcato only).
+            'B' -> { val x = t / (0.035 * sr); 1.0 + (if (accent > 0 || tone.art and (ART_ACCENT or ART_MARCATO) != 0) 0.13 * hard else 0.0) * (if (x > 0) x * x * exp(2 * (1 - x)) else 0.0) }
+            // C, D: firmness is a touch more level for a moment - never a separate transient.
+            'C', 'D' -> (1.0 + 0.12 * hard * exp(-t / (0.08 * sr))) * (1.0 + accent * 0.25 * hump(t / (0.11 * sr)))
+            else -> 1.0 + accent * 0.25 * hump(t / (0.11 * sr))
+        }
         val vel = velAt(tone, t)
         var g = env * boost * p.gain * (if (p.spectral) amplitude(vel) else vel)
         if (v.continued) {
@@ -654,10 +871,18 @@ class Synth(val sampleRate: Int) {
         val t = (s - v.segStart).toDouble()
         val age = (s - v.born).toDouble()
         val vibDelay = p.vibDelay * sr
-        val vib = if (p.vibratoHz > 0 && v.vibOk && age > vibDelay)
+        val plan = tone.vib
+        val vib = if (plan != null) {
+            // The planned vibrato: depth and rate wander, the phase added up so it never jumps.
+            val ts = (s - plan.origin) / sr
+            if (v.vibLast == Long.MIN_VALUE) v.vibLast = s
+            v.vibPhase += 2 * PI * plan.rateAt(ts) * max(0L, s - v.vibLast) / sr
+            v.vibLast = max(v.vibLast, s)
+            plan.depthAt(ts) / 1200.0 * sin(v.vibPhase)
+        } else if (p.vibratoHz > 0 && v.vibOk && age > vibDelay)
             p.vibratoCents / 1200.0 * sin(2 * PI * p.vibratoHz * age / sr) * min(1.0, (age - vibDelay) / (0.4 * sr)) else 0.0
         // Lips settling onto the note (brass): only on a note that is struck.
-        val scoop = if (p.scoop > 0 && !v.continued && v.xfade == 0L && !tone.legato) -p.scoop / 1200.0 * exp(-t / (0.03 * sr)) else 0.0
+        val scoop = if (p.scoop > 0 && !v.continued && v.xfade == 0L && !tone.legato) -p.scoop * (if (hardness(tone) > 0) 0.3 else 0.6) / 1200.0 * exp(-t / (0.03 * sr)) else 0.0
         val drift = 2.0 / 1200.0 * sin(2 * PI * 0.31 * age / sr + v.drift)
         // A slurred note starts a few cents flat and settles (the lips finding the partial).
         val flat = if (v.xfade > 0 && v.settle > 0) -v.flat / 1200.0 * exp(-t / (v.settle * 0.001 * sr / 3)) else 0.0
@@ -677,6 +902,19 @@ class Synth(val sampleRate: Int) {
          * lifted by the body's resonance, rolled off above a cutoff that rises with loudness. Smooth and monotonic
          * apart from the resonance: no hollow (clarinet-like) odd/even pattern.
          */
+        fun voiced(v: Voicing, p: Patch, f0: Double, level: Float, count: Int): DoubleArray {
+            val midi = 69 + 12 * ln(f0 / 440.0) / ln(2.0)
+            val a = DoubleArray(count)
+            var sum = 0.0
+            for (h in 0 until count) {
+                val x = Math.pow(10.0, v.db(h, midi, level.toDouble(), p.toneBlend) / 20)
+                a[h] = x; sum += x * x
+            }
+            val norm = 1.0 / kotlin.math.sqrt(sum.coerceAtLeast(1e-9))
+            for (h in 0 until count) a[h] *= norm * 1.6
+            return a
+        }
+
         fun brass(p: Patch, f0: Double, loud: Double, count: Int): DoubleArray {
             val k = p.slopeSoft + (p.slopeLoud - p.slopeSoft) * loud
             val fc = p.cutoffSoft * (p.cutoffLoud / p.cutoffSoft).pow(loud)
@@ -698,6 +936,7 @@ class Synth(val sampleRate: Int) {
 
         fun spectrum(p: Patch, f0: Double, level: Float, count: Int): DoubleArray {
             val loud = ((level - 0.25) / 0.85).coerceIn(0.0, 1.0)
+            p.voicing?.let { return voiced(it, p, f0, level, count) }
             if (p.brass) return brass(p, f0, loud, count)
             val slope = p.slopeSoft + (p.slopeLoud - p.slopeSoft) * loud
             val a = DoubleArray(count)
@@ -731,7 +970,7 @@ class Synth(val sampleRate: Int) {
         private val passAt = IntArray(2)
         private val feedback = 0.76f
         private val damp = 0.3f
-        private val wet = 0.04f
+        private val wet = 0.015f
 
         fun process(buf: FloatArray) {
             for (i in buf.indices) {
