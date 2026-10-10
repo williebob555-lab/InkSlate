@@ -1,0 +1,450 @@
+Initialized native services in: C:\Users\willi\.gradle\native
+Initialized jansi services in: C:\Users\willi\.gradle\native
+Removing 4 daemon stop events from registry
+Previous Daemon (14056) stopped at Sat Oct 10 10:52:15 EDT 2026 stop command received
+Previous Daemon (7400) stopped at Sat Oct 10 10:52:15 EDT 2026 by user or operating system
+Previous Daemon (16392) stopped at Sat Oct 10 10:52:15 EDT 2026 by user or operating system
+Previous Daemon (23700) stopped at Sat Oct 10 10:52:15 EDT 2026 by user or operating system
+Previous Daemon (5468) stopped at Sat Oct 10 10:52:15 EDT 2026 by user or operating system
+Previous Daemon (27620) stopped at Sat Oct 10 10:52:15 EDT 2026 by user or operating system
+Previous Daemon (26708) stopped at Sat Oct 10 10:52:15 EDT 2026 by user or operating system
+Starting a Gradle Daemon, 7 stopped Daemons could not be reused, use --status for details
+Starting process 'Gradle build daemon'. Working directory: C:\Users\willi\.gradle\daemon\9.7.1 Command: C:\Program Files\Android\Android Studio\jbr\bin\java.exe --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.prefs/java.util.prefs=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED --add-opens=java.base/java.nio.charset=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED --add-opens=java.xml/javax.xml.namespace=ALL-UNNAMED --add-opens=java.base/java.time=ALL-UNNAMED --enable-native-access=ALL-UNNAMED -XX:MaxMetaspaceSize=1g -Xmx4g -Dfile.encoding=UTF-8 -Duser.country=US -Duser.language=en -Duser.variant -cp C:\Users\willi\.gradle\wrapper\dists\gradle-9.7.1-bin\1w1c7tv4s851m17nbqdsro2tv\gradle-9.7.1\lib\gradle-daemon-main-9.7.1.jar -javaagent:C:\Users\willi\.gradle\wrapper\dists\gradle-9.7.1-bin\1w1c7tv4s851m17nbqdsro2tv\gradle-9.7.1\lib\agents\gradle-instrumentation-agent-9.7.1.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.7.1
+Successfully started process 'Gradle build daemon'
+An attempt to start the daemon took 1.862 secs.
+The client will now receive all logging from the daemon (pid: 27216). The daemon log file: C:\Users\willi\.gradle\daemon\9.7.1\daemon-27216.out.log
+Starting build in new daemon [memory: 4 GiB]
+Using 2 worker leases.
+Operational build model parameters: {cachingModelBuilding=false, configurationCache=false, configurationCacheDisabledReason=null, configurationCacheParallelLoad=false, configurationCacheParallelStore=false, configureOnDemand=false, invalidateCoupledProjects=false, isolatedProjects=false, isolatedProjectsDiagnostics=false, isolatedProjectsDangerouslyIgnoreProblems=false, modelAsProjectDependency=false, modelBuilding=false, parallelModelBuilding=false, parallelProjectConfiguration=false, parallelProjectExecution=true, vintage=true}
+Received JVM installation metadata from 'C:\Program Files\Android\Android Studio\jbr': {JAVA_HOME=C:\Program Files\Android\Android Studio\jbr, JAVA_VERSION=25.0.3, JAVA_VENDOR=JetBrains s.r.o., RUNTIME_NAME=OpenJDK Runtime Environment, RUNTIME_VERSION=25.0.3+-15898627-b508.16, VM_NAME=OpenJDK 64-Bit Server VM, VM_VERSION=25.0.3+-15898627-b508.16, VM_VENDOR=JetBrains s.r.o., OS_ARCH=amd64}
+Watching the file system is configured to be enabled if available
+Now considering [C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e] as hierarchies to watch
+File system watching is active
+Starting Build
+Settings evaluated using settings file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\settings.gradle.kts'.
+Using local directory build cache for the root build (location = C:\Users\willi\.gradle\caches\build-cache-1, remove unused entries = after 7 days).
+Projects loaded. Root project using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\build.gradle.kts'.
+Included projects: [root project 'InkSlate', project ':app', project ':core', project ':desktop', project ':sheets-core', project ':sheets-desktop', project ':watch']
+
+> Configure project :
+Evaluating root project 'InkSlate' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\build.gradle.kts'.
+Resolved plugin [id: 'com.android.application', version: '9.4.0', apply: false]
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.compose', version: '2.4.10', apply: false]
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.serialization', version: '2.4.10', apply: false]
+Resolved plugin [id: 'org.jetbrains.kotlin.jvm', version: '2.4.10', apply: false]
+Resolved plugin [id: 'org.jetbrains.compose', version: '1.9.3', apply: false]
+
+> Configure project :app
+Evaluating project ':app' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\app\build.gradle.kts'.
+Resolved plugin [id: 'com.android.application', version: '9.4.0']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.compose', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.serialization', version: '2.4.10']
+Build f1a3eb11-c46f-403d-94bf-e7b740895c33 is started
+Using default execution profile
+InkSlate: no release keystore found - signing the release build with the debug key. This APK cannot update any previously installed InkSlate.
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+Detected Android Gradle Plugin compose compiler configuration
+
+> Configure project :core
+Evaluating project ':core' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\core\build.gradle.kts'.
+Resolved plugin [id: 'org.jetbrains.kotlin.jvm', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.serialization', version: '2.4.10']
+Using Kotlin Gradle Plugin gradle813 variant
+kotlin scripting plugin: created the scripting discovery configuration: kotlinScriptDef
+kotlin scripting plugin: created the scripting discovery configuration: testKotlinScriptDef
+
+> Configure project :desktop
+Evaluating project ':desktop' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\desktop\build.gradle.kts'.
+Resolved plugin [id: 'org.jetbrains.kotlin.jvm', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.compose', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.compose', version: '1.9.3']
+Using Kotlin Gradle Plugin gradle813 variant
+kotlin scripting plugin: created the scripting discovery configuration: kotlinScriptDef
+kotlin scripting plugin: created the scripting discovery configuration: testKotlinScriptDef
+Configure java-only compose resources
+Configure compose resources generation
+Configure 'map(provider(?))' class generation for main
+Configure resource accessors generation for main
+Configure resource accessors generation for test
+Configure actual resource collectors generation for main
+Configure main resources for '' target
+Configure test resources for '' target
+Check that new 'org.jetbrains.kotlin.plugin.compose' was applied
+
+> Configure project :sheets-core
+Evaluating project ':sheets-core' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-core\build.gradle.kts'.
+Resolved plugin [id: 'org.jetbrains.kotlin.jvm', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.serialization', version: '2.4.10']
+Using Kotlin Gradle Plugin gradle813 variant
+kotlin scripting plugin: created the scripting discovery configuration: kotlinScriptDef
+kotlin scripting plugin: created the scripting discovery configuration: testKotlinScriptDef
+
+> Configure project :sheets-desktop
+Evaluating project ':sheets-desktop' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build.gradle.kts'.
+Resolved plugin [id: 'org.jetbrains.kotlin.jvm', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.compose', version: '2.4.10']
+Resolved plugin [id: 'org.jetbrains.compose', version: '1.9.3']
+Using Kotlin Gradle Plugin gradle813 variant
+kotlin scripting plugin: created the scripting discovery configuration: kotlinScriptDef
+kotlin scripting plugin: created the scripting discovery configuration: testKotlinScriptDef
+Configure java-only compose resources
+Configure compose resources generation
+Configure 'map(provider(?))' class generation for main
+Configure resource accessors generation for main
+Configure resource accessors generation for test
+Configure actual resource collectors generation for main
+Configure main resources for '' target
+Configure test resources for '' target
+Check that new 'org.jetbrains.kotlin.plugin.compose' was applied
+
+> Configure project :watch
+Evaluating project ':watch' using build file 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\watch\build.gradle.kts'.
+Resolved plugin [id: 'com.android.application', version: '9.4.0']
+Resolved plugin [id: 'org.jetbrains.kotlin.plugin.serialization', version: '2.4.10']
+Using default execution profile
+InkSheets watch: no release keystore - signed with the debug key, so it will only talk to a debug phone app.
+All projects evaluated.
+Task path ':sheets-desktop:test' matched project ':sheets-desktop'
+Task name matched 'test'
+Selected primary task 'test' from project :sheets-desktop
+Tasks to be executed: [task ':core:checkKotlinGradlePluginConfigurationErrors', task ':core:compileKotlin', task ':core:compileJava', task ':core:processResources', task ':core:classes', task ':core:jar', task ':desktop:checkKotlinGradlePluginConfigurationErrors', task ':desktop:convertXmlValueResourcesForMain', task ':desktop:copyNonXmlValueResourcesForMain', task ':desktop:prepareComposeResourcesTaskForMain', task ':desktop:generateResourceAccessorsForMain', task ':desktop:generateActualResourceCollectorsForMain', task ':desktop:generateComposeResClass', task ':desktop:compileKotlin', task ':desktop:compileJava', task ':desktop:assembleMainResources', task ':desktop:processResources', task ':desktop:classes', task ':desktop:jar', task ':sheets-core:checkKotlinGradlePluginConfigurationErrors', task ':sheets-core:compileKotlin', task ':sheets-core:compileJava', task ':sheets-core:processResources', task ':sheets-core:classes', task ':sheets-core:jar', task ':sheets-desktop:checkKotlinGradlePluginConfigurationErrors', task ':sheets-desktop:convertXmlValueResourcesForMain', task ':sheets-desktop:copyNonXmlValueResourcesForMain', task ':sheets-desktop:prepareComposeResourcesTaskForMain', task ':sheets-desktop:generateResourceAccessorsForMain', task ':sheets-desktop:generateActualResourceCollectorsForMain', task ':sheets-desktop:generateComposeResClass', task ':sheets-desktop:compileKotlin', task ':sheets-desktop:compileJava', task ':sheets-desktop:assembleMainResources', task ':sheets-desktop:processResources', task ':sheets-desktop:classes', task ':sheets-desktop:jar', task ':sheets-desktop:convertXmlValueResourcesForTest', task ':sheets-desktop:copyNonXmlValueResourcesForTest', task ':sheets-desktop:prepareComposeResourcesTaskForTest', task ':sheets-desktop:generateResourceAccessorsForTest', task ':sheets-desktop:compileTestKotlin', task ':sheets-desktop:compileTestJava', task ':sheets-desktop:assembleTestResources', task ':sheets-desktop:processTestResources', task ':sheets-desktop:testClasses', task ':sheets-desktop:test']
+Tasks that were excluded: []
+Resolve mutations for :core:checkKotlinGradlePluginConfigurationErrors (Thread[#60,included builds,5,main]) started.
+Resolve mutations for :desktop:checkKotlinGradlePluginConfigurationErrors (Thread[#61,Execution worker,5,main]) started.
+:core:checkKotlinGradlePluginConfigurationErrors (Thread[#60,included builds,5,main]) started.
+:desktop:checkKotlinGradlePluginConfigurationErrors (Thread[#61,Execution worker,5,main]) started.
+
+> Task :core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+Skipping task ':core:checkKotlinGradlePluginConfigurationErrors' as task onlyIf 'errorDiagnostics are present' is false.
+
+> Task :desktop:checkKotlinGradlePluginConfigurationErrors SKIPPED
+Skipping task ':desktop:checkKotlinGradlePluginConfigurationErrors' as task onlyIf 'errorDiagnostics are present' is false.
+Resolve mutations for :core:compileKotlin (Thread[#60,included builds,5,main]) started.
+Resolve mutations for :desktop:convertXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+:core:compileKotlin (Thread[#60,included builds,5,main]) started.
+:desktop:convertXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:convertXmlValueResourcesForMain NO-SOURCE
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\desktop\build\generated\compose\resourceGenerator\preparedResources\main\composeResources', not found
+Skipping task ':desktop:convertXmlValueResourcesForMain' as it has no source files and no previous output files.
+Resolve mutations for :desktop:copyNonXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+:desktop:copyNonXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:copyNonXmlValueResourcesForMain NO-SOURCE
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\desktop\build\generated\compose\resourceGenerator\preparedResources\main\composeResources', not found
+Skipping task ':desktop:copyNonXmlValueResourcesForMain' as it has no source files and no previous output files.
+Resolve mutations for :desktop:prepareComposeResourcesTaskForMain (Thread[#61,Execution worker,5,main]) started.
+:desktop:prepareComposeResourcesTaskForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:prepareComposeResourcesTaskForMain NO-SOURCE
+Skipping task ':desktop:prepareComposeResourcesTaskForMain' as it has no source files and no previous output files.
+Resolve mutations for :desktop:generateResourceAccessorsForMain (Thread[#61,Execution worker,5,main]) started.
+:desktop:generateResourceAccessorsForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:generateResourceAccessorsForMain SKIPPED
+Skipping task ':desktop:generateResourceAccessorsForMain' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :desktop:generateActualResourceCollectorsForMain (Thread[#61,Execution worker,5,main]) started.
+:desktop:generateActualResourceCollectorsForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:generateActualResourceCollectorsForMain SKIPPED
+Skipping task ':desktop:generateActualResourceCollectorsForMain' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :desktop:generateComposeResClass (Thread[#61,Execution worker,5,main]) started.
+:desktop:generateComposeResClass (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:generateComposeResClass SKIPPED
+Skipping task ':desktop:generateComposeResClass' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :desktop:assembleMainResources (Thread[#61,Execution worker,5,main]) started.
+:desktop:assembleMainResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:assembleMainResources UP-TO-DATE
+Caching disabled for task ':desktop:assembleMainResources' because:
+  There is no logic, just copy files
+Skipping task ':desktop:assembleMainResources' as it is up-to-date.
+Resolve mutations for :desktop:processResources (Thread[#61,Execution worker,5,main]) started.
+:desktop:processResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :desktop:processResources UP-TO-DATE
+Caching disabled for task ':desktop:processResources' because:
+  Not worth caching
+Skipping task ':desktop:processResources' as it is up-to-date.
+Resolve mutations for :sheets-core:checkKotlinGradlePluginConfigurationErrors (Thread[#61,Execution worker,5,main]) started.
+:sheets-core:checkKotlinGradlePluginConfigurationErrors (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-core:checkKotlinGradlePluginConfigurationErrors SKIPPED
+Skipping task ':sheets-core:checkKotlinGradlePluginConfigurationErrors' as task onlyIf 'errorDiagnostics are present' is false.
+Resolve mutations for :sheets-core:compileKotlin (Thread[#61,Execution worker,5,main]) started.
+:sheets-core:compileKotlin (Thread[#61,Execution worker,5,main]) started.
+
+> Task :core:compileKotlin UP-TO-DATE
+Build cache key for task ':core:compileKotlin' is c8fe2514b7d4fb04e9c842eed985d09e
+Skipping task ':core:compileKotlin' as it is up-to-date.
+Resolve mutations for :core:compileJava (Thread[#60,included builds,5,main]) started.
+:core:compileJava (Thread[#60,included builds,5,main]) started.
+
+> Task :core:compileJava NO-SOURCE
+Skipping task ':core:compileJava' as it has no source files and no previous output files.
+Resolve mutations for :core:processResources (Thread[#60,included builds,5,main]) started.
+:core:processResources (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-core:compileKotlin UP-TO-DATE
+Build cache key for task ':sheets-core:compileKotlin' is a8c30dab26a7e8adcb1e4d575613ff10
+Skipping task ':sheets-core:compileKotlin' as it is up-to-date.
+Resolve mutations for :sheets-core:compileJava (Thread[#61,Execution worker,5,main]) started.
+:sheets-core:compileJava (Thread[#61,Execution worker,5,main]) started.
+
+> Task :core:processResources NO-SOURCE
+Skipping task ':core:processResources' as it has no source files and no previous output files.
+Resolve mutations for :core:classes (Thread[#60,included builds,5,main]) started.
+:core:classes (Thread[#60,included builds,5,main]) started.
+
+> Task :core:classes UP-TO-DATE
+Skipping task ':core:classes' as it has no actions.
+Resolve mutations for :core:jar (Thread[#60,included builds,5,main]) started.
+:core:jar (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-core:compileJava NO-SOURCE
+Skipping task ':sheets-core:compileJava' as it has no source files and no previous output files.
+Resolve mutations for :sheets-core:processResources (Thread[#61,Execution worker,5,main]) started.
+:sheets-core:processResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-core:processResources UP-TO-DATE
+Caching disabled for task ':sheets-core:processResources' because:
+  Not worth caching
+Skipping task ':sheets-core:processResources' as it is up-to-date.
+Resolve mutations for :sheets-core:classes (Thread[#61,Execution worker,5,main]) started.
+:sheets-core:classes (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-core:classes UP-TO-DATE
+Skipping task ':sheets-core:classes' as it has no actions.
+Resolve mutations for :sheets-core:jar (Thread[#61,Execution worker,5,main]) started.
+
+> Task :core:jar UP-TO-DATE
+Caching disabled for task ':core:jar' because:
+  Not worth caching
+Skipping task ':core:jar' as it is up-to-date.
+:sheets-core:jar (Thread[#61,Execution worker,5,main]) started.
+work action resolve core.jar (project ':core') (Thread[#60,included builds,5,main]) started.
+Resolve mutations for :desktop:compileKotlin (Thread[#60,included builds,5,main]) started.
+:desktop:compileKotlin (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-core:jar UP-TO-DATE
+Caching disabled for task ':sheets-core:jar' because:
+  Not worth caching
+Skipping task ':sheets-core:jar' as it is up-to-date.
+work action resolve sheets-core.jar (project ':sheets-core') (Thread[#61,Execution worker,5,main]) started.
+Resolve mutations for :sheets-desktop:checkKotlinGradlePluginConfigurationErrors (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:checkKotlinGradlePluginConfigurationErrors (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:checkKotlinGradlePluginConfigurationErrors SKIPPED
+Skipping task ':sheets-desktop:checkKotlinGradlePluginConfigurationErrors' as task onlyIf 'errorDiagnostics are present' is false.
+Resolve mutations for :sheets-desktop:convertXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:convertXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:convertXmlValueResourcesForMain NO-SOURCE
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\generated\compose\resourceGenerator\preparedResources\main\composeResources', not found
+Skipping task ':sheets-desktop:convertXmlValueResourcesForMain' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:copyNonXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:copyNonXmlValueResourcesForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:copyNonXmlValueResourcesForMain NO-SOURCE
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\generated\compose\resourceGenerator\preparedResources\main\composeResources', not found
+Skipping task ':sheets-desktop:copyNonXmlValueResourcesForMain' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:prepareComposeResourcesTaskForMain (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:prepareComposeResourcesTaskForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:prepareComposeResourcesTaskForMain NO-SOURCE
+Skipping task ':sheets-desktop:prepareComposeResourcesTaskForMain' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:generateResourceAccessorsForMain (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:generateResourceAccessorsForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:generateResourceAccessorsForMain SKIPPED
+Skipping task ':sheets-desktop:generateResourceAccessorsForMain' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :sheets-desktop:generateActualResourceCollectorsForMain (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:generateActualResourceCollectorsForMain (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:generateActualResourceCollectorsForMain SKIPPED
+Skipping task ':sheets-desktop:generateActualResourceCollectorsForMain' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :sheets-desktop:generateComposeResClass (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:generateComposeResClass (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:generateComposeResClass SKIPPED
+Skipping task ':sheets-desktop:generateComposeResClass' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :sheets-desktop:assembleMainResources (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:assembleMainResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:assembleMainResources UP-TO-DATE
+Caching disabled for task ':sheets-desktop:assembleMainResources' because:
+  There is no logic, just copy files
+Skipping task ':sheets-desktop:assembleMainResources' as it is up-to-date.
+Resolve mutations for :sheets-desktop:processResources (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:processResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:processResources UP-TO-DATE
+Caching disabled for task ':sheets-desktop:processResources' because:
+  Not worth caching
+Skipping task ':sheets-desktop:processResources' as it is up-to-date.
+Resolve mutations for :sheets-desktop:convertXmlValueResourcesForTest (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:convertXmlValueResourcesForTest (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:convertXmlValueResourcesForTest NO-SOURCE
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\generated\compose\resourceGenerator\preparedResources\test\composeResources', not found
+Skipping task ':sheets-desktop:convertXmlValueResourcesForTest' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:copyNonXmlValueResourcesForTest (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:copyNonXmlValueResourcesForTest (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:copyNonXmlValueResourcesForTest NO-SOURCE
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\generated\compose\resourceGenerator\preparedResources\test\composeResources', not found
+Skipping task ':sheets-desktop:copyNonXmlValueResourcesForTest' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:prepareComposeResourcesTaskForTest (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:prepareComposeResourcesTaskForTest (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:prepareComposeResourcesTaskForTest NO-SOURCE
+Skipping task ':sheets-desktop:prepareComposeResourcesTaskForTest' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:generateResourceAccessorsForTest (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:generateResourceAccessorsForTest (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:generateResourceAccessorsForTest SKIPPED
+Skipping task ':sheets-desktop:generateResourceAccessorsForTest' as task onlyIf 'Task satisfies onlyIf spec' is false.
+Resolve mutations for :sheets-desktop:assembleTestResources (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:assembleTestResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:assembleTestResources UP-TO-DATE
+Caching disabled for task ':sheets-desktop:assembleTestResources' because:
+  There is no logic, just copy files
+Skipping task ':sheets-desktop:assembleTestResources' as it is up-to-date.
+Resolve mutations for :sheets-desktop:processTestResources (Thread[#61,Execution worker,5,main]) started.
+:sheets-desktop:processTestResources (Thread[#61,Execution worker,5,main]) started.
+
+> Task :sheets-desktop:processTestResources UP-TO-DATE
+Caching disabled for task ':sheets-desktop:processTestResources' because:
+  Not worth caching
+Skipping task ':sheets-desktop:processTestResources' as it is up-to-date.
+
+> Task :desktop:compileKotlin UP-TO-DATE
+Build cache key for task ':desktop:compileKotlin' is 586828389bf856b5e0e6b44e04b79f46
+Skipping task ':desktop:compileKotlin' as it is up-to-date.
+Resolve mutations for :desktop:compileJava (Thread[#60,included builds,5,main]) started.
+:desktop:compileJava (Thread[#60,included builds,5,main]) started.
+
+> Task :desktop:compileJava NO-SOURCE
+Skipping task ':desktop:compileJava' as it has no source files and no previous output files.
+Resolve mutations for :desktop:classes (Thread[#60,included builds,5,main]) started.
+:desktop:classes (Thread[#60,included builds,5,main]) started.
+
+> Task :desktop:classes UP-TO-DATE
+Skipping task ':desktop:classes' as it has no actions.
+Resolve mutations for :desktop:jar (Thread[#60,included builds,5,main]) started.
+:desktop:jar (Thread[#60,included builds,5,main]) started.
+
+> Task :desktop:jar UP-TO-DATE
+Caching disabled for task ':desktop:jar' because:
+  Not worth caching
+Skipping task ':desktop:jar' as it is up-to-date.
+work action resolve desktop.jar (project ':desktop') (Thread[#60,included builds,5,main]) started.
+Resolve mutations for :sheets-desktop:compileKotlin (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:compileKotlin (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:compileKotlin UP-TO-DATE
+Build cache key for task ':sheets-desktop:compileKotlin' is b519263e0d4f9770c0fb7de01a293aba
+Skipping task ':sheets-desktop:compileKotlin' as it is up-to-date.
+Resolve mutations for :sheets-desktop:compileJava (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:compileJava (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:compileJava NO-SOURCE
+Skipping task ':sheets-desktop:compileJava' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:classes (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:classes (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:classes UP-TO-DATE
+Skipping task ':sheets-desktop:classes' as it has no actions.
+Resolve mutations for :sheets-desktop:jar (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:jar (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:jar UP-TO-DATE
+Caching disabled for task ':sheets-desktop:jar' because:
+  Not worth caching
+Skipping task ':sheets-desktop:jar' as it is up-to-date.
+Resolve mutations for :sheets-desktop:compileTestKotlin (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:compileTestKotlin (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:compileTestKotlin UP-TO-DATE
+Build cache key for task ':sheets-desktop:compileTestKotlin' is 16641cdb5a47bf68ad60885637d72735
+Skipping task ':sheets-desktop:compileTestKotlin' as it is up-to-date.
+Resolve mutations for :sheets-desktop:compileTestJava (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:compileTestJava (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:compileTestJava NO-SOURCE
+Skipping task ':sheets-desktop:compileTestJava' as it has no source files and no previous output files.
+Resolve mutations for :sheets-desktop:testClasses (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:testClasses (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:testClasses UP-TO-DATE
+Skipping task ':sheets-desktop:testClasses' as it has no actions.
+Resolve mutations for :sheets-desktop:test (Thread[#60,included builds,5,main]) started.
+:sheets-desktop:test (Thread[#60,included builds,5,main]) started.
+
+> Task :sheets-desktop:test
+Custom actions are attached to task ':sheets-desktop:test'.
+Caching disabled for task ':sheets-desktop:test' because:
+  Gradle does not know how file 'build\test-results\test\binary\results-generic.bin' was created (output property 'binaryResultsDirectory'). Task output caching requires exclusive access to output paths to guarantee correctness (i.e. multiple tasks are not allowed to produce output in the same location).
+Task ':sheets-desktop:test' is not up-to-date because:
+  Task.upToDateWhen is false.
+file or directory 'C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\classes\java\test', not found
+Starting process 'Gradle Test Executor 1'. Working directory: C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop Command: C:\Program Files\Android\Android Studio\jbr\bin\java.exe -Dinksheets.silent=1 -Dinksheets.turns=1 -Dinksheets.turns.lock=1 -Dinksheets.turns.lostAligns=6 -Dinksheets.turns.only=new own -Dinksheets.turns.rival=0.03 -Dinksheets.turns.rivalGood=99 -Dinksheets.turns.songs=Enter Sandman,Party Medley,School Songs,Swag Surfin -Dinksheets.turns.speeds=0.92 -Dorg.gradle.internal.worker.tmpdir=C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\tmp\test\work -Duser.home=C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\test-appdata @C:\Users\willi\.gradle\.tmp\gradle-worker-classpath655197868945915455txt -Xmx5g -Dfile.encoding=UTF-8 -Duser.country=US -Duser.language=en -Duser.variant -ea worker.org.gradle.process.internal.worker.GradleWorkerMain 'Gradle Test Executor 1'
+Successfully started process 'Gradle Test Executor 1'
+
+Gradle Test Executor 1 started executing tests.
+
+> Task :sheets-desktop:test
+
+PageTurnBench > page turns by ear on the Pep Band's songs STANDARD_OUT
+    TURNS Enter Sandman / Enter Sandman - Electric Bass: 1 pages, 15 other parts, recording 144s, about 128 bpm; turns (whole band, offline) s; own part offline s
+        LOCKRUN start new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 0 lost 6% turn-ok 100% turn-wrong 0.0%
+        LOCKRUN mid new own  lock NaNs first-trust 6.2s searching 0% flips 0 wrong-jumps 2 lost 100% turn-ok 88% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 19.2s first-trust 8.2s searching 0% flips 0 wrong-jumps 4 lost 20% turn-ok 100% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 0 lost 24% turn-ok 99% turn-wrong 0.0%
+      new own  at 92%: place within 2 s 90%, median off 0.3 s; turn errors (s) 
+    TURNS Party Medley / Party Medley - Electric Bass: 4 pages, 16 other parts, recording 287s, about 170 bpm; turns (whole band, offline) 79.8, 156.9, 202.2s; own part offline 76.8, 135.1, 197.8s
+        LOCKRUN start new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 4 lost 69% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 9.7s first-trust 6.2s searching 0% flips 0 wrong-jumps 1 lost 65% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 7.0s first-trust 6.7s searching 0% flips 0 wrong-jumps 2 lost 96% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock NaNs first-trust 6.2s searching 0% flips 0 wrong-jumps 1 lost 100% turn-ok 0% turn-wrong 0.0%
+      new own  at 92%: place within 2 s 29%, median off 17.6 s; turn errors (s) -0.2, +140.1, never
+    TURNS School Songs / Maryland School Songs - Electric Bass: 2 pages, 17 other parts, recording 182s, about 227 bpm; turns (whole band, offline) 102.3s; own part offline 102.4s
+        LOCKRUN start new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 1 lost 70% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 7.2s first-trust 7.2s searching 0% flips 0 wrong-jumps 1 lost 98% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock NaNs first-trust 6.2s searching 0% flips 0 wrong-jumps 1 lost 97% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock NaNs first-trust 6.2s searching 0% flips 0 wrong-jumps 2 lost 100% turn-ok 0% turn-wrong 0.0%
+      new own  at 92%: place within 2 s 29%, median off 34.4 s; turn errors (s) +51.9
+    TURNS Swag Surfin / Swag Surfin' - Tuba: 2 pages, 11 other parts, recording 94s, about 135 bpm; turns (whole band, offline) 65.8s; own part offline 65.7s
+        LOCKRUN start new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 0 lost 0% turn-ok 96% turn-wrong 1.6%
+        LOCKRUN mid new own  lock NaNs first-trust 6.7s searching 0% flips 0 wrong-jumps 2 lost 100% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 0 lost 0% turn-ok 0% turn-wrong 0.0%
+        LOCKRUN mid new own  lock 6.2s first-trust 6.2s searching 0% flips 0 wrong-jumps 0 lost 0% turn-ok 0% turn-wrong 0.0%
+      new own  at 92%: place within 2 s 96%, median off 0.4 s; turn errors (s) +1.2
+    LOCK table: start | follower | runs | locked | median time to lock s | locked<8s | searching % after lock | flips/run | wrong jumps/run | locked-but-off % | turn-trusted % | turn-trusted-but-wrong %
+    LOCK start | new own  | 4 | 4 | 6.2 | 4/4 | 0.0 | 0.00 | 1.25 | 36.5 | 49.0 | 0.39
+    LOCK mid   | new own  | 12 | 7 | 7.0 | 5/12 | 0.0 | 0.00 | 1.33 | 66.7 | 23.9 | 0.00
+    WORK following: 12570 ms for 1583 s heard (7.9 ms a second, every follower together)
+    PLACE new own: within 2 s 50%, within 5 s 55%, median off 2.0 s
+    GATED new own: 5 turns made only while trusted; within 4 s early to 1 s late 0/5; never made 4
+    SUMMARY new own: 5 turns; within 4 s early to 1 s late 1/5; never made 1; median |error| 51.9 s
+
+Gradle Test Executor 1 finished executing tests.
+
+> Task :sheets-desktop:test
+Generating HTML test report...
+Finished generating test html results (0.062 secs) into: C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\reports\tests\test
+Finished generating test XML results (0.01 secs) into: C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e\sheets-desktop\build\test-results\test
+Build f1a3eb11-c46f-403d-94bf-e7b740895c33 is closed
+
+BUILD SUCCESSFUL in 1m 25s
+17 actionable tasks: 1 executed, 16 up-to-date
+Watched directory hierarchies: [C:\PDF Draw App\.claude\worktrees\agent-a295ba5308f80708e]
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.7.1/userguide/configuration_cache_enabling.html

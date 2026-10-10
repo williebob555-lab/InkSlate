@@ -59,11 +59,17 @@ class WindowFollower(
     private val windowHi = max(windowLo, (startEndMs / Chroma.FRAME_MS).toInt())
     private var heardSinceStart = 0
     private var quietRun = 0
+    private var quietGap = 0
     private val candidates = ArrayList<Int>()
     private var rivalStreak = 0
     private var lastRival = -1
     private var poorAligns = 0
     private var typical = 0f
+    /** How well the place held has matched at its best lately: slow to rise, quick to fall. */
+    private var base = 0f
+    /** Where and when (frames heard) the place was last known surely: the pace is measured from there, over a long stretch. */
+    private var anchorPos = 0
+    private var anchorHeard = 0
     private var smooth = 0f
     private var aligns = 0
     private var tieRun = 0
@@ -121,6 +127,7 @@ class WindowFollower(
         if (quiet) {
             // A rest, a gap: the place holds (on at the band's pace for a few seconds at most - the music goes on
             // through a rest - and never dropped).
+            quietGap++
             if (locked && quietRun < 30) { quietRun++; positionMs = (at + (sinceLast + quietRun) * pace).toInt().coerceIn(0, n - 1) * Chroma.FRAME_MS }
             return positionMs
         }
@@ -132,7 +139,7 @@ class WindowFollower(
         // (Not before five seconds are heard: two of an intro sound like half the song.)
         if (++sinceAlign >= every && heard.size >= 50) {
             sinceAlign = 0
-            align()?.let { at = it; sinceLast = 0 }
+            align()?.let { at = it; sinceLast = 0; quietGap = 0 }
         }
         // Between line-ups, on at the band's pace.
         val now = (at + sinceLast * pace).toInt().coerceIn(0, n - 1)
@@ -215,7 +222,7 @@ class WindowFollower(
         }
         // Once a stretch has been told apart from the places that sound like it, following it on (in the window
         // round where the band should be) keeps it told apart; a jump, or being lost, starts that again.
-        if (tie) { tieRun++; clearRun = 0 } else { clearRun++; tieRun = 0; if (clearRun >= 4) turnSafe = true }
+        if (tie) { tieRun++; clearRun = 0; if (tieRun >= TIE_UNLATCH) turnSafe = false } else { clearRun++; tieRun = 0; if (clearRun >= 4) turnSafe = true }
     }
 
     /** Not locked: the best line-up overall (the page in front pulls a little); locks once it has been one place, going on, a few times running. */
@@ -240,7 +247,7 @@ class WindowFollower(
             val ok = candidates.zipWithNext().all { (x, y) -> y - x in -6..35 }
             if (ok) {
                 locked = true; suspect = false; rivalStreak = 0; poorAligns = 0; lastRival = -1
-                typical = here
+                typical = here; base = here; anchorPos = candidates.last(); anchorHeard = heardSinceStart
                 val moved = (candidates.last() - candidates.first()).toDouble() / ((LOCK_ALIGNS - 1) * every)
                 if (moved in 0.5..2.0) pace = 0.5 * pace + 0.5 * moved
                 smooth = UNSURE + 0.15f
@@ -254,7 +261,8 @@ class WindowFollower(
     /** Locked: the place near where the band should be; a rival place that matches clearly better for several seconds takes over. */
     private fun follow(raw: FloatArray, w: Int, predicted: Int): Int? {
         var localJ = -1; var localCost = Float.MAX_VALUE
-        val lo = max(0, predicted - LOCAL_BACK); val hi = minOf(w - 1, predicted + LOCAL_FORWARD)
+        // Where it can be: on from the last line-up by half to twice the music's pace (and whatever a rest let by), a little slack.
+        val lo = max(0, at + (sinceLast * 0.5).toInt() - LOCAL_BACK); val hi = minOf(w - 1, at + (sinceLast * 2.0).toInt() + quietGap * 2 + LOCAL_FORWARD)
         for (jj in lo..hi) {
             if (raw[jj] == Float.MAX_VALUE) continue
             val off = jj - predicted
@@ -285,7 +293,11 @@ class WindowFollower(
             rivalStreak = if (consistent) rivalStreak + 1 else 1
             lastRival = rivalJ
         } else if (rivalStreak > 0) { rivalStreak--; if (rivalStreak == 0) lastRival = -1 } else lastRival = -1
-        suspect = rivalStreak >= 3
+        // The match is worse than it has been (the band is playing something the part does not have, or the
+        // place has slipped): the place is in doubt - no turns - until it matches as it did.
+        base = if (here < base) 0.7f * base + 0.3f * here else 0.995f * base + 0.005f * here
+        val degraded = here > base * DEGRADE + 0.02f
+        suspect = rivalStreak >= 3 || degraded
         // Nothing matches (a solo the parts do not have, a stop): hold on a good while before searching again.
         if (here > typical * POOR && here > POOR_FLOOR) poorAligns++ else poorAligns = max(0, poorAligns - 2)
         if (DEBUG) println("FOLLOW lock heard=$heardSinceStart at=$localJ per=${"%.3f".format(here)} typ=${"%.3f".format(typical)} rival=$rivalJ ${"%.3f".format(rival)} adv=${"%.2f".format(advantage)} streak=$rivalStreak poor=$poorAligns")
@@ -295,14 +307,12 @@ class WindowFollower(
         // (A rival that wins by a wide margin is believed sooner.)
         if (rivalStreak >= LOST_ALIGNS || (advantage > STRONG && rivalStreak >= STRONG_ALIGNS)) {
             // Gone elsewhere for good: straight there, still locked.
-            end = rivalJ; jumps++; turnSafe = false; clearRun = 0; rivalStreak = 0; lastRival = -1; suspect = false; typical = rival; poorAligns = 0
+            end = rivalJ; jumps++; turnSafe = false; clearRun = 0; rivalStreak = 0; lastRival = -1; suspect = false; typical = rival; base = rival; poorAligns = 0; anchorPos = end; anchorHeard = heardSinceStart
             smooth = UNSURE + 0.05f; confidence = smooth
         } else {
             if (advantage <= RIVAL) typical = 0.9f * typical + 0.1f * here
-            if (sinceLast > 0) {
-                val moved = (end - at).toDouble() / sinceLast
-                if (moved in 0.4..2.5) pace = 0.8 * pace + 0.2 * moved
-            }
+            // The pace over a long stretch (a short one is no judge on a held chord or a vamp), kept near the music's own.
+            if (heardSinceStart - anchorHeard >= 150) pace = ((end - anchorPos).toDouble() / (heardSinceStart - anchorHeard)).coerceIn(0.75, 1.35)
         }
         return end
     }
@@ -346,7 +356,10 @@ class WindowFollower(
         private val LOSE_ALIGNS = knob("loseAligns", 40f).toInt()
         /** The most a far place can be pulled against, in frames' worth of distance. */
         private val PEN_CAP = knob("penCap", 300f)
-        private val LOCAL_BACK = knob("localBack", 30f).toInt()
-        private val LOCAL_FORWARD = knob("localForward", 50f).toInt()
+        /** Line-ups (half seconds) of a look-alike place with the turn elsewhere before a verified place is doubted again. */
+        private val TIE_UNLATCH = knob("tieUnlatch", 12f).toInt()
+        private val DEGRADE = knob("degrade", 1.3f)
+        private val LOCAL_BACK = knob("localBack", 15f).toInt()
+        private val LOCAL_FORWARD = knob("localForward", 15f).toInt()
     }
 }
