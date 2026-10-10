@@ -82,7 +82,7 @@ internal fun ListenGauge(state: SheetsState) {
                 f == null -> Text(text, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
                 else -> {
                     val turned = System.currentTimeMillis() - f.turnedAt < 2_000
-                    if (f.turnMs != null && f.music && !turned && f.found && f.sure >= com.inksheets.core.WindowFollower.UNSURE) {
+                    if (f.turnMs != null && f.music && !turned && f.found && !f.suspect && f.turnSafe) {
                         // The countdown, big: how long, and to which page.
                         val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)
                         Text(if (s < 1) "Now" else "${s}s", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold,
