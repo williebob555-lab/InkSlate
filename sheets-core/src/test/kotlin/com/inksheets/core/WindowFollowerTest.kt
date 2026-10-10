@@ -48,4 +48,45 @@ class WindowFollowerTest {
             assertTrue("at $speed: worst $worst s", worst < 3.0)
         }
     }
+
+    @Test
+    fun `starting part way through the page locks within a few seconds, stays locked, and does not flip back to searching`() {
+        val ref = music()
+        for (from in listOf(100, 250, 400)) {
+            // The page in front is the whole stretch; the band comes in at [from] and plays a little slower.
+            val follower = WindowFollower(ref, 0, startEndMs = (ref.size - 1) * 100L)
+            val noise = java.util.Random(5)
+            var t = from.toDouble()
+            var heardFrames = 0
+            var lockedAt = -1
+            var flips = 0
+            var was = false
+            while (t < ref.size - 1) {
+                val at = follower.hear(frame(ref[t.toInt()].notes, noise), quiet = false)
+                heardFrames++
+                if (follower.locked && lockedAt < 0) lockedAt = heardFrames
+                if (was && !follower.locked) flips++
+                was = follower.locked
+                if (follower.locked && heardFrames > 150) assertTrue("from $from at heard $heardFrames: ${at / 100.0} vs $t", abs(at / 100.0 - t) < 60)
+                t += 0.9
+            }
+            assertTrue("from $from: locked after $lockedAt frames", lockedAt in 1..120)
+            assertTrue("from $from: flipped $flips times", flips == 0)
+            assertTrue(follower.searching.not())
+        }
+    }
+
+    @Test
+    fun `a rest holds the place and does not drop the lock`() {
+        val ref = music()
+        val follower = WindowFollower(ref, 0, startEndMs = (ref.size - 1) * 100L)
+        val noise = java.util.Random(5)
+        var t = 100.0
+        repeat(150) { follower.hear(frame(ref[t.toInt()].notes, noise), quiet = false); t += 1.0 }
+        assertTrue(follower.locked)
+        val before = follower.positionMs
+        repeat(60) { follower.hear(frame(ref[t.toInt()].notes, noise), quiet = true) }
+        assertTrue(follower.locked)
+        assertTrue("held: ${follower.positionMs} from $before", follower.positionMs - before in 0..7_000)
+    }
 }
