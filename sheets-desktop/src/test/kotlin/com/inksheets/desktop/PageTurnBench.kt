@@ -158,6 +158,25 @@ class PageTurnBench {
             if (counted == 0) 100.0 else searching * 100.0 / counted, flips, wrongJumps, if (counted == 0) 0.0 else tw * 100.0 / counted, n / 10.0, if (counted == 0) 0.0 else turnWrong * 100.0 / counted, if (counted == 0) 0.0 else turnOk * 100.0 / counted).also { println("    LOCKRUN $start ${"%-8s".format(label)} lock ${it.lockS}s first-trust ${it.firstTrustS}s searching ${"%.0f".format(it.searchingPct)}% flips ${it.flips} wrong-jumps ${it.wrongJumps} lost ${"%.0f".format(it.trustedWrongPct)}% turn-ok ${"%.0f".format(it.turnOkPct)}% turn-wrong ${"%.1f".format(it.turnWrongPct)}%") }
     }
 
+    private val gatedTotals = LinkedHashMap<String, IntArray>()
+
+    /** Turns as Listen makes them, for one run: made, made wrong (more than 3 s early), made late (more than 3 s), missed. */
+    private fun gatedRun(song: String, start: String, label: String, speed: Double, t: Trace, changes: List<Long>, truth: List<Long>, fromS: Double) {
+        var due = 0; var made = 0; var wrong = 0; var late = 0; var missed = 0
+        for ((refMs, trueMs) in changes.zip(truth)) {
+            if (trueMs / 1000.0 < fromS + 5.0) continue
+            due++
+            val k = t.path.indices.firstOrNull { t.path[it] >= refMs - 500 && t.trusted[it] }
+            if (k == null) { missed++; continue }
+            val err = fromS + k * 0.1 * speed - trueMs / 1000.0
+            made++
+            if (err < -3.0) wrong++ else if (err > 3.0) late++
+        }
+        val tot = gatedTotals.getOrPut(start.take(3) + " " + label) { IntArray(5) }
+        tot[0] += due; tot[1] += made; tot[2] += wrong; tot[3] += late; tot[4] += missed
+        if (due > 0) println("    GTURN $song ${start.padEnd(9)} $label at ${(speed * 100).toInt()}%: due $due made $made WRONG $wrong late $late missed $missed")
+    }
+
     private val locks = ArrayList<Lock>()
 
     private fun printLocks() {
@@ -241,6 +260,7 @@ class PageTurnBench {
                     if (System.getProperty("inksheets.turns.dump") != null && speed < 1.0) println("    PATH $label: " + path.indices.filter { it % 30 == 0 }.joinToString(" ") { k ->
                         val r = (k * speed).toInt(); "${k / 10}:${path[k] / 1000}/${if (r < musicAt.size) musicAt[r] / 10 else -1}" })
                     if (mode != "old" && System.getProperty("inksheets.turns.lock") != null) {
+                        gatedRun("${dir.name}/${mineFile.nameWithoutExtension.takeLast(12)}", "start", label, speed, trace, changes, truth, 0.0)
                         locks += lockOf(label, "start", trace, toTurnOf(label)) { k -> val r = (k * speed).toInt(); if (r >= musicAt.size) null else musicAt[r] }
                         // Started part way down a page: three places, page by page.
                         val bR = listOf(0L) + truth + listOf(recording.size * 100L)
@@ -252,6 +272,7 @@ class PageTurnBench {
                             val t0 = from / 10 * 10 / (rate / 10).coerceAtLeast(1)
                             val base = (from.toDouble() / rate * 10).toInt()
                             val tr = followed(reference, samples, rate, speed, mode, from, bM[p], bM[p + 1], maxS = 120.0, pageAt = pageAtOf(label))
+                            gatedRun("${dir.name}/${mineFile.nameWithoutExtension.takeLast(12)}", "mid@${"%.0f".format(tR / 1000.0)}s", label, speed, tr, changes, truth, tR / 1000.0)
                             locks += lockOf(label, "mid", tr, toTurnOf(label)) { k -> val r = base + (k * speed).toInt(); if (r >= musicAt.size) null else musicAt[r] }
                         }
                     }
@@ -276,6 +297,7 @@ class PageTurnBench {
             }
         }
         printLocks()
+        for ((k, v) in gatedTotals) println("GTOTAL $k: due ${v[0]} made ${v[1]} WRONG ${v[2]} late ${v[3]} missed ${v[4]}")
         println("WORK following: ${workMs} ms for ${"%.0f".format(heardS)} s heard (${"%.1f".format(workMs / heardS)} ms a second, every follower together)")
         for ((label, e) in posAll) println("PLACE $label: within 2 s ${e.count { it <= 2.0 } * 100 / maxOf(1, e.size)}%, within 5 s ${e.count { it <= 5.0 } * 100 / maxOf(1, e.size)}%, median off ${"%.1f".format(e.sorted()[e.size / 2])} s")
         for (label in listOf("win0 band", "new band", "win0 own", "new own")) {
