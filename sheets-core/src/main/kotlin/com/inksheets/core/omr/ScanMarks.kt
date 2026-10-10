@@ -185,45 +185,59 @@ internal class ScanMarks(private val ink: Ink, private val staves: List<Recogniz
             val lo = group.minOf { measures[it].box.left }; val hi = group.maxOf { measures[it].box.right }
             val mid = (lo + hi) / 2
             val owner = { x: Int -> group.firstOrNull { x >= measures[it].box.left && x < measures[it].box.right } }
+            val thinMost = sp * 0.45f
             for (above in listOf(false, true)) {
                 val top = s.lineY(0, mid); val bottom = s.lineY(4, mid)
                 val y0 = if (above) (top - sp * 4.2f).toInt() else (bottom + sp * 0.4f).toInt()
                 val y1 = if (above) (top - sp * 0.4f).toInt() else (bottom + sp * 4.2f).toInt()
-                val comps = components(lo, y0, hi, y1, 2) { x, y -> ink[x, y] && (owner(x)?.let { !covered(it, x, y) } ?: true) }
-                for (px in comps) {
-                    val bx = box(px)
-                    if (bx[2] - bx[0] + 1 < sp * 2.5f) continue
-                    // Columns: ink count, top, bottom.
-                    val n = bx[2] - bx[0] + 1
-                    val cnt = IntArray(n); val mn = IntArray(n) { Int.MAX_VALUE }; val mx = IntArray(n) { Int.MIN_VALUE }
-                    for (i in px.indices step 2) { val c = px[i] - bx[0]; cnt[c]++; mn[c] = min(mn[c], px[i + 1]); mx[c] = max(mx[c], px[i + 1]) }
-                    // The longest run of thin columns (a letter beside it is heavier).
-                    var best = 0 to 0; var start = -1
-                    for (c in 0..n) {
-                        val thin = c < n && cnt[c] > 0 && cnt[c] <= sp * 0.5f
-                        if (thin && start < 0) start = c
-                        if (!thin && start >= 0) { if (c - start > best.second - best.first) best = start to c; start = -1 }
+                // Each column's runs of ink in the band (a wedge's column: one or two thin runs).
+                val n = hi - lo + 1
+                val top1 = IntArray(n) { -1 }; val bot1 = IntArray(n) { -1 }; val runs = IntArray(n); val wedgy = BooleanArray(n); val blank = BooleanArray(n)
+                for (c in 0 until n) {
+                    val x = lo + c
+                    var r = 0; var inRun = false; var runStart = 0; var ok = true; var first = -1; var last = -1; var gap = 0
+                    for (y in y0..y1) {
+                        val v = ink[x, y] && (owner(x)?.let { !covered(it, x, y) } ?: true)
+                        if (v) {
+                            if (!inRun) { if (!(r > 0 && gap <= 1)) r++; runStart = y; inRun = true }
+                            if (first < 0) first = y
+                            last = y; gap = 0
+                            if (y - runStart + 1 > thinMost) ok = false
+                        } else { inRun = false; gap++ }
                     }
-                    val len = best.second - best.first
-                    if (len < sp * 2.5f) continue
-                    val cols = (best.first until best.second).filter { cnt[it] > 0 }
-                    if (cols.size < len * 0.85f) continue
-                    val e = cols.map { (mx[it] - mn[it] + 1).toFloat() }
+                    runs[c] = r; top1[c] = first; bot1[c] = last
+                    blank[c] = r == 0
+                    wedgy[c] = r in 1..2 && ok
+                }
+                // Stretches of wedge-like columns (hair-line breaks of a few columns allowed), moving smoothly.
+                var c = 0
+                while (c < n) {
+                    if (!wedgy[c]) { c++; continue }
+                    var e = c; var lastGood = c
+                    while (e + 1 < n) {
+                        if (wedgy[e + 1] && abs((top1[e + 1] + bot1[e + 1]) / 2f - (top1[lastGood] + bot1[lastGood]) / 2f) <= 3f + (e + 1 - lastGood) && (e + 1 - lastGood) <= 4) { e++; lastGood = e }
+                        else if (blank[e + 1] && e + 1 - lastGood <= 3) e++
+                        else break
+                    }
+                    val cols = (c..lastGood).filter { wedgy[it] }
+                    val from = c; val to = lastGood; c = lastGood + 1
+                    if (to - from + 1 < sp * 2.5f || cols.size < (to - from + 1) * 0.7f) continue
+                    val ext = cols.map { (bot1[it] - top1[it] + 1).toFloat() }
                     val k = max(2, cols.size / 8)
-                    val left = e.take(k).average().toFloat(); val right = e.takeLast(k).average().toFloat()
+                    val left = ext.take(k).average().toFloat(); val right = ext.takeLast(k).average().toFloat()
                     val open = max(left, right); val point = min(left, right)
-                    if (open - point < sp * 0.45f || point > sp * 0.45f || open > sp * 3.2f) continue
-                    // Spreading steadily: the extent follows the line from one end to the other.
+                    if (DEBUG) println("  WEDGE? staff ${key.second} above=$above x ${lo + from}..${lo + to} y ${top1[cols[0]]} sp ${sp.toInt()} left ${"%.1f".format(left)} right ${"%.1f".format(right)}")
+                    if (open - point < sp * 0.45f || point > sp * 0.9f || open > sp * 3.2f) continue
                     val xs = cols.map { it.toFloat() }
-                    val mxm = xs.average().toFloat(); val me = e.average().toFloat()
+                    val mxm = xs.average().toFloat(); val me = ext.average().toFloat()
                     var sxy = 0f; var sxx = 0f; var syy = 0f
-                    for (i in xs.indices) { sxy += (xs[i] - mxm) * (e[i] - me); sxx += (xs[i] - mxm) * (xs[i] - mxm); syy += (e[i] - me) * (e[i] - me) }
-                    if (sxx == 0f || syy == 0f || abs(sxy) / kotlin.math.sqrt(sxx * syy) < 0.9f) continue
-                    // Two strokes at the open end, a gap between.
+                    for (i in xs.indices) { sxy += (xs[i] - mxm) * (ext[i] - me); sxx += (xs[i] - mxm) * (xs[i] - mxm); syy += (ext[i] - me) * (ext[i] - me) }
+                    if (sxx == 0f || syy == 0f || abs(sxy) / kotlin.math.sqrt(sxx * syy) < 0.93f) continue
+                    // Two strokes at the open end.
                     val openCols = if (right > left) cols.takeLast(k) else cols.take(k)
-                    if (openCols.any { cnt[it] > (mx[it] - mn[it] + 1) * 0.7f + 1 }) continue
+                    if (openCols.count { runs[it] == 2 } < openCols.size * 0.6f) continue
                     val kind = if (right > left) "cresc" else "dim"
-                    val xa = (bx[0] + cols.first()).toFloat(); val xb = (bx[0] + cols.last()).toFloat()
+                    val xa = (lo + cols.first()).toFloat(); val xb = (lo + cols.last()).toFloat()
                     out += Wedge(owner((xa + xb).toInt() / 2) ?: group.first(), kind, xa, xb, above)
                 }
             }
