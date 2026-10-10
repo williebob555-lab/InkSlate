@@ -290,6 +290,15 @@ internal class ScanMarks(private val ink: Ink, private val grey: IntArray, priva
                     var sxy = 0f; var sxx = 0f; var syy = 0f
                     for (i in xs.indices) { sxy += (xs[i] - mxm) * (ext[i] - me); sxx += (xs[i] - mxm) * (xs[i] - mxm); syy += (ext[i] - me) * (ext[i] - me) }
                     if (sxx == 0f || syy == 0f || abs(sxy) / kotlin.math.sqrt(sxx * syy) < 0.93f) continue
+                    // The strokes lean apart (or one lies flat): an arc's two edges lean the same way, its extent growing only as it steepens.
+                    fun slopeOf(v: IntArray): Float {
+                        var sxyv = 0f
+                        val mv = cols.map { v[it].toFloat() }.average().toFloat()
+                        for (i in xs.indices) sxyv += (xs[i] - mxm) * (v[cols[i]] - mv)
+                        return sxyv / sxx
+                    }
+                    val st = slopeOf(top1); val sb = slopeOf(bot1)
+                    if (abs(st + sb) > abs(sb - st) * 1.2f) continue
                     // Two strokes at the open end.
                     val openCols = if (right > left) cols.takeLast(k) else cols.take(k)
                     if (openCols.count { runs[it] == 2 } < openCols.size * 0.6f) continue

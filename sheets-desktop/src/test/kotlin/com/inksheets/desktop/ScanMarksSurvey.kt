@@ -34,9 +34,25 @@ class ScanMarksSurvey {
         val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
         val (grey, ink) = draw(width)
         val r = Recognizer().read(ink, page, 1, Recognizer.Carry(), null, grey = grey, net = Net.shipped)
+        if (System.getProperty("inksheets.survey.list") == file.name) println("STACLIST ${if (geometry) "new" else "old"} page $page w ${ink.width}: " +
+            r.measures.flatMap { m -> m.events.filterIsInstance<Note>().filter { "staccato" in it.articulations }.map { "${it.x.toInt()},${r.staves[m.staff].lineY(0, it.x.toInt()).toInt()}" } }.joinToString(" "))
         val d = r.measures.flatMap { it.directions }.distinct()
+        if (System.getProperty("inksheets.survey.list") == file.name) println("DIRLIST ${if (geometry) "new" else "old"} page $page: " +
+            r.measures.flatMap { m -> m.directions.filter { it.kind in setOf("slur", "cresc", "dim") }.map { m.staff to it } }.distinct().sortedBy { it.first * 10000 + it.second.x }
+                .joinToString(" ") { (st, x) -> "${x.kind}@${x.x.toInt()}..${x.x2.toInt()}/y${r.staves[st].lineY(0, x.x.toInt().coerceAtLeast(0)).toInt()}" })
         return intArrayOf(r.measures.sumOf { m -> m.events.count { it is Note && "staccato" in it.articulations } },
             d.count { it.kind == "slur" }, d.count { it.kind == "dynamic" }, d.count { it.kind == "cresc" || it.kind == "dim" }, r.measures.size)
+    }
+
+    /** One page, old and new, with every staccato note and slur/hairpin listed: -Dinksheets.survey.page=<path under the library>|<page> */
+    @Test
+    fun `one page listed`() {
+        val spec = System.getProperty("inksheets.survey.page") ?: return
+        val f = File(music, spec.substringBefore("|")); val page = spec.substringAfter("|").toInt()
+        assumeTrue(f.isFile)
+        System.setProperty("inksheets.survey.list", f.name)
+        for (g in listOf(false, true)) println("SURVEY ${if (g) "new" else "old"}: " + marks(f, page, g).toList())
+        System.clearProperty("inksheets.omr.noscanmarks")
     }
 
     @Test
