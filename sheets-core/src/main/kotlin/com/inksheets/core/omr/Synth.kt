@@ -44,7 +44,7 @@ object Feel {
      *     amplitude as amp^(0.35 (n-1)): every note starts dark and blooms; firmness is faster growth and a touch more level.
      * D - C plus an air "t": 10 ms of soft noise, low-passed, 30 dB under the note, on accents, marcatos and staccatos.
      */
-    @Volatile var onset: Char = 'A'
+    @Volatile var onset: Char = 'D'
 }
 
 class Synth(val sampleRate: Int) {
@@ -692,7 +692,7 @@ class Synth(val sampleRate: Int) {
             // B: a small overshoot, +1.5 dB at most, peaking at 35 ms and settled by 120 ms (accent and marcato only).
             'B' -> { val x = t / (0.035 * sr); 1.0 + (if (accent > 0 || tone.art and (ART_ACCENT or ART_MARCATO) != 0) 0.13 * hard else 0.0) * (if (x > 0) x * x * exp(2 * (1 - x)) else 0.0) }
             // C, D: firmness is a touch more level for a moment - never a separate transient.
-            'C', 'D' -> 1.0 + 0.12 * hard * exp(-t / (0.08 * sr))
+            'C', 'D' -> (1.0 + 0.12 * hard * exp(-t / (0.08 * sr))) * (1.0 + accent * 0.25 * hump(t / (0.11 * sr)))
             else -> 1.0 + accent * 0.25 * hump(t / (0.11 * sr))
         }
         val vel = velAt(tone, t)
