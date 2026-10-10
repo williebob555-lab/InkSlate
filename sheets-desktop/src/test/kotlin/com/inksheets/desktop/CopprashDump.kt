@@ -13,11 +13,11 @@ class CopprashDump {
     @Test
     fun dump() {
         val spec = System.getProperty("inksheets.dump") ?: return
-        val file = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets/MobileSheets/Trombone Copprash.pdf")
+        val file = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets/" + (System.getProperty("inksheets.dump.file") ?: "MobileSheets/Trombone Copprash.pdf"))
         assumeTrue(file.isFile)
         val source = com.inkslate.desktop.DesktopSources.open(file, detached = true)!!
         fun draw(width: Int): Pair<IntArray, Ink> {
-            val img = source.render(3, width)!!
+            val img = source.render((System.getProperty("inksheets.dump.page") ?: "3").toInt(), width)!!
             val px = IntArray(img.width * img.height); img.readPixels(px)
             return Strips.grey(px) to Ink.fromArgb(img.width, img.height, px)
         }

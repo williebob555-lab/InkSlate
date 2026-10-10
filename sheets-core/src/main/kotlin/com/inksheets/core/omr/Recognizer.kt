@@ -3390,6 +3390,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * stand by), slurs (curves over more than one note, not ties) and hairpins (louder towards the
      * open end) - each marked seen, so the clean view leaves the print's own in place.
      */
+    /** The scan's small marks read by geometry ([ScanMarks]); -Dinksheets.omr.noscanmarks=1 reads them as before, to compare. */
+    private val scanGeometry = System.getProperty("inksheets.omr.noscanmarks") == null
+
     private fun readMarks(measures: MutableList<Measure>) {
         val g = pageGrey ?: return
         val ink = pageInk ?: return
@@ -3409,7 +3412,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (bx[2] - bx[0] > s.space * 20 || bx[3] - bx[1] > s.space * 6) continue
                 if (bx[2] - bx[0] + 1 < s.space * 0.22f && bx[3] - bx[1] + 1 < s.space * 0.22f) continue
                 // A shape between two staves is the nearer one's (each keeps what is within a few spaces of it).
-                if (this.printed?.learned == true) {
+                if (this.printed?.learned == true && scanGeometry) {
                     val cx = ((bx[0] + bx[2]) / 2).coerceIn(s.left, s.right); val cy = (bx[1] + bx[3]) / 2f
                     fun gap(st: Staff) = if (cy < st.lineY(0, cx)) st.lineY(0, cx) - cy else if (cy > st.lineY(4, cx)) cy - st.lineY(4, cx) else 0f
                     if (staves.any { o -> o !== s && o.left <= cx && o.right >= cx && gap(o) < gap(s) - 1f }) continue
@@ -3597,7 +3600,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val m = measures[mi]
             covs.getOrPut(mi) { coverage(m, staves[m.staff]) }.covers(x.toFloat(), y.toFloat(), upright = false)
         }
-        val ownArcs = scan.slurs().distinctBy { "${it.mi} ${it.x0} ${it.x1}" }
+        val ownArcs = if (!scanGeometry) emptyList() else scan.slurs().distinctBy { "${it.mi} ${it.x0} ${it.x1}" }
         for (arc in ownArcs) {
             val m0 = measures[arc.mi]
             // (The net's own slur over the same notes is replaced by this one, which has its ends.)
@@ -3615,7 +3618,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 if (m.staff == m0.staff && m.page == m0.page && m.box.right > arc.x0 && m.box.left < arc.x1) add.getOrPut(k) { ArrayList() } += d
             }
         }
-        for (hw in scan.hairpins()) {
+        for (hw in if (!scanGeometry) emptyList() else scan.hairpins()) {
             val m0 = measures[hw.mi]
             val d = Direction(hw.kind, hw.x0, hw.x1, above = hw.above, seen = true)
             for (k in measures.indices) {
@@ -3625,7 +3628,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         // Dynamics' letters read whole from the ink: they replace what the cut-up kept shapes gave there.
-        val ownDyn = scan.dynamics()
+        val ownDyn = if (!scanGeometry) emptyList() else scan.dynamics()
         for (dy in ownDyn) {
             val m0 = measures[dy.mi]
             for (k in measures.indices) {
@@ -3635,12 +3638,12 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         for (dy in ownDyn) add.getOrPut(dy.mi) { ArrayList() } += Direction("dynamic", dy.x0, dy.x1, dy.text, above = dy.above, seen = true)
-        val dotted = scan.staccatos().toSet()
+        val dotted = if (!scanGeometry) emptySet() else scan.staccatos().toSet()
         for ((k, ds) in add) measures[k] = measures[k].copy(directions = measures[k].directions + ds)
         // Articulations: to the note standing over or under them (not a breath mark's comma).
         for (f in found) {
             if (f in breathsSeen) continue
-            val name = when (f.label) { "accent", "tenuto", "marcato", "fermata" -> f.label; else -> continue }
+            val name = when (f.label) { "accent", "tenuto", "marcato", "fermata" -> f.label; "staccato" -> if (scanGeometry) continue else f.label; else -> continue }
             val m = measures[f.mi]
             val sp = m.space
             val cx = (f.box[0] + f.box[2]) / 2f

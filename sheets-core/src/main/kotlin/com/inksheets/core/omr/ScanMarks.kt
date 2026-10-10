@@ -84,7 +84,7 @@ internal class ScanMarks(private val ink: Ink, private val grey: IntArray, priva
                         // This note's, not the next one's.
                         m.events.none { o -> o !== e && o is Note && abs(o.x + sp * 0.6f - dx) < abs(cx - dx) }
                     }
-                    if (found) { out += mi to ei; break }
+                    if (found) { out += mi to ei; if (DEBUG) println("  STAC staff ${m.staff} note x ${e.x.toInt()} y ${yHi.toInt()} above=$above"); break }
                 }
             }
         }
@@ -205,6 +205,8 @@ internal class ScanMarks(private val ink: Ink, private val grey: IntArray, priva
                     val cx = (bx[0] + bx[2]) / 2
                     val (label, p) = MarkReader.read(grey, ink.width, ink.height, bx, sp, s.lineY(0, cx.coerceIn(s.left, s.right))) ?: continue
                     if (p < 0.9f || !label.startsWith("dyn_")) continue
+                    // (A letter of a dynamic is tall; small ones are a word's, a chord's name...)
+                    if (label.removePrefix("dyn_") in setOf("f", "p") && h < 1.5f || h < 0.7f) continue
                     letters += Letter(bx, label.removePrefix("dyn_")[0])
                 }
                 letters.sortBy { it.bx[0] }
