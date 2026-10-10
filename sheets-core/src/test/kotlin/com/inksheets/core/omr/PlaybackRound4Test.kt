@@ -106,4 +106,34 @@ class PlaybackRound4Test {
         assertTrue("tiny dip", Synth.CLARINET.slur.dipDb <= 0.5 && Synth.CLARINET.slur.roughDb in 0.5..1.2)
         for (p in listOf(Synth.SAX, Synth.DOUBLE_REED, Synth.FLUTE)) assertTrue(p.slur.minOverlapMs >= 28.0 && p.slur.dipDb <= 0.6)
     }
+
+    @Test
+    fun `every onset model starts clean, and each does what it says`() {
+        try {
+            for (model in "BCD") {
+                Feel.onset = model
+                val f0 = Synth.frequency(58.0)
+                for (kind in listOf("plain", "staccato", "accent", "marcato")) {
+                    val x = render(tone(Synth.LOW_BRASS, 58, kind), 0.8)
+                    var jump = 0.0
+                    for (i in 1 until x.size) jump = max(jump, abs((x[i] - x[i - 1]).toDouble()))
+                    val peak = x.maxOf { abs(it) }
+                    val first = (0 until rate * 2 / 1000).maxOf { abs(x[it]) }
+                    val onset = centroid(x, 0, rate / 50, f0); val later = centroid(x, rate * 90 / 1000, rate * 110 / 1000, f0)
+                    println("R5 $model $kind: -3 dB at ${"%.1f".format(toMinus3(x))} ms, step ${"%.3f".format(jump / peak)}, first 2 ms ${"%.3f".format(first / peak)}, centroid ${"%.0f".format(onset)} vs ${"%.0f".format(later)} Hz")
+                    assertTrue("$model $kind: a step of ${jump / peak}", jump / peak < 0.2)
+                    assertTrue("$model $kind: first 2 ms at ${first / peak}", first < 0.3 * peak)
+                    if (model == 'C' || model == 'D') assertTrue("$model $kind: a note starts dark and blooms ($onset vs $later)", onset < later)
+                }
+                if (model == 'B') {
+                    val acc = render(tone(Synth.LOW_BRASS, 58, "accent"), 0.8)
+                    val top = (0 until 40).maxOf { k -> rms(acc, rate * k / 1000, rate * k / 1000 + rate / 250) }
+                    val settled = rms(acc, rate * 250 / 1000, rate * 254 / 1000)
+                    val over = 20 * kotlin.math.log10(top / settled)
+                    println("R5 B accent overshoot ${"%.2f".format(over)} dB")
+                    assertTrue("overshoot $over dB (the bump plus the settling after the attack)", over in 0.3..2.6)
+                }
+            }
+        } finally { Feel.onset = 'A' }
+    }
 }

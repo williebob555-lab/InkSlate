@@ -33,6 +33,18 @@ object Feel {
     val C = Setting(pitchBreakMs = 8.0, dipDb = 1.5, dipMs = 30.0, gap = 0.12, releaseMs = 25.0, gapMinMs = 40.0)
 
     @Volatile var now: Setting = C
+
+    /**
+     * How a tongued or articulated note begins (a taste call, to listen to):
+     * A - a fast raised-cosine attack (marcato 6 ms .. accent 7 ms, staccato 8 ms, plain a quick "da"), bright from the first
+     *     millisecond with a strike boost on the upper harmonics settling over 40 ms.
+     * B - no strike boost; attacks 12-18 ms (accents), 25 ms plain; harmonic n enters 1.75 ms x (n-1) after the first (at most
+     *     20 ms); a +1.5 dB overshoot peaking at 35 ms, settled by 120 ms, on accents and marcatos.
+     * C - brass physics: the buzz grows over 30 ms (15 ms for a marcato) and each upper partial n follows the instantaneous
+     *     amplitude as amp^(0.35 (n-1)): every note starts dark and blooms; firmness is faster growth and a touch more level.
+     * D - C plus an air "t": 10 ms of soft noise, low-passed, 30 dB under the note, on accents, marcatos and staccatos.
+     */
+    @Volatile var onset: Char = 'A'
 }
 
 class Synth(val sampleRate: Int) {
@@ -561,8 +573,14 @@ class Synth(val sampleRate: Int) {
                 val attack = max(0.004 * sr, p.attack * sr)
                 val hard = hardness(tone)
                 // Brass blooms over a plain note's start; a struck note is bright from the very first ms and settles a little.
-                val bloom = if (p.bloom > 0f && !soft) (if (hard > 0) 1.0 else min(1.0, 0.55 + t / (attack * 2 + 1))) else 1.0
-                val strike = if (hard > 0 && !soft && t < 0.15 * sr) 1.0 + 0.4 * hard * exp(-t / (0.04 * sr)) else 1.0
+                val onset = Feel.onset
+                val bloom = if (p.bloom > 0f && !soft) (if (hard > 0 || onset != 'A') 1.0 else min(1.0, 0.55 + t / (attack * 2 + 1))) else 1.0
+                val strike = if (onset == 'A' && hard > 0 && !soft && t < 0.15 * sr) 1.0 + 0.4 * hard * exp(-t / (0.04 * sr)) else 1.0
+                // C, D: the upper partials follow the buzz's own amplitude, so a note starts dark and blooms as it speaks.
+                val ampNow = if ((onset == 'C' || onset == 'D') && !soft && p.fade <= 0) {
+                    val att = attackSamples(v, sr, hard, onset)
+                    if (t >= att) 1.0 else 0.5 * (1 - kotlin.math.cos(PI * t / att))
+                } else 1.0
                 val vel = velAt(tone, t)
                 // The brief softening of a slur's change: the upper harmonics dip a little with the loudness.
                 val dark = if (v.xfade > 0 && t < 2 * v.xfade) hump(t / (2.0 * v.xfade)) * min(0.5, v.dipDb * 0.25)
@@ -572,7 +590,10 @@ class Synth(val sampleRate: Int) {
                 for (h in 0 until v.active) {
                     val target = if (h >= v.count) 0.0 else if (a0 != null && a1 != null) (a0[h] + (a1[h] - a0[h]) * prog) * (if (h == 0 || bloom >= 1.0) 1.0 else bloom.pow(1.0 + h * p.bloom))
                         else p.harmonics[h] * (if (h == 0) 1.0 else bloom.pow(1.0 + h * p.bloom) * loud.pow(h * 0.45))
-                    v.now[h] += (target * (1 - dark * min(1.0, h / 5.0)) * (if (h > 0) strike else 1.0) - v.now[h]) * slew
+                    // B: the upper harmonics enter a little after the lower ones.
+                    val enter = if (onset == 'B' && !soft && p.fade <= 0 && h > 0) smooth((t - min(0.020, 0.00175 * h) * sr) / (0.004 * sr)) else 1.0
+                    val follow = if (ampNow < 1.0 && h > 0) ampNow.pow(0.35 * h) else 1.0
+                    v.now[h] += (target * (1 - dark * min(1.0, h / 5.0)) * (if (h > 0) strike else 1.0) * enter * follow - v.now[h]) * slew
                 }
             }
             var x = 0.0
@@ -601,9 +622,33 @@ class Synth(val sampleRate: Int) {
                     x += b * nz * 0.6
                 }
             }
-            buf[i] += (x * g).toFloat()
+            // D: an air "t" under the start of a struck note - soft, low-passed, 30 dB below the note, 10 ms.
+            var air = 0.0
+            if (Feel.onset == 'D' && hardness(tone) > 0 && !v.continued && !tone.legato && v.xfade == 0L && t < 0.010 * sr) {
+                if (!(p.chiff > 0f || p.breath > 0f)) { v.lo1 += (noiseSample() - v.lo1) * 0.12; v.lo2 += (v.lo1 - v.lo2) * 0.12 }
+                val vv = velAt(tone, t)
+                val nominal = p.gain * (if (p.spectral) amplitude(vv) else vv)
+                val win = sin(PI * t / (0.010 * sr)).let { it * it }
+                air = v.lo2 * 5 * 0.07 * nominal * win
+            }
+            buf[i] += (x * g + air).toFloat()
         }
         return false
+    }
+
+    /**
+     * How long the start of the note takes: a slurred note has none; otherwise by the [Feel.onset] model - see there.
+     */
+    private fun attackSamples(v: Voice, sr: Double, hard: Double, onset: Char): Double {
+        val tone = v.tone
+        val p = tone.patch
+        return if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr
+        else if (p.fade > 0) max(0.004 * sr, p.attack * sr)
+        else when (onset) {
+            'B' -> (if (hard > 0) 0.018 - 0.006 * hard else 0.025) * sr
+            'C', 'D' -> (0.030 - 0.015 * hard) * sr
+            else -> if (hard > 0) (0.012 - 0.006 * hard) * sr else max(0.012 * sr, p.attack * sr * 0.55)
+        }
     }
 
     /** How firmly a note is struck, 0-1: a marcato 1, an accent 0.8, a staccato 0.6, a plain tongued note 0. */
@@ -628,12 +673,8 @@ class Synth(val sampleRate: Int) {
         val t = (s - v.segStart).toDouble()
         val soft = v.continued || tone.legato
         val hard = hardness(tone)
-        // The start: a slurred note has none; a struck one (marcato, accent, staccato) speaks at once - "ta", full in 6-12 ms;
-        // a plain tongued note is a softer "da", a bit quicker than the instrument's slow swell.
-        val att = if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr
-            else if (p.fade > 0) max(0.004 * sr, p.attack * sr)
-            else if (hard > 0) (0.012 - 0.006 * hard) * sr
-            else max(0.012 * sr, p.attack * sr * 0.55)
+        val onset = Feel.onset
+        val att = attackSamples(v, sr, hard, onset)
         val decay = p.decay * sr
         // A wind's note settles only a hair after its start; a struck or plucked one dies away.
         val sustain = if (p.spectral) 1.0 - (1.0 - p.sustain.toDouble()) * (0.4 + 0.6 * hard) else p.sustain.toDouble()
@@ -647,7 +688,13 @@ class Synth(val sampleRate: Int) {
             else -> sustain
         }
         // An accent: a gentle weight on the note - up to 2 dB, rising and falling back over about a tenth of a second.
-        val boost = 1.0 + accent * 0.25 * hump(t / (0.11 * sr))
+        val boost = when (onset) {
+            // B: a small overshoot, +1.5 dB at most, peaking at 35 ms and settled by 120 ms (accent and marcato only).
+            'B' -> { val x = t / (0.035 * sr); 1.0 + (if (accent > 0 || tone.art and (ART_ACCENT or ART_MARCATO) != 0) 0.13 * hard else 0.0) * (if (x > 0) x * x * exp(2 * (1 - x)) else 0.0) }
+            // C, D: firmness is a touch more level for a moment - never a separate transient.
+            'C', 'D' -> 1.0 + 0.12 * hard * exp(-t / (0.08 * sr))
+            else -> 1.0 + accent * 0.25 * hump(t / (0.11 * sr))
+        }
         val vel = velAt(tone, t)
         var g = env * boost * p.gain * (if (p.spectral) amplitude(vel) else vel)
         if (v.continued) {

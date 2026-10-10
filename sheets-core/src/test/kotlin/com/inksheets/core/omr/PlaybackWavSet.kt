@@ -33,4 +33,31 @@ class PlaybackWavSet {
             write(dir, "$prefix-accents", DemoPassages.accents(), 92.0, Synth.LOW_BRASS, 0)
         }
     }
+
+    /** With INKSHEETS_ONSETS=1: for each onset model A-D (see Feel.onset), X-accents, X-copprasch and X-onenote (a Bb2 plain, accent, marcato, staccato, a second apart). */
+    @Test
+    fun `the onset models to wav`() {
+        val dir = System.getenv("INKSHEETS_WAV")?.takeIf { it.isNotBlank() } ?: return
+        if (System.getenv("INKSHEETS_ONSETS") != "1") return
+        try {
+            for (model in "ABCD") {
+                Feel.onset = model
+                write(dir, "$model-accents", DemoPassages.accents(), 92.0, Synth.LOW_BRASS, 0)
+                write(dir, "$model-copprasch", DemoPassages.copprasch(), 108.0, Synth.LOW_BRASS, 0)
+                val rate = 44_100
+                val one = listOf(
+                    Synth.Tone(46, 0, (0.5 * rate).toLong(), 0.7f, Synth.LOW_BRASS),
+                    Synth.Tone(46, rate.toLong(), (0.5 * rate).toLong(), 0.7f, Synth.LOW_BRASS, accent = 0.8f, art = Synth.ART_ACCENT),
+                    Synth.Tone(46, 2L * rate, (0.5 * rate).toLong(), 0.7f, Synth.LOW_BRASS, accent = 1f, art = Synth.ART_MARCATO),
+                    Synth.Tone(46, 3L * rate, (0.12 * rate).toLong(), 0.7f, Synth.LOW_BRASS, art = Synth.ART_STACCATO))
+                val synth = Synth(rate); synth.add(one)
+                val wav = java.io.File(dir, "$model-onenote.wav")
+                val w = com.inksheets.core.WavWriter(wav, rate)
+                val buf = FloatArray(rate / 20)
+                repeat(5 * 20) { java.util.Arrays.fill(buf, 0f); synth.fill(buf); w.write(buf) }
+                w.close()
+                println("PQ wav $wav")
+            }
+        } finally { Feel.onset = 'A' }
+    }
 }
