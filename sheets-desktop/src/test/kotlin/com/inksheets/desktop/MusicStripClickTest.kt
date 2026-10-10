@@ -68,17 +68,31 @@ class MusicStripClickTest {
             SimulatedTouch.on = true
             val root = onAllNodes(isRoot()).onFirst()
             fun shot(name: String) { settle(); ImageIO.write(root.captureToImage().toAwtImage(), "png", File(shots, "strip-click-%02d-%s.png".format(++step, name))) }
+            // What happened to the music tools' open state, and where each tap landed - said in full if a tap
+            // does not do what it should (it has failed only on a busy machine; this says why next time).
+            val story = java.util.Collections.synchronizedList(ArrayList<String>())
+            var lastOpen = ScoreTools.open
+            val watch = androidx.compose.runtime.snapshots.Snapshot.registerApplyObserver { _, _ ->
+                val now = ScoreTools.open
+                if (now != lastOpen) { story += "open $lastOpen -> $now at ${System.currentTimeMillis() % 100_000}"; lastOpen = now }
+            }
             fun tap(text: String) {
                 val node = onAllNodesWithText(text, substring = false, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
                     ?: error("no '$text' on screen")
                 val c = node.boundsInRoot.center
+                story += "tap '$text' at $c (${System.currentTimeMillis() % 100_000})"
                 SimulatedTouch.stamp(); root.performMouseInput { moveTo(c); press() }
+                // A slow finger, as a busy machine makes it (-Dinksheets.slowTapMs): held this long in real time.
+                System.getProperty("inksheets.slowTapMs")?.toLongOrNull()?.let { Thread.sleep(it) }
                 settle(3); SimulatedTouch.stamp(); root.performMouseInput { release() }
+                onAllNodesWithText(text, substring = false, useUnmergedTree = true).fetchSemanticsNodes().firstOrNull()
+                    ?.let { if (it.boundsInRoot.center != c) story += "  '$text' moved to ${it.boundsInRoot.center} under the finger" }
                 settle(20)
             }
             tap("Music")
             shot("music-open")
-            assertTrue("Music opens the strip", ScoreTools.open)
+            assertTrue("Music opens the strip - ${story.joinToString("; ")}", ScoreTools.open)
+            watch.dispose()
             tap("Page 1")
             settle(10)
             shot("page-pressed")
