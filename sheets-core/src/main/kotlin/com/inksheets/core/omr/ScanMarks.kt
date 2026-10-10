@@ -14,6 +14,8 @@ import kotlin.math.min
 internal class ScanMarks(private val ink: Ink, private val staves: List<Recognizer.Staff>, private val measures: List<Measure>,
                          private val covered: (Int, Int, Int) -> Boolean) {
 
+    private val DEBUG = System.getProperty("inksheets.omr.scanmarks") != null
+
     class Arc(val mi: Int, val x0: Float, val x1: Float, val above: Boolean)
     class Wedge(val mi: Int, val kind: String, val x0: Float, val x1: Float, val above: Boolean)
 
@@ -153,6 +155,7 @@ internal class ScanMarks(private val ink: Ink, private val staves: List<Recogniz
                         merged = true; break@loop
                     }
                 }
+                if (DEBUG) println("  ARCS staff ${key.second} above=$above band $y0..$y1 comps ${comps.size} pieces ${pieces.map { "${it.x0()}..${it.x1()}" }}")
                 for (p in pieces) {
                     val x0 = p.x0(); val x1 = p.x1(); val w = x1 - x0 + 1
                     if (w < sp * 1.6f || w > sp * 16f) continue
