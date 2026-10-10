@@ -96,8 +96,53 @@ class Synth(val sampleRate: Int) {
         /** Seconds before vibrato comes in on a held note. */
         val vibDelay: Double = 0.28,
         /** How a slur sounds on this family of instrument. */
-        val slur: Slur = Slur.LIP
+        val slur: Slur = Slur.LIP,
+        /** Harmonic levels measured from recordings, by register and loudness (see [Voicing]); then the brass law above is not used. */
+        val voicing: Voicing? = null,
+        /** Between the two recordings [voicing] holds: 0 the dark, lyrical one, 1 the sweet-spot one (the default). */
+        val toneBlend: Double = 1.0
     )
+
+    /**
+     * An instrument's tone as measured: harmonic 1-10 levels (dB re the fundamental) of two recordings of a euphonium
+     * played through the same range - [dark] ("Song for Ina", accompanied, lyrical) and [bright] (a dry solo take, the sweet
+     * spot) - by register (low, mid, high at [REGISTERS] MIDI) and loudness (soft, mid, loud). Harmonics above the tenth go on
+     * falling at 6 dB each. Loudness changes the spectrum very little, as in both recordings.
+     */
+    class Voicing(val dark: Array<Array<DoubleArray>>, val bright: Array<Array<DoubleArray>>) {
+        /** Harmonic [h] (0 = the fundamental) in dB re the fundamental, for a note at [midi], loudness [level] (0-1.5), tone [blend]. */
+        fun db(h: Int, midi: Double, level: Double, blend: Double): Double {
+            val r = when { midi <= REGISTERS[0] -> 0.0; midi >= REGISTERS[2] -> 2.0; midi <= REGISTERS[1] -> (midi - REGISTERS[0]) / (REGISTERS[1] - REGISTERS[0]); else -> 1 + (midi - REGISTERS[1]) / (REGISTERS[2] - REGISTERS[1]) }
+            val l = when { level <= 0.45 -> 0.0; level <= 0.75 -> (level - 0.45) / 0.30; else -> 1.0 + (level - 0.75) / 0.25 }.coerceIn(0.0, 2.5)
+            fun at(t: Array<Array<DoubleArray>>): Double {
+                fun lev(reg: Int): Double {
+                    val rows = t[reg]
+                    fun v(i: Int) = if (h < 10) rows[i][h] else rows[i][9] - 6.0 * (h - 9)
+                    return if (l <= 2.0) { val i = l.toInt().coerceAtMost(1); v(i) + (v(i + 1) - v(i)) * (l - i) } else v(2) + (v(2) - v(1)) * 0.5 * (l - 2.0)
+                }
+                val i = r.toInt().coerceAtMost(1)
+                return lev(i) + (lev(i + 1) - lev(i)) * (r - i)
+            }
+            val d = at(dark); val b = at(bright)
+            return d + (b - d) * blend
+        }
+
+        companion object {
+            val REGISTERS = doubleArrayOf(48.0, 56.0, 63.0)
+            private fun t(vararg rows: DoubleArray) = arrayOf(*rows)
+            private fun r(vararg v: Double) = v
+            val EUPHONIUM = Voicing(
+                dark = arrayOf(
+                    // low (no clean recording: the mid register's shape), mid, high
+                    t(r(0.0, -0.3, -3.8, -16.5, -24.0, -37.6, -47.9, -57.8, -63.0, -64.6), r(0.0, 1.7, -2.5, -12.8, -20.5, -28.3, -40.7, -44.8, -53.6, -56.8), r(0.0, 6.6, -0.2, -5.5, -16.1, -12.9, -31.3, -25.9, -37.5, -36.6)),
+                    t(r(0.0, -0.3, -3.8, -16.5, -24.0, -37.6, -47.9, -57.8, -63.0, -64.6), r(0.0, 1.7, -2.5, -12.8, -20.5, -28.3, -40.7, -44.8, -53.6, -56.8), r(0.0, 6.6, -0.2, -5.5, -16.1, -12.9, -31.3, -25.9, -37.5, -36.6)),
+                    t(r(0.0, 6.7, -3.0, -11.5, -28.9, -40.1, -48.1, -51.5, -61.7, -65.5), r(0.0, 6.3, -3.9, -8.4, -22.3, -32.7, -46.1, -47.1, -53.5, -64.3), r(0.0, 5.0, -4.0, -6.0, -17.0, -26.0, -38.0, -40.0, -47.0, -55.0))),
+                bright = arrayOf(
+                    t(r(0.0, 4.4, 3.9, -4.0, -10.9, -17.1, -27.7, -36.2, -40.1, -42.6), r(0.0, 3.9, 4.5, -6.3, -9.5, -16.8, -29.6, -36.4, -37.7, -38.8), r(0.0, 3.6, 4.1, -6.6, -9.9, -20.3, -23.1, -34.3, -36.3, -36.3)),
+                    t(r(0.0, -1.6, -5.6, -16.3, -27.8, -41.8, -48.1, -54.9, -56.1, -58.6), r(0.0, -0.3, -5.3, -14.0, -27.0, -39.0, -45.6, -47.3, -49.3, -55.1), r(0.0, -2.6, -10.1, -16.0, -30.3, -39.0, -43.1, -47.8, -55.0, -53.6)),
+                    t(r(0.0, -1.9, -12.7, -27.2, -41.7, -51.9, -54.0, -59.2, -64.8, -64.9), r(0.0, -1.9, -12.7, -27.2, -41.7, -51.9, -54.0, -59.2, -64.8, -64.9), r(0.0, -0.1, -10.9, -24.5, -35.9, -46.2, -49.5, -55.3, -62.3, -65.5))))
+        }
+    }
 
     /**
      * How a slur is made on a family of instrument: the old note fades as the new speaks, over [minOverlapMs]
@@ -133,9 +178,16 @@ class Synth(val sampleRate: Int) {
             spectral = true, slopeSoft = 0.62, slopeLoud = 0.1, formantHz = 1250.0, formantGain = 1.9, scoop = 14.0, brass = true,
             cutoffSoft = 1600.0, cutoffLoud = 5500.0, vibDelay = 0.4, slur = Slur.TRUMPET)
         /** Euphonium, baritone, tuba (and trombone) - a conical bore: dark, round, strong fundamental and second partial. */
-        val LOW_BRASS = Patch(FloatArray(1), 0.05, 0.14, 0.88f, 0.13, vibratoHz = 4.4, vibratoCents = 3.5, bloom = 0.5f, gain = 0.24f, breath = 0.006f,
+        /**
+         * The euphonium, as recorded: [toneBlend] 1 the dry solo take's tone (the default), 0 the darker, lyrical one. Vibrato of
+         * the dry take: 4.2 Hz, about 13 cents, coming in after about half a second.
+         */
+        fun euphonium(toneBlend: Double = 1.0, vibratoCents: Double = 13.0) = Patch(FloatArray(1), 0.06, 0.14, 0.88f, 0.14, vibratoHz = 4.2, vibratoCents = vibratoCents, bloom = 0.5f, gain = 0.24f, breath = 0.004f,
             spectral = true, slopeSoft = 0.6, slopeLoud = 0.13, formantHz = 430.0, formantGain = 1.8, scoop = 12.0, brass = true,
-            cutoffSoft = 900.0, cutoffLoud = 3200.0, vibDelay = 0.5, slur = Slur.LIP)
+            cutoffSoft = 900.0, cutoffLoud = 3200.0, vibDelay = 0.5, slur = Slur.LIP, voicing = Voicing.EUPHONIUM, toneBlend = toneBlend)
+        val LOW_BRASS = euphonium(1.0)
+        /** The euphonium toward the dark, lyrical end. */
+        val LOW_BRASS_DARK = euphonium(0.0)
         /** Trombone: a cylindrical bore, brighter than the euphonium. */
         val TROMBONE = Patch(FloatArray(1), 0.045, 0.13, 0.88f, 0.12, vibratoHz = 4.8, vibratoCents = 4.0, bloom = 0.5f, gain = 0.23f, breath = 0.005f,
             spectral = true, slopeSoft = 0.52, slopeLoud = 0.1, formantHz = 500.0, formantGain = 1.9, scoop = 12.0, brass = true,
@@ -322,7 +374,7 @@ class Synth(val sampleRate: Int) {
             amp0 = if (p.spectral) Spectra.spectrum(p, freq, t.velocity, most) else null
             amp1 = if (p.spectral) Spectra.spectrum(p, freq, t.endVelocity, most) else null
             val a0 = amp0; val a1 = amp1
-            count = if (a0 == null || a1 == null) most else (most - 1 downTo 0).firstOrNull { maxOf(a0[it], a1[it]) > 0.004 }?.plus(1) ?: 1
+            count = if (a0 == null || a1 == null) most else (most - 1 downTo 0).firstOrNull { maxOf(a0[it], a1[it]) > (if (p.voicing != null) 0.0006 else 0.004) }?.plus(1) ?: 1
             active = max(active, count)
         }
     }
@@ -646,7 +698,8 @@ class Synth(val sampleRate: Int) {
         else if (p.fade > 0) max(0.004 * sr, p.attack * sr)
         else when (onset) {
             'B' -> (if (hard > 0) 0.018 - 0.006 * hard else 0.025) * sr
-            'C', 'D' -> (0.030 - 0.015 * hard) * sr
+            // (a plain note after a rest grows as slowly as the instrument does; a struck one is quicker)
+            'C', 'D' -> (if (hard > 0) 0.030 - 0.015 * hard else max(0.030, p.attack)) * sr
             else -> if (hard > 0) (0.012 - 0.006 * hard) * sr else max(0.012 * sr, p.attack * sr * 0.55)
         }
     }
@@ -751,6 +804,19 @@ class Synth(val sampleRate: Int) {
          * lifted by the body's resonance, rolled off above a cutoff that rises with loudness. Smooth and monotonic
          * apart from the resonance: no hollow (clarinet-like) odd/even pattern.
          */
+        fun voiced(v: Voicing, p: Patch, f0: Double, level: Float, count: Int): DoubleArray {
+            val midi = 69 + 12 * ln(f0 / 440.0) / ln(2.0)
+            val a = DoubleArray(count)
+            var sum = 0.0
+            for (h in 0 until count) {
+                val x = Math.pow(10.0, v.db(h, midi, level.toDouble(), p.toneBlend) / 20)
+                a[h] = x; sum += x * x
+            }
+            val norm = 1.0 / kotlin.math.sqrt(sum.coerceAtLeast(1e-9))
+            for (h in 0 until count) a[h] *= norm * 1.6
+            return a
+        }
+
         fun brass(p: Patch, f0: Double, loud: Double, count: Int): DoubleArray {
             val k = p.slopeSoft + (p.slopeLoud - p.slopeSoft) * loud
             val fc = p.cutoffSoft * (p.cutoffLoud / p.cutoffSoft).pow(loud)
@@ -772,6 +838,7 @@ class Synth(val sampleRate: Int) {
 
         fun spectrum(p: Patch, f0: Double, level: Float, count: Int): DoubleArray {
             val loud = ((level - 0.25) / 0.85).coerceIn(0.0, 1.0)
+            p.voicing?.let { return voiced(it, p, f0, level, count) }
             if (p.brass) return brass(p, f0, loud, count)
             val slope = p.slopeSoft + (p.slopeLoud - p.slopeSoft) * loud
             val a = DoubleArray(count)
@@ -805,7 +872,7 @@ class Synth(val sampleRate: Int) {
         private val passAt = IntArray(2)
         private val feedback = 0.76f
         private val damp = 0.3f
-        private val wet = 0.04f
+        private val wet = 0.015f
 
         fun process(buf: FloatArray) {
             for (i in buf.indices) {

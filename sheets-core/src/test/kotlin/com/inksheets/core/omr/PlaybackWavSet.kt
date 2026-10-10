@@ -27,10 +27,11 @@ class PlaybackWavSet {
         val prefix = System.getenv("INKSHEETS_PREFIX") ?: "D"
         write(dir, "$prefix-legato", DemoPassages.legato(), 96.0, Synth.LOW_BRASS, 0)
         write(dir, "$prefix-copprasch", DemoPassages.copprasch(), 108.0, Synth.LOW_BRASS, 0)
+        write(dir, "$prefix-accents", DemoPassages.accents(), 92.0, Synth.LOW_BRASS, 0)
+        write(dir, "$prefix-lyrical", DemoPassages.lyrical(), 66.0, Synth.LOW_BRASS, 0)
         if (System.getenv("INKSHEETS_FAMILIES") == "1") {
             write(dir, "$prefix-trumpet-legato", DemoPassages.legato(), 96.0, Synth.BRASS, -12)
             write(dir, "$prefix-clarinet-legato", DemoPassages.legato(), 96.0, Synth.CLARINET, -12)
-            write(dir, "$prefix-accents", DemoPassages.accents(), 92.0, Synth.LOW_BRASS, 0)
         }
     }
 
