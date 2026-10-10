@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ReportProblem
@@ -139,6 +140,21 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     StripButton(Icons.Default.Description, "Page ${here + 1}", "Read just this page's music", btn, named) {
                         if (file != null) Transcriber.read(state, file, pages = setOf(here)) { Perform.marksChanged() }
                     }
+                }
+                // Read by an earlier reader (before the reader last got better): said, and offered
+                // to be read again - this page, or every page read that way. Until then the old
+                // reading stands, and anything put right by hand is kept either way.
+                val older = remember(file, Transcriber.shown, busy) { file?.let { Transcriber.olderPages(state, it) } ?: emptySet() }
+                if (busy == null && here in older) {
+                    Text("Older\nreading", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, lineHeight = 10.sp, maxLines = 2,
+                        textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.tertiary, modifier = Modifier.padding(top = 2.dp))
+                    StripButton(Icons.Default.Refresh, "Page ${here + 1}", "Read this page again with the newer reader", btn, named) {
+                        if (file != null) Transcriber.read(state, file, again = true, pages = setOf(here)) { Perform.marksChanged() }
+                    }
+                    if (older.size > 1) StripButton(Icons.Default.Refresh, "All ${older.size}", "Read again every page the older reader read", btn, named) {
+                        if (file != null) Transcriber.read(state, file, pages = older) { Perform.marksChanged() }
+                    }
+                    HorizontalDivider(Modifier.width(28.dp).padding(vertical = 2.dp))
                 }
                 // The tools only for a page that has been read: an unread page offers reading it,
                 // and nothing else - not tools with nothing to work on.

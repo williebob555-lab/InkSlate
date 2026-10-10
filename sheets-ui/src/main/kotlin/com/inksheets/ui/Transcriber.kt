@@ -183,20 +183,34 @@ internal object Transcriber {
     private class Known(val score: Score?, val at: Long, val signature: String)
     private val known = HashMap<String, Known>()
 
+    /** The pages of [file] (0-based) whose reading is an earlier reader's, not read again since - offered to be read again. */
+    fun olderPages(state: SheetsState, file: File): Set<Int> {
+        val own = folder(state, file).listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty().map { pageOf(it) }.toSet()
+        val older = olderFolder(state, file)?.listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty().map { pageOf(it) }.toSet()
+        return older - own
+    }
+
+    private fun pageOf(f: File) = f.name.drop(1).removeSuffix(".json").toIntOrNull()?.minus(1) ?: -1
+
     /** [file]'s notes as far as they have been read - here or on another device; null if none of it has. */
     fun cached(state: SheetsState, file: File): Score? {
         val own = folder(state, file)
-        // Nothing read by this reader yet: an earlier reader's reading, until it is read again.
-        val dir = if (own.listFiles { f -> PAGE_FILE.matches(f.name) }?.isNotEmpty() == true) own else olderFolder(state, file) ?: own
+        // This reader's pages, and an earlier reader's for the pages not read again yet - so reading
+        // one page again never loses the rest of the part.
+        val older = olderFolder(state, file)
+        val dir = own
         val now = System.currentTimeMillis()
-        synchronized(known) { known[dir.path]?.let { if (now - it.at < 3000) return it.score } }
+        val key = own.path + "|" + (older?.path ?: "")
+        synchronized(known) { known[key]?.let { if (now - it.at < 3000) return it.score } }
         // Only the pages' own files: not a copy a syncing program kept of one two devices wrote at
         // once (Syncthing's "p1.sync-conflict-....json") - every bar of it would be there twice. Those
         // copies are let go.
-        val pages = dir.listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty()
+        val mine = dir.listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty()
+        val minePages = mine.map { pageOf(it) }.toSet()
+        val pages: List<File> = mine.toList() + (older?.listFiles { f: File -> PAGE_FILE.matches(f.name) && pageOf(f) !in minePages }?.toList() ?: emptyList())
         dir.listFiles { f -> f.name.contains(".sync-conflict-") }?.forEach { runCatching { it.delete() } }
-        val signature = pages.sortedBy { it.name }.joinToString { "${it.name}:${it.length()}:${it.lastModified()}" }
-        synchronized(known) { known[dir.path]?.takeIf { it.signature == signature }?.let { known[dir.path] = Known(it.score, now, signature); return it.score } }
+        val signature = pages.sortedBy { it.path }.joinToString { "${it.path}:${it.length()}:${it.lastModified()}" }
+        synchronized(known) { known[key]?.takeIf { it.signature == signature }?.let { known[key] = Known(it.score, now, signature); return it.score } }
         val parts = pages.mapNotNull { f -> runCatching { Scores.decode(f.readText()) }.getOrNull() }
         val score = if (parts.isEmpty()) null else {
             val count = parts.maxOf { it.pages }
@@ -205,7 +219,7 @@ internal object Transcriber {
             // (Numbered so no bar number comes twice: see Scores.numberedOnce.)
             Score(Scores.numberedOnce(parts.flatMap { it.measures }.sortedWith(compareBy({ it.page }, { it.staff }, { it.box.left }))), count, widths, read.takeIf { it.size < count })
         }
-        synchronized(known) { known[dir.path] = Known(score, now, signature) }
+        synchronized(known) { known[key] = Known(score, now, signature) }
         return score
     }
 
@@ -231,7 +245,7 @@ internal object Transcriber {
         if (again) {
             val dir = folder(state, file)
             if (pages == null) dir.listFiles().orEmpty().forEach { it.delete() } else pages.forEach { pageFile(dir, it).delete() }
-            synchronized(known) { known.remove(dir.path) }
+            synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
         }
         busy = "Getting ready..."
         stopAsked = false
@@ -295,7 +309,9 @@ internal object Transcriber {
             // A whole read starts at the page in front (a long book is opened at the study being
             // worked on) and goes on from there, coming back round to the pages before it last.
             val here = if (only == null && state.currentPath == file.absolutePath) state.pageShown.first.coerceIn(0, maxOf(0, peek.pageCount - 1)) else 0
-            val todo = (only ?: (0 until peek.pageCount).filter { before == null || !before.hasRead(it) }.toSet()).filter { it in 0 until peek.pageCount }
+            // (A page an earlier reader read counts as not read: reading the part reads it again.)
+            val stale = olderPages(state, file)
+            val todo = (only ?: (0 until peek.pageCount).filter { before == null || !before.hasRead(it) || it in stale }.toSet()).filter { it in 0 until peek.pageCount }
                 .sortedWith(compareBy({ it < here }, { it }))
             val carry = Recognizer.Carry()
             val measures = ArrayList<Measure>()
@@ -374,7 +390,7 @@ internal object Transcriber {
                     val tmp = File(dir, "p${p + 1}.json.tmp"); tmp.writeText(Scores.encode(one))
                     val dest = pageFile(dir, p); dest.delete(); tmp.renameTo(dest)
                 }
-                synchronized(known) { known.remove(dir.path) }
+                synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
             } } finally {
                 // The page ahead finished drawing before the file is closed under it.
                 ahead?.second?.let { runCatching { it.get() } }
