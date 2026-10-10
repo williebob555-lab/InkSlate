@@ -99,7 +99,11 @@ class CopprashMarksTest {
             for (g in 0 until groups) {
                 for (k in 0..3) {
                     val n = notes[g * 4 + k]; val has = "staccato" in n.articulations
-                    if (k == 0) { s.stacTrue++; if (has) s.stacHit++ } else if (has) s.stacFalse++
+                    if (k == 0) { s.stacTrue++; if (has) s.stacHit++ else if (verbose) {
+                        // What is kept near where the dot should be (over or under the note, a space or two off).
+                        val near = m.kept.map { com.inksheets.core.omr.MarkReader.box(it) }.filter { b -> abs((b[0] + b[2]) / 2f - centre[g * 4]) < sp * 0.8f && (b[3] - b[1]) < sp * 1.2f && (b[2] - b[0]) < sp * 1.2f }
+                        println("TRUTH $staff/$bi group $g: staccato missed; kept near: ${near.map { "${it[2] - it[0] + 1}x${it[3] - it[1] + 1}@${it[0]},${it[1]}" }} (sp ${sp.toInt()}, note at ${centre[g * 4].toInt()})")
+                    } } else if (has) s.stacFalse++
                 }
                 if (Triple(staff, bi, g) in t.skipSlur) continue
                 s.slurTrue++
@@ -139,7 +143,7 @@ class CopprashMarksTest {
         val s = score()
         assumeTrue("no Copprash here", s != null)
         println("TRUTH SCORE $s")
-        // The level reached (2026-10-10): the least that must stay so.
+        // The level reached (2026-10-10; shipped net + rescue: staccato 16/39, 9 false; slurs 13/38 exact; dynamics 16/22): the least that must stay so.
         assertTrue("bars scored ${s!!.bars}", s.bars >= MIN_BARS)
         assertTrue("staccato recall ${s.stacHit}/${s.stacTrue}", s.stacHit >= s.stacTrue * MIN_STACCATO_RECALL)
         assertTrue("staccato false ${s.stacFalse}", s.stacFalse <= s.stacHit * MAX_STACCATO_FALSE)
@@ -149,12 +153,12 @@ class CopprashMarksTest {
     }
 
     private companion object {
-        const val MIN_BARS = 10
-        const val MIN_STACCATO_RECALL = 0.0
-        const val MAX_STACCATO_FALSE = 100.0
-        const val MIN_SLUR_EXACT = 0.0
-        const val MIN_DYNAMICS = 0.0
-        const val MAX_DYNAMICS_FALSE = 100.0
+        const val MIN_BARS = 16
+        const val MIN_STACCATO_RECALL = 0.38
+        const val MAX_STACCATO_FALSE = 0.7
+        const val MIN_SLUR_EXACT = 0.3
+        const val MIN_DYNAMICS = 0.7
+        const val MAX_DYNAMICS_FALSE = 0.15
         const val MIN_HAIRPINS = 0.0
     }
 }
