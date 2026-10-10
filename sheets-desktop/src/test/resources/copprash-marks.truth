@@ -1,0 +1,51 @@
+# Marks of Trombone Copprash.pdf (the library's MobileSheets/ folder), read off the page by eye (2026-10-10).
+# A heavy old plate-print scan: no notes in the PDF, so only the picture to go by.
+#
+# page 3 (0-based): staves 1-5 are No. 7 (slurs over groups, hairpins, dynamics), staves 6-11 are No. 8 (Tempo giusto).
+# No. 8 in 3/4: runs of 16ths in groups of four - each group has a staccato dot on its FIRST note and a slur from its
+# SECOND note to its FOURTH; a bar is 2 groups + an eighth + an eighth rest, or 3 groups.
+#
+#   bar <staff> <bar in that staff, from 0> <groups>      scored: staccato on notes 0,4,(8); slur from note 1 to 3, 5 to 7, (9 to 11)
+#   dyn <staff> <letters left to right>                    dynamics on the staff, in order
+#   hair <staff> <cresc|dim ...>                           hairpins on the staff, in order
+#
+# Rows of No. 8 left out of "bar" lines (staves 8, 9): their groups are not all the same (some have no dot or no slur).
+file MobileSheets/Trombone Copprash.pdf
+page 3
+bar 6 0 2
+bar 6 1 2
+bar 6 2 3
+bar 6 3 2
+bar 7 0 3
+bar 7 1 3
+bar 7 2 3
+bar 7 3 2
+bar 10 0 3
+bar 10 1 2
+bar 10 2 3
+bar 10 3 2
+bar 11 0 2
+bar 11 1 2
+bar 11 2 3
+bar 11 3 2
+dyn 1 p p f
+hair 1 cresc dim cresc dim
+dyn 2 p p
+hair 2 cresc dim cresc
+dyn 3 p f
+hair 3 dim dim
+dyn 4 p p
+hair 4 dim cresc dim cresc
+dyn 5 f
+hair 5 dim
+dyn 6 p f
+hair 6 dim
+dyn 7 p f
+dyn 8 p
+hair 8 dim
+dyn 9 f p f p
+dyn 10 f
+hair 10 cresc dim
+dyn 11 p f
+# Not scored: a group whose slur is hidden under a fingering figure.
+skipslur 7 2 0

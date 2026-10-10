@@ -258,9 +258,14 @@ class ReadingBenchmark {
         val (printed, dpi) = OmrRealPagesTest().renderAt(f, page) ?: return null
         val keyRaw = AnswerKey.read(f, page, dpi) ?: return null
         val warpKind = if (scan) System.getProperty("inksheets.bench.warp") else null
-        val turn = if (!scan) 0.0 else if (warpKind == "tilt3") 3.0 else 0.6
+        // -Dinksheets.bench.heavy=<n>: a heavy old plate-print scan instead (HeavyScan), another profile for each n.
+        val heavy = if (scan) System.getProperty("inksheets.bench.heavy")?.toLongOrNull() else null
+        val heavySeed = (f.name + page + heavy).hashCode().toLong()
+        val heavyProfile = if (heavy != null) HeavyScan.profile(heavySeed) else null
+        val turn = if (!scan) 0.0 else if (heavyProfile != null) heavyProfile.turn else if (warpKind == "tilt3") 3.0 else 0.6
         val warp = warpKind?.takeIf { it != "tilt3" }?.let { Warp(it, printed.width, printed.height) }
-        val greyScan = if (scan) scannedGrey(printed, turn, (f.name + page).hashCode().toLong(), warp) else null
+        val greyScan = if (!scan) null else if (heavyProfile != null) HeavyScan.grey(printed, heavyProfile, heavySeed)
+            else scannedGrey(printed, turn, (f.name + page).hashCode().toLong(), warp)
         val ink = if (greyScan == null) printed else Ink.fromGrey(printed.width, printed.height, greyScan)
         // The trained reader, given the page in grey: the scan's, or the print drawn again.
         val greyPage = if (net == null) null else greyScan ?: org.apache.pdfbox.Loader.loadPDF(f).use { d ->
