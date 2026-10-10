@@ -88,9 +88,9 @@ internal object Listener {
         val words = when {
             System.currentTimeMillis() - f.turnedAt < 2_000 -> "Turned to page ${f.page + 1}"
             !f.music -> "Waiting for the music"
-            !f.found -> "Finding where you are..."
-            f.suspect -> "Not sure where - won't turn"
-            !f.turnSafe -> "Following - checking the turn"
+            !f.found -> "Finding you..."
+            f.suspect -> "Unsure: holding"
+            !f.turnSafe -> "Checking the turn"
             f.turnMs == null -> "Last page - following"
             else -> {
                 val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)

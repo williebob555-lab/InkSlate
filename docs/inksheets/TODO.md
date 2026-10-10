@@ -3,7 +3,7 @@
 Resume here after any interruption: read the **Now** line, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
-**Now:** (2026-10-10) Test build pushed with the playback settled by ear (onset D, euphonium tone from the user's reference, planned vibrato I), sampler instruments, Fix full-screen editor, strip fixes, RenderGate. Listen rework NOT in it (agent worktree agent-a295ba5308f80708e: WIP, locks fast but locks wrong with own-part reference; resume later). Next: the user's idea - a bar put right in one part fixes the same bar in the song's other parts where it was read the same (unisons, doublings, transposed copies). No load tests without asking.
+**Now:** (2026-10-10) test.291 out (playback by ear, sampler, Fix). Next build carries: Listen rework (two-state tracker: locks in ~6 s, no searching or flips once locked, turns only when locked, unsuspected and turn-safe; bench 0 wrong turns of 64 due, 16 missed - mostly Shorts mid-page and Swag Surfin; own-part reference still weak, rarely trusted), carried fixes across parts (quiet), Fix on tiny screens, panels clear of edge tabs. Open: MusicStripClickTest flakes only under heavy load (not reproduced without a load test - ask first); Copprash marks need marknet retraining on heavy scans (CPU-heavy, ask first); Listen look-alike sections in medleys (waits rather than turns).
 
 **Earlier:** (2026-10-09) T3/T4 hit the rate limit mid-run — resume them. PlayAlong.kt written (uncommitted, compile next). Then W/L/R/P above.
 
