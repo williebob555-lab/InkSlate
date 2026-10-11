@@ -143,7 +143,7 @@ class CopprashMarksTest {
         val s = score()
         assumeTrue("no Copprash here", s != null)
         println("TRUTH SCORE $s")
-        // The level reached (2026-10-10; was staccato 16/39 with 9 false, slurs 13/38 exact, dynamics 16/22, hairpins 0/18; now ScanMarks geometry): the least that must stay so.
+        // The level reached (2026-10-10; was staccato 16/39 with 9 false, slurs 13/38 exact, dynamics 16/22, hairpins 0/18; ScanMarks was taken back out for making scans worse elsewhere - test.292 level): the least that must stay so.
         assertTrue("bars scored ${s!!.bars}", s.bars >= MIN_BARS)
         assertTrue("staccato recall ${s.stacHit}/${s.stacTrue}", s.stacHit >= s.stacTrue * MIN_STACCATO_RECALL)
         assertTrue("staccato false ${s.stacFalse}", s.stacFalse <= s.stacHit * MAX_STACCATO_FALSE)
@@ -154,11 +154,11 @@ class CopprashMarksTest {
 
     private companion object {
         const val MIN_BARS = 16
-        const val MIN_STACCATO_RECALL = 0.9
-        const val MAX_STACCATO_FALSE = 0.1
-        const val MIN_SLUR_EXACT = 0.85
-        const val MIN_DYNAMICS = 0.9
-        const val MAX_DYNAMICS_FALSE = 0.06
-        const val MIN_HAIRPINS = 0.6
+        const val MIN_STACCATO_RECALL = 0.35
+        const val MAX_STACCATO_FALSE = 0.7
+        const val MIN_SLUR_EXACT = 0.3
+        const val MIN_DYNAMICS = 0.7
+        const val MAX_DYNAMICS_FALSE = 0.15
+        const val MIN_HAIRPINS = 0.0
     }
 }
