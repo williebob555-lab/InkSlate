@@ -8,7 +8,6 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -144,7 +143,9 @@ class HomeRedesignTest {
             waitForIdle()
             assertEquals("trombone", state.profileId)
             onNode(hasSetTextAction()).performTextInput("Nocturne")
-            onNode(hasText("Nocturne") and hasClickAction() and !hasSetTextAction()).performClick()
+            // Tap the title itself. The merged row's centre lies on the independent Parts
+            // expander with Linux font metrics, which correctly expands parts instead of opening.
+            onNode(hasText("Nocturne") and !hasSetTextAction(), useUnmergedTree = true).performClick()
             waitForIdle()
             assertTrue(platform.opened.last().endsWith("Nocturne - Trombone.pdf"))
         }
