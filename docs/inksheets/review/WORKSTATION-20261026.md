@@ -37,8 +37,13 @@ Final local validation passed in 7 min 54 s:
 
 984 tests passed; 78 were skipped by existing environment/fixture gates. The real-PDF workspace audit produced 48 screenshots (four scenes at all twelve sizes). Home, shelf and editing/settings audits also pass all twelve sizes. Both Android flavors compile, the InkSheets APK assembles, and `git diff --check` passes. Hardware exclusions above still apply.
 
-Release destination: https://github.com/williebob555-lab/InkSlate/releases/tag/inksheets-test . The final commit requests the InkSheets-only test workflow; publication and matching installer assets are verified after pushing.
+CI exposed two validation issues: playback measured 19.68x against the unchanged 20x threshold while Gradle compiled other projects concurrently, and the home test tapped the merged song row's centre, where the independent Parts expander can own the hit. CI now uses the locally validated `--no-parallel --max-workers=2` profile and includes InkSheets Android unit tests as well as InkSlate's. The home test selects the unmerged title text and excludes the Search field. No performance threshold or product behavior was weakened. All seven home tests pass locally (17 s), and both checks pass on Linux in the final GitHub run.
 
-The first GitHub run packaged Windows and Fedora but stopped Android on two checks: playback measured 19.68x against the unchanged 20x threshold while Gradle compiled other projects concurrently, and the home test selected non-clickable matching text instead of explicitly selecting the song row. CI now uses the locally validated `--no-parallel --max-workers=2` profile and includes InkSheets Android unit tests as well as InkSlate's. The home matcher explicitly requires a click action. Both focused suites pass locally (43 s); the final GitHub rerun verifies publication. No performance threshold or product behavior was weakened to address these failures.
+## Published and verified
 
-The second GitHub run passed playback but exposed that selecting the merged clickable song row still taps its centre, where the independent Parts expander can own the hit. The home test now selects the unmerged title text, keeping the Search-field exclusion, and clicks the title itself. All seven home tests pass locally (17 s). This is an input-target correction in the test; the independent Parts control retains its behavior.
+- Version: **1.2.2-test.298**.
+- Release: https://github.com/williebob555-lab/InkSlate/releases/tag/inksheets-test
+- Successful workflow: https://github.com/williebob555-lab/InkSlate/actions/runs/40332368975
+- Published tag and release body both identify `deab893dcdf944d010865d874ff4c9e5ae4dc635`.
+- All four matching assets are uploaded and nonempty: InkSheets APK, Windows MSI, Fedora RPM and watch ZIP, each named with `1.2.2-test.298`.
+- Android tests/signing, Windows installer including its installation smoke check, Fedora packaging and publication all succeeded. No older-platform asset remains in this release.
