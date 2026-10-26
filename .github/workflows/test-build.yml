@@ -147,7 +147,9 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/inkslate.jks"
 
       - name: Run the tests
-        run: ./gradlew :core:test :sheets-core:test :app:testInkslateDebugUnitTest :desktop:test :sheets-desktop:test --stacktrace
+        # Keep timing assertions independent of compilation/rendering in other projects.
+        # This is the same bounded, sequential run used for local validation.
+        run: ./gradlew :core:test :sheets-core:test :app:testInkslateDebugUnitTest :app:testInksheetsDebugUnitTest :desktop:test :sheets-desktop:test --no-parallel --max-workers=2 --stacktrace
 
       # Run logs need a login to read; annotations do not. Each failed test is named in one.
       - name: Name the failed tests

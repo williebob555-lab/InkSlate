@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -143,7 +144,8 @@ class HomeRedesignTest {
             waitForIdle()
             assertEquals("trombone", state.profileId)
             onNode(hasSetTextAction()).performTextInput("Nocturne")
-            onNode(hasText("Nocturne") and !hasSetTextAction()).performClick()
+            onNode(hasText("Nocturne") and hasClickAction() and !hasSetTextAction()).performClick()
+            waitForIdle()
             assertTrue(platform.opened.last().endsWith("Nocturne - Trombone.pdf"))
         }
     }
