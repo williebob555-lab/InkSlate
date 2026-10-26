@@ -92,6 +92,12 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.musicLaneDp = if (open) 72f else 0f
     }
 
+    override fun setMusicShelfHeight(dp: Float) {
+        if (com.inkslate.ink.DrawingView.musicShelfDp == dp) return
+        com.inkslate.ink.DrawingView.musicShelfDp = dp
+        com.inkslate.core.Perform.recentre?.invoke()
+    }
+
     /** Set from the activities' lifecycle (FlavorSetup): false once none is started - backgrounded, or the screen off. */
     @Volatile var started = 1
     override val inForeground: Boolean get() = started > 0

@@ -3,6 +3,8 @@ package com.inksheets.ui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,6 +35,14 @@ import kotlinx.coroutines.withContext
 @Composable
 fun SheetsSettings(state: SheetsState) {
     var importing by remember { mutableStateOf(false) }
+    var section by remember { mutableStateOf("Library") }
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+        listOf("Library", "Controllers", "Music tools").forEach { label ->
+            FilterChip(selected = section == label, onClick = { section = label }, label = { Text(label) })
+        }
+    }
+    if (section == "Library") {
     Heading("Library")
     TextButton(
         onClick = { importing = true },
@@ -39,8 +50,10 @@ fun SheetsSettings(state: SheetsState) {
         modifier = Modifier.padding(horizontal = 12.dp)
     ) { Text("Import from MobileSheets...") }
     if (importing) MobileSheetsDialog(state, onClose = { importing = false })
-    ControllerSettings(state)
-    if (state.library != null) LibraryHealth(state)
+    if (state.library != null) LibraryHealth(state, health = true, experiments = false)
+    }
+    if (section == "Controllers") ControllerSettings(state)
+    if (section == "Music tools") LibraryHealth(state, health = false, experiments = true)
 }
 
 @Composable
@@ -57,7 +70,7 @@ private fun Heading(text: String) = Text(
  * to be missing, and the Trash.
  */
 @Composable
-private fun LibraryHealth(state: SheetsState) {
+private fun LibraryHealth(state: SheetsState, health: Boolean = true, experiments: Boolean = true) {
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     var missing by remember { mutableStateOf<List<Pair<com.inksheets.core.Song, com.inksheets.core.Part>>>(emptyList()) }
@@ -72,6 +85,7 @@ private fun LibraryHealth(state: SheetsState) {
     }
     LaunchedEffect(state.version) { look() }
 
+    if (health) {
     Heading("Library health")
     Column(Modifier.padding(horizontal = 16.dp)) {
         ReassignRow(state)
@@ -167,8 +181,9 @@ private fun LibraryHealth(state: SheetsState) {
         }
     }
 
-    // Tucked away at the very end: things still being tried out.
-    Heading("Experimental")
+    }
+    if (experiments) {
+    Heading("Music tools — experimental")
     Column(Modifier.padding(horizontal = 16.dp)) {
         val companion = state.companion
         Row(
@@ -222,6 +237,7 @@ private fun LibraryHealth(state: SheetsState) {
         }
         if (state.readMusic) InstrumentsSettings(state)
         WatchSettings(state)
+    }
     }
 }
 

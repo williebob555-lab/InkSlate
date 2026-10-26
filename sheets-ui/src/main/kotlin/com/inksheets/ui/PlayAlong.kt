@@ -94,7 +94,7 @@ internal object PlayAlong {
     fun pageChanged(state: SheetsState, path: String, page: Int) {
         val was = if (lastPath == path) lastPage else -1
         lastPath = path; lastPage = page
-        if (!Recording.playing || Listener.active || page != was + 1 || was < 0) return
+        if (!on || !Recording.playing || Listener.active || page != was + 1 || was < 0) return
         if (System.currentTimeMillis() - autoTurnedAt < 1_500) return
         val song = state.songAt(path) ?: return
         if (song.id != Recording.songId) return

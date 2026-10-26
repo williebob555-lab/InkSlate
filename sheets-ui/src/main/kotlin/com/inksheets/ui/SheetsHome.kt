@@ -2,6 +2,8 @@ package com.inksheets.ui
 
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
@@ -45,6 +47,13 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Minimize
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.MergeType
+import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -132,14 +141,17 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
         .then(if (state.remote.remoteOpen) Modifier.underCover() else Modifier)) {
     // On a phone the buttons need the whole bar; the name goes.
     val narrow = maxWidth < 520.dp
+    val compactHeader = maxWidth < 760.dp
+    val showAppTitle = maxWidth >= 760.dp
+    val sideNavigation = maxWidth >= 900.dp && maxHeight >= 500.dp
     // A phone on its side: the list needs every line it can get (see SongsPane).
     val low = maxHeight < 440.dp
     androidx.compose.runtime.SideEffect { state.lowScreen = low }
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
-            title = { if (!narrow) Text("InkSheets", maxLines = 1) },
+            title = { if (showAppTitle) Text("InkSheets", maxLines = 1) },
             actions = {
-                InstrumentChooser(state)
+                InstrumentChooser(state, compact = compactHeader)
                 // Playback mode, from a song left behind: paused or played on from here.
                 if (Recording.session) {
                     IconButton(
@@ -156,28 +168,34 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                     onClick = { showMetronome = !showMetronome },
                     modifier = if (showMetronome) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
                 ) { Icon(Icons.Default.Timer, "Metronome") }
-                IconButton(
+                if (!narrow || !Recording.session) IconButton(
                     onClick = { if (tunerShown) { showTuner = false; state.tunerOpen = false } else showTuner = true },
                     modifier = if (tunerShown) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
                 ) { Icon(Icons.Default.GraphicEq, "Tuner") }
                 // Named, not an icon among icons: the first thing a new library needs.
                 if (state.library != null) {
-                    if (narrow) IconButton(onClick = { showImport = true }) { Icon(Icons.Default.LibraryAdd, "Add music") }
+                    if (compactHeader) IconButton(onClick = { showImport = true }) { Icon(Icons.Default.LibraryAdd, "Add music") }
                     else TextButton(onClick = { showImport = true }) {
                         Icon(Icons.Default.LibraryAdd, null)
                         Spacer(Modifier.size(6.dp))
                         Text("Add music")
                     }
                 }
+                if (!compactHeader) HomeDevicesButton(state)
                 var more by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { more = true }) { Icon(Icons.Default.MoreVert, "More") }
                     DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                        if (narrow && Recording.session) DropdownMenuItem(
+                            text = { Text("Tuner") }, leadingIcon = { Icon(Icons.Default.GraphicEq, null) },
+                            onClick = { more = false; if (tunerShown) { showTuner = false; state.tunerOpen = false } else showTuner = true }
+                        )
                         DropdownMenuItem(
                             text = { Text("Change library...") },
                             leadingIcon = { Icon(Icons.Default.FolderOpen, null) },
                             onClick = { more = false; chooseFolder = true }
                         )
+                        HorizontalDivider()
                         DropdownMenuItem(
                             text = { Text("Play together (lead or follow)...") },
                             leadingIcon = { Icon(Icons.Default.Devices, null) },
@@ -188,6 +206,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                             leadingIcon = { Icon(Icons.Default.Gamepad, null) },
                             onClick = { more = false; state.remote.remoteOpen = true }
                         )
+                        HorizontalDivider()
                         if (state.library != null) {
                             DropdownMenuItem(
                                 text = { Text("Open a shared setlist...") },
@@ -293,18 +312,22 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
             // Bookmarks is a tab only while there are some.
             val marked = remember(state.version) { state.library?.songs.orEmpty().filter { it.bookmarks.isNotEmpty() } }
             if (tab == 2 && marked.isEmpty()) tab = 0
-            TabRow(selectedTabIndex = tab) {
-                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Songs") })
-                Tab(selected = tab == 1, onClick = {
-                    // Also the way back to the top of the setlists, from inside a folder or a setlist.
-                    tab = 1; state.setlistFolder = null; state.setlistShown = null
-                }, text = { Text("Setlists") })
-                if (marked.isNotEmpty()) Tab(selected = tab == 2, onClick = { tab = 2 }, text = { Text("Bookmarks") })
-            }
-            when (tab) {
-                0 -> SongsPane(state)
-                2 -> BookmarksPane(state, marked)
-                else -> SetlistsPane(state)
+            Row(Modifier.weight(1f).fillMaxWidth()) {
+                if (sideNavigation) HomeNavigation(
+                    state = state,
+                    hasBookmarks = marked.isNotEmpty(),
+                    onOpenSettings = onOpenSettings,
+                    onOpenDeleted = { showDeleted = true }
+                )
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    if (!sideNavigation) HomeCompactNavigation(state, marked.isNotEmpty())
+                    if (tab == 0 && !low) HomeContinue(state)
+                    when (tab) {
+                        0 -> SongsPane(state)
+                        2 -> BookmarksPane(state, marked)
+                        else -> SetlistsPane(state)
+                    }
+                }
             }
         }
     }
@@ -359,13 +382,13 @@ private fun Welcome(onChoose: () -> Unit) {
 
 /** The instrument being played: only its parts are shown, and its part opens first. */
 @Composable
-private fun InstrumentChooser(state: SheetsState) {
+private fun InstrumentChooser(state: SheetsState, compact: Boolean = false) {
     var open by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf(false) }
     if (editing) ProfilesDialog(state, onClose = { editing = false })
     Box {
-        TextButton(onClick = { open = true }) {
-            Text(state.profile?.name ?: "All instruments")
+        TextButton(onClick = { open = true }, modifier = Modifier.widthIn(max = if (compact) 152.dp else 260.dp)) {
+            Text(state.profile?.name ?: "All instruments", maxLines = if (compact) 2 else 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
             Icon(Icons.Default.ArrowDropDown, null)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
@@ -387,6 +410,7 @@ private fun InstrumentChooser(state: SheetsState) {
 private fun SongsPane(state: SheetsState) {
     var query by rememberSaveable { mutableStateOf("") }
     var editing by remember { mutableStateOf<Song?>(null) }
+    var editAssignments by remember { mutableStateOf(false) }
     var addingToSetlist by remember { mutableStateOf<Song?>(null) }
     // Songs chosen to act on together (a hold on one starts it, as in Slate's Home).
     val picked = remember { androidx.compose.runtime.mutableStateListOf<String>() }
@@ -401,6 +425,7 @@ private fun SongsPane(state: SheetsState) {
     var missingOnly by rememberSaveable { mutableStateOf(false) }
     var merging by remember { mutableStateOf<Song?>(null) }
     var colouring by remember { mutableStateOf<Song?>(null) }
+    var compactFilters by remember { mutableStateOf(false) }
 
     val version = state.version
     // What each filter would pick out of the whole library - a filter that would show nothing,
@@ -460,6 +485,27 @@ private fun SongsPane(state: SheetsState) {
             onValueChange = { query = it },
             leadingIcon = { Icon(Icons.Default.Search, null) },
             placeholder = { Text("Title, composer, instrument...") },
+            trailingIcon = {
+                if (state.lowScreen) Box {
+                    IconButton(onClick = { compactFilters = true }) { Icon(Icons.Default.MoreVert, "Sort and filter songs") }
+                    DropdownMenu(expanded = compactFilters, onDismissRequest = { compactFilters = false }) {
+                        SongSort.entries.forEach { option ->
+                            DropdownMenuItem(text = { Text(option.label) },
+                                leadingIcon = { if (sort == option) Icon(Icons.Default.Check, null) },
+                                onClick = { sortName = option.name; compactFilters = false })
+                        }
+                        HorizontalDivider()
+                        @Composable fun filter(label: String, selected: Boolean, toggle: () -> Unit) {
+                            DropdownMenuItem(text = { Text(label) }, leadingIcon = { if (selected) Icon(Icons.Default.Check, null) }, onClick = { toggle(); compactFilters = false })
+                        }
+                        filter("Has a recording", withRecording) { withRecording = !withRecording }
+                        filter("In no setlist", notInSet) { notInSet = !notInSet }
+                        filter("No instrument (${counts.noInstrument})", noInstrument) { noInstrument = !noInstrument }
+                        filter("No tempo (${counts.noTempo})", noTempo) { noTempo = !noTempo }
+                        filter("File missing (${counts.missing.size})", missingOnly) { missingOnly = !missingOnly }
+                    }
+                }
+            },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
         )
@@ -572,7 +618,8 @@ private fun SongsPane(state: SheetsState) {
                             onPart = { p -> state.stopPlaying(); state.pickPart(song, p); openSong(state, song) },
                             missing = song.id in counts.missing,
                             onOpen = { if (picked.isNotEmpty()) toggle() else { state.stopPlaying(); openSong(state, song) } },
-                            onEdit = { editing = song },
+                            onEdit = { editAssignments = false; editing = song },
+                            onEditParts = { editAssignments = true; editing = song },
                             onAddToSetlist = { addingToSetlist = song },
                             onRecordings = { recordingsFor = song },
                             onNotes = { state.notesFor = song },
@@ -614,7 +661,7 @@ private fun SongsPane(state: SheetsState) {
         }
     }
 
-    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }, initialParts = editAssignments) }
     colouring?.let { song ->
         ColourDialog("Colour for ${song.title}", song.color, onChosen = { state.setSongColor(song.id, it); colouring = null }, onDismiss = { colouring = null })
     }
@@ -665,7 +712,11 @@ internal fun SongRow(
     unsure: Boolean,
     onOpen: () -> Unit,
     onEdit: (() -> Unit)? = null,
+    /** Open the assignments tab directly, instead of detouring through song details. */
+    onEditParts: (() -> Unit)? = null,
     onAddToSetlist: (() -> Unit)? = null,
+    /** A set entry can be removed without removing its song from the library. */
+    onTakeOutOfSetlist: (() -> Unit)? = null,
     onRecordings: (() -> Unit)? = null,
     /** Write the song's notes; its notes, shown beside its name, open them too. */
     onNotes: (() -> Unit)? = null,
@@ -769,7 +820,7 @@ internal fun SongRow(
                                 label = { Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                             )
                         }
-                        onEdit?.let { TextButton(onClick = it) { Text("Edit parts") } }
+                        (onEditParts ?: onEdit)?.let { TextButton(onClick = it) { Text("Edit parts") } }
                     }
                 }
             } else if ((instruments.isNotEmpty() || unsure) && note == null) {
@@ -802,23 +853,29 @@ internal fun SongRow(
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Song options") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    onLook?.let { DropdownMenuItem(text = { Text("Look at it") }, onClick = { menu = false; it() }) }
-                    onEdit?.let { DropdownMenuItem(text = { Text("Details and parts") }, onClick = { menu = false; it() }) }
-                    onAddToSetlist?.let { DropdownMenuItem(text = { Text("Add to setlist...") }, onClick = { menu = false; it() }) }
+                    onLook?.let { DropdownMenuItem(text = { Text("Look at it") }, leadingIcon = { Icon(Icons.Default.Visibility, null) }, onClick = { menu = false; it() }) }
+                    onEdit?.let { DropdownMenuItem(text = { Text("Details and parts") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { menu = false; it() }) }
+                    onEditParts?.let { DropdownMenuItem(text = { Text("Part assignments...") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) }, onClick = { menu = false; it() }) }
                     onRecordings?.let {
                         DropdownMenuItem(
                             text = { Text(if (song.audio.isEmpty()) "Recordings..." else "Recordings (${song.audio.size})") },
+                            leadingIcon = { Icon(Icons.Default.LibraryMusic, null) },
                             onClick = { menu = false; it() }
                         )
                     }
-                    onNotes?.let { DropdownMenuItem(text = { Text(if (song.notes == null) "Add notes..." else "Notes...") }, onClick = { menu = false; it() }) }
-                    onColour?.let { DropdownMenuItem(text = { Text(colourLabel) }, onClick = { menu = false; it() }) }
-                    onColourEverywhere?.let { DropdownMenuItem(text = { Text("Colour everywhere...") }, onClick = { menu = false; it() }) }
-                    onMerge?.let { DropdownMenuItem(text = { Text("Put into another song...") }, onClick = { menu = false; it() }) }
+                    HorizontalDivider()
+                    onAddToSetlist?.let { DropdownMenuItem(text = { Text("Add to setlist...") }, leadingIcon = { Icon(Icons.Default.PlaylistAdd, null) }, onClick = { menu = false; it() }) }
+                    onTakeOutOfSetlist?.let { DropdownMenuItem(text = { Text("Take out of this setlist") }, leadingIcon = { Icon(Icons.Default.Close, null) }, onClick = { menu = false; it() }) }
+                    onNotes?.let { DropdownMenuItem(text = { Text(if (song.notes == null) "Add notes..." else "Notes...") }, leadingIcon = { Icon(Icons.Default.Notes, null) }, onClick = { menu = false; it() }) }
+                    onColour?.let { DropdownMenuItem(text = { Text(colourLabel) }, leadingIcon = { Icon(Icons.Default.Palette, null) }, onClick = { menu = false; it() }) }
+                    onColourEverywhere?.let { DropdownMenuItem(text = { Text("Colour everywhere...") }, leadingIcon = { Icon(Icons.Default.Palette, null) }, onClick = { menu = false; it() }) }
+                    onMerge?.let { DropdownMenuItem(text = { Text("Put into another song...") }, leadingIcon = { Icon(Icons.Default.MergeType, null) }, onClick = { menu = false; it() }) }
                     onDelete?.let {
+                        HorizontalDivider()
                         var confirm by remember { mutableStateOf(false) }
                         DropdownMenuItem(
-                            text = { Text(if (confirm) "Tap again: it goes to the Trash for 30 days" else "Remove from library", fontWeight = if (confirm) FontWeight.Bold else null) },
+                            text = { Text(if (confirm) "Tap again: it goes to the Trash for 30 days" else "Remove from library", color = MaterialTheme.colorScheme.error, fontWeight = if (confirm) FontWeight.Bold else null) },
+                            leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
                             onClick = { if (confirm) { menu = false; it() } else confirm = true }
                         )
                     }
@@ -848,12 +905,18 @@ internal fun SheetDialog(
         return
     }
     val footer: @Composable () -> Unit = buttons ?: { TextButton(onClick = onDismiss) { Text("Close") } }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            Modifier.fillMaxSize().imePadding().padding(8.dp), contentAlignment = Alignment.Center
+        ) {
         Surface(
             shape = MaterialTheme.shapes.large,
             tonalElevation = 6.dp,
             // As wide as it wants on a tablet or laptop, and no wider than a phone's screen.
-            modifier = Modifier.widthIn(max = if (wide) 640.dp else 440.dp).fillMaxWidth().padding(8.dp)
+            modifier = Modifier.widthIn(max = if (wide) 880.dp else 440.dp).fillMaxWidth().heightIn(max = maxHeight)
         ) {
             Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 20.dp)) {
                 // Like every panel: an X at the top right, and the title swiped down closes it.
@@ -878,6 +941,7 @@ internal fun SheetDialog(
                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                 androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { footer() }
             }
+        }
         }
     }
 }

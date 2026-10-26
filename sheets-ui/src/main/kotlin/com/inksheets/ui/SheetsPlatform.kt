@@ -73,6 +73,9 @@ interface SheetsPlatform {
     /** Keep a lane clear for the music tools down the side away from the strip, or not. */
     fun setMusicLane(open: Boolean) {}
 
+    /** Space below the fitted music page, measured from the adaptive shelf. */
+    fun setMusicShelfHeight(dp: Float) {}
+
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
 

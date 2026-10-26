@@ -369,8 +369,13 @@ class RemoteScreensTest {
             "Boots on the Ground", "Seven Nation Army", "Uptown Funk", "Land of a Thousand Dances", "Shout", "Iron Man",
             "Zombie Nation", "Mr. Brightside", "Hey Song", "24K Magic", "Fight Song")
         lateinit var setId: String
+        titles.forEach { title -> File(root, "Band/$title - Alto Sax.pdf").apply { parentFile.mkdirs(); writeText("fixture") } }
         stand.change {
-            val ids = titles.map { t -> songs.firstOrNull { it.title == t }?.id ?: ensureSong(t).id }
+            val ids = titles.map { t ->
+                val song = songs.firstOrNull { it.title == t } ?: ensureSong(t)
+                if (song.parts.isEmpty()) editSong(song.id) { parts = listOf(Part(file = "Band/$t - Alto Sax.pdf", instrument = "alto-sax")) }
+                song.id
+            }
             setId = addSetlist("Football - home").id
             editSetlist(setId) { entries = ids.map { com.inksheets.core.SetlistEntry(songId = it) } }
         }

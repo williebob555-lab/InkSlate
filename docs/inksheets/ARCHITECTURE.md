@@ -1,5 +1,13 @@
 # InkSheets — architecture
 
+## Workstation UI (October 2026)
+
+`HomeWorkspace.kt` supplies wide sidebar navigation and compact direct destinations over the existing song, setlist/folder and bookmark panes. `SettingsWorkspace.kt` in library-ui supplies one responsive category/body layout; the platform settings retain every existing section and use this layout only in music view.
+
+`MusicShelf.kt` supplies device-local widget order/visibility, direct timing/recording/recognition/device actions, and an active transport strip independent of widget visibility. It measures its height and calls `SheetsPlatform.setMusicShelfHeight`; desktop `Viewport.fitClear(bottomLane)` and Android `DrawingView.fitInto` fit the page above it. Floating panels respect `Overlays.bottomOut`, and the original annotation strip is fitted into the remaining height. The annotation engine, full InkSlate tool palette and input actions remain shared. Advanced score editing/export controls remain available from All score tools. At narrow widths the shelf scrolls horizontally rather than stacking into the music area; short landscape layouts use a shallower shelf. Folding the strip releases both side and bottom reservations.
+
+Part assignments and metadata are separate tabs in one editor; saves apply only edited fields, including per-part page ranges, to the current library snapshot. Folder recovery snapshots live in the synced log, so Recently deleted can restore the tree after the immediate Undo expires. Companion page-follow messages carry optional part identity; old clients remain wire compatible.
+
 Conventions: paths are relative to `C:\PDF Draw App`. `file:line` refs were checked against the current tree. Not every pref, file and class was read end to end (see "Not verified" at the end).
 
 ---

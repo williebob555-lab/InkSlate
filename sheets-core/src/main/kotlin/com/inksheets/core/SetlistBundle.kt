@@ -28,7 +28,15 @@ object SetlistBundle {
     private val SOUND = setOf("mp3", "wav", "m4a", "aac", "ogg", "flac", "aif", "aiff")
 
     @Serializable
-    data class BundlePart(val file: String, val instrument: String? = null, val firstPage: Int? = null, val lastPage: Int? = null)
+    data class BundlePart(
+        val file: String,
+        val instrument: String? = null,
+        val firstPage: Int? = null,
+        val lastPage: Int? = null,
+        val chair: Int? = null,
+        val label: String? = null,
+        val also: List<String> = emptyList()
+    )
 
     @Serializable
     data class BundleAudio(val file: String, val label: String? = null)
@@ -53,6 +61,14 @@ object SetlistBundle {
     /** Write [setlistId] to [out]. Returns how many files went in. */
     fun export(library: Library, root: File, setlistId: String, out: File): Int {
         val setlist = library.setlist(setlistId) ?: error("No such setlist")
+        // Refuse before touching the output: an incomplete package must never look successful.
+        val missing = setlist.entries.flatMapIndexed { i, e ->
+            val song = library.song(e.songId)
+            if (song == null) listOf("${i + 1}. Removed song")
+            else (song.parts.map { it.file } + song.audio.map { it.file })
+                .filter { !File(root, it).isFile }.map { "${song.title}: $it" }
+        }.distinct()
+        require(missing.isEmpty()) { "Cannot share: missing music or recordings:\n" + missing.joinToString("\n") }
         val stored = LinkedHashMap<String, String>()   // library path -> name in the zip
         val taken = HashSet<String>()
         // Named for a person reading the zip: its place in the set, the song, and what it is.
@@ -69,16 +85,17 @@ object SetlistBundle {
         val width = present.size.toString().length.coerceAtLeast(2)
         val songs = present.mapIndexed { i, s ->
             val number = (i + 1).toString().padStart(width, '0')
-            val parts = s.parts.filter { File(root, it.file).isFile }
+            val parts = s.parts
             BundleSong(
                 title = s.title, composers = s.composers, arrangers = s.arrangers, key = s.key,
                 timeSignature = s.timeSignature, tempo = s.tempo,
                 parts = parts.map { p ->
-                    val what = p.instrument?.let { Instruments.byId[it]?.name ?: it }
+                    val what = p.instrument?.let { Instruments.partName(p) }
                         ?: if (parts.size > 1) File(p.file).nameWithoutExtension else null
-                    BundlePart(store(p.file, "$number ${s.title}" + (what?.let { " - $it" } ?: "")), p.instrument, p.firstPage, p.lastPage)
+                    BundlePart(store(p.file, "$number ${s.title}" + (what?.let { " - $it" } ?: "")), p.instrument, p.firstPage, p.lastPage,
+                        chair = p.chair, label = p.label, also = p.also)
                 },
-                audio = s.audio.filter { File(root, it.file).isFile }.map { a ->
+                audio = s.audio.map { a ->
                     BundleAudio(store(a.file, "$number ${s.title} - " + (a.label ?: "recording")), a.label)
                 }
             )
@@ -122,45 +139,89 @@ object SetlistBundle {
             // Each file in the bundle gets its own name here: two parts of the same name from
             // different folders of someone's zip are two files, not one written over the other.
             val namedAs = HashMap<String, String>()
-            val trash = LibraryTrash(root, library)
-            fun extract(inZip: String): String? {
-                namedAs[inZip]?.let { return it }
+            val originalLocations = HashMap<String, String>()
+            fun extract(inZip: String, songBase: String): String? {
+                val sourceKey = "$songBase/$inZip"
+                namedAs[sourceKey]?.let { return it }
                 val entry = zip.getEntry(inZip) ?: return null
                 // Only a plain name inside the bundle's own folder: never a path that climbs out.
                 val name = inZip.substringAfterLast('/').replace("..", "_")
-                var rel = "$base/$name"
+                var rel = "$songBase/$name"
                 var n = 2
                 while (rel.lowercase() in namedAs.values.map { it.lowercase() }) {
-                    rel = "$base/${name.substringBeforeLast('.')} ($n)" + name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }; n++
+                    rel = "$songBase/${name.substringBeforeLast('.')} ($n)" + name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }; n++
                 }
-                namedAs[inZip] = rel
-                val target = File(root, rel)
-                target.parentFile.mkdirs()
+                originalLocations[sourceKey] = rel
                 val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                if (target.isFile) {
-                    // Brought in before: the same file again changes nothing; a different one
-                    // (marked here since, or a new edition) keeps the old copy in the trash.
-                    if (target.length() == bytes.size.toLong() && target.readBytes().contentEquals(bytes)) return rel
-                    trash.keepFile(rel, "${manifest.name}: $name (before it was brought in again)")
+                fun identical(file: File) = file.isFile && file.length() == bytes.size.toLong() && file.readBytes().contentEquals(bytes)
+                var target = File(root, rel)
+                if (target.exists() && !identical(target)) {
+                    // A re-import is not permission to replace this device's annotations. Keep
+                    // both editions, with a stable content name so importing again adds nothing.
+                    val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+                        .take(8).joinToString("") { "%02x".format(it.toInt() and 255) }
+                    val stem = rel.substringBeforeLast('.', rel)
+                    val ext = rel.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
+                    rel = "$stem (shared $hash)$ext"
+                    target = File(root, rel)
+                    var suffix = 2
+                    while (target.exists() && !identical(target)) {
+                        rel = "$stem (shared $hash ${suffix++})$ext"
+                        target = File(root, rel)
+                    }
                 }
-                target.writeBytes(bytes)
+                namedAs[sourceKey] = rel
+                target.parentFile.mkdirs()
+                if (!identical(target)) target.writeBytes(bytes)
                 return rel
             }
 
             var added = 0
             var matched = 0
             val ids = manifest.songs.map { b ->
+                // Different arrangements in identically named setlists must not share file or
+                // part identities, even if the publisher gives their PDFs identical names.
+                val identifyingNames = (b.composers + listOf("/") + b.arrangers).joinToString("|") { Library.matchKey(it) }
+                val songBase = if (b.composers.isEmpty() && b.arrangers.isEmpty()) base else {
+                    val identity = java.security.MessageDigest.getInstance("SHA-256")
+                        .digest((Library.matchKey(b.title) + "|" + identifyingNames).toByteArray())
+                        .take(8).joinToString("") { "%02x".format(it.toInt() and 255) }
+                    "$base/Edition-$identity"
+                }
                 val parts = b.parts.mapNotNull { p ->
-                    extract(p.file)?.let { rel ->
-                        Part(id = Library.partIdFor(rel), file = rel, instrument = p.instrument, firstPage = p.firstPage, lastPage = p.lastPage,
-                            source = if (p.instrument != null) InstrumentSource.PERSON else InstrumentSource.UNKNOWN)
+                    extract(p.file, songBase)?.let { rel ->
+                        // A band pack is stored once in the ZIP, but each song/instrument's
+                        // page range is its own part. A file-only ID transfers ownership of
+                        // every earlier range to whichever song is imported last.
+                        val identity = if (p.firstPage != null || p.lastPage != null)
+                            "$rel#${Library.matchKey(b.title)}:${p.firstPage}:${p.lastPage}:${p.instrument}"
+                        else rel
+                        Part(id = Library.partIdFor(identity), file = rel, instrument = p.instrument, firstPage = p.firstPage, lastPage = p.lastPage,
+                            source = if (p.instrument != null) InstrumentSource.PERSON else InstrumentSource.UNKNOWN, placed = true,
+                            chair = p.chair, label = p.label, also = p.also)
                     }
                 }
-                val audio = b.audio.mapNotNull { a -> extract(a.file)?.let { AudioTrack(file = it, label = a.label) } }
-                val existing = library.songs.firstOrNull { Library.matchKey(it.title) == Library.matchKey(b.title) }
+                val audio = b.audio.mapNotNull { a -> extract(a.file, songBase)?.let { AudioTrack(file = it, label = a.label) } }
+                val candidates = library.songs.filter { Library.matchKey(it.title) == Library.matchKey(b.title) }
+                fun names(values: List<String>) = values.map(Library::matchKey).filter { it.isNotEmpty() }.toSet()
+                fun conflict(s: Song): Boolean =
+                    (s.composers.isNotEmpty() && b.composers.isNotEmpty() && names(s.composers) != names(b.composers)) ||
+                        (s.arrangers.isNotEmpty() && b.arrangers.isNotEmpty() && names(s.arrangers) != names(b.arrangers))
+                val importedPaths = (parts.map { it.file } + audio.map { it.file } +
+                    (b.parts.map { it.file } + b.audio.map { it.file }).mapNotNull { originalLocations["$songBase/$it"] }).toSet()
+                val existing = candidates.filter { s ->
+                    !conflict(s) && (
+                        (s.parts.map { it.file } + s.audio.map { it.file }).any { it in importedPaths } ||
+                            (s.composers.isNotEmpty() && b.composers.isNotEmpty() && names(s.composers) == names(b.composers)) ||
+                            (s.arrangers.isNotEmpty() && b.arrangers.isNotEmpty() && names(s.arrangers) == names(b.arrangers)) ||
+                            (s.parts.isEmpty() && s.audio.isEmpty())
+                        )
+                }.singleOrNull()
                 if (existing != null) {
                     // Already here: add what is new, keep what the person has.
-                    val newParts = parts.filter { p -> existing.parts.none { it.file == p.file } }
+                    val newParts = parts.filter { p -> existing.parts.none {
+                        it.file == p.file && it.firstPage == p.firstPage && it.lastPage == p.lastPage && it.instrument == p.instrument
+                    } }
                     val newAudio = audio.filter { a -> existing.audio.none { it.file == a.file } }
                     if (newParts.isNotEmpty() || newAudio.isNotEmpty()) {
                         library.editSong(existing.id) {
@@ -173,6 +234,8 @@ object SetlistBundle {
                 } else {
                     added++
                     library.addSong(b.title, parts) {
+                        // Distinct arrangements must survive the automatic library scan too.
+                        if (candidates.isNotEmpty()) apart = true
                         composers = b.composers
                         arrangers = b.arrangers
                         key = b.key

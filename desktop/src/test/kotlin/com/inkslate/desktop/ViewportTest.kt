@@ -15,6 +15,22 @@ import org.junit.Test
  */
 class ViewportTest {
 
+    @Test
+    fun `music shelf and either annotation side leave every page wholly clear`() {
+        for ((width, height) in listOf(360f to 640f, 640f to 360f, 800f to 1280f, 1280f to 800f)) {
+            for (left in listOf(false, true)) {
+                val page = Box(0f, 0f, 612f, 792f)
+                val vp = Viewport().apply { viewSize = androidx.compose.ui.geometry.Size(width, height); content = page }
+                vp.fitClear(page, 8f, 64f, laneOnLeft = left, bottomLane = 128f)
+                val topLeft = vp.docToScreen(page.left, page.top)
+                val bottomRight = vp.docToScreen(page.right, page.bottom)
+                assertTrue("page must be above shelf", bottomRight.y <= height - 128f + .01f)
+                assertTrue("page top visible", topLeft.y >= 0f)
+                assertTrue("annotation side clear", if (left) topLeft.x >= 64f else bottomRight.x <= width - 64f + .01f)
+            }
+        }
+    }
+
     private fun viewport() = Viewport().apply {
         viewSize = androidx.compose.ui.geometry.Size(800f, 600f)
         content = Box(0f, 0f, 612f, 792f)

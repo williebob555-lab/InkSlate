@@ -271,9 +271,8 @@ fun TabStrip(
             // The songs open now, kept as a setlist in the order of their tabs.
             AppFlavor.onSaveTabs?.let { save ->
                 if (tabs.isNotEmpty()) {
-                    TextButton(onClick = { save(tabs.filter { !it.closeRequested.value }.map { it.file }) }) {
-                        Icon(Icons.Default.PlaylistAdd, null, modifier = Modifier.size(18.dp))
-                        Text(" Save as setlist", style = MaterialTheme.typography.labelMedium)
+                    IconButton(onClick = { save(tabs.filter { !it.closeRequested.value }.map { it.file }) }) {
+                        Icon(Icons.Default.PlaylistAdd, "Save as setlist", modifier = Modifier.size(18.dp))
                     }
                 }
             }

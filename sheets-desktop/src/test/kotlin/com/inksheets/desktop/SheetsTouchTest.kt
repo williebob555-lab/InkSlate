@@ -98,7 +98,7 @@ class SheetsTouchTest {
                 settle(40)
             }
             fun strokes() = com.inkslate.core.Perform.inkOf?.invoke(part.absolutePath)?.pages?.values?.sumOf { it.size } ?: 0
-            fun shown(text: String) = onAllNodesWithText(text, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            fun shown(text: String) = onAllNodes(androidx.compose.ui.test.hasText(text) or androidx.compose.ui.test.hasContentDescription(text), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
 
             shot("opened")
             val first = page()
@@ -117,11 +117,11 @@ class SheetsTouchTest {
             assertTrue("and another brings them back", shown("Tuner"))
 
             // A button pressed by a finger: the metronome's panel opens, and closes again.
-            tapNode(onAllNodesWithText("Metronome", useUnmergedTree = true).onFirst())
+            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Metronome settings"), useUnmergedTree = true).onFirst())
             shot("metronome")
             println("after tapping Metronome: page ${page()}")
             // Off again, so its clicks do not run on under the rest.
-            tapNode(onAllNodesWithText("Metronome", useUnmergedTree = true).onFirst())
+            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Metronome settings"), useUnmergedTree = true).onFirst())
 
             // Pages: a tap at the right, one at the left, a flick each way.
             tap(0.93f, 0.5f)

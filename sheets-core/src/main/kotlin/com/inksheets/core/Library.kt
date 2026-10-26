@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonObject
 import java.util.UUID
 
 /** Where a part's instrument came from, so a guess can be shown as one and never overrule a person. */
@@ -650,8 +651,45 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     /** Bring back a deleted setlist, as it was. */
     fun restoreSetlist(id: String) = edit(SETLIST, id) { put(Op.DELETED, false) }
 
-    /** Bring back a deleted folder (what was in it is put back by whoever kept the list). */
-    fun restoreFolder(id: String) = edit(FOLDER, id) { put(Op.DELETED, false) }
+    /** Save the live hierarchy before a folder and/or its contents are removed. Synced with it. */
+    fun rememberFolderContents(id: String) {
+        if (folders.none { it.id == id }) return
+        val childFolders = LinkedHashMap<String, JsonElement>()
+        val childLists = LinkedHashMap<String, JsonElement>()
+        fun walk(parent: String) {
+            setlistsIn(parent).forEach { childLists[it.id] = it.folderId?.let(::JsonPrimitive) ?: JsonNull }
+            foldersIn(parent).forEach {
+                childFolders[it.id] = it.parentId?.let(::JsonPrimitive) ?: JsonNull
+                walk(it.id)
+            }
+        }
+        walk(id)
+        edit(FOLDER, id) {
+            put("folderRecovery", JsonObject(mapOf("folders" to JsonObject(childFolders), "setlists" to JsonObject(childLists))))
+        }
+    }
+
+    /** Restore a deleted folder and its saved contents without undoing moves made after deletion. */
+    fun restoreFolder(id: String) {
+        val fields = synchronized(this) { state.fields(FOLDER, id)?.toMap() } ?: return
+        if ((fields[Op.DELETED]?.value as? JsonPrimitive)?.content != "true") return
+        val deletedAt = fields[Op.DELETED]?.at
+        val recovery = fields["folderRecovery"]?.value as? JsonObject
+        edit(FOLDER, id) { put(Op.DELETED, false) }
+        if (deletedAt == null || recovery == null) return
+        fun restore(kind: String, saved: JsonObject?, location: String) {
+            saved?.forEach { (childId, parent) ->
+                val child = synchronized(this) { state.fields(kind, childId)?.toMap() } ?: return@forEach
+                // Restoring yesterday's folder must not reclaim a setlist moved elsewhere today,
+                // or resurrect one independently deleted after that folder was removed.
+                if (child[location]?.at?.let { it > deletedAt } == true ||
+                    child[Op.DELETED]?.at?.let { it > deletedAt } == true) return@forEach
+                edit(kind, childId) { put(Op.DELETED, false); put(location, parent) }
+            }
+        }
+        restore(FOLDER, recovery["folders"] as? JsonObject, "parent")
+        restore(SETLIST, recovery["setlists"] as? JsonObject, "folder")
+    }
 
     /**
      * Setlists deleted in the last [days] days, newest first, with when: kept as records with a
@@ -667,12 +705,24 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         }.sortedByDescending { it.second }
     }
 
+    /** Deleted folders remain discoverable after the transient Undo offer has expired. */
+    fun deletedFolders(days: Int = LibraryTrash.KEEP_DAYS, now: Long = System.currentTimeMillis()): List<Pair<Folder, Long>> = synchronized(this) {
+        state.allOf(FOLDER).mapNotNull { (id, fields) ->
+            val d = fields[Op.DELETED] ?: return@mapNotNull null
+            if ((d.value as? JsonPrimitive)?.content != "true" || now - d.at.ms > days * 86_400_000L) return@mapNotNull null
+            folder(id, fields.mapValues { it.value.value }) to d.at.ms
+        }.sortedByDescending { it.second }
+    }
+
     /**
      * Delete a folder. What was inside moves up to where the folder was, rather than going with
      * it: deleting "2023-24" must never quietly delete that year's setlists.
      */
     fun deleteFolder(id: String) {
         val folder = folders.firstOrNull { it.id == id } ?: return
+        val fields = synchronized(this) { state.fields(FOLDER, id)?.toMap() }.orEmpty()
+        val recovery = fields["folderRecovery"]
+        if (recovery == null || fields[Op.DELETED]?.at?.let { recovery.at <= it } == true) rememberFolderContents(id)
         foldersIn(id).forEach { moveFolder(it.id, folder.parentId) }
         setlistsIn(id).forEach { s -> editSetlist(s.id) { this.folderId = folder.parentId } }
         edit(FOLDER, id) { put(Op.DELETED, true) }

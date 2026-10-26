@@ -166,17 +166,19 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         // Every button on screen at once, in one column - never a second column, never a strip to
         // scroll. On a short screen the buttons shrink and their names go small; only where even
         // that is not enough do the last of them move into More (named there).
+        val shelfActions = setOf(PerformAction.METRONOME, PerformAction.TUNER, PerformAction.RECORDINGS, PerformAction.PLAY_AUDIO, PerformAction.PLAY_TOGETHER)
         val wanted = shown.filter { a ->
+            a !in shelfActions &&
             !((a == PerformAction.NEXT_SONG || a == PerformAction.PREVIOUS_SONG) && state.playing == null) &&
                 !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
         }
-        val room = if (side) maxHeight else maxWidth
+        val room = if (side) (maxHeight - state.shelfHeight.dp).coerceAtLeast(80.dp) else maxWidth
         val onStripPresets = if (state.companion.leading) state.presets.filter { it.onStrip } else emptyList()
         // The fold button, the padding and the dividers; the page count and the tempo under their buttons.
-        val extras = 72.dp + (if (state.pageShown.second > 0) 26.dp else 0.dp) + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in shown) 28.dp else 0.dp) +
+        val extras = 72.dp + (if (state.pageShown.second > 0) 26.dp else 0.dp) + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in wanted) 28.dp else 0.dp) +
             34.dp * onStripPresets.size
         // File, Music and More are there besides the chosen buttons.
-        val fixed = 1 + (if (state.pageShown.second > 0) 1 else 0) + (if (state.readMusic && state.current != null) 1 else 0)
+        val fixed = 1 + (if (state.pageShown.second > 0) 1 else 0) + (if (state.readMusic && state.current != null && state.shelfHeight <= 0f) 1 else 0)
         val named = state.stripLabels
         fun fitting(least: androidx.compose.ui.unit.Dp, label: androidx.compose.ui.unit.Dp) = ((room - extras) / (least + label + 2.dp)).toInt() - fixed
         val small = named && fitting(32.dp, 12.dp) < wanted.size
@@ -184,7 +186,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         val least = if (small) 28.dp else 32.dp
         val fits = fitting(least, labelRoom).coerceAtLeast(2)
         // The last of them go first - but never the page turns, Undo or the tools' switch.
-        val keep = setOf(PerformAction.NEXT_PAGE, PerformAction.PREVIOUS_PAGE, PerformAction.UNDO, PerformAction.FULLSCREEN)
+        val keep = setOf(PerformAction.NEXT_PAGE, PerformAction.PREVIOUS_PAGE, PerformAction.UNDO, PerformAction.FULLSCREEN, PerformAction.SWITCH_PART)
         val overflow = if (wanted.size > fits) wanted.reversed().filter { it !in keep }.take(wanted.size - fits) else emptyList()
         val visible = wanted.size - overflow.size
         val btn = ((room - extras) / (visible + fixed).coerceAtLeast(1) - labelRoom - 2.dp).coerceIn(least, 44.dp)
@@ -220,7 +222,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     )
                 }
                 var lastGroup = -1
-                for (action in shown) {
+                for (action in wanted) {
                     if (action in overflow) continue
                     val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
                     if (songAction && state.playing == null) continue
@@ -271,12 +273,12 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     state.readMusic && state.currentPath?.let { Transcriber.cached(state, java.io.File(it)) } != null
                 }
                 // The music tools, with reading the music on: their own strip, down the other side.
-                if (state.readMusic && state.current != null) {
+                if (state.readMusic && state.current != null && state.shelfHeight <= 0f) {
                     StripButton(Icons.Default.MusicNote, "Music", "The music tools: clean view, play bars, go to a bar", btn, named, lit = ScoreTools.open) {
                         if (ScoreTools.open) ScoreTools.close(state) else ScoreTools.open = true
                     }
                 }
-                if (state.listenTurns && (state.current?.audio?.isNotEmpty() == true || readHere || Listener.active)) {
+                if (state.listenTurns && (Listener.active || state.current?.audio?.isNotEmpty() == true || readHere)) {
                     StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
                     ListenGauge(state)
 
@@ -304,10 +306,10 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         androidx.compose.runtime.SideEffect { Overlays.screen = screenWide; Overlays.actionOnLeft = state.stripOnLeft }
         if (Overlays.stripsAside) StripTab(onLeft = state.stripOnLeft, what = "the buttons") else Row(
             verticalAlignment = Alignment.Bottom,
-            modifier = Modifier.align(if (state.stripOnLeft) Alignment.BottomStart else Alignment.BottomEnd).padding(6.dp)
+            modifier = Modifier.align(if (state.stripOnLeft) Alignment.BottomStart else Alignment.BottomEnd).padding(bottom = state.shelfHeight.dp).padding(6.dp)
                 .reportWidth { w -> Overlays.actionOut = with(density) { w.toDp() } + 12.dp }
         ) {
-            val playback = Recording.session && !collapsed
+            val playback = false // Active recording transport lives in the measured shelf status strip.
             if (playback && !state.stripOnLeft) PlaybackColumn(state, btn, named, Modifier.padding(end = 6.dp))
             Surface(
                 shape = RoundedCornerShape(20.dp),
@@ -321,7 +323,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                     // fit (a short screen, many buttons), the column scrolls instead.
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(vertical = 4.dp)
+                        modifier = Modifier.heightIn(max = (room - 12.dp).coerceAtLeast(44.dp))
+                            .verticalScroll(rememberScrollState()).padding(vertical = 4.dp)
                     ) { items() }
                 } else {
                     androidx.compose.foundation.layout.FlowRow(
@@ -350,6 +353,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
     }
 
+    if (!state.homeInFront) MusicShelf(state)
     if (customising) StripEditor(state, onClose = { customising = false })
     if (sendingNote) SendNoteDialog(state, onClose = { sendingNote = false })
     SaveTabsDialog(state)
@@ -380,7 +384,10 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     val song = state.current
     if (state.audioOpen && song != null) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
     // The music tools' strip, down the other side, in its own lane.
-    if (!state.homeInFront) MusicStrip(state)
+    if (!state.homeInFront) {
+        Box(Modifier.matchParentSize().padding(bottom = state.shelfHeight.dp)) { MusicStrip(state) }
+        if (state.remote.remoteOpen) RemoteScreen(state, onClose = { state.remote.remoteOpen = false })
+    }
 }
 
 /** An instrument's name for a part, or what the part calls itself. */
@@ -472,6 +479,11 @@ private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformA
             text = { Text("Fit the page to the screen") },
             leadingIcon = { Icon(Icons.Default.CenterFocusStrong, null) },
             onClick = { onDismiss(); Perform.recentre?.invoke() }
+        )
+        DropdownMenuItem(
+            text = { Text("Arrange music shelf...") },
+            leadingIcon = { Icon(Icons.Default.Tune, null) },
+            onClick = { onDismiss(); state.arrangingShelf = true }
         )
         // Night for a dark pit or stage, Sepia for long reading: one choice for every song.
         var colours by remember { mutableStateOf(false) }

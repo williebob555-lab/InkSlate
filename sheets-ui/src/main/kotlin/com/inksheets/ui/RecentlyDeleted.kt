@@ -69,10 +69,12 @@ internal fun RecentlyDeletedDialog(state: SheetsState, onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
     var trash by remember { mutableStateOf<List<com.inksheets.core.LibraryTrash.Entry>>(emptyList()) }
     var setlists by remember { mutableStateOf<List<Pair<com.inksheets.core.Setlist, Long>>>(emptyList()) }
+    var folders by remember { mutableStateOf<List<Pair<com.inksheets.core.Folder, Long>>>(emptyList()) }
     var query by remember { mutableStateOf("") }
     LaunchedEffect(state.version) {
         trash = withContext(Dispatchers.IO) { state.trash()?.entries().orEmpty() }
         setlists = state.library?.deletedSetlists().orEmpty()
+        folders = state.library?.deletedFolders().orEmpty()
     }
     SheetDialog(title = "Recently deleted", onDismiss = onClose) {
         Column(Modifier.fillMaxWidth()) {
@@ -81,13 +83,14 @@ internal fun RecentlyDeletedDialog(state: SheetsState, onClose: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            ListSearch(trash.size + setlists.size, query, { query = it }, "Find")
+            ListSearch(trash.size + setlists.size + folders.size, query, { query = it }, "Find")
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                if (trash.isEmpty() && setlists.isEmpty()) {
+                if (trash.isEmpty() && setlists.isEmpty() && folders.isEmpty()) {
                     Text("Nothing here.", modifier = Modifier.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 val rows = trash.map { e -> Triple(e.title, e.removedAt, { scope.launch { withContext(Dispatchers.IO) { state.restore(e) } }; Unit }) } +
-                    setlists.map { (s, at) -> Triple("Setlist: ${s.name}", at, { state.change { restoreSetlist(s.id) }; Unit }) }
+                    setlists.map { (s, at) -> Triple("Setlist: ${s.name}", at, { state.change { restoreSetlist(s.id) }; Unit }) } +
+                    folders.map { (f, at) -> Triple("Folder: ${f.name}", at, { state.change { restoreFolder(f.id) }; Unit }) }
                 rows.sortedByDescending { it.second }.filter { matches(query, it.first) }.forEach { (title, at, restore) ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

@@ -16,9 +16,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -36,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.inksheets.core.InstrumentSource
 import com.inksheets.core.Instruments
@@ -44,7 +51,8 @@ import com.inksheets.core.Song
 
 /** A song's details, and which instrument each of its parts is for. */
 @Composable
-internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Unit) {
+internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Boolean = false, onClose: () -> Unit) {
+    var assignments by remember(song.id) { mutableStateOf(initialParts) }
     var title by remember { mutableStateOf(song.title) }
     var composers by remember { mutableStateOf(song.composers.joinToString(", ")) }
     var arrangers by remember { mutableStateOf(song.arrangers.joinToString(", ")) }
@@ -57,16 +65,32 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
     var choosingColour by remember { mutableStateOf(false) }
     var moving by remember { mutableStateOf<Part?>(null) }
     var splitting by remember { mutableStateOf<Part?>(null) }
+    val validRanges = parts.all { validPartPageRange(it.firstPage, it.lastPage) }
 
     fun list(text: String) = text.split(',').map { it.trim() }.filter { it.isNotEmpty() }
 
+    // A subtask replaces this frame rather than stacking another dialog on top.
+    // Cancelling returns to the same draft, including unsaved assignment edits.
+    moving?.let { part ->
+        PickSongDialog(state, title = "Move this part to which song?", exclude = song.id, near = song.title,
+            onChosen = { to -> state.movePart(part.id, to.id); moving = null; onClose() },
+            onDismiss = { moving = null })
+        return
+    }
+    splitting?.let { part ->
+        AskName(title = "A song of its own, called", initial = song.title, confirm = "Make it",
+            onDone = { name -> state.splitPart(part.id, name); splitting = null; onClose() },
+            onDismiss = { splitting = null })
+        return
+    }
+
     SheetDialog(
-        title = "Song",
+        title = if (assignments) "Part assignments — ${song.title}" else "Song details — ${song.title}",
         onDismiss = onClose,
         wide = true,
         buttons = {
             TextButton(onClick = onClose) { Text("Cancel") }
-            TextButton(onClick = {
+            TextButton(enabled = validRanges, onClick = {
                 // Only what was changed here is written: the dialog shows the song as it was when
                 // opened, and a part that arrived meanwhile (or an instrument read in the
                 // background) must not be overwritten by that old picture of it.
@@ -89,15 +113,36 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                     for (p in parts) {
                         val was = before[p.id] ?: continue
                         val current = now[p.id] ?: continue
-                        if (p.instrument == was.instrument && p.chair == was.chair && p.also == was.also) continue
-                        writePart(song.id, current.copy(instrument = p.instrument, chair = p.chair, also = p.also, source = p.source))
+                        if (p == was) continue
+                        // Apply individual field differences. A fresh background assignment or a
+                        // page range received from another device must survive an unrelated edit.
+                        writePart(song.id, current.copy(
+                            instrument = if (p.instrument != was.instrument) p.instrument else current.instrument,
+                            chair = if (p.chair != was.chair) p.chair else current.chair,
+                            also = if (p.also != was.also) p.also else current.also,
+                            firstPage = if (p.firstPage != was.firstPage) p.firstPage else current.firstPage,
+                            lastPage = if (p.lastPage != was.lastPage) p.lastPage else current.lastPage,
+                            source = if (p.instrument != was.instrument || p.chair != was.chair || p.also != was.also) p.source else current.source
+                        ))
                     }
                 }
                 onClose()
             }) { Text("Save") }
         }
     ) {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
+        Column {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = !assignments, onClick = { assignments = false },
+                    label = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Description, null) })
+                FilterChip(selected = assignments, onClick = { assignments = true },
+                    label = { Text("Parts (${parts.size})") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
+            }
+            HorizontalDivider()
+            if (!validRanges) Text("A part has an invalid page range. Check the Parts tab before saving.",
+                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(vertical = 4.dp))
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            if (!assignments) {
             Field("Title", title) { title = it }
             Field("Composer", composers) { composers = it }
             Field("Arranger", arrangers) { arrangers = it }
@@ -147,8 +192,10 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                 TextButton(onClick = { choosingColour = true }) { Text(if (colour == null) "Choose" else "Change") }
             }
 
-            Spacer(Modifier.size(12.dp))
-            Text("Parts", style = MaterialTheme.typography.titleMedium)
+            } else {
+            Text("File assignments", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
+            Text("These describe the files. Your playing instrument stays separate.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
             // Two parts for one instrument are usually two versions of the piece, or two pieces
             // sharing a name: only the first opens, so say so and offer the way out.
             val doubled = parts.filter { it.instrument != null }.groupBy { it.instrument to it.chair }.filter { (_, v) -> v.size > 1 }.values.map { it.first() }
@@ -195,6 +242,9 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                     if (part.instrument != null) ChairPicker(part.chair) { chair ->
                         parts[i] = part.copy(chair = chair, source = InstrumentSource.PERSON)
                     }
+                    PartPageRange(part, onChange = { first, last ->
+                        parts[i] = part.copy(firstPage = first, lastPage = last)
+                    })
                     TextButton(onClick = { state.peeking = song to part }) { Text("Look") }
                     // A duo, or a part printed for several: it shows for each of them.
                     if (part.instrument != null) AlsoFor(part) { also ->
@@ -242,6 +292,11 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
                     }
                   }
                 }
+                HorizontalDivider()
+            }
+            if (!validRanges) Text("Page ranges must start at 1 or later and end at or after the first page.",
+                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
+            }
             }
         }
     }
@@ -249,19 +304,27 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, onClose: () -> Uni
     if (choosingColour) {
         ColourDialog("Colour", colour, onChosen = { colour = it; choosingColour = false }, onDismiss = { choosingColour = false })
     }
-    moving?.let { part ->
-        PickSongDialog(
-            state, title = "Move this part to which song?", exclude = song.id, near = song.title,
-            onChosen = { to -> state.movePart(part.id, to.id); moving = null; onClose() },
-            onDismiss = { moving = null }
-        )
-    }
-    splitting?.let { part ->
-        AskName(
-            title = "A song of its own, called", initial = song.title, confirm = "Make it",
-            onDone = { name -> state.splitPart(part.id, name); splitting = null; onClose() },
-            onDismiss = { splitting = null }
-        )
+}
+
+/** Inclusive, 1-based pages; a missing end means the remainder of the file. */
+internal fun validPartPageRange(first: Int?, last: Int?): Boolean =
+    (first == null || first >= 1) && (last == null || last >= 1) && (last == null || last >= (first ?: 1))
+
+@Composable
+private fun PartPageRange(part: Part, onChange: (Int?, Int?) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        OutlinedTextField(value = part.firstPage?.toString().orEmpty(),
+            onValueChange = { value -> if (value.all(Char::isDigit) && (value.isEmpty() || value.toIntOrNull() != null)) onChange(value.toIntOrNull(), part.lastPage) },
+            label = { Text("First page") }, placeholder = { Text("1") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = !validPartPageRange(part.firstPage, part.lastPage),
+            modifier = Modifier.size(width = 112.dp, height = 64.dp).testTag("part-first-${part.id}"))
+        OutlinedTextField(value = part.lastPage?.toString().orEmpty(),
+            onValueChange = { value -> if (value.all(Char::isDigit) && (value.isEmpty() || value.toIntOrNull() != null)) onChange(part.firstPage, value.toIntOrNull()) },
+            label = { Text("Last page") }, placeholder = { Text("End") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = !validPartPageRange(part.firstPage, part.lastPage),
+            modifier = Modifier.size(width = 112.dp, height = 64.dp).testTag("part-last-${part.id}"))
     }
 }
 

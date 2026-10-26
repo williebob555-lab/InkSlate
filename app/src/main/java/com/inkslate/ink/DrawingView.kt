@@ -2546,7 +2546,7 @@ class DrawingView @JvmOverloads constructor(
      */
     private fun fitInto(b: RectF, out: Matrix): Float {
         var w = width.toFloat()
-        val h = height.toFloat()
+        val h = if (fitWholePage) (height.toFloat() - musicShelfDp * resources.displayMetrics.density).coerceAtLeast(48f) else height.toFloat()
         val lane = stripLaneDp * resources.displayMetrics.density
         val music = musicLaneDp * resources.displayMetrics.density
         var laneShift = 0f
@@ -4952,6 +4952,8 @@ class DrawingView @JvmOverloads constructor(
         @JvmStatic
         @Volatile
         var musicLaneDp: Float = 0f
+
+        var musicShelfDp: Float = 0f
 
         /** That room is on the left rather than the right. */
         @JvmStatic

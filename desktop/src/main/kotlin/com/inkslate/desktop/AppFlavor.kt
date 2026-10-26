@@ -122,6 +122,8 @@ object AppFlavor {
     @Volatile
     var musicLaneDp: Float = 0f
 
+    var musicShelfDp: Float = 0f
+
     /** How a page turn in music is shown: "slide", "fade" or "none". */
     @Volatile
     var turnAnimation: String = "slide"

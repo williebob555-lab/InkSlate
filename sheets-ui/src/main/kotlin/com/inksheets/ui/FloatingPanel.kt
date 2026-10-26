@@ -86,12 +86,13 @@ internal fun FloatingPanel(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val room = with(density) { Offset(maxWidth.toPx(), maxHeight.toPx()) }
+        val availableHeight = (maxHeight - Overlays.bottomOut).coerceAtLeast(120.dp)
+        val room = with(density) { Offset(maxWidth.toPx(), availableHeight.toPx()) }
         // Never wider or taller than the screen it is on: a phone gets the width it has.
         // (With the strips stepped aside, their tabs at the screen's edges stay clear of it.)
         val tabs = if (Overlays.stripsAside) 26.dp else 0.dp
         val panelWidth = minOf(width, maxWidth - 16.dp - tabs * 2).coerceAtLeast(200.dp)
-        val panelHeight = (maxHeight - 16.dp).coerceAtLeast(160.dp)
+        val panelHeight = (availableHeight - 16.dp).coerceAtLeast(120.dp)
         val wide = with(density) { panelWidth.toPx() }
         // Open over the music: the strips at the sides make room for it, or step aside (see Overlays).
         Opened(title, panelWidth)

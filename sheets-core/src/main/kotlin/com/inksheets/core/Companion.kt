@@ -56,7 +56,9 @@ object CompanionLink {
         val shareInk: Boolean = false,
         /** Numbered in the order sent, and stamped with the leader's clock, to measure delays. */
         val seq: Long = 0,
-        val at: Long = 0
+        val at: Long = 0,
+        /** The exact part on shared-library devices; absent from older leaders. */
+        val partId: String? = null
     )
 
     /** The leader's marks on its part: an InkDocument, serialised. */
@@ -201,6 +203,15 @@ object CompanionLink {
         Follow.AUTO, Follow.SAME_PAGE -> leaderPage
         Follow.NEXT_PAGE -> leaderPage + 1
         Follow.SONG_ONLY -> null
+    }
+
+    /** A shared song is not a shared part: a score and euphonium part have different page turns. */
+    fun automaticFollow(showing: Showing, songId: String, part: Part): Follow = when {
+        showing.partId != null && showing.partId == part.id -> Follow.SAME_PAGE
+        showing.songId == songId && showing.partId != null -> Follow.SONG_ONLY
+        showing.instrument != null && showing.instrument == part.instrument &&
+            showing.partNo == (part.chair?.toString() ?: partNumber(part.label ?: part.file.substringAfterLast('/'))) -> Follow.SAME_PAGE
+        else -> Follow.SONG_ONLY
     }
 
     /**

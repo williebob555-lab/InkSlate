@@ -93,20 +93,29 @@ class MusicStripClickTest {
                     ?.let { if (it.boundsInRoot.center != c) story += "  '$text' moved to ${it.boundsInRoot.center} under the finger" }
                 settle(20)
             }
-            tap("Music")
+            tap("All score tools")
             shot("music-open")
             assertTrue("Music opens the strip - ${story.joinToString("; ")}", ScoreTools.open)
             watch.dispose()
+            val sawReading = java.util.concurrent.atomic.AtomicBoolean(false)
+            val sawProgress = java.util.concurrent.atomic.AtomicBoolean(false)
+            val readingWatch = androidx.compose.runtime.snapshots.Snapshot.registerApplyObserver { _, _ ->
+                if (Transcriber.busy != null) sawReading.set(true)
+                if (Transcriber.progress != null) sawProgress.set(true)
+            }
             tap("Page 1")
             settle(10)
             shot("page-pressed")
-            assertTrue("Page 1 starts reading", Transcriber.busy != null)
-            var sawProgress = false
+            assertTrue("Page 1 starts reading", sawReading.get() || runOnIdle { Transcriber.busy != null })
             val end = System.currentTimeMillis() + 180_000
-            while (Transcriber.busy != null && System.currentTimeMillis() < end) { if (Transcriber.progress != null) sawProgress = true; settle(10) }
+            while (runOnIdle { Transcriber.busy != null } && System.currentTimeMillis() < end) {
+                runOnIdle { if (Transcriber.progress != null) sawProgress.set(true) }
+                settle(10)
+            }
+            readingWatch.dispose()
             settle(20)
             shot("page-read")
-            assertTrue("the progress bar was up while it read", sawProgress)
+            assertTrue("the progress bar was up while it read", sawProgress.get())
             assertTrue("page 1 read", ScoreTools.scoreHere(sheets())?.hasRead(0) == true)
             tap("Clean")
             shot("clean-on")

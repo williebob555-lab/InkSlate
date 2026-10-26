@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
  * at once when their tab is tapped.
  */
 internal object Overlays {
+    var bottomOut by mutableStateOf(0.dp)
     /** How wide each strip is when out (measured; 0 where it is not shown at all), and which side the action strip is on. */
     var actionOut by mutableStateOf(0.dp)
     var musicOut by mutableStateOf(0.dp)

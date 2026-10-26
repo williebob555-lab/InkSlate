@@ -86,7 +86,7 @@ class OlderReadingTest {
                 settle(3); SimulatedTouch.stamp(); root.performMouseInput { release() }
                 settle(20)
             }
-            tap("Music")
+            tap("All score tools")
             settle(30)
             assertTrue("it says so", onAllNodesWithText("Older", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
             ImageIO.write(root.captureToImage().toAwtImage(), "png", File("build/touch/older-reading.png").also { it.parentFile.mkdirs() })

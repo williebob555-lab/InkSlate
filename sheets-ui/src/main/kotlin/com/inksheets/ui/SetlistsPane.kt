@@ -406,6 +406,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
     var colouringEntry by remember { mutableStateOf<com.inksheets.core.SetlistEntry?>(null) }
     // Everything the song list offers for a song, here too.
     var editing by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
+    var editAssignments by remember { mutableStateOf(false) }
     var merging by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
     var recordingsFor by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
     var addingElsewhere by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
@@ -553,8 +554,10 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             onColour = { colouringEntry = entry },
                             onOpen = { state.playSetlist(setlist.id, setlist.entries.indexOfFirst { it.id == entry.id }.coerceAtLeast(0)) },
                             onLook = { state.partFor(song)?.let { state.peeking = song to it } },
-                            onEdit = { editing = song },
+                            onEdit = { editAssignments = false; editing = song },
+                            onEditParts = { editAssignments = true; editing = song },
                             onAddToSetlist = { addingElsewhere = song },
+                            onTakeOutOfSetlist = { state.takeOut(setlist.id, entry.id) },
                             onRecordings = { recordingsFor = song },
                             onNotes = { state.notesFor = song },
                             onMerge = { merging = song },
@@ -564,9 +567,6 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
                             trailing = {
                                 // Its place in the set, however the list is sorted.
                                 Text("${setlist.entries.indexOfFirst { it.id == entry.id } + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 4.dp))
-                                IconButton(onClick = { state.takeOut(setlist.id, entry.id) }) {
-                                    Icon(Icons.Default.Close, "Take out of setlist")
-                                }
                             }
                         )
                     }
@@ -576,7 +576,7 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
         }
     }
 
-    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    editing?.let { song -> SongEditorDialog(state, song, initialParts = editAssignments, onClose = { editing = null }) }
     colouringSong?.let { song ->
         ColourDialog("Colour for ${song.title}", song.color, onChosen = { state.setSongColor(song.id, it); colouringSong = null }, onDismiss = { colouringSong = null })
     }

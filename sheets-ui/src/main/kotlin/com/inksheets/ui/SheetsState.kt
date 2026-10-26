@@ -18,6 +18,10 @@ import java.io.File
  */
 class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
+    internal val shelf = MusicShelfPreferences(platform)
+    var shelfHeight by mutableStateOf(0f)
+    var arrangingShelf by mutableStateOf(false)
+
     /** The thread watching the library; declared first, as [open] runs during construction. */
     @Volatile private var watcher: Thread? = null
 
@@ -441,7 +445,15 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         val lib = library ?: return
         val entries = lib.setlist(setlistId)?.entries ?: return
         val entry = entries.getOrNull(index) ?: return
-        val song = lib.song(entry.songId) ?: return
+        val song = lib.song(entry.songId) ?: run {
+            edgeNotice = "This song was removed from the library"; edgeNoticeAt = System.currentTimeMillis(); return
+        }
+        val selectedPart = partFor(song)
+        if (selectedPart == null || partFile(song, selectedPart) == null) {
+            edgeNotice = "Cannot open ${song.title}: its part is unavailable"
+            edgeNoticeAt = System.currentTimeMillis()
+            return
+        }
         val tabs = ArrayList<Pair<File, String>>()
         var focus = 0
         entries.forEachIndexed { i, e ->
@@ -643,6 +655,11 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         val song = entry?.let { lib.song(it.songId) }
         val part = song?.let { partFor(it) }
         val file = song?.let { s -> part?.let { partFile(s, it) } }
+        if (song == null || part == null || file == null) {
+            edgeNotice = if (song == null) "The next song was removed from the library" else "Cannot open ${song.title}: its part is unavailable"
+            edgeNoticeAt = System.currentTimeMillis()
+            return false
+        }
         // A song turned to starts at its start, whatever page its tab was left on.
         if (file != null) com.inkslate.core.Perform.requestPage(file.absolutePath, (part?.firstPage ?: 1) - 1)
         steppedAt = System.currentTimeMillis()
@@ -1068,6 +1085,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     fun deleteFolder(id: String, withSetlists: Boolean) {
         val lib = library ?: return
         val folder = lib.folders.firstOrNull { it.id == id } ?: return
+        lib.rememberFolderContents(id)
         // Everything under it, and where each thing was, for the Undo.
         val folders = ArrayList<com.inksheets.core.Folder>()
         fun walk(f: String) { lib.foldersIn(f).forEach { folders += it; walk(it.id) } }

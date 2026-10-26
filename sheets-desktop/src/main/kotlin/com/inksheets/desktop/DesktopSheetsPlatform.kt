@@ -181,6 +181,12 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.musicLaneDp = if (open) 72f else 0f
     }
 
+    override fun setMusicShelfHeight(dp: Float) {
+        if (com.inkslate.desktop.AppFlavor.musicShelfDp == dp) return
+        com.inkslate.desktop.AppFlavor.musicShelfDp = dp
+        com.inkslate.core.Perform.recentre?.invoke()
+    }
+
     override var readingMode: com.inkslate.core.ReadingMode
         get() = com.inkslate.desktop.AppFlavor.readingMode.value
         set(v) { com.inkslate.desktop.AppFlavor.readingMode.value = v }

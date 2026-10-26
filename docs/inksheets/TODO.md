@@ -1,6 +1,12 @@
 # InkSheets — TODO (the workstation)
 
-Resume here after any interruption: read the **Now** line, then the open items of the current phase.
+## Approved workstation redesign — 2026-10-25
+
+User approved home sidebar/direct setlists and folders, immediate instrument switching, adaptive music shelf with bounded widget ordering/visibility, and consistent settings/part editing panels. Keep original InkSlate annotation parity and all existing capabilities. Main work: home agent (Home), panels agent (editing/settings), reliability agent (safe following/import/export), lead (shelf/page geometry/integration). Validate all 12 UiAudit sizes, desktop and Android builds, regression suites; publish one `[build sheets]` test build and verify installers. Existing untracked training outputs are unrelated and must stay uncommitted.
+
+**Workstation status (2026-10-26):** Implementation and local validation complete: 984 tests passed, 78 existing gated skips, no failures; both Android flavors compile and InkSheets APK assembles. All 12 real-PDF workspace, home, shelf and assignment/settings screen checks pass. Publishing the final `[build sheets]` commit and verifying matching release assets is the final step. Validation details: `review/WORKSTATION-20261026.md`. The older progress entries below refer to the October 8 sweep.
+
+Resume here after any interruption: read the workstation status above, then the open items of the current phase.
 Mark items `[x]` when done (with the commit), `[~]` when in progress, `[-]` when dropped (say why).
 
 **Now:** (2026-10-10 evening) Scan marks rebuilt (omr/ScanMarks.kt: dots from the ink near each head, slurs grown to their notes and joined, hairpin wedges, dynamics as whole shapes) - Copprash p3 staccato 39/39 (2 false), slurs 35/38, dynamics 21/22, hairpins 13/18; held-out p4 and dropped-staccato parts checked by eye. READER 13 -> 14 (older readings still show until a part is read again; fixes are kept by file id). Retrained marknet NOT shipped (worse on Copprash; kept in scratchpad mx/). MusicStripClickTest flake explained: ScoreTools.open left open by an earlier test - the test starts from closed now. Test build pushed with these.

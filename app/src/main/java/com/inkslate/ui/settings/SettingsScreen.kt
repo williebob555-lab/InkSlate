@@ -68,6 +68,9 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
+    val musicSettings = com.inkslate.AppFlavor.musicView
+    val categories = listOf("Music & library", "Saving", "Reading & annotation", "Devices", "Storage & files", "Updates & diagnostics")
+    var category by remember { mutableStateOf(categories.first()) }
     val context = LocalContext.current
     val prefs = remember { SavePrefs(context) }
     // The same store the editor's toolbar edits, so the stylus setting is one value everywhere.
@@ -114,10 +117,11 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
         }
     ) { pad ->
-        Column(
-            Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())
-        ) {
+        val body: @Composable () -> Unit = {
+            if (!musicSettings || category == "Music & library") {
             com.inkslate.AppFlavor.settingsSection?.let { it(); HorizontalDivider(Modifier.padding(top = 14.dp)) }
+            }
+            if (!musicSettings || category == "Saving") {
             SectionHeader("Saving")
 
             ChoiceRow(
@@ -209,9 +213,13 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            YourDevicesSection()
+            }
+            if (!musicSettings || category == "Devices") {
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                YourDevicesSection()
+            }
 
+            if (!musicSettings || category == "Reading & annotation") {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("While a document is open")
 
@@ -273,6 +281,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )
 
+            }
+            if (!musicSettings || category == "Devices") {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("This device")
 
@@ -295,7 +305,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )
 
-            if (overrides.isNotEmpty()) {
+            }
+            if ((!musicSettings || category == "Saving") && overrides.isNotEmpty()) {
                 HorizontalDivider(Modifier.padding(vertical = 8.dp))
                 SectionHeader("Files with their own rules")
                 Text(
@@ -345,6 +356,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ) { Text("Reset all to defaults") }
             }
 
+            if (!musicSettings || category == "Updates & diagnostics") {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Diagnostics")
 
@@ -469,6 +481,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 ) { Text("Clear crash reports") }
             }
 
+            }
+            if (!musicSettings || category == "Storage & files") {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Companion files")
 
@@ -521,13 +535,23 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
 
-            HorizontalDivider(Modifier.padding(vertical = 8.dp))
-            PedalSection()
+            }
+            if (!musicSettings || category == "Devices") {
+                HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                PedalSection()
+            }
 
+            if (!musicSettings || category == "Updates & diagnostics") {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             UpdateSection()
+            }
 
             Box(Modifier.padding(24.dp))
+        }
+        if (musicSettings) {
+            com.inkslate.library.SettingsWorkspace(categories, category, { category = it }, Modifier.padding(pad), content = body)
+        } else {
+            Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) { body() }
         }
     }
 

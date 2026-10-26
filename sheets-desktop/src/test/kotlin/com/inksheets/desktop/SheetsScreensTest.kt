@@ -188,10 +188,11 @@ class SheetsScreensTest {
     }
 
     @Test
-    fun `playback mode has its own column beside the strip, playing or paused, until put away`() {
+    fun `playback mode has a persistent shelf transport playing or paused until put away`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
         val player = FakePlayer()
+        state.homeInFront = false
         com.inksheets.ui.Recording.player = player
         try {
             runDesktopComposeUiTest(width = 900, height = 700) {
@@ -209,20 +210,20 @@ class SheetsScreensTest {
                 waitForIdle()
                 assertTrue(player.playing)
                 shoot("playback-column", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
-                onNode(androidx.compose.ui.test.hasContentDescription("Back 5 seconds")).performClick()
+                onNode(androidx.compose.ui.test.hasContentDescription("Recording back five seconds")).performClick()
                 assertEquals(55_000L, player.positionMs)
-                onNode(androidx.compose.ui.test.hasContentDescription("On 5 seconds")).performClick()
-                onNode(androidx.compose.ui.test.hasContentDescription("On 5 seconds")).performClick()
+                onNode(androidx.compose.ui.test.hasContentDescription("Recording forward five seconds")).performClick()
+                onNode(androidx.compose.ui.test.hasContentDescription("Recording forward five seconds")).performClick()
                 assertEquals(65_000L, player.positionMs)
                 // Paused: still in playback mode, the column stays.
-                onNode(androidx.compose.ui.test.hasContentDescription("Pause or play on")).performClick()
+                onNode(androidx.compose.ui.test.hasContentDescription("Pause or resume active recording")).performClick()
                 waitForIdle()
                 assertFalse(player.playing)
                 onNode(androidx.compose.ui.test.hasContentDescription("From the start again")).assertExists()
                 onNode(androidx.compose.ui.test.hasContentDescription("From the start again")).performClick()
                 assertEquals(0L, player.positionMs)
                 assertTrue(player.playing)
-                onNode(androidx.compose.ui.test.hasContentDescription("Stop, and put these away")).performClick()
+                onNode(androidx.compose.ui.test.hasContentDescription("Stop recording playback")).performClick()
                 waitForIdle()
                 assertFalse(player.playing)
                 assertEquals(0, onAllNodes(androidx.compose.ui.test.hasContentDescription("From the start again")).fetchSemanticsNodes().size)
@@ -309,6 +310,7 @@ class SheetsScreensTest {
         com.inksheets.ui.SampledInstrumentsTesting.add(state, preset)
         runDesktopComposeUiTest(width = 900, height = 1400) {
             setContent { MaterialTheme { Surface { com.inksheets.ui.SheetsSettings(state) } } }
+            onNodeWithText("Music tools").performClick()
             waitUntil(timeoutMillis = 10_000) { onAllNodesWithText("My Euphonium").fetchSemanticsNodes().isNotEmpty() }
             onNodeWithText("Plays: nothing yet  ▾").performClick()
             onNodeWithText("     Euphonium").performClick()
@@ -473,7 +475,7 @@ class SheetsScreensTest {
             // Into the folder, and back out by dropping on "Setlists" at the top.
             onNodeWithText("Jazz Band").performClick()
             waitForIdle()
-            val top = onAllNodesWithText("Setlists").fetchSemanticsNodes().maxBy { it.boundsInRoot.top }.boundsInRoot.center
+            val top = onAllNodesWithText("Setlists").fetchSemanticsNodes().maxBy { it.boundsInRoot.left }.boundsInRoot.center
             val inside = onNodeWithText("Gig")
             val start = inside.fetchSemanticsNode().boundsInRoot.center
             inside.performTouchInput {

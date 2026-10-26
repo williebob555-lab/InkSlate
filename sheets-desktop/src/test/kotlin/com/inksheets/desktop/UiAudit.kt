@@ -62,7 +62,9 @@ object UiAudit {
                * of sight by a panel too short for it is not in what is looked over at all (Compose leaves
                * out what is clipped away), so it is asked for by name.
                */
-              required: List<String> = emptyList()): List<String> {
+              required: List<String> = emptyList(),
+              /** Explicitly bounded tab/file labels may ellipsize; never exempt action labels. */
+              allowedTruncations: Set<String> = emptySet()): List<String> {
         test.waitForIdle()
         val roots = test.onAllNodes(isRoot()).fetchSemanticsNodes()
         val problems = ArrayList<String>()
@@ -141,7 +143,7 @@ object UiAudit {
             val text = r.layoutInput.text.text.trimEnd()
             val shownTo = if (r.lineCount == 0) 0 else r.getLineEnd(r.lineCount - 1, visibleEnd = true)
             val cut = shownTo < text.length || r.isLineEllipsized(maxOf(0, r.lineCount - 1))
-            if (cut && text.isNotBlank())
+            if (cut && text.isNotBlank() && text !in allowedTruncations)
                 problems += "TRUNCATED '${r.layoutInput.text.text.lines().joinToString(" ").take(40)}' at ${node.boundsInRoot.left.toInt()},${node.boundsInRoot.top.toInt()}"
         }
         for (name in required) {

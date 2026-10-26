@@ -394,12 +394,12 @@ class Companion(private val state: SheetsState) {
     private fun announce(page: Int) {
         val l = leader ?: return
         val song = state.current ?: return
-        val part = state.partFor(song)
+        val part = state.partShown() ?: state.partFor(song)
         l.show(
             CompanionLink.Showing(
                 songId = song.id, title = song.title, page = page,
                 instrument = part?.instrument, partNo = part?.let(::partNo),
-                pages = state.pageShown.second, shareInk = shareInk
+                pages = state.pageShown.second, shareInk = shareInk, partId = part?.id
             )
         )
         l.current?.let { meshPublish(it, hops = 0) }
@@ -604,11 +604,7 @@ class Companion(private val state: SheetsState) {
     /** The page to show for what the leader is on, or null to turn one's own pages. */
     private fun pageFor(showing: CompanionLink.Showing, song: Song, part: Part): Int? {
         val mode = when (follow) {
-            CompanionLink.Follow.AUTO -> when {
-                showing.songId == song.id -> CompanionLink.Follow.SAME_PAGE
-                showing.instrument != null && showing.instrument == part.instrument && showing.partNo == partNo(part) -> CompanionLink.Follow.SAME_PAGE
-                else -> CompanionLink.Follow.SONG_ONLY
-            }
+            CompanionLink.Follow.AUTO -> CompanionLink.automaticFollow(showing, song.id, part)
             else -> follow
         }
         return CompanionLink.pageFor(mode, showing.page)

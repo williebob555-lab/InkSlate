@@ -71,6 +71,8 @@ import java.io.File
 @Composable
 fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
     navigation.back = onBack
+    val categories = listOf("Music & library", "Appearance", "Saving", "Reading & annotation", "Devices", "Storage & files", "Updates & diagnostics")
+    var category by remember { mutableStateOf(categories.first()) }
 
     Scaffold(
         topBar = {
@@ -84,6 +86,23 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
             )
         }
     ) { pad ->
+        if (AppFlavor.musicView) {
+            com.inkslate.library.SettingsWorkspace(categories, category, { category = it }, Modifier.padding(pad)) {
+                when (category) {
+                    "Music & library" -> AppFlavor.settingsSection?.invoke()
+                    "Appearance" -> SizeSection()
+                    "Saving" -> SavingSection()
+                    "Reading & annotation" -> { WhileOpenSection(); StylusSection() }
+                    "Devices" -> { YourDevicesSection(); DeviceSection() }
+                    "Storage & files" -> {
+                        StorageSection()
+                        com.inkslate.library.RecentlyDeletedSection(remember { DesktopLibrary(FileRepo()) })
+                        CompanionFilesSection()
+                    }
+                    "Updates & diagnostics" -> { UpdateSection(); DiagnosticsSection() }
+                }
+            }
+        } else {
         Column(Modifier.padding(pad).fillMaxSize().verticalScroll(rememberScrollState())) {
             SizeSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
@@ -108,6 +127,7 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
             CompanionFilesSection()
             HorizontalDivider(Modifier.padding(top = 14.dp))
             UpdateSection()
+        }
         }
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.KeyboardOptions
@@ -88,6 +89,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     var printingFor by remember { mutableStateOf(false) }
     val named = true
     BoxWithConstraints(Modifier.matchParentSize()) {
+        val toolsHeight = maxHeight
         BarCheck(state, maxHeight)
         if (!ScoreTools.checking) PlaybackBar(state)
         val btn = ((maxHeight - 150.dp) / 14 - 12.dp).coerceIn(26.dp, 40.dp)
@@ -105,7 +107,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.padding(vertical = 6.dp)
+                modifier = Modifier.heightIn(max = toolsHeight - 12.dp).verticalScroll(rememberScrollState()).padding(vertical = 6.dp)
             ) {
                 // The page in front, and whether it has been read: a long book can be read a page at a
                 // time, just the passage being worked on.
@@ -324,7 +326,7 @@ private fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit) 
 
 /** A bar number, and straight there. */
 @Composable
-private fun GoToBar(state: SheetsState, onDone: () -> Unit) {
+internal fun GoToBar(state: SheetsState, onDone: () -> Unit) {
     var text by remember { mutableStateOf("") }
     fun go() { text.trim().toIntOrNull()?.let { if (ScoreTools.goTo(state, it)) onDone() } }
     AlertDialog(
