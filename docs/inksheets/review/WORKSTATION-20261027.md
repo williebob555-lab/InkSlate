@@ -1,6 +1,6 @@
 # InkSheets follow-up: adaptive workstation and reliability
 
-This revision implements the approved Shelf/Studio, Home and editing demos while retaining the InkSlate annotation palette and original Fix interface. The previous test.298 release does not contain this revision.
+This revision implements the approved Shelf/Studio, Home and editing demos while retaining the InkSlate annotation palette and original Fix interface. Published and verified as **1.2.2-test.300**, source `b296f46b1d84407ed426596d9994b3e13390edd4`, at https://github.com/williebob555-lab/InkSlate/releases/tag/inksheets-test .
 
 ## Player-facing changes
 
@@ -20,6 +20,8 @@ This revision implements the approved Shelf/Studio, Home and editing demos while
 
 Complete local regression: **1,070 passed, 78 gated/skipped, zero failures** across core (340), music core (307), desktop (164), InkSheets desktop (198), Android InkSheets (76) and Android InkSlate (63). Phone and watch debug APK assembly succeeded. The watch installation script passed its fake-ADB policy test.
 
-All app-data fixtures are isolated; automated audio runs are silent. Shared UI audits cover 360×640 through 1600×1000, including phones/tablets in both orientations. The actual full-PDF workspace, original annotation palette, connections and settings pass all twelve sizes. Original Fix, real reading/rereading and page turns pass alongside new dragging, actual mask-rendering, docking, recording, sync and connectivity tests. The final compact-connection follow-up passes, including immediate Lead access with the actual dock present. GitHub publishing is pending.
+All app-data fixtures are isolated; automated audio runs are silent. Shared UI audits cover 360×640 through 1600×1000, including phones/tablets in both orientations. The actual full-PDF workspace, original annotation palette, connections and settings pass all twelve sizes. Original Fix, real reading/rereading and page turns pass alongside new dragging, actual mask-rendering, docking, recording, sync and connectivity tests. The final compact-connection follow-up passes, including immediate Lead access with the actual dock present.
+
+GitHub run https://github.com/williebob555-lab/InkSlate/actions/runs/40563841066 succeeded in every job: tests/signed Android APK, Windows MSI, Fedora RPM and publishing. Release notes and moving tag point to the tested source. All four release assets match test.300. Downloaded watch bundle checksum matches GitHub (`86bf3bff114d58a8c320ad88563fa60a0e98d335ef8f4f202518180d33ba376d`); it contains exactly the watch APK and three installer/guide files. The embedded APK reports `1.2.2-test.300`.
 
 Physical device checks remain necessary for OEM-specific BLE behavior, real headset/call interruption, screen-off audio, and watch pairing/calibration retention. Automated protocol, policy and installer simulations do not substitute for those checks.

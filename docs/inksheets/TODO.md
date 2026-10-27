@@ -17,7 +17,16 @@ User approved all six follow-up priorities and polished music overlays, includin
 - [x] Polished, legible playback/listening/recording indicators that leave notation readable.
 - [x] Added user scope: heartbeat-based remote/companion liveness without requiring commands; explicit connected/reconnecting/disconnected feedback.
 - [x] Added user scope: standalone Bluetooth discovery/pair/connect/reconnect when the tablet has no Wi-Fi connection; preserve Wi-Fi operation and old-client compatibility.
-- [ ] Full regression, Android packaging, all twelve UI sizes; publish and verify test build.
+- [x] Full regression, Android packaging, all twelve UI sizes; published and verified **1.2.2-test.300** (`b296f46`), all APK/MSI/RPM/watch assets match. See `review/WORKSTATION-20261027.md`.
+
+## Reconstruction alignment and musical articulations — approved 2026-10-27
+
+User requests a concrete explanation, then implementation while they may offer adjustments. Align reconstructed elements to original positions/scale rather than losing local geometry; improve recognition and playback of accents, slurs, ties and rearticulation (soft la, normal da, firm ta). Preserve original Fix and annotation workflows. Panels owns engraving/overlay mapping; reliability owns optional score geometry and recognition capture/classification; home owns interpretation/synth/sampler. Root owns integration, reading compatibility, QA and next test publication. Serialize Gradle; use silent/offline audio demos only, never automatic laptop playback.
+
+- [~] Add source anchors for heads/chords, rests, stems/beams, preamble, accidentals/dots; retain safe edited-score/old-reading fallback.
+- [~] Distinguish tie evidence from slurs; retain articulations/phrase attachments accurately across bars/staves.
+- [~] Separate sustain, smooth transition, soft reattack, normal and firm attacks; preserve rhythm, accents and sample/synth parity.
+- [ ] Quantitative alignment checks, actual before/after crops, offline listening comparisons, regressions, publish verified follow-up.
 
 ## Approved workstation redesign — 2026-10-25
 
