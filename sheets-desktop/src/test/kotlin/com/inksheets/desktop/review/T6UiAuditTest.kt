@@ -62,7 +62,7 @@ class T6UiAuditTest {
         runCatching { ScoreTools.endCheck() }
         setProgress(null)
         resetFlavor()
-        AppFlavor.musicView = false
+        AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f
     }
 
     /** Transcriber is internal with a private setter: reached by reflection. */

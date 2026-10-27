@@ -53,7 +53,8 @@ internal object Listener {
         /** Locked but in doubt (somewhere else matches better for a moment): turns wait; the gauge may dim, not flip to searching. */
         val suspect: Boolean = false,
         /** Locked, and the next turn can be trusted from here (no look-alike place has it at another time). Until then: "following", no countdown. */
-        val turnSafe: Boolean = true
+        val turnSafe: Boolean = true,
+        val previouslyFound: Boolean = false
     )
 
     var follow by mutableStateOf<Follow?>(null)
@@ -88,10 +89,11 @@ internal object Listener {
         val words = when {
             System.currentTimeMillis() - f.turnedAt < 2_000 -> "Turned to page ${f.page + 1}"
             !f.music -> "Waiting for the music"
-            !f.found -> "Finding you..."
+            !f.found -> if (f.previouslyFound) "Lost your place - holding" else "Finding your place..."
             f.suspect -> "Unsure: holding"
             !f.turnSafe -> "Checking the turn"
             f.turnMs == null -> "Last page - following"
+            f.source == "guessed" -> "Following - page turns estimated"
             else -> {
                 val s = ((f.turnMs - f.atMs) / 1000).coerceAtLeast(0)
                 if (s < 1) "Turning..." else "Turn in ${s}s"
@@ -111,7 +113,7 @@ internal object Listener {
         val track = if (practice) null else song.audio.firstOrNull()
         if (track == null && score == null) { say(state, "Listen needs a recording of this song, or its music read"); return }
         val file = track?.let { state.fileOf(it.file) }
-        if (track != null && file == null && score == null) { say(state, "Its recording is not on this device"); return }
+        if (track != null && (file == null || !file.isFile) && score == null) { say(state, "Its recording is not on this device"); return }
         val microphone = state.platform.microphone ?: run { say(state, "No microphone here"); return }
         val me = Any()
         val rate = microphone.sampleRate
@@ -187,6 +189,7 @@ internal object Listener {
             var wantPage = -1
             var wantSince = 0L
             var shownAt = 0L
+            var previouslyFound = false
             state.platform.log("Listen: following ${song.title} (${if (recording != null) "its recording" else if (practice) "its music as read" else "the band's music as read, ${band.size} other parts${if (bandToCome) ", more being read" else ""}"}) from ${startMs / 1000}s, turns $source" +
                 (fromMusic?.let { t -> " at " + t.joinToString { "%.1f".format(java.util.Locale.ROOT, it / 1000.0) } + "s" } ?: ""))
             state.platform.onMain { if (run === me) status = if (source == "guessed") "Listening - turns guessed" else "Listening - turns $source" }
@@ -242,9 +245,10 @@ internal object Listener {
                     if (now - shownAt >= 200) {
                         shownAt = now
                         val from = if (goesBack) changes?.getOrNull(next - 1)?.first ?: 0L else if (page <= 0) 0L else plan.turnAt(page - 1) ?: 0L
+                        previouslyFound = previouslyFound || follower.locked
                         val shown = Follow(at, from, turn?.let { it - lead }, !presence.quiet(f), source, page, pages, turnedAt,
                             nextPage = if (goesBack) changes?.getOrNull(next)?.second else null,
-                            found = follower.locked, sure = follower.confidence, suspect = follower.suspect, turnSafe = follower.turnSafe)
+                            found = follower.locked, sure = follower.confidence, suspect = follower.suspect, turnSafe = follower.turnSafe, previouslyFound = previouslyFound)
                         state.platform.onMain { if (run === me) follow = shown }
                     }
                     val why = when {

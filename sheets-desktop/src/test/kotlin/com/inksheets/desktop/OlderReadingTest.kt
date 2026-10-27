@@ -6,6 +6,13 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -40,7 +47,7 @@ class OlderReadingTest {
         ScoreTools.scoreSource = null
         ScoreTools.open = false
         AppFlavor.onHomeShown = null; AppFlavor.onHome = null; AppFlavor.settingsSection = null
-        AppFlavor.musicView = false; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
+        AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
         AppFlavor.home = null; AppFlavor.paneOverlay = null
     }
 
@@ -86,18 +93,20 @@ class OlderReadingTest {
                 settle(3); SimulatedTouch.stamp(); root.performMouseInput { release() }
                 settle(20)
             }
-            tap("All score tools")
+            onAllNodesWithContentDescription("All score tools").onFirst().performScrollTo().performClick()
             settle(30)
-            assertTrue("it says so", onAllNodesWithText("Older", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
+            assertTrue("it says so", onAllNodesWithText("older reading", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
             ImageIO.write(root.captureToImage().toAwtImage(), "png", File("build/touch/older-reading.png").also { it.parentFile.mkdirs() })
-            tap("Page 1")
+            onNodeWithTag("score-tools-body").performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, 1000f) }
+            settle(60)
+            onNodeWithTag("score-action-Read page 1 again", useUnmergedTree = true).performClick()
             val again = System.currentTimeMillis() + 180_000
             settle(10)
             while (Transcriber.busy != null && System.currentTimeMillis() < again) settle(10)
             settle(30)
             assertEquals("read again: nothing older", emptySet<Int>(), Transcriber.olderPages(sheets(), part))
             assertTrue("and read", ScoreTools.scoreHere(sheets())?.hasRead(0) == true)
-            assertTrue("the prompt is gone", onAllNodesWithText("Older", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+            assertTrue("the prompt is gone", onAllNodesWithText("older reading", substring = true, useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
             runOnIdle { ScoreTools.close(sheets()) }
         }
     }

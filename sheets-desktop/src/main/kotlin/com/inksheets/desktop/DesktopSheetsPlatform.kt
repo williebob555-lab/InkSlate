@@ -34,6 +34,8 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
             listOf("Sync", "Syncthing", "Music").map { File(home, it) }.firstOrNull { it.isDirectory } ?: home
         }
 
+    override val canInstallWatch: Boolean get() = System.getProperty("os.name").startsWith("Windows", true)
+    override fun installWatch(done: (String?) -> Unit) = DesktopWatchInstaller.open(done)
     override fun pref(key: String): String? = DesktopPrefs.get(key)
     override fun setPref(key: String, value: String?) = DesktopPrefs.put(key, value)
 
@@ -184,6 +186,11 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override fun setMusicShelfHeight(dp: Float) {
         if (com.inkslate.desktop.AppFlavor.musicShelfDp == dp) return
         com.inkslate.desktop.AppFlavor.musicShelfDp = dp
+        com.inkslate.core.Perform.recentre?.invoke()
+    }
+    override fun setStudioRailWidth(dp: Float) {
+        if (com.inkslate.desktop.AppFlavor.studioRailDp == dp) return
+        com.inkslate.desktop.AppFlavor.studioRailDp = dp
         com.inkslate.core.Perform.recentre?.invoke()
     }
 

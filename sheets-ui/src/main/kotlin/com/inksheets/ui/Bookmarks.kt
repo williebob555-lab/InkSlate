@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -56,7 +57,7 @@ private fun sortMarks(rows: List<Marked>, sort: BookmarkSort): List<Marked> {
     val manual = compareBy<Marked, Double?>(nullsLast()) { it.mark.rank }.thenBy { it.mark.at }.thenBy { it.song.title.lowercase() }.thenBy { it.mark.page }
     return when (sort) {
         BookmarkSort.MANUAL -> rows.sortedWith(manual)
-        BookmarkSort.TITLE -> rows.sortedWith(compareBy<Marked> { it.song.title.lowercase() }.thenBy { it.mark.page })
+        BookmarkSort.TITLE -> rows.sortedWith(compareBy<Marked> { (it.mark.excerptTitle ?: it.song.title).lowercase() }.thenBy { it.mark.page })
         BookmarkSort.RECENT -> rows.sortedWith(compareByDescending<Marked> { it.mark.at }.then(manual))
         // The colours in the order they are offered in, the uncoloured last; each colour in your order.
         BookmarkSort.COLOUR -> rows.sortedWith(compareBy<Marked> { r ->
@@ -74,7 +75,9 @@ private fun sortMarks(rows: List<Marked>, sort: BookmarkSort): List<Marked> {
  */
 @Composable
 internal fun BookmarksPane(state: SheetsState, marked: List<Song>) {
-    var editing by remember { mutableStateOf<Song?>(null) }
+    var editing by remember { mutableStateOf<Marked?>(null) }
+    var creatingFor by remember { mutableStateOf<Song?>(null) }
+    var choosingBook by remember { mutableStateOf(false) }
     var addingToSetlist by remember { mutableStateOf<Song?>(null) }
     var colouring by remember { mutableStateOf<Marked?>(null) }
     val sort = state.bookmarkSort
@@ -90,6 +93,9 @@ internal fun BookmarksPane(state: SheetsState, marked: List<Song>) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            TextButton(onClick = { choosingBook = true }) {
+                Icon(Icons.Default.Add, null); Text("Excerpt")
+            }
             BookmarkSort.entries.forEach { o ->
                 FilterChip(selected = sort == o, onClick = { state.bookmarkSort = o }, label = { Text(o.label) })
             }
@@ -170,13 +176,19 @@ internal fun BookmarksPane(state: SheetsState, marked: List<Song>) {
                         )
                 ) {
                     SongRow(
-                        song = song.copy(color = row.colour),
+                        song = song.copy(title = mark.excerptTitle?.takeIf { it.isNotBlank() } ?: song.title,
+                            color = row.colour,
+                            notes = mark.notes ?: song.notes.takeIf { mark.excerptTitle == null },
+                            reminder = mark.reminder ?: song.reminder.takeIf { mark.excerptTitle == null }),
                         unsure = false,
-                        note = mark.label + (part?.let { "  ·  " + Instruments.partName(it) } ?: ""),
+                        note = (if (mark.excerptTitle != null) song.title + " · " else "") +
+                            "Page ${mark.page}" + (mark.endPage?.takeIf { it != mark.page }?.let { "–$it" } ?: "") +
+                            (part?.let { " · " + Instruments.partName(it) } ?: "") +
+                            (if (mark.excerptTitle == null) " · " + mark.label else ""),
                         onOpen = { if (!going) state.openBookmark(song, mark) },
-                        onEdit = { editing = song },
+                        onEdit = { editing = row },
                         onAddToSetlist = { addingToSetlist = song },
-                        onNotes = { state.notesFor = song },
+                        onNotes = { editing = row },
                         onColour = { colouring = row },
                         colourLabel = "Colour this bookmark...",
                         onLook = { part?.let { state.peeking = song to it } },
@@ -195,7 +207,10 @@ internal fun BookmarksPane(state: SheetsState, marked: List<Song>) {
             }
         }
     }
-    editing?.let { song -> SongEditorDialog(state, song, onClose = { editing = null }) }
+    editing?.let { row -> BookmarkEditorDialog(state, row.song, row.mark, onClose = { editing = null }) }
+    creatingFor?.let { song -> BookmarkEditorDialog(state, song, null, onClose = { creatingFor = null }) }
+    if (choosingBook) PickSongDialog(state, "Choose the book or piece", exclude = null,
+        onChosen = { creatingFor = it; choosingBook = false }, onDismiss = { choosingBook = false })
     colouring?.let { row ->
         ColourDialog(
             "Colour for ${row.song.title}, ${row.mark.label}", row.mark.color,

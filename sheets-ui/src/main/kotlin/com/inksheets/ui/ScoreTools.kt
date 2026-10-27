@@ -66,6 +66,11 @@ internal object ScoreTools {
     /** Playing now: which bar, how fast, which time round. */
     var playing by mutableStateOf<Triple<Int, Int, Int>?>(null)
         private set
+    var playbackProgress by mutableStateOf(0f)
+        private set
+    var maskBrushEnabled by mutableStateOf(false)
+        private set
+    private var hiddenClean by mutableStateOf<Set<String>>(emptySet())
 
     /** A bar just gone to, lit for a moment. */
     private var found: Pair<Int, Long>? = null
@@ -76,7 +81,9 @@ internal object ScoreTools {
     /** Bumped at every change, so the pages are drawn again and the marks made afresh. */
     // State, so what is shown from it (Clean lit, the bars' colours) follows every change at once.
     private var version by androidx.compose.runtime.mutableIntStateOf(0)
-    private val marksCache = HashMap<Pair<String, Int>, Pair<Int, List<PageMark>>>()
+    private data class CachedMarks(val version: Int, val width: Float, val height: Float,
+                                   val mask: PageMark.Mask?, val flash: Int?, val marks: List<PageMark>)
+    private val marksCache = HashMap<Pair<String, Int>, CachedMarks>()
 
     private fun changed() {
         version++
@@ -92,8 +99,20 @@ internal object ScoreTools {
 
     fun install(s: SheetsState) {
         state = s
-        Perform.pageMarks = { path, page, w, h -> marks(path, page, w, h) }
+        Perform.pageMarks = { path, page, w, h ->
+            if (h > 0 && w > 0 && path == s.currentPath && kotlin.math.abs(s.pageAspect-w/h) > .01f) {
+                s.platform.onMain { if (path == s.currentPath) s.pageAspect = w/h }
+            }
+            marks(path, page, w, h)
+        }
         Perform.musicGesture = { path, page, pts, done -> gesture(path, page, pts, done) }
+        Perform.musicUndo = {
+            val path = s.currentPath
+            if (maskBrushEnabled && path != null) {
+                if (CleanMasks.undo(s, path)) changed()
+                true // Exhausting mask history must not undo unrelated ink beneath the overlay.
+            } else false
+        }
     }
 
     /** Where a part's notes come from; a test gives its own. */
@@ -296,6 +315,10 @@ internal object ScoreTools {
         scoreHere(s)?.measures?.any { it.bars == 1 && it.number in bars && it.sure } == true
 
     fun scoreHere(s: SheetsState): Score? {
+        // Shared controls must redraw together when a reading finishes or a correction changes.
+        // Disk-cache reads alone are not observable Compose state.
+        version
+        Transcriber.shown
         // The part's sisters' fixes that are its own too (throttled; cheap when nothing changed).
         runCatching { carryIn(s) }
         return s.currentPath?.let { scoreOf(it) }
@@ -304,6 +327,10 @@ internal object ScoreTools {
     // ---- the tools -----------------------------------------------------------------------------
 
     fun choose(t: Tool) {
+        if (maskBrushEnabled) {
+            maskBrushEnabled = false
+            state?.let { s -> s.currentPath?.let { CleanMasks.cancel(s,it) } }
+        }
         val was = tool
         tool = if (tool == t) Tool.NONE else t
         // The select tool put away: what it chose let go with it (a choice left over, out of sight,
@@ -319,8 +346,8 @@ internal object ScoreTools {
     internal fun syncTool() {
         // Only while the tools are out, and only on a part that has been read: a tool left in hand
         // must never stop the pages of another song from turning.
-        val read = state?.let { s -> s.currentPath?.let { scoreOf(it) } } != null
-        Perform.musicTool = open && ((tool != Tool.NONE && read) || playing != null || paused != null)
+        val read = state?.let { s -> s.currentPath?.let { scoreOf(it)?.hasRead(s.pageShown.first) } } == true
+        Perform.musicTool = (open || maskBrushEnabled) && ((tool != Tool.NONE && read) || playing != null || paused != null)
     }
 
     fun showUnderlay(on: Boolean) { underlay = on; changed() }
@@ -838,10 +865,38 @@ internal object ScoreTools {
 
     fun canUndo(s: SheetsState) = undo.any { it.first == s.currentPath }
 
+    fun cleanEnabled(s: SheetsState): Boolean {
+        version
+        val path = s.currentPath ?: return false
+        return path !in hiddenClean && (cleanedIn(path).isNotEmpty() || CleanMasks.hasMask(s,path,s.pageShown.first))
+    }
+
+    fun toggleClean(s: SheetsState) {
+        val path = s.currentPath ?: return
+        if (cleanEnabled(s)) {
+            hiddenClean = hiddenClean + path
+            if (maskBrushEnabled) { maskBrushEnabled = false; tool = Tool.NONE; syncTool() }
+        } else {
+            hiddenClean = hiddenClean - path
+            if (cleanedIn(path).isEmpty() && !CleanMasks.hasMask(s,path,s.pageShown.first)) cleanWhole(s,true)
+        }
+        changed()
+    }
+
+    fun toggleMaskBrush(s: SheetsState) {
+        val path = s.currentPath ?: return
+        if (scoreHere(s)?.hasRead(s.pageShown.first) != true) return
+        maskBrushEnabled = !maskBrushEnabled
+        if (maskBrushEnabled) { hiddenClean = hiddenClean - path; tool = Tool.CLEAN }
+        else { CleanMasks.cancel(s,path); tool = Tool.NONE }
+        syncTool(); changed()
+    }
+
     /** Every bar of the part in front shown clean - laid over the page, nothing new made - or none. */
     fun cleanWhole(s: SheetsState, on: Boolean) {
         val path = s.currentPath ?: return
         val score = scoreHere(s) ?: return
+        hiddenClean = if (on) hiddenClean - path else hiddenClean + path
         val set = cleanedIn(path)
         undo += path to set.toSet()
         if (on) set += score.measures.flatMap { m -> m.number until m.number + m.bars } else set.clear()
@@ -853,6 +908,7 @@ internal object ScoreTools {
     fun cleanedWhole(s: SheetsState): Boolean {
         version   // (read, so the Clean button is redrawn when it changes)
         val path = s.currentPath ?: return false
+        if (path in hiddenClean) return false
         val n = scoreHere(s)?.measures?.size ?: return false
         return n > 0 && cleanedIn(path).size * 2 >= n
     }
@@ -895,6 +951,13 @@ internal object ScoreTools {
     private fun gesture(path: String, page: Int, pts: FloatArray, done: Boolean) {
         val score = scoreOf(path) ?: run { said = "Read the music first"; return }
         val k = scaleOf(score, page, pageWidth[path to page] ?: return) ?: return
+        if (maskBrushEnabled) {
+            val s = state ?: return
+            if (!score.hasRead(page)) return
+            CleanMasks.gesture(s,path,page,pts,done,Perform.musicBrush,k)
+            changed()
+            return
+        }
         val bars = (0 until pts.size / 2).mapNotNull { i -> barAt(score, page, pts[2 * i], pts[2 * i + 1], k)?.number }
         // No tool in hand, the music playing or paused: a tap on a bar plays from it (a drag is let be).
         if (tool == Tool.NONE) {
@@ -976,8 +1039,7 @@ internal object ScoreTools {
     private const val DOUBT = 0xD0E65100.toInt()     // a bar that may be read wrong
     private const val CHOSEN = 0x2E1E88E5            // a selection's tint
     private const val CHOSEN_EDGE = 0xCC1E88E5.toInt()
-    private const val NOW = 0x4043A047               // the bar playing
-    private const val GREEN = 0x2643A047             // Check: read surely
+    private const val GREEN = 0x2643A047             // Original Fix confidence colors.
     private const val GREEN_EDGE = 0xB043A047.toInt()
     private const val YELLOW = 0x33FFB300            // worth a look
     private const val YELLOW_EDGE = 0xD0FFB300.toInt()
@@ -991,16 +1053,23 @@ internal object ScoreTools {
     internal fun marks(path: String, page: Int, width: Float, height: Float): List<PageMark>? {
         pageWidth[path to page] = width
         val score = scoreOf(path) ?: return null
-        val clean = cleanedIn(path)
-        val live = playing?.first
+        val clean = if (path in hiddenClean) emptySet() else cleanedIn(path)
+        val brush = if (path in hiddenClean) null else state?.let { CleanMasks.getMask(it,path,page) }
+        val live = playing?.first ?: paused
         val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
         val off = Listener.offBars.toSet()
         val cueHere = if (cues) cueCache[path].orEmpty() else emptyMap()
-        if (!colours && !underlay && clean.isEmpty() && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
+        if (!colours && !underlay && clean.isEmpty() && brush == null && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
         val fixed = if (colours) fixesOf(path).keys + carriedFixes(path).keys else emptySet()
         val key = path to page
-        marksCache[key]?.let { (v, m) -> if (v == version) return m }
+        marksCache[key]?.let { cached ->
+            if (cached.version == version && cached.width == width && cached.height == height &&
+                cached.mask?.strokes == brush?.strokes && cached.flash == flash) return cached.marks
+        }
         val k = scaleOf(score, page, width) ?: return null
+        val maskStrokes = brush?.strokes?.map { stroke -> PageMark.MaskStroke(stroke.contours.map { polygon -> FloatArray(polygon.size) { polygon[it] * k } },stroke.erase) }
+        val partialMask = maskStrokes?.let { PageMark.Mask(it,false,width,height) }
+        val fullMask = maskStrokes?.let { PageMark.Mask(it,true,width,height) }
         val out = ArrayList<PageMark>()
         for ((index, m) in score.measures.withIndex()) {
             if (m.page != page) continue
@@ -1031,22 +1100,22 @@ internal object ScoreTools {
                     out += PageMark.line(right, top - sp * 2f, right, bottom + sp * 2f, w, CHOSEN_EDGE)
                 }
             }
-            if (live != null && live in numbers) out += PageMark.rect(left, top - sp * 2f, right, bottom + sp * 2f, NOW)
-            if (flash != null && flash in numbers) out += PageMark.rect(left, top - sp * 2.5f, right, bottom + sp * 2.5f, FOUND)
+            if (flash != null && flash in numbers && live == null) out += PlaybackIndicator.marks(left, top, right, bottom, sp, 1f, paused = true)
             // A bar that sounded off when practised: a red bar over it, above the staff - not over the notes.
             if (numbers.any { it in off }) out += PageMark.rect(left + sp * 0.3f, top - sp * 3.4f, right - sp * 0.3f, top - sp * 2.9f, OFF)
             cueHere[index]?.let { out += cueMarks(it, left, right, top, sp) }
+            val cleaningStart = out.size
             when {
                 // A bar in doubt is never redrawn: a guess drawn cleanly is worse than the print. It
                 // stays as printed, framed, until it is checked (Fix) - then it is redrawn.
-                numbers.first in clean && !m.sure -> {
+                (numbers.first in clean || brush != null) && !m.sure -> {
                     val pad = sp * 0.4f
                     out += PageMark.line(left, top - sp * 2f, right, top - sp * 2f, pad * 0.35f, DOUBT)
                     out += PageMark.line(left, bottom + sp * 2f, right, bottom + sp * 2f, pad * 0.35f, DOUBT)
                     out += PageMark.line(left, top - sp * 2f, left, bottom + sp * 2f, pad * 0.35f, DOUBT)
                     out += PageMark.line(right, top - sp * 2f, right, bottom + sp * 2f, pad * 0.35f, DOUBT)
                 }
-                numbers.first in clean -> {
+                numbers.first in clean || brush != null -> {
                     // Cleaned up: the print hidden, the reading in its place.
                     // The paper over the print reaches as far as what is redrawn in its place (a dynamic under it, a high note).
                     val drawn = engraved(m, k, INK)
@@ -1086,8 +1155,17 @@ internal object ScoreTools {
                     }
                 }
             }
+            if (brush != null) {
+                val layer = out.subList(cleaningStart,out.size).toList()
+                out.subList(cleaningStart,out.size).clear()
+                val mask = if (numbers.first in clean) fullMask else partialMask
+                out += layer.map { PageMark(it.kind,it.contours,it.color,it.width,mask) }
+            }
+            // Draw last, so Clean's paper does not erase the playing/paused position.
+            if (live != null && live in numbers) out += PlaybackIndicator.marks(
+                left, top, right, bottom, sp, playbackProgress, paused = playing == null)
         }
-        marksCache[key] = version to out
+        marksCache[key] = CachedMarks(version,width,height,brush,flash,out)
         return out
     }
 
@@ -1219,6 +1297,7 @@ internal object ScoreTools {
         val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, SampledInstruments.patchFor(s, sounding),
             loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, click = click, order = order)
         player = p
+        playbackProgress = 0f
         playing = Triple(range.first, start.toInt(), 0)
         syncTool()
         Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
@@ -1232,7 +1311,10 @@ internal object ScoreTools {
                         // The tempo changed (the metronome, a remote, a pedal): the music goes on at it, smoothly.
                         if (!(ramp && loop) && kotlin.math.abs(SharedMetronome.bpm - p.bpm) > 0.01) p.setTempo(SharedMetronome.bpm)
                         if (p.finished) { stop(s); return@onMain }
-                        if (playing != now) { playing = now; changed() }
+                        val progress = p.barProgress
+                        if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
+                            playing = now; playbackProgress = progress; changed()
+                        }
                         // The page follows the music.
                         if (now.first != lastBar) {
                             lastBar = now.first
@@ -1340,6 +1422,7 @@ internal object ScoreTools {
             val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, SampledInstruments.patchFor(s, soundAs ?: myId)) to 1f else null
             val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
+            playbackProgress = 0f
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
             syncTool()
@@ -1353,7 +1436,10 @@ internal object ScoreTools {
                             if (p.finished) { stop(s); return@onMain }
                             if (kotlin.math.abs(SharedMetronome.bpm - p.tempo) > 0.01) p.setTempo(SharedMetronome.bpm)
                             val now = Triple(p.bar + offset, SharedMetronome.bpm.toInt(), 0)
-                            if (playing != now) { playing = now; changed() }
+                            val progress = p.barProgress
+                            if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
+                                playing = now; playbackProgress = progress; changed()
+                            }
                             if (now.first != lastBar) {
                                 lastBar = now.first
                                 whole.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m -> if (m.page != s.pageShown.first) Perform.jumpTo?.invoke(path, m.page) }
@@ -1449,7 +1535,9 @@ internal object ScoreTools {
     fun stop(s: SheetsState) {
         halt()
         paused = null
+        playbackProgress = 0f
         syncTool()
+        changed()
     }
 
     /** The sound stopped, where it was kept or not. */

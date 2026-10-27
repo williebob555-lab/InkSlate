@@ -23,6 +23,8 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.clickable
@@ -114,13 +116,16 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     var sendingNote by remember { mutableStateOf(false) }
     var partMenu by remember { mutableStateOf(false) }
     // Folded away, the strip is one button in the corner and the page has the whole width.
-    androidx.compose.runtime.LaunchedEffect(collapsed) { state.platform.setStripLane(!collapsed) }
+    androidx.compose.runtime.LaunchedEffect(collapsed,ScoreTools.checking) {
+        state.platform.setStripLane(!collapsed && ScoreTools.checking)
+        if(!ScoreTools.checking) { state.platform.setMusicLane(false);Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
+    }
     val readingMode = state.platform.readingMode
     androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
     // The music being read: a slim bar up the screen's edge filling as it goes - always in sight,
     // never over the music, whatever is open.
     // (The music tools show it in themselves while they are out.)
-    if (Transcriber.progress != null && !(ScoreTools.open && !state.stripCollapsed)) {
+    if (ScoreTools.checking && Transcriber.progress != null && !(ScoreTools.open && !state.stripCollapsed)) {
         // Moving all the time while a part is read - the page in hand filling as pages take here.
         var shown by remember { mutableStateOf(0f) }
         androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -144,7 +149,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     // "End of the set": a small pill at the page's foot for two seconds - a turn that does nothing says why.
     state.edgeNotice?.let { text ->
         androidx.compose.runtime.LaunchedEffect(state.edgeNoticeAt) { kotlinx.coroutines.delay(2_000); state.edgeNotice = null }
-        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.inverseSurface, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)) {
+        if(ScoreTools.checking) Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.inverseSurface, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)) {
             Text(text, color = MaterialTheme.colorScheme.inverseOnSurface, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
         }
     }
@@ -160,7 +165,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 
     // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
     // the bottom of a portrait one - so it sits in blank space and never over the music.
-    BoxWithConstraints(Modifier.matchParentSize()) {
+    if(ScoreTools.checking) BoxWithConstraints(Modifier.matchParentSize()) {
         // Always down a side: along the bottom, the buttons wrap into two rows and take more room.
         val side = true
         // Every button on screen at once, in one column - never a second column, never a strip to
@@ -280,7 +285,6 @@ fun BoxScope.ActionStrip(state: SheetsState) {
                 }
                 if (state.listenTurns && (Listener.active || state.current?.audio?.isNotEmpty() == true || readHere)) {
                     StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
-                    ListenGauge(state)
 
                 }
                 Box {
@@ -339,21 +343,16 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         BackToLeader(state, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
         // The leader's messages, where the music is not.
         NotePopup(state)
-        // Counting in: the beat, big, over the music - seen as well as heard.
-        if (Click.counting > 0 && SharedMetronome.beat >= 0) {
-            Surface(
-                shape = androidx.compose.foundation.shape.CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
-                modifier = Modifier.align(Alignment.Center).size(160.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("${SharedMetronome.beat + 1}", fontSize = 96.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                }
-            }
-        }
+        // Count-in and listening confidence live in the reserved music shelf, clear of notation.
     }
 
-    if (!state.homeInFront) MusicShelf(state)
+    if (!state.homeInFront) {
+        MusicDock(state) { ReaderFooter(state) }
+        if(!ScoreTools.checking) {
+            BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
+            BoxWithConstraints(Modifier.matchParentSize()) { NotePopup(state) }
+        }
+    }
     if (customising) StripEditor(state, onClose = { customising = false })
     if (sendingNote) SendNoteDialog(state, onClose = { sendingNote = false })
     SaveTabsDialog(state)
@@ -385,12 +384,93 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.audioOpen && song != null) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
     // The music tools' strip, down the other side, in its own lane.
     if (!state.homeInFront) {
-        Box(Modifier.matchParentSize().padding(bottom = state.shelfHeight.dp)) { MusicStrip(state) }
+        if(ScoreTools.checking) Box(Modifier.matchParentSize()) { MusicStrip(state) }
         if (state.remote.remoteOpen) RemoteScreen(state, onClose = { state.remote.remoteOpen = false })
     }
 }
 
 /** An instrument's name for a part, or what the part calls itself. */
+@Composable
+private fun ReaderFooter(state:SheetsState) {
+    var more by remember { mutableStateOf(false) }
+    var excerpt by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow=maxWidth<760.dp
+        val toolsOut=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
+        @Composable fun Mini(icon:ImageVector,label:String,description:String,active:Boolean=false,action:()->Unit) {
+            Column(Modifier.width(38.dp).height(40.dp).clip(RoundedCornerShape(7.dp))
+                .background(if(active)MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                .clickable(onClick=action),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
+                Icon(icon,description,Modifier.size(17.dp))
+                Text(label,fontSize=9.sp,maxLines=1,lineHeight=11.sp)
+            }
+        }
+        val annotations:@Composable RowScope.()->Unit={
+            if(!toolsOut) {
+                Mini(Icons.Default.Edit,"Pen","Pen",Perform.on(PerformAction.PEN)){Perform.run(PerformAction.PEN)}
+                Mini(Icons.Default.Highlight,"Mark","Highlighter",Perform.on(PerformAction.HIGHLIGHTER)){Perform.run(PerformAction.HIGHLIGHTER)}
+                Mini(Icons.Default.CleaningServices,"Erase","Eraser",Perform.on(PerformAction.ERASER)){Perform.run(PerformAction.ERASER)}
+                Mini(Icons.AutoMirrored.Filled.Undo,"Undo","Undo"){Perform.run(PerformAction.UNDO)}
+            }
+            Mini(if(toolsOut)Icons.Default.Close else Icons.Default.Construction,if(toolsOut)"Hide"else"Tools",if(toolsOut)"Hide annotation tools"else"All tools",toolsOut){Perform.run(PerformAction.FULLSCREEN)}
+            Mini(Icons.Default.Description,"Pages","Manage file pages"){Perform.openPages?.invoke()}
+            Mini(Icons.Default.Bookmark,"Excerpt","Bookmark excerpt"){excerpt=true}
+            if(state.companion.leading) {
+                Mini(Icons.Default.Campaign,"Message","Message the band"){message=true}
+                state.presets.filter {it.onStrip}.forEach {preset ->TextButton(onClick={state.sendPreset(preset)}){Text(preset.text,style=MaterialTheme.typography.labelSmall)}}
+            }
+        }
+        val navigation:@Composable RowScope.()->Unit={
+            IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")}
+            val (page,count)=state.pageShown
+            Column(Modifier.widthIn(min=56.dp,max=150.dp),horizontalAlignment=Alignment.CenterHorizontally) {
+                Text(state.edgeNotice ?: "${page+1} / $count",style=MaterialTheme.typography.labelLarge,maxLines=1)
+                if(state.readMusic) {
+                    val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
+                    Text(if(read)"Read"else"NOT READ",fontSize=9.sp,lineHeight=11.sp,color=if(read)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
+                }
+                state.playing?.let { (id,index) ->
+                    Text("${state.library?.setlist(id)?.name ?: "Setlist"} · ${index+1}",fontSize=9.sp,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
+            IconButton(onClick={Perform.run(PerformAction.NEXT_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateNext,"Next page")}
+            state.current?.let {song ->
+                Box {
+                    TextButton(onClick={state.partPicker=!state.partPicker},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=6.dp),modifier=Modifier.widthIn(max=140.dp)) {
+                        Icon(Icons.Default.SwapHoriz,null,Modifier.size(16.dp))
+                        Text(state.partShown()?.let(::partName) ?: "Part",modifier=Modifier.padding(start=4.dp),fontSize=10.sp,maxLines=2)
+                    }
+                    PartMenu(state,song,state.partShown(),state.partPicker){state.partPicker=false}
+                }
+            }
+        }
+        @Composable fun RowScope.OutsideControls() {
+            Box {
+                Mini(Icons.Default.MoreVert,"More","More music actions",more){more=true}
+                StripMenu(state,more,listOf(PerformAction.HALF_PAGE_BACK,PerformAction.HALF_PAGE_FORWARD,PerformAction.FIRST_PAGE,PerformAction.LAST_PAGE,PerformAction.REDO),
+                    {more=false},{state.arrangingShelf=true},{state.partPicker=true},fromDock=true)
+            }
+            Mini(Icons.Default.UnfoldLess,"Fold","Hide buttons"){state.stripCollapsed=true;Perform.recentre?.invoke()}
+            VerticalDivider(Modifier.height(28.dp).padding(horizontal=4.dp))
+            Mini(Icons.Default.Tune,"Layout","Arrange music shelf"){state.arrangingShelf=true}
+        }
+        if(narrow) Column(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),content=annotations)
+                OutsideControls()
+            }
+            Row(Modifier.fillMaxWidth().heightIn(min=36.dp).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center,content=navigation)
+        } else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),content=annotations)
+            Row(verticalAlignment=Alignment.CenterVertically,content=navigation)
+            OutsideControls()
+        }
+    }
+    if(excerpt) state.current?.let {BookmarkEditorDialog(state,it,null){excerpt=false}}
+    if(message) SendNoteDialog(state){message=false}
+}
+
 private fun partName(p: com.inksheets.core.Part): String =
     com.inksheets.core.Instruments.partName(p)
 
@@ -455,7 +535,7 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
 }
 
 @Composable
-private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformAction>, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit) {
+private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformAction>, onDismiss: () -> Unit, onCustomise: () -> Unit, onPart: () -> Unit, fromDock: Boolean = false) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         // The strip's own buttons that did not fit on this screen, first, as they are on it.
         val fullscreen = Perform.on(PerformAction.FULLSCREEN)
@@ -466,7 +546,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformA
         )
         if (overflow.isNotEmpty()) HorizontalDivider()
         // Only what is not on the strip already: one way to each thing.
-        val onStrip = state.strip - overflow.toSet()
+        val onStrip = if(fromDock) emptyList() else state.strip - overflow.toSet()
         if (PerformAction.SWITCH_PART !in onStrip) state.current?.let { _ ->
             val part = state.partShown()?.let { partName(it) }
             DropdownMenuItem(

@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Keeps Wi-Fi out of power saving while playing together, so page turns arrive at once. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- A recording continues safely while the screen is off, with media controls in its notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Play together over Bluetooth (experimental, off unless turned on): broadcasts to nearby
          devices and listening for theirs. Never used to find where anyone is. -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"
@@ -23,6 +26,9 @@
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
     <application>
+        <service android:name="com.inksheets.android.RecordingPlaybackService"
+            android:exported="false" android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="false" />
         <!-- Scanning a leader's join code with the tablet's own camera app opens InkSheets and follows; a device's remote code makes this one its remote. -->
         <activity android:name="com.inkslate.MainActivity" android:launchMode="singleTask">
             <intent-filter>

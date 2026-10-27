@@ -79,9 +79,26 @@ class PanelsRedesignTest {
                 onNodeWithText("Save").assertIsDisplayed()
                 onNodeWithText("Cancel").assertIsDisplayed()
                 onNodeWithContentDescription("Close").assertIsDisplayed()
+                if (height <= 400) {
+                    val firstPage = onNodeWithTag("part-first-part-b").fetchSemanticsNode()
+                    val full = firstPage.layoutInfo.coordinates.size.height
+                    assertTrue("$name first page control should fit without scrolling past the introduction",
+                        firstPage.boundsInRoot.height >= full * .85f)
+                }
                 val issues = UiAudit.check(this, name, "redesign-assignments", width, height,
                     required = listOf("Save", "Cancel", "Parts (2)"))
                 assertTrue("$name: $issues", issues.isEmpty())
+            }
+            runDesktopComposeUiTest(width = width, height = height) {
+                setContent { MaterialTheme { SongEditorDialog(state, song, onClose = {}) } }
+                onNodeWithText("Save").assertIsDisplayed()
+                onNodeWithText("Details").assertIsDisplayed()
+                onNodeWithText("Parts (2)").assertIsDisplayed()
+                val issues = UiAudit.check(this, name, "redesign-song-details", width, height,
+                    required = listOf("Save", "Cancel", "Details", "Parts (2)"))
+                assertTrue("$name: $issues", issues.isEmpty())
+                onNodeWithText("Parts (2)").performClick()
+                onNodeWithTag("part-assignments-body").assertIsDisplayed()
             }
             runDesktopComposeUiTest(width = width, height = height) {
                 setContent { MaterialTheme {

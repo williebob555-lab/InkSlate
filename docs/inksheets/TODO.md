@@ -1,5 +1,24 @@
 # InkSheets — TODO (the workstation)
 
+## Reliability and music overlays — approved 2026-10-26
+
+**Latest direction 2026-10-27:** Approved HTML demos are the visual baseline, not merely inspiration for regrouped old buttons. Implement real metronome lights, recording waveform, device rows, page/navigation footer, and externally separated dock settings. Replace legacy music sidebars with adaptive Shelf/Studio/Auto constrained layouts; preserve original InkSlate annotation palette. Keep consistent landscape-style home actions in portrait, prominent search, color hierarchy, manual song/setlist colors and alphabetical grouping. Redo Play together, Details and Part assignments against demos; remove obsolete companion-file option in InkSheets. Add easier watch installation/update and excerpt bookmarks (range/title/reminder/notes), plus continue-last-setlist.
+
+**Explicit correction:** Fix mode must remain exactly the original layout/behavior. Its unshipped redesign was discarded; BarCheck restored from HEAD. Ensure the shelf never reduces or covers original Fix. Clean must visibly toggle, unread pages clearly state NOT READ with unavailable actions disabled, and optional brush masking must reuse existing All tools brushes. Floating panels must not snap right on repeated drags.
+
+User approved all six follow-up priorities and polished music overlays, including playback indicators. Preserve annotation parity and direct access; avoid covering notation. Root owns playback failure/recovery, listening confidence, shelf/status and on-page indicators; reliability agent owns synced-list merges; Android agent owns audio focus/headphones; panels agent owns correction editor. All changes use isolated test libraries. Serialize Gradle runs whenever shared dependency JARs change. Existing train outputs remain uncommitted.
+
+- [x] Actionable recording failures, safe retry/locate/choose flows.
+- [x] Recover interrupted takes and retain song association from recording start.
+- [x] Merge independent recording/setlist edits across devices without restoring intentional removals.
+- [x] Android audio interruptions and headphone safety.
+- [x] Honest listening confidence and rehearsal-state tests.
+- [-] Specialist correction editor redesign rejected by user; original restored. Test original Fix with the surrounding dock instead.
+- [x] Polished, legible playback/listening/recording indicators that leave notation readable.
+- [x] Added user scope: heartbeat-based remote/companion liveness without requiring commands; explicit connected/reconnecting/disconnected feedback.
+- [x] Added user scope: standalone Bluetooth discovery/pair/connect/reconnect when the tablet has no Wi-Fi connection; preserve Wi-Fi operation and old-client compatibility.
+- [ ] Full regression, Android packaging, all twelve UI sizes; publish and verify test build.
+
 ## Approved workstation redesign — 2026-10-25
 
 User approved home sidebar/direct setlists and folders, immediate instrument switching, adaptive music shelf with bounded widget ordering/visibility, and consistent settings/part editing panels. Keep original InkSlate annotation parity and all existing capabilities. Main work: home agent (Home), panels agent (editing/settings), reliability agent (safe following/import/export), lead (shelf/page geometry/integration). Validate all 12 UiAudit sizes, desktop and Android builds, regression suites; publish one `[build sheets]` test build and verify installers. Existing untracked training outputs are unrelated and must stay uncommitted.

@@ -130,7 +130,8 @@ jobs:
           # InkSheets-... the phone's updater - this version's and every older one's - could take it
           # for its own update: same app id, same key. Installed on the watch with adb.
           cp watch/build/outputs/apk/release/watch-release.apk "$RUNNER_TEMP/InkSheets-Watch.apk"
-          (cd "$RUNNER_TEMP" && zip -q "$GITHUB_WORKSPACE/dist/InkSheets-Watch-${{ needs.version.outputs.name }}.zip" InkSheets-Watch.apk)
+          cp scripts/watch/Install-Watch.ps1 scripts/watch/Install-Watch.cmd scripts/watch/README-Watch.txt "$RUNNER_TEMP/"
+          (cd "$RUNNER_TEMP" && zip -q "$GITHUB_WORKSPACE/dist/InkSheets-Watch-${{ needs.version.outputs.name }}.zip" InkSheets-Watch.apk Install-Watch.ps1 Install-Watch.cmd README-Watch.txt)
 
       - uses: actions/upload-artifact@v4
         with:

@@ -29,15 +29,21 @@ class AndroidRemoteBluetooth(private val context: () -> Context) : RemoteBluetoo
 
     @Volatile private var servers: List<BluetoothServerSocket> = emptyList()
 
-    override fun ready(): Boolean {
+    override fun ready(): Boolean = ready(ask = true)
+
+    override fun ready(ask: Boolean): Boolean {
         val c = context()
-        if (Build.VERSION.SDK_INT >= 31 && c.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            (c as? Activity)?.requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), 4712)
+        val missing = BluetoothReadinessPolicy.missing(Build.VERSION.SDK_INT, mesh = false) {
+            c.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            val activity = c as? Activity
+            if (ask) activity?.runOnUiThread { activity.requestPermissions(missing.toTypedArray(), 4712) }
             return false
         }
         val a = adapter ?: return false
-        if (!a.isEnabled) {
-            runCatching { (c as? Activity)?.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) }
+        if (!runCatching { a.isEnabled }.getOrDefault(false)) {
+            if (ask) (c as? Activity)?.runOnUiThread { runCatching { c.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } }
             return false
         }
         return true
@@ -52,10 +58,12 @@ class AndroidRemoteBluetooth(private val context: () -> Context) : RemoteBluetoo
 
     override fun listen(take: (RemotePipe) -> Unit): RemoteBluetooth.Listening? {
         stopListening()
+        if (!ready(ask = false)) return null
         val a = adapter ?: return null
         // Both kinds: a paired remote connects to either; the insecure one spares a second prompt.
         val made = listOfNotNull(
-            runCatching { a.listenUsingInsecureRfcommWithServiceRecord(RemoteBluetooth.NAME, RemoteBluetooth.UUID) }.getOrNull()
+            runCatching { a.listenUsingInsecureRfcommWithServiceRecord(RemoteBluetooth.NAME, RemoteBluetooth.UUID) }
+                .onFailure { EventLog.warn("sheets", "Bluetooth remote listener: ${it.message}") }.getOrNull()
         )
         if (made.isEmpty()) return null
         servers = made
@@ -78,9 +86,12 @@ class AndroidRemoteBluetooth(private val context: () -> Context) : RemoteBluetoo
     }
 
     override fun connect(address: String, channel: Int?): RemotePipe? {
+        if (!ready(ask = false)) return null
         val a = adapter ?: return null
         val device = runCatching { a.getRemoteDevice(address) }.getOrNull() ?: return null
-        runCatching { a.cancelDiscovery() }
+        if (Build.VERSION.SDK_INT < 31 || context().checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
+            runCatching { a.cancelDiscovery() }
+        }
         // By the service's id, both ways; then by channel, for a computer whose service is not
         // listed (Linux).
         val attempts = listOf<() -> BluetoothSocket>(

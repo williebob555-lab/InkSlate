@@ -97,7 +97,6 @@ fun SettingsScreen(onBack: () -> Unit, navigation: NavigationHooks) {
                     "Storage & files" -> {
                         StorageSection()
                         com.inkslate.library.RecentlyDeletedSection(remember { DesktopLibrary(FileRepo()) })
-                        CompanionFilesSection()
                     }
                     "Updates & diagnostics" -> { UpdateSection(); DiagnosticsSection() }
                 }

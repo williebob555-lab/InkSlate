@@ -83,6 +83,7 @@ class MusicShelfRedesignTest {
             }
         }
         state.current = state.library!!.songs.first { it.title == "Nocturne" }
+        File(root, "rehearsal.wav").writeBytes(byteArrayOf(0)) // Player fixture still exercises real file validation.
         state.currentPath = file.absolutePath
         state.pageShown = 0 to 3
         state.homeInFront = false
@@ -118,7 +119,7 @@ class MusicShelfRedesignTest {
             runDesktopComposeUiTest(width = 1280, height = 800) {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
                 waitForIdle()
-                onAllNodesWithContentDescription("Arrange music shelf").onFirst().performScrollTo().performClick()
+                onAllNodesWithContentDescription("Arrange music shelf").onFirst().performClick()
                 waitForIdle()
                 onNodeWithContentDescription("Move Timing later").performClick()
                 runOnIdle { assertEquals(ShelfWidget.RECORDING, state.shelf.order.first()) }
@@ -138,8 +139,8 @@ class MusicShelfRedesignTest {
                 waitForIdle()
                 onNodeWithContentDescription("Stop recording playback").assertIsDisplayed()
                 assertTrue("Active playback keeps its stop control when the shelf is folded", platform.shelfHeight > 0)
-                onNodeWithText("Show music widgets").performClick()
-                onNodeWithText("Show music widgets").performClick()
+                onNodeWithContentDescription("Show buttons").performClick()
+                onNodeWithContentDescription("Arrange music shelf").performClick()
                 onNodeWithText("Reset").performClick()
                 runOnIdle { assertTrue(state.shelf.hidden.isEmpty()) }
             }
@@ -149,5 +150,19 @@ class MusicShelfRedesignTest {
     @Test fun `corrupt arrangement preference retains each widget once`() {
         assertEquals(ShelfWidget.entries.toSet(), MusicShelfPreferences.decode("SCORE,bogus,SCORE").toSet())
         assertEquals(ShelfWidget.entries.size, MusicShelfPreferences.decode("SCORE,bogus,SCORE").size)
+    }
+
+    @Test fun `phone widget shortcuts expose distant tools without opening layout settings`() {
+        val (state,_)=setup("phone-shortcuts")
+        runDesktopComposeUiTest(width=360,height=640) {
+            setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
+            onNodeWithText("Devices").performClick()
+            waitForIdle()
+            onNodeWithContentDescription("Remote").assertIsDisplayed()
+            onNodeWithText("Score").performClick()
+            waitForIdle()
+            onNodeWithContentDescription("Read notes").assertIsDisplayed()
+            assertTrue(!state.arrangingShelf)
+        }
     }
 }

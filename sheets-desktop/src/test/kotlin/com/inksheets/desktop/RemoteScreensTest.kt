@@ -161,6 +161,31 @@ class RemoteScreensTest {
             shoot("bookmarks-a-z", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
             onNodeWithText("Keep this order").assertExists()
             assertEquals(2, onAllNodesWithText("Solo at D - take the repeat", useUnmergedTree = true).fetchSemanticsNodes().size)
+            // An excerpt-specific note overrides only that row; ordinary bookmarks keep the song note.
+            runOnIdle {
+                val song = state.library!!.songs.first { it.title == "Take On Me" }
+                state.change { editSong(song.id) {
+                    bookmarks = song.bookmarks.mapIndexed { index, mark ->
+                        if (index == 0) mark.copy(notes = "Only this bookmark") else mark
+                    }
+                } }
+            }
+            waitForIdle()
+            onNodeWithText("Only this bookmark", useUnmergedTree = true).assertExists()
+            assertEquals(1, onAllNodesWithText("Solo at D - take the repeat", useUnmergedTree = true).fetchSemanticsNodes().size)
+            // A named excerpt is independent: intentionally blank notes must not inherit the book note.
+            runOnIdle {
+                val song = state.library!!.songs.first { it.title == "Take On Me" }
+                state.change { editSong(song.id) {
+                    bookmarks = song.bookmarks.mapIndexed { index, mark ->
+                        if (index == 1) mark.copy(excerptTitle = "Take On Me excerpt", notes = null) else mark
+                    }
+                } }
+            }
+            waitForIdle()
+            onNodeWithText("Take On Me excerpt").assertExists()
+            assertEquals(0, onAllNodesWithText("Solo at D - take the repeat", useUnmergedTree = true).fetchSemanticsNodes().size)
+            onNodeWithText("Only this bookmark", useUnmergedTree = true).assertExists()
             // A-Z kept as my order: Take On Me p2, p4, then Tom Sawyer.
             onNodeWithText("Keep this order").performClick()
             waitForIdle()

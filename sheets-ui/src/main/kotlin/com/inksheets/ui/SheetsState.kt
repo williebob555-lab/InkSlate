@@ -21,6 +21,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     internal val shelf = MusicShelfPreferences(platform)
     var shelfHeight by mutableStateOf(0f)
     var arrangingShelf by mutableStateOf(false)
+    var scorePanelOpen by mutableStateOf(false)
+    var pageAspect by mutableStateOf(.707f)
+    var recoveredRecordingSongs by mutableStateOf<List<String>>(emptyList())
 
     /** The thread watching the library; declared first, as [open] runs during construction. */
     @Volatile private var watcher: Thread? = null
@@ -415,6 +418,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         // leading tablet tells its followers about.
         com.inkslate.core.Perform.onPosition = { page, count ->
             pageShown = page to count
+            rememberSetlistPosition(frontEntry, page, currentPath)
             companion.applyPendingInk()
         }
         // Markings brought across from MobileSheets, handed to a part when it is opened.
@@ -432,6 +436,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             songAt(path)?.let { song ->
                 if (current?.id != song.id) current = song
                 followInSet(song)
+                rememberSetlistPosition(frontEntry, page, path)
             }
             companion.pageTurned(page)
         }
@@ -441,7 +446,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
      * Open a setlist as tabs - every song, in order, with your instrument's part - and bring entry
      * [index] to the front. Remembered for the pedals, the strip and companion mode.
      */
-    fun playSetlist(setlistId: String, index: Int) {
+    fun playSetlist(setlistId: String, index: Int, resumePage: Int? = null) {
         val lib = library ?: return
         val entries = lib.setlist(setlistId)?.entries ?: return
         val entry = entries.getOrNull(index) ?: return
@@ -464,7 +469,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             if (tabs.none { it.first == file }) {
                 // Every song of a set opens at its start - not wherever it was last read, which put
                 // a song turn on page 3 of a part last left there.
-                com.inkslate.core.Perform.requestPage(file.absolutePath, (part.firstPage ?: 1) - 1)
+                com.inkslate.core.Perform.requestPage(file.absolutePath, if (i == index && resumePage != null) resumePage else (part.firstPage ?: 1) - 1)
                 tabs += file to s.title
             } else if (i == index) {
                 focus = tabs.indexOfFirst { it.first == file }
@@ -475,6 +480,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         playing = setlistId to index
         frontEntry = entry.id
         current = song
+        rememberSetlistPosition(entry.id, resumePage ?: (selectedPart.firstPage ?: 1) - 1, partFile(song, selectedPart)?.absolutePath)
         noteOpened(song)
         platform.openSet(tabs, focus)
         companion.pageTurned(0)
@@ -785,6 +791,13 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         version = lib.version
         runCatching { lib.noteDevice(platform.deviceName) }
         startWatching()
+        Thread({
+            runCatching { com.inksheets.core.RecordingRecovery(folder, platform.deviceId).recover(lib, SelfRecorder.activeFile) }
+                .onSuccess { result ->
+                    result.problems.forEach { platform.log(it) }
+                    platform.onMain { if (root == folder) { recoveredRecordingSongs = result.songs; version = lib.version } }
+                }.onFailure { platform.log("Recording recovery failed: ${it.message}") }
+        }, "recover-recordings").apply { isDaemon = true; start() }
         // Songs already here get a tempo read for them once, in the background.
         Thread({ runCatching { readTempos() } }, "tempos").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
     }

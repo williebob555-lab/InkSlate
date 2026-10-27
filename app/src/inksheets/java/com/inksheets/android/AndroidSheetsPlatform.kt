@@ -97,6 +97,11 @@ class AndroidSheetsPlatform(
         com.inkslate.ink.DrawingView.musicShelfDp = dp
         com.inkslate.core.Perform.recentre?.invoke()
     }
+    override fun setStudioRailWidth(dp: Float) {
+        if (com.inkslate.ink.DrawingView.studioRailDp == dp) return
+        com.inkslate.ink.DrawingView.studioRailDp = dp
+        com.inkslate.core.Perform.recentre?.invoke()
+    }
 
     /** Set from the activities' lifecycle (FlavorSetup): false once none is started - backgrounded, or the screen off. */
     @Volatile var started = 1
@@ -177,7 +182,7 @@ class AndroidSheetsPlatform(
     override val audioOut: AudioOut = TrackOut()
     override val microphone: Microphone = RecordMic(context)
 
-    override fun audioPlayer(): com.inksheets.ui.AudioPlayer = MediaAudioPlayer()
+    override fun audioPlayer(): com.inksheets.ui.AudioPlayer = MediaAudioPlayer(context.applicationContext)
 
     override fun decodeAudio(file: File, onChunk: (FloatArray, Int) -> Unit): Boolean = AudioDecode.decode(file, onChunk)
 

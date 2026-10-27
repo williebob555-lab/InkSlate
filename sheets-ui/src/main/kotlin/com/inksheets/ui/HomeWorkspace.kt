@@ -61,19 +61,35 @@ internal fun HomeNavigation(
     state: SheetsState,
     hasBookmarks: Boolean,
     onOpenSettings: () -> Unit,
-    onOpenDeleted: () -> Unit
+    onOpenDeleted: () -> Unit,
+    compact: Boolean = false
 ) {
     val library = state.library ?: return
     val version = state.version
     val lists = remember(version) { library.setlistsIn(null) }
     val folders = remember(version) { library.foldersIn(null) }
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(220.dp).fillMaxHeight()) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.width(if (compact) 48.dp else 220.dp).fillMaxHeight()) {
+        if (compact) {
+            Column(Modifier.fillMaxHeight().verticalScroll(rememberScrollState()), horizontalAlignment = Alignment.CenterHorizontally) {
+                @Composable fun destination(label: String, icon: ImageVector, selected: Boolean = false, action: () -> Unit) {
+                    IconButton(onClick = action, modifier = if (selected) Modifier.background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.small) else Modifier) {
+                        Icon(icon, label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                destination("All music", Icons.Default.LibraryMusic, state.homeTab == 0) { state.homeTab = 0 }
+                destination("Setlists", Icons.AutoMirrored.Filled.QueueMusic, state.homeTab == 1) { state.homeTab = 1; state.setlistShown = null; state.setlistFolder = null }
+                destination("Bookmarks", Icons.Default.BookmarkBorder, state.homeTab == 2) { state.homeTab = 2 }
+                Spacer(Modifier.height(16.dp))
+                destination("Recently deleted", Icons.Default.DeleteOutline, action = onOpenDeleted)
+                destination("Library settings", Icons.Default.Settings, action = onOpenSettings)
+            }
+        } else {
         Column(Modifier.padding(8.dp)) {
             HomeNavRow("All music", Icons.Default.LibraryMusic, state.homeTab == 0) { state.homeTab = 0 }
             HomeNavRow("Setlists", Icons.AutoMirrored.Filled.QueueMusic, state.homeTab == 1 && state.setlistShown == null && state.setlistFolder == null) {
                 state.homeTab = 1; state.setlistShown = null; state.setlistFolder = null
             }
-            if (hasBookmarks) HomeNavRow("Bookmarks", Icons.Default.BookmarkBorder, state.homeTab == 2) { state.homeTab = 2 }
+            HomeNavRow("Bookmarks", Icons.Default.BookmarkBorder, state.homeTab == 2) { state.homeTab = 2 }
             HorizontalDivider(Modifier.padding(vertical = 10.dp))
             Text("Your setlists", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
@@ -101,6 +117,7 @@ internal fun HomeNavigation(
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             HomeNavRow("Recently deleted", Icons.Default.DeleteOutline, false, onClick = onOpenDeleted)
             HomeNavRow("Library settings", Icons.Default.Settings, false, onClick = onOpenSettings)
+        }
         }
     }
 }
@@ -138,14 +155,7 @@ private fun HomeNavRow(
 /** The same destinations remain direct taps on a phone; no navigation drawer to open first. */
 @Composable
 internal fun HomeCompactNavigation(state: SheetsState, hasBookmarks: Boolean) {
-    TabRow(selectedTabIndex = state.homeTab) {
-        Tab(selected = state.homeTab == 0, onClick = { state.homeTab = 0 }, text = { Text("All music") })
-        Tab(selected = state.homeTab == 1, onClick = {
-            state.homeTab = 1; state.setlistFolder = null; state.setlistShown = null
-        }, text = { Text("Setlists") })
-        if (hasBookmarks) Tab(selected = state.homeTab == 2, onClick = { state.homeTab = 2 }, text = { Text("Bookmarks") })
-    }
-    if (state.homeTab == 0) {
+    run {
         val library = state.library ?: return
         val version = state.version
         val lists = remember(version) { library.setlistsIn(null) }
@@ -173,6 +183,16 @@ internal fun HomeCompactNavigation(state: SheetsState, hasBookmarks: Boolean) {
 }
 
 @Composable
+internal fun HomeResumeStrip(state: SheetsState) {
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= 600.dp || state.lowScreen) Row {
+            androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { HomeContinue(state) }
+            if (state.homeSetResume() != null) androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { HomeSetContinue(state) }
+        } else Column { HomeContinue(state); HomeSetContinue(state) }
+    }
+}
+
+@Composable
 internal fun HomeContinue(state: SheetsState) {
     val version = state.version
     val song = state.current?.let { current -> state.library?.song(current.id) }
@@ -180,7 +200,8 @@ internal fun HomeContinue(state: SheetsState) {
         ?: return
     val part = state.partFor(song) ?: return
     val samePart = state.fileOf(part.file)?.absolutePath == state.currentPath
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+    Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f), shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
         Row(Modifier.fillMaxWidth().clickable { resumeHomeSong(state, song) }.padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.MenuBook, null, tint = MaterialTheme.colorScheme.primary)
@@ -192,6 +213,26 @@ internal fun HomeContinue(state: SheetsState) {
                     maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(onClick = { resumeHomeSong(state, song) }) { Text("Resume"); Spacer(Modifier.width(5.dp)); Icon(Icons.Default.ArrowForward, null) }
+        }
+    }
+}
+
+@Composable
+internal fun HomeSetContinue(state: SheetsState) {
+    val saved = state.homeSetResume() ?: return
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.55f), shape = MaterialTheme.shapes.medium,
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
+        Row(Modifier.fillMaxWidth().clickable { state.resumeHomeSetlist() }.padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = saved.setlist.color?.let(::Color) ?: MaterialTheme.colorScheme.tertiary)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Continue setlist", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                Text(saved.setlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleSmall)
+                Text("${saved.index + 1}. ${saved.song.title} · page ${saved.page + 1}", maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { state.resumeHomeSetlist() }) { Icon(Icons.Default.ArrowForward, "Resume setlist") }
         }
     }
 }
@@ -210,11 +251,13 @@ internal fun resumeHomeSong(state: SheetsState, song: Song) {
 }
 
 @Composable
-internal fun HomeDevicesButton(state: SheetsState) {
+internal fun HomeDevicesButton(state: SheetsState, compact: Boolean = false) {
     var open by remember { mutableStateOf(false) }
     val active = state.companion.leading || state.companion.following != null || state.remote.connected
     androidx.compose.foundation.layout.Box {
-        TextButton(onClick = { open = true }) {
+        if (compact) IconButton(onClick = { open = true }) {
+            Icon(Icons.Default.Devices, "Devices", tint = if (active) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary)
+        } else TextButton(onClick = { open = true }) {
             Icon(Icons.Default.Devices, null, tint = if (active) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(5.dp))
             Text("Devices")

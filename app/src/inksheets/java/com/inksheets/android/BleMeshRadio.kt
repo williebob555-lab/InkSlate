@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothAdapter
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertisingSet
 import android.bluetooth.le.AdvertisingSetCallback
@@ -13,6 +14,7 @@ import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -30,6 +32,7 @@ import com.inkslate.data.EventLog
 class BleMeshRadio(private val context: () -> Context) : MeshRadio {
 
     private val main = Handler(Looper.getMainLooper())
+    private val scanHealth = BluetoothScanHealth()
     private var scanning: ScanCallback? = null
     private var set: AdvertisingSet? = null
     private var setCallback: AdvertisingSetCallback? = null
@@ -49,35 +52,41 @@ class BleMeshRadio(private val context: () -> Context) : MeshRadio {
 
     private val adapter get() = (context().getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
-    private val needed: Array<String>
-        get() = if (Build.VERSION.SDK_INT >= 31) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_ADVERTISE)
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
+    override fun ready(): Boolean = ready(ask = true)
 
-    override fun ready(): Boolean {
+    override fun ready(ask: Boolean): Boolean {
         val c = context()
-        val missing = needed.filter { c.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        val missing = BluetoothReadinessPolicy.missing(Build.VERSION.SDK_INT, mesh = true) {
+            c.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+        }
         if (missing.isNotEmpty()) {
-            (c as? Activity)?.requestPermissions(missing.toTypedArray(), 4711)
+            val activity = c as? Activity
+            if (ask) activity?.runOnUiThread { activity.requestPermissions(missing.toTypedArray(), 4711) }
             return false
         }
         val a = adapter ?: return false
-        return a.isEnabled && a.bluetoothLeScanner != null && a.bluetoothLeAdvertiser != null
+        if (!runCatching { a.isEnabled }.getOrDefault(false)) {
+            if (ask) (c as? Activity)?.runOnUiThread { runCatching { c.startActivity(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)) } }
+            return false
+        }
+        return runCatching { scanHealth.healthy && a.bluetoothLeScanner != null && a.bluetoothLeAdvertiser != null }.getOrDefault(false)
     }
 
     override fun start(onFrame: (ByteArray) -> Unit): Boolean = runCatching {
         stop()
+        if (!ready(ask = false)) return false
         val a = adapter ?: return false
+        val token = scanHealth.begin()
         val callback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                result.scanRecord?.getServiceData(SERVICE)?.let(onFrame)
+                if (scanning === this) result.scanRecord?.getServiceData(SERVICE)?.let(onFrame)
             }
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
+                if (scanning !== this) return
                 results.forEach { r -> r.scanRecord?.getServiceData(SERVICE)?.let(onFrame) }
             }
             override fun onScanFailed(errorCode: Int) {
+                scanHealth.failed(token)
                 EventLog.warn("sheets", "Bluetooth: listening failed ($errorCode)")
             }
         }
@@ -116,6 +125,10 @@ class BleMeshRadio(private val context: () -> Context) : MeshRadio {
                 .build()
             val cb = object : AdvertisingSetCallback() {
                 override fun onAdvertisingSetStarted(advertisingSet: AdvertisingSet?, txPower: Int, status: Int) {
+                    if (setCallback !== this) {
+                        runCatching { a.bluetoothLeAdvertiser?.stopAdvertisingSet(this) }
+                        return
+                    }
                     if (status != ADVERTISE_SUCCESS || advertisingSet == null) {
                         EventLog.warn("sheets", "Bluetooth: sending failed ($status)")
                         setCallback = null
@@ -126,7 +139,7 @@ class BleMeshRadio(private val context: () -> Context) : MeshRadio {
                     main.postDelayed(rotate, ROTATE_MS)
                 }
                 override fun onAdvertisingSetStopped(advertisingSet: AdvertisingSet?) {
-                    set = null
+                    if (setCallback === this) { set = null; setCallback = null }
                 }
             }
             setCallback = cb
@@ -143,6 +156,7 @@ class BleMeshRadio(private val context: () -> Context) : MeshRadio {
     }
 
     override fun stop() {
+        scanHealth.stop()
         main.post { stopAdvertising() }
         scanning?.let { cb -> runCatching { adapter?.bluetoothLeScanner?.stopScan(cb) } }
         scanning = null

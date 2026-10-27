@@ -38,7 +38,7 @@ class T6BreakTest {
         ScoreTools.scoreSource = null
         runCatching { ScoreTools.endCheck() }
         resetFlavor()
-        AppFlavor.musicView = false
+        AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f
     }
 
     @Test

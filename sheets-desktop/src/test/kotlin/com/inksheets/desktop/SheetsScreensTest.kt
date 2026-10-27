@@ -42,6 +42,14 @@ import javax.imageio.ImageIO
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 class SheetsScreensTest {
 
+    @org.junit.Before fun clearWorkspaceCallbacks() {
+        // These mount shared panels without AppRoot; a previous full-app test must not make
+        // them believe an annotation palette is already mounted elsewhere.
+        com.inkslate.core.Perform.isOn = null
+        com.inkslate.core.Perform.workspace = null
+        com.inkslate.core.Perform.musicTool = false
+    }
+
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -149,6 +157,7 @@ class SheetsScreensTest {
     fun `the action strip sits over the page and runs pedal actions`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
+        state.homeInFront = false
         val ran = ArrayList<com.inkslate.core.PerformAction>()
         com.inkslate.core.Perform.document = { ran += it; true }
         runDesktopComposeUiTest(width = 900, height = 700) {
@@ -166,7 +175,7 @@ class SheetsScreensTest {
             // The lean strip: marking up and the metronome; pages turn by tap and swipe.
             onNode(androidx.compose.ui.test.hasContentDescription("Undo")).performClick()
             assertEquals(listOf(com.inkslate.core.PerformAction.UNDO), ran)
-            assertEquals(0, onAllNodes(androidx.compose.ui.test.hasContentDescription("Next page")).fetchSemanticsNodes().size)
+            onNode(androidx.compose.ui.test.hasContentDescription("Next page")).assertIsDisplayed()
             shoot("action-strip", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
         }
         com.inkslate.core.Perform.document = null
@@ -210,7 +219,7 @@ class SheetsScreensTest {
                 waitForIdle()
                 assertTrue(player.playing)
                 shoot("playback-column", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
-                onNode(androidx.compose.ui.test.hasContentDescription("Recording back five seconds")).performClick()
+                onAllNodes(androidx.compose.ui.test.hasContentDescription("Recording back five seconds")).onFirst().performClick()
                 assertEquals(55_000L, player.positionMs)
                 onNode(androidx.compose.ui.test.hasContentDescription("Recording forward five seconds")).performClick()
                 onNode(androidx.compose.ui.test.hasContentDescription("Recording forward five seconds")).performClick()
@@ -238,6 +247,7 @@ class SheetsScreensTest {
     fun `on a short screen every strip button is on screen, none scrolled away`() {
         val root = tmp.newFolder("Music")
         val state = SheetsState(FakePlatform(root))
+        state.homeInFront = false
         state.setStripActions(com.inkslate.core.PerformAction.entries.toList())
         runDesktopComposeUiTest(width = 1000, height = 420) {
             setContent {
@@ -249,7 +259,7 @@ class SheetsScreensTest {
                 }
             }
             waitForIdle()
-            for (action in listOf("Previous page", "Undo", "Show or hide the tools", "More, and changing these buttons")) {
+            for (action in listOf("Previous page", "Undo", "All tools", "More music actions", "Arrange music shelf")) {
                 onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
             }
             shoot("action-strip-short", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
@@ -333,7 +343,7 @@ class SheetsScreensTest {
                 state.companionOpen = true
                 waitForIdle()
                 shoot("play-together", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
-                onNodeWithText("Lead from this device").performClick()
+                onNodeWithText("Lead", useUnmergedTree = true).performClick()
                 waitForIdle()
                 onNodeWithText("Scan to follow Test stand").assertExists()
                 onNodeWithText("Nobody following yet").assertExists()
@@ -354,7 +364,7 @@ class SheetsScreensTest {
                 setContent { MaterialTheme { Surface { SheetsHome(state, onOpenSettings = {}) } } }
                 state.companionOpen = true
                 waitForIdle()
-                onNodeWithText("Lead from this device").performClick()
+                onNodeWithText("Lead", useUnmergedTree = true).performClick()
                 waitForIdle()
                 onNodeWithText("Scan to follow Test stand").assertExists()
                 shoot("leading-phone", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())

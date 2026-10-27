@@ -1021,6 +1021,14 @@ class ScorePlayer(
     /** The bars to play, in order, where given (from a bar on, repeats and all: [PlayOrder.from]) - else those numbered [from] to [to]. */
     order: List<Measure>? = null
 ) {
+    /** Position within the sounding bar, for a quiet progress rail rather than a note-covering tint. */
+    val barProgress: Float get() {
+        val position = synth.position - passStart
+        val at = starts.indexOfLast { it <= position }
+        if (at < 0) return 0f
+        val end = starts.getOrNull(at + 1) ?: passLength
+        return ((position - starts[at]).toDouble() / (end - starts[at]).coerceAtLeast(1)).toFloat().coerceIn(0f, 1f)
+    }
     /** The tempo now: goes up round each loop when ramping. */
     @Volatile var bpm: Double = bpm
         private set
@@ -1100,6 +1108,12 @@ class EnsemblePlayer(
     /** The metronome's click with the band, on the beats of [mine]. */
     click: Boolean = false
 ) {
+    val barProgress: Float get() {
+        val at = starts.indexOfLast { it <= synth.position }
+        if (at < 0) return 0f
+        val end = starts.getOrNull(at + 1) ?: length
+        return ((synth.position - starts[at]).toDouble() / (end - starts[at]).coerceAtLeast(1)).toFloat().coerceIn(0f, 1f)
+    }
     /** One part: its notes, how far it is written above where it sounds, how it sounds. */
     class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch,
                 /** Drums: the drums each note is (see [DrumKind]), in place of its pitches. */

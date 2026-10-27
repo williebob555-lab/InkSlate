@@ -43,7 +43,7 @@ class BarCheckTest {
         ScoreTools.scoreSource = null
         ScoreTools.endCheck()
         AppFlavor.home = null; AppFlavor.paneOverlay = null; AppFlavor.onHomeShown = null; AppFlavor.onHome = null; AppFlavor.settingsSection = null
-        AppFlavor.musicView = false; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
+        AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
     }
 
     private fun DesktopComposeUiTest.settle(frames: Int = 12) = repeat(frames) { mainClock.advanceTimeBy(16); Thread.sleep(4) }
@@ -59,7 +59,7 @@ class BarCheckTest {
         val reading = Recognizer().read(ink, 0)
         val score = Score(reading.measures, 1, listOf(ink.width))
         ScoreTools.scoreSource = { if (it == part.absolutePath) score else null }
-        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false"); it.setPref("sheets_read_music", "true") }
         val home = AppFlavor.home!!
         var openFile: ((File) -> Unit)? = null
         AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }
@@ -89,7 +89,9 @@ class BarCheckTest {
             // (Another test may have left the colours on: this starts from the tools as they open.)
             if (ScoreTools.colours) runOnIdle { ScoreTools.choose(ScoreTools.Tool.CHECK) }
             settle(10)
-            tapText("Check")
+            // The redesigned workspace calls the original confidence/check toggle Review.
+            // Everything after entering it exercises the unchanged original Fix interface.
+            tapText("Review")
             assertTrue("colours on", ScoreTools.colours)
             shot("colours")
             // A tap on the first red bar (as the page hands a tap on it to the tool).
@@ -154,7 +156,7 @@ class BarCheckTest {
         val score = Score(reading.measures, 1, listOf(ink.width))
         val sure = score.measures.first { it.sure && it.bars == 1 }.number
         ScoreTools.scoreSource = { if (it == part.absolutePath) score else null }
-        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false") }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_strip_collapsed", "false"); it.setPref("sheets_read_music", "true") }
         val home = AppFlavor.home!!
         var openFile: ((File) -> Unit)? = null
         AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }

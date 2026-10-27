@@ -142,8 +142,8 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
     // On a phone the buttons need the whole bar; the name goes.
     val narrow = maxWidth < 520.dp
     val compactHeader = maxWidth < 760.dp
-    val showAppTitle = maxWidth >= 760.dp
-    val sideNavigation = maxWidth >= 900.dp && maxHeight >= 500.dp
+    val showAppTitle = maxWidth >= 520.dp
+    val sideNavigation = maxWidth >= 760.dp
     // A phone on its side: the list needs every line it can get (see SongsPane).
     val low = maxHeight < 440.dp
     androidx.compose.runtime.SideEffect { state.lowScreen = low }
@@ -151,7 +151,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
         TopAppBar(
             title = { if (showAppTitle) Text("InkSheets", maxLines = 1) },
             actions = {
-                InstrumentChooser(state, compact = compactHeader)
+                if (!narrow) InstrumentChooser(state, compact = compactHeader)
                 // Playback mode, from a song left behind: paused or played on from here.
                 if (Recording.session) {
                     IconButton(
@@ -168,7 +168,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                     onClick = { showMetronome = !showMetronome },
                     modifier = if (showMetronome) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
                 ) { Icon(Icons.Default.Timer, "Metronome") }
-                if (!narrow || !Recording.session) IconButton(
+                IconButton(
                     onClick = { if (tunerShown) { showTuner = false; state.tunerOpen = false } else showTuner = true },
                     modifier = if (tunerShown) Modifier.background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape) else Modifier
                 ) { Icon(Icons.Default.GraphicEq, "Tuner") }
@@ -181,7 +181,7 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
                         Text("Add music")
                     }
                 }
-                if (!compactHeader) HomeDevicesButton(state)
+                HomeDevicesButton(state, compact = compactHeader)
                 var more by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { more = true }) { Icon(Icons.Default.MoreVert, "More") }
@@ -263,6 +263,13 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
             }
         )
 
+        if (narrow) Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.LibraryMusic, null, tint = MaterialTheme.colorScheme.primary)
+                Text("Playing", modifier = Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelMedium)
+                InstrumentChooser(state)
+            }
+        }
         FollowBanner(state)
         if (state.library == null && state.opening) {
             Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -271,6 +278,8 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
         } else if (state.library == null) {
             Welcome(onChoose = { chooseFolder = true })
         } else {
+            RecoveredRecordingNotice(state)
+            PlaybackProblem(state)
             reading?.let { (done, of) ->
                 Text(
                     "Reading the instrument off scanned parts: ${done + 1} of $of",
@@ -311,17 +320,16 @@ fun SheetsHome(state: SheetsState, onOpenSettings: () -> Unit) = Box(Modifier.fi
             }
             // Bookmarks is a tab only while there are some.
             val marked = remember(state.version) { state.library?.songs.orEmpty().filter { it.bookmarks.isNotEmpty() } }
-            if (tab == 2 && marked.isEmpty()) tab = 0
             Row(Modifier.weight(1f).fillMaxWidth()) {
-                if (sideNavigation) HomeNavigation(
+                HomeNavigation(
                     state = state,
                     hasBookmarks = marked.isNotEmpty(),
                     onOpenSettings = onOpenSettings,
-                    onOpenDeleted = { showDeleted = true }
+                    onOpenDeleted = { showDeleted = true },
+                    compact = !sideNavigation
                 )
                 Column(Modifier.weight(1f).fillMaxHeight()) {
                     if (!sideNavigation) HomeCompactNavigation(state, marked.isNotEmpty())
-                    if (tab == 0 && !low) HomeContinue(state)
                     when (tab) {
                         0 -> SongsPane(state)
                         2 -> BookmarksPane(state, marked)
@@ -480,11 +488,17 @@ private fun SongsPane(state: SheetsState) {
     }
 
     Column(Modifier.fillMaxSize()) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val searchHint = if (maxWidth < 480.dp) "Search music…" else "Search music, composer, instrument…"
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-            placeholder = { Text("Title, composer, instrument...") },
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary) },
+            placeholder = { Text(searchHint, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                focusedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
             trailingIcon = {
                 if (state.lowScreen) Box {
                     IconButton(onClick = { compactFilters = true }) { Icon(Icons.Default.MoreVert, "Sort and filter songs") }
@@ -507,8 +521,10 @@ private fun SongsPane(state: SheetsState) {
                 }
             },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).heightIn(min = 56.dp)
         )
+        }
+        HomeResumeStrip(state)
         // How the list is ordered, then what it is narrowed to - not on a screen this short, where
         // the list itself needs the room (the order last chosen stays).
         if (!state.lowScreen) Row(
@@ -901,7 +917,7 @@ internal fun SheetDialog(
     content: @Composable () -> Unit
 ) {
     if (movable) {
-        FloatingPanel(title = title, onClose = onDismiss, width = if (wide) 440.dp else 360.dp, footer = buttons, scroll = false, content = content)
+        FloatingPanel(title = title, onClose = onDismiss, width = if (wide) 760.dp else 360.dp, footer = buttons, scroll = false, content = content)
         return
     }
     val footer: @Composable () -> Unit = buttons ?: { TextButton(onClick = onDismiss) { Text("Close") } }

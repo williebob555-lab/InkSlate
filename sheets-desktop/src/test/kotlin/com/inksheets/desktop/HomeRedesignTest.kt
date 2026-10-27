@@ -82,8 +82,8 @@ class HomeRedesignTest {
             runDesktopComposeUiTest(width = width, height = height) {
                 setContent { MaterialTheme { Surface { SheetsHome(state, {}) } } }
                 waitForIdle()
-                onNodeWithText("All music").assertIsDisplayed()
-                onNodeWithText("Bookmarks").assertIsDisplayed()
+                onNode(hasText("All music") or hasContentDescription("All music")).assertIsDisplayed()
+                onNode(hasText("Bookmarks") or hasContentDescription("Bookmarks")).assertIsDisplayed()
                 onNode(hasText("Add music") or hasContentDescription("Add music")).assertIsDisplayed()
                 onNodeWithContentDescription("More").assertIsDisplayed()
                 val problems = UiAudit.check(this, name, "home-redesign", width, height)
@@ -159,7 +159,8 @@ class HomeRedesignTest {
             onNodeWithContentDescription("Song options").performClick()
             onNodeWithText("Part assignments...").performClick()
             waitForIdle()
-            onNodeWithText("Part assignments — Nocturne").assertIsDisplayed()
+            onNodeWithText("Part assignments").assertIsDisplayed()
+            onNodeWithText("Save").assertIsDisplayed()
             onNodeWithContentDescription("Close").performClick()
             onNodeWithText("Nocturne").performTouchInput { longClick() }
             waitForIdle()

@@ -21,6 +21,11 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Devices
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SettingsRemote
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -117,6 +122,66 @@ class Companion(private val state: SheetsState) {
     val lastLeader: CompanionLink.Leader?
         get() = state.platform.pref(K_LAST)?.let(CompanionLink::parseJoin)
 
+    internal var transport by mutableStateOf(ConnectionTransport.decode(state.platform.pref("sheets_companion_transport")))
+        private set
+    internal fun chooseTransport(value: ConnectionTransport) {
+        val wasLeading = leading
+        val last = if (following != null) lastLeader else null
+        stopLeading(); stopFollowing()
+        transport = value
+        state.platform.setPref("sheets_companion_transport", value.name)
+        if (wasLeading) lead() else if (last != null) followLeader(last) {}
+    }
+    internal val nearbyBluetooth = mutableStateListOf<CompanionLink.Leader>()
+    private val nearbySeen = HashMap<Int, Long>()
+    private var discovery = false
+    internal fun discoverBluetooth() {
+        discovery = true
+        if (!leading && following == null && transport != ConnectionTransport.WIFI) startMesh("")
+    }
+    internal fun endDiscovery() { discovery = false; if (!leading && following == null) stopMesh() }
+    internal fun retryBluetooth() {
+        if (transport != ConnectionTransport.WIFI) startMesh(if (leading) state.platform.deviceName else following.orEmpty(), ask = true)
+    }
+    private var selectedSession: Int? = null
+    private var beaconSeq = 0L
+    private var heardBeaconSeq = 0L
+    private var beaconCandidateSeq: Long? = null
+    private var beaconCandidateAt = 0L
+    private var meshGeneration = 0L
+    internal var connectionClock: () -> Long = { System.nanoTime() / 1_000_000L }
+    private var beaconAt = 0L
+    internal val connectionDetail: String
+        get() {
+            val age = if (beaconAt > 0) ((connectionClock() - beaconAt) / 1000).coerceAtLeast(0) else null
+            return when {
+                connected && age != null && age < 4 -> "Connected · Bluetooth · heartbeat ${age}s ago"
+                connected -> "Connected · Wi-Fi / network"
+                age != null && age < 7 -> "Reconnecting · last Bluetooth heartbeat ${age}s ago"
+                following != null -> "Waiting for the leader · reconnecting automatically"
+                else -> "Ready"
+            }
+        }
+    private val participant = com.inksheets.core.MeshFrames.participantOf(state.platform.deviceId)
+    private var presenceSeq = 0L
+    private var pendingJoin: ((Boolean) -> Unit)? = null
+    private val participants = HashMap<Long, Pair<Long, Long>>()
+    private val participantNames = HashMap<Long, String>()
+    var connectedDevices by mutableStateOf<List<com.inksheets.core.ConnectedPeer>>(emptyList())
+        private set
+    private fun refreshConnectedDevices() {
+        val now = connectionClock()
+        val network = leader?.connectedDevices.orEmpty()
+        val bluetooth = participants.map { (id, seen) ->
+            val key = "participant:$id"
+            com.inksheets.core.ConnectedPeer(key,
+                network.firstOrNull { it.id == key }?.name ?: participantNames[id]?.takeIf { it.isNotBlank() } ?: "Bluetooth stand ${id.toString(16).takeLast(4)}",
+                "Bluetooth", com.inksheets.core.peerStatus(seen.first, now),
+                System.currentTimeMillis() - (now - seen.first).coerceAtLeast(0))
+        }
+        connectedDevices = com.inksheets.core.mergeConnectedPeers(network + bluetooth)
+        followers = connectedDevices.count { it.status == com.inksheets.core.ConnectionStatus.CONNECTED }
+    }
     private var leader: CompanionLeader? = null
     private var follower: CompanionFollower? = null
     private var lastApplied: Pair<String, Int?>? = null
@@ -149,7 +214,7 @@ class Companion(private val state: SheetsState) {
         set(v) {
             meshOnState = v
             state.platform.setPref(K_MESH, v.toString())
-            if (!v) stopMesh() else when {
+            if (!v) { chooseTransport(ConnectionTransport.WIFI); stopMesh() } else when {
                 leading -> startMesh(state.platform.deviceName)
                 following != null -> startMesh(following!!)
             }
@@ -165,13 +230,14 @@ class Companion(private val state: SheetsState) {
     private val assembler = com.inksheets.core.MeshFrames.NoteAssembler()
     private var songKeys: Pair<Long, Map<Long, Song>>? = null
 
-    private fun startMesh(leaderName: String) {
-        if (!meshOn) return
+    private fun startMesh(leaderName: String, ask: Boolean = true) {
+        if (transport == ConnectionTransport.WIFI) return
         val r = state.platform.meshRadio() ?: run { meshStatus = "Not on this device"; return }
-        if (!r.ready()) { meshStatus = "Waiting for Bluetooth permission, or Bluetooth to be on"; return }
+        if (!r.ready(ask)) { meshStatus = "Waiting for Bluetooth permission, or Bluetooth to be on"; return }
         stopMesh()
-        meshSession = com.inksheets.core.MeshFrames.sessionOf(leaderName)
-        if (!r.start { bytes -> state.platform.onMain { heardFrame(bytes) } }) { meshStatus = "Bluetooth could not start"; return }
+        meshSession = selectedSession ?: com.inksheets.core.MeshFrames.sessionOf(leaderName)
+        val generation = meshGeneration
+        if (!r.start { bytes -> state.platform.onMain { if (generation == meshGeneration && radio === r) heardFrame(bytes) } }) { meshStatus = "Bluetooth could not start"; return }
         radio = r
         meshStatus = "On"
         state.platform.log("Companion: Bluetooth on, for $leaderName")
@@ -179,11 +245,12 @@ class Companion(private val state: SheetsState) {
     }
 
     private fun stopMesh() {
+        meshGeneration++
         radio?.stop()
         radio = null
         meshState = null
         meshNotes.clear()
-        if (meshOn) meshStatus = null
+        meshStatus = null
     }
 
     /** Everything this device knows, sent round in turn: where the leader is, and recent messages. */
@@ -191,9 +258,14 @@ class Companion(private val state: SheetsState) {
         val r = radio ?: return
         val now = System.currentTimeMillis()
         meshNotes.removeAll { now - it.first > 20_000 }
-        val frames = listOfNotNull(meshState?.let { com.inksheets.core.MeshFrames.encode(it) }) +
+        val heartbeat = when {
+            leading -> com.inksheets.core.MeshFrames.Beacon(meshSession, beaconSeq, state.platform.deviceName)
+            following != null && heardBeaconSeq > 0 -> com.inksheets.core.MeshFrames.Presence(meshSession, participant, presenceSeq, heardBeaconSeq, name = state.platform.deviceName)
+            else -> null
+        }
+        val payload = listOfNotNull(meshState?.let { com.inksheets.core.MeshFrames.encode(it) }) +
             meshNotes.flatMap { (_, pieces) -> pieces.map { com.inksheets.core.MeshFrames.encode(it) } }
-        r.broadcast(frames)
+        r.broadcast(meshBroadcastSchedule(heartbeat?.let { com.inksheets.core.MeshFrames.encode(it) }, payload))
     }
 
     /** Where the leader is, passed on: from the leader itself (hop 0) or heard over Wi-Fi (hop 1). */
@@ -224,8 +296,44 @@ class Companion(private val state: SheetsState) {
     /** A broadcast heard from a nearby device. UI thread. */
     private fun heardFrame(bytes: ByteArray) {
         val frame = com.inksheets.core.MeshFrames.decode(bytes) ?: return
-        if (frame.session != meshSession || radio == null) return
+        if (radio == null) return
+        if (frame is com.inksheets.core.MeshFrames.Beacon && frame.hops == 0 && frame.name.isNotBlank() && !leading) {
+            nearbySeen[frame.session] = connectionClock()
+            nearbyBluetooth.removeAll { it.bluetoothSession == frame.session }
+            nearbyBluetooth += CompanionLink.Leader(frame.name, emptyList(), CompanionLink.PORT, frame.session)
+        }
+        if (frame.session != meshSession) return
         when (frame) {
+            is com.inksheets.core.MeshFrames.Beacon -> {
+                if (!leading && following != null && frame.hops == 0) {
+                    val now = connectionClock()
+                    val disconnected = beaconAt == 0L || now - beaconAt >= 7000L
+                    val candidate = beaconCandidateSeq
+                    val fresh = if (disconnected) {
+                        if (candidate == null || now - beaconCandidateAt > 4000L) {
+                            // A cached advertisement cannot reconnect a stand by itself. Observe
+                            // a baseline, then require the leader's sequence to actually advance.
+                            beaconCandidateSeq = frame.seq; beaconCandidateAt = now
+                            false
+                        } else com.inksheets.core.MeshFrames.isNewer(frame.seq, candidate)
+                    } else com.inksheets.core.MeshFrames.isNewer(frame.seq, heardBeaconSeq)
+                    if (fresh) {
+                        if (disconnected) lastSeq = 0L // New process may restart its page sequence.
+                        beaconCandidateSeq = null
+                        heardBeaconSeq = frame.seq; beaconAt = now; connected = true
+                        pendingJoin?.invoke(true); pendingJoin = null
+                    }
+                }
+            }
+            is com.inksheets.core.MeshFrames.Presence -> {
+                val previous = participants[frame.participant]
+                if (leading && frame.hops == 0 && frame.leaderSeq > 0 && beaconSeq - frame.leaderSeq in 0L..3L &&
+                    (previous == null || com.inksheets.core.MeshFrames.isNewer(frame.seq, previous.second))) {
+                    participants[frame.participant] = connectionClock() to frame.seq
+                    participantNames[frame.participant] = frame.name
+                    refreshConnectedDevices()
+                }
+            }
             is com.inksheets.core.MeshFrames.State -> {
                 if (leading) return
                 if (!com.inksheets.core.MeshFrames.isNewer(frame.seq, lastSeq)) return
@@ -352,16 +460,18 @@ class Companion(private val state: SheetsState) {
         stopFollowing()
         val name = state.platform.deviceName
         val l = CompanionLeader(name, leadPort)
-        l.onFollowers = { n -> state.platform.onMain { followers = n } }
+        l.onFollowers = { _ -> state.platform.onMain { refreshConnectedDevices() } }
         l.onLog = { line ->
             state.platform.log("Companion: $line")
             Regex("""went silent for \d+ s after (\d+) s""").find(line)?.let { m -> state.platform.onMain { linkDied(m.groupValues[1].toLong()) } }
         }
-        if (!l.start()) return false
+        if (!l.start(tcp = transport != ConnectionTransport.BLUETOOTH)) return false
         leader = l
         leading = true
         state.platform.holdNetwork(true)
-        joinLink = CompanionLink.joinLink(name, NetAddresses.mine(), leadPort)
+        selectedSession = com.inksheets.core.MeshFrames.sessionOf(name)
+        joinLink = CompanionLink.joinLink(name, if (transport == ConnectionTransport.BLUETOOTH) emptyList() else NetAddresses.mine(), leadPort,
+            if (transport != ConnectionTransport.WIFI && state.platform.meshRadio() != null) selectedSession else null)
         startMesh(name)
         state.platform.log("Companion: leading as $name")
         state.current?.let { announce(state.pageShown.first) }
@@ -437,6 +547,7 @@ class Companion(private val state: SheetsState) {
         leader = null
         leading = false
         followers = 0
+        participants.clear(); participantNames.clear(); connectedDevices = emptyList()
         joinLink = null
     }
 
@@ -449,7 +560,7 @@ class Companion(private val state: SheetsState) {
     fun followLeader(target: CompanionLink.Leader, done: (Boolean) -> Unit) {
         stopLeading()
         follower?.stop()
-        val f = CompanionFollower(state.platform.deviceName) { line -> state.platform.onMain { heard(line) } }
+        val f = CompanionFollower(state.platform.deviceName, state.platform.deviceId) { line -> state.platform.onMain { heard(line) } }
         if (networkBlocks) f.refreshEveryMs = REFRESH_MS
         f.onLog = { line ->
             state.platform.log("Companion: $line")
@@ -466,22 +577,28 @@ class Companion(private val state: SheetsState) {
                         val lostAt = System.currentTimeMillis()
                         reconnectCheck.schedule(object : java.util.TimerTask() {
                             override fun run() = state.platform.onMain {
-                                if (follower === f && (f.lastHeard < lostAt)) connected = false
+                                if (follower === f && (f.lastHeard < lostAt) && connectionClock() - beaconAt >= 4000) connected = false
                             }
                         }, 2_000L)
                     }
                 }
             }
         }
-        if (follower == null) state.platform.holdNetwork(true)
+        if (follower == null && transport != ConnectionTransport.BLUETOOTH && target.hosts.isNotEmpty()) state.platform.holdNetwork(true)
         follower = f
         following = target.name
+        selectedSession = target.bluetoothSession
+        heardBeaconSeq = 0; beaconAt = 0; beaconCandidateSeq = null
         lastSeq = 0
         startMesh(target.name)
         connected = false
         lastApplied = null
-        state.platform.setPref(K_LAST, CompanionLink.joinLink(target.name, target.hosts, target.port))
+        state.platform.setPref(K_LAST, CompanionLink.joinLink(target.name, target.hosts, target.port, target.bluetoothSession))
         state.platform.setPref(K_FOLLOWING_SINCE, System.currentTimeMillis().toString())
+        if (transport == ConnectionTransport.BLUETOOTH || target.hosts.isEmpty()) {
+            pendingJoin = done
+            return
+        }
         Thread({
             val ok = f.start(target)
             state.platform.onMain { done(ok) }
@@ -498,6 +615,7 @@ class Companion(private val state: SheetsState) {
         follower = null
         following = null
         connected = false
+        pendingJoin = null; beaconAt = 0; beaconCandidateSeq = null; selectedSession = null
         leaderAt = null
         missing = null
         pendingInk.clear()
@@ -505,7 +623,7 @@ class Companion(private val state: SheetsState) {
     }
 
     private fun heard(line: CompanionLink.Line) {
-        if (follower == null) return
+        if (following == null) return
         when (line) {
             is CompanionLink.Line.Show -> {
                 state.platform.setPref(K_FOLLOWING_SINCE, System.currentTimeMillis().toString())
@@ -636,7 +754,26 @@ class Companion(private val state: SheetsState) {
 
     // Last in the class, so everything it touches is already set up: resuming follows a leader,
     // and that reads state declared all through the class.
+    internal fun tickBluetooth() {
+                val now = connectionClock()
+                if (radio?.ready(ask = false) == false) { stopMesh(); meshStatus = "Bluetooth is off or permission is unavailable" }
+                if (radio == null && (leading || following != null || discovery)) startMesh(if (leading) state.platform.deviceName else following.orEmpty(), ask = false)
+                nearbyBluetooth.removeAll { now - (nearbySeen[it.bluetoothSession] ?: 0L) > 7000 }
+                participants.entries.removeAll { now - it.value.first >= 7000 }
+                if (leading) { refreshConnectedDevices(); beaconSeq++ }
+                if (following != null) {
+                    presenceSeq++
+                    if (beaconAt > 0) connected = now - beaconAt < 4000 || follower?.connectionStatus == com.inksheets.core.ConnectionStatus.CONNECTED
+                }
+                rebroadcast()
+    }
+
     init {
+        reconnectCheck.schedule(object : java.util.TimerTask() {
+            override fun run() = state.platform.onMain {
+                tickBluetooth()
+            }
+        }, 1000L, 1000L)
         // Following when the app was closed, not long ago: carry on, so a tablet that restarted
         // mid-rehearsal is back with the band without anyone touching it.
         val since = state.platform.pref(K_FOLLOWING_SINCE)?.toLongOrNull()
@@ -700,106 +837,132 @@ internal fun qrPicture(state: SheetsState, text: String): File? {
     return if (state.platform.writePng(w, h, px, file)) file else null
 }
 
-/** Leading and following, and how to follow. */
+@Composable
+private fun TogetherDeviceRow(name: String, detail: String, bluetooth: Boolean, action: String, onAction: () -> Unit) {
+    val accent = if (bluetooth) Color(0xFF8054AD) else MaterialTheme.colorScheme.primary
+    Surface(color = accent.copy(alpha = 0.07f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Surface(color = accent.copy(alpha = 0.13f), shape = RoundedCornerShape(10.dp)) {
+                Icon(if (bluetooth) Icons.Default.Bluetooth else Icons.Default.Devices, null, tint = accent, modifier = Modifier.padding(10.dp).size(24.dp))
+            }
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.titleSmall)
+                Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            OutlinedButton(onClick = onAction) { Text(action) }
+        }
+    }
+}
+
+/** Roles and real nearby devices stay visible; detail controls keep their existing behavior. */
 @Composable
 internal fun CompanionDialog(state: SheetsState, onClose: () -> Unit) {
     val companion = state.companion
     var problem by remember { mutableStateOf<String?>(null) }
     var said by remember { mutableStateOf<String?>(null) }
+    var search by remember { mutableStateOf("") }
     val found = remember { mutableStateListOf<CompanionLink.Leader>() }
-
-    DisposableEffect(Unit) {
-        val scanner = CompanionScanner { leader ->
-            state.platform.onMain {
-                if (leader.host !in com.inksheets.core.RemoteClient.localAddresses() && found.none { it.host == leader.host && it.port == leader.port }) found += leader
-            }
-        }
-        scanner.start()
-        onDispose { scanner.stop() }
+    DisposableEffect(companion.transport) {
+        companion.discoverBluetooth()
+        val scanner = CompanionScanner { leader -> state.platform.onMain {
+            if (leader.host !in com.inksheets.core.RemoteClient.localAddresses() && found.none { it.host == leader.host && it.port == leader.port }) found += leader
+        } }
+        if (companion.transport != ConnectionTransport.BLUETOOTH) scanner.start()
+        onDispose { scanner.stop(); companion.endDiscovery() }
     }
-
     fun join(leader: CompanionLink.Leader) {
         problem = null
         companion.followLeader(leader) { ok ->
-            if (ok) onClose()
-            else problem = "Can't reach ${leader.name} yet - still trying. Both need to be on the same Wi-Fi."
+            if (ok) onClose() else problem = "Still trying ${leader.name}. Check the selected connection and keep the leader open."
         }
     }
-
+    androidx.compose.foundation.layout.BoxWithConstraints {
+    val compact = maxHeight < 440.dp
     SheetDialog(title = "Play together", onDismiss = onClose, wide = true, movable = true) {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
-            when {
-                companion.leading -> LeadingSection(state, onSaid = { said = it })
-                companion.following != null -> FollowingSection(state, onClose)
-                else -> {
-                    Text("Lead", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Everyone who follows goes to the song you open. Only where you are is shared, " +
-                            "unless you choose to share your markings too.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(
-                        onClick = { problem = if (companion.lead()) null else "Could not start leading. Is another app using port ${CompanionLink.PORT}?" },
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    ) { Text("Lead from this device") }
-
-                    HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                    Text("Follow", style = MaterialTheme.typography.titleMedium)
-                    companion.lastLeader?.let { last ->
-                        Button(onClick = { join(last) }, modifier = Modifier.padding(top = 6.dp)) { Text("Follow ${last.name} again") }
-                    }
-                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
-                        if (state.platform.canScanQr) {
-                            Button(onClick = {
-                                state.platform.scanQr { text ->
-                                    if (text != null) {
-                                        CompanionLink.parseJoin(text)?.let(::join) ?: run { problem = "That code isn't an InkSheets code." }
-                                    }
-                                }
-                            }) {
-                                Icon(Icons.Default.QrCodeScanner, null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Scan the leader's code")
-                            }
-                        }
-                        OutlinedButton(onClick = {
-                            val text = state.platform.readClipboard()
-                            val leader = text?.let(CompanionLink::parseJoin)
-                            if (leader != null) join(leader)
-                            else problem = "There's no InkSheets code on the clipboard. Copy the leader's code (the picture or the link) first."
-                        }) {
-                            Icon(Icons.Default.ContentPaste, null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Paste a code")
-                        }
-                    }
-                    Text("Leading nearby", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
-                    if (found.isEmpty()) {
-                        Text("Looking on this Wi-Fi...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    found.forEach { leader ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Text(leader.name, modifier = Modifier.weight(1f))
-                            Button(onClick = { join(leader) }) { Text("Follow") }
-                        }
-                    }
-                    FollowModes(companion)
-                    TypedAddress(onJoin = ::join)
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 12.dp)) {
+            if (compact) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) { TransportChoice(companion.transport, state.platform.meshRadio() != null, companion::chooseTransport) }
+                when {
+                    companion.leading -> OutlinedButton(onClick = companion::stopLeading) { Text("Stop leading") }
+                    companion.following != null -> OutlinedButton(onClick = companion::stopFollowing) { Text("Stop following") }
+                    else -> Button(onClick = { problem = if (companion.lead()) null else "Could not start leading." }) { Text("Lead") }
                 }
             }
-            said?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp)) }
-            problem?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp)) }
-            // A remote of this player's own, alongside playing together or without it.
-            HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            if (compact && companion.transport != ConnectionTransport.WIFI) companion.meshStatus?.let { status ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Bluetooth · $status", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                    if (status != "On" && state.platform.meshRadio() != null) TextButton(onClick = companion::retryBluetooth) { Text("Retry Bluetooth") }
+                }
+            }
+            if (!compact) Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .5f), shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Icon(Icons.Default.Groups, null, tint = MaterialTheme.colorScheme.primary)
+                        Text("One group. Everyone's own part.", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    }
+                    Text("Lead the music, follow another stand, or connect a remote.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TransportChoice(companion.transport, state.platform.meshRadio() != null, companion::chooseTransport)
+                    companion.meshStatus?.let { status ->
+                        Text("Bluetooth · $status", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        if (status != "On" && companion.transport != ConnectionTransport.WIFI && state.platform.meshRadio() != null) {
+                            TextButton(onClick = companion::retryBluetooth) { Text("Retry Bluetooth") }
+                        }
+                    }
+                }
+            }
+            when {
+                companion.leading -> LeadingSection(state, onSaid = { said = it }, showStop = !compact)
+                companion.following != null -> FollowingSection(state, onClose, showStop = !compact)
+                else -> {
+                    if (!compact) TogetherDeviceRow(state.platform.deviceName, "This device · lead the song and page", false, "Lead") {
+                        problem = if (companion.lead()) null else "Could not start leading. Try Bluetooth only or check the network port."
+                    }
+                    Text("Find your group", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(value = search, onValueChange = { search = it }, singleLine = true,
+                        label = { Text("Search nearby devices") }, leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth())
+                    val nearby = (companion.nearbyBluetooth + found.filter { companion.transport != ConnectionTransport.BLUETOOTH })
+                        .filter { it.name.contains(search, ignoreCase = true) }
+                    if (nearby.isEmpty()) {
+                        Text(if (search.isBlank()) "Looking for leaders nearby…" else "No devices match “$search”.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    nearby.forEach { leader ->
+                        val bt = leader.hosts.isEmpty() && leader.bluetoothSession != null
+                        TogetherDeviceRow(leader.name, if (bt) "Bluetooth · no Wi-Fi needed" else "Wi-Fi / network · nearby leader", bt, "Follow") { join(leader) }
+                    }
+                    companion.lastLeader?.let { last ->
+                        TogetherDeviceRow(last.name, "Last group · reconnect", last.hosts.isEmpty(), "Follow again") { join(last) }
+                    }
+                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (state.platform.canScanQr) OutlinedButton(onClick = {
+                            state.platform.scanQr { text -> if (text != null) {
+                                CompanionLink.parseJoin(text)?.let(::join) ?: run { problem = "That code isn't an InkSheets code." }
+                            } }
+                        }) { Icon(Icons.Default.QrCodeScanner, null); Spacer(Modifier.width(6.dp)); Text("Scan code") }
+                        OutlinedButton(onClick = {
+                            val leader = state.platform.readClipboard()?.let(CompanionLink::parseJoin)
+                            if (leader != null) join(leader) else problem = "Copy the leader's InkSheets code first."
+                        }) { Icon(Icons.Default.ContentPaste, null); Spacer(Modifier.width(6.dp)); Text("Paste code") }
+                    }
+                    TypedAddress(onJoin = ::join)
+                    FollowModes(companion)
+                }
+            }
+            said?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+            problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.SettingsRemote, null, tint = Color(0xFF28775B))
+                Text("Your remote", style = MaterialTheme.typography.titleMedium)
+            }
             HostSection(state)
         }
     }
 }
+}
 
 @Composable
-private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
+private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit, showStop: Boolean = true) {
     val companion = state.companion
     val link = companion.joinLink
     // Side by side where there is room; on a phone the code above, everything else below it.
@@ -816,7 +979,7 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
                 Text(
-                    "A phone or tablet's own camera works too. Send the picture to a group chat and anyone can join from it.",
+                    "Scan this code from the other device, or choose this stand in Nearby.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -844,8 +1007,13 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
             }
         }
         // Beside the words, small: the code never pushes them away. Tapped, it shows big to scan.
-        Row(verticalAlignment = Alignment.Top) {
-            if (link != null) ScanCode(link, if (narrow) 104.dp else 136.dp)
+        if (narrow) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                details()
+                if (link != null) ScanCode(link, 128.dp)
+            }
+        } else Row(verticalAlignment = Alignment.Top) {
+            if (link != null) ScanCode(link, 136.dp)
             Spacer(Modifier.width(12.dp))
             Box(Modifier.weight(1f)) { details() }
         }
@@ -855,8 +1023,22 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
             Text(link, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         }
     }
-    if (NetAddresses.mine().isEmpty()) {
-        Text("This device isn't on a network, so nobody can reach it.", color = MaterialTheme.colorScheme.error)
+    if (NetAddresses.mine().isEmpty() && companion.transport != ConnectionTransport.BLUETOOTH) {
+        Text("No Wi-Fi address. Bluetooth discovery remains available when enabled.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    companion.connectedDevices.forEach { peer ->
+        val green = peer.status == com.inksheets.core.ConnectionStatus.CONNECTED
+        Surface(color = (if (green) Color(0xFF28775B) else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = .07f),
+            shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(Icons.Default.Devices, null, tint = if (green) Color(0xFF28775B) else MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f)) {
+                    Text(peer.name, style = MaterialTheme.typography.titleSmall)
+                    Text("${peer.transport} · ${peer.status.name.lowercase().replaceFirstChar { it.uppercase() }} · heartbeat ${((System.currentTimeMillis() - peer.lastHeard).coerceAtLeast(0) / 1000)}s ago",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
     }
     HorizontalDivider(Modifier.padding(vertical = 8.dp))
     Row(
@@ -876,36 +1058,33 @@ private fun LeadingSection(state: SheetsState, onSaid: (String) -> Unit) {
     NetworkHint(state)
     HorizontalDivider(Modifier.padding(vertical = 8.dp))
     SendNote(state, onSaid)
-    OutlinedButton(onClick = { companion.stopLeading() }, modifier = Modifier.padding(top = 8.dp)) { Text("Stop leading") }
+    if (showStop) OutlinedButton(onClick = { companion.stopLeading() }, modifier = Modifier.padding(top = 8.dp)) { Text("Stop leading") }
 }
 
 @Composable
-private fun FollowingSection(state: SheetsState, onClose: () -> Unit) {
+private fun FollowingSection(state: SheetsState, onClose: () -> Unit, showStop: Boolean = true) {
     val companion = state.companion
     NetworkHint(state)
     Text(
-        "Following ${companion.following}" + if (companion.connected) "" else " - reconnecting...",
+        "Following ${companion.following}",
         style = MaterialTheme.typography.titleMedium
     )
+    Text(companion.connectionDetail, style = MaterialTheme.typography.bodySmall, color = if (companion.connected) Color(0xFF28775B) else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 6.dp))
     LeaderWhere(state, onGo = onClose)
     FollowModes(companion)
-    OutlinedButton(onClick = { companion.stopFollowing() }, modifier = Modifier.padding(top = 8.dp)) { Text("Stop following") }
+    if (showStop) OutlinedButton(onClick = { companion.stopFollowing() }, modifier = Modifier.padding(top = 8.dp)) { Text("Stop following") }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun FollowModes(companion: Companion) {
-    Text("Show me", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 10.dp))
-    CompanionLink.Follow.entries.forEach { mode ->
-        Row(
-            Modifier.fillMaxWidth().clickable { companion.follow = mode },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            RadioButton(selected = companion.follow == mode, onClick = { companion.follow = mode })
-            Text(mode.label, style = MaterialTheme.typography.bodyMedium)
+    Text("When the leader moves", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        CompanionLink.Follow.entries.forEach { mode ->
+            androidx.compose.material3.FilterChip(selected = companion.follow == mode, onClick = { companion.follow = mode }, label = { Text(mode.label) })
         }
     }
 }
-
 @Composable
 private fun TypedAddress(onJoin: (CompanionLink.Leader) -> Unit) {
     var open by remember { mutableStateOf(false) }
@@ -960,7 +1139,7 @@ internal fun FollowBanner(state: SheetsState) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Following ${companion.following}" + if (companion.connected) "" else " - reconnecting...",
+                    "Following ${companion.following}",
                     style = MaterialTheme.typography.labelLarge
                 )
                 LeaderWhere(state)

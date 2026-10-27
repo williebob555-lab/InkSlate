@@ -2549,11 +2549,12 @@ class DrawingView @JvmOverloads constructor(
         val h = if (fitWholePage) (height.toFloat() - musicShelfDp * resources.displayMetrics.density).coerceAtLeast(48f) else height.toFloat()
         val lane = stripLaneDp * resources.displayMetrics.density
         val music = musicLaneDp * resources.displayMetrics.density
+        val studio = studioRailDp * resources.displayMetrics.density
         var laneShift = 0f
-        if (fitWholePage && (lane > 0f || music > 0f)) {
-            w -= lane + music
+        if (fitWholePage && (lane > 0f || music > 0f || studio > 0f)) {
+            w -= lane + music + studio
             // The strip's lane on its side, the music tools' on the other.
-            laneShift = if (stripOnLeft) lane else music
+            laneShift = (if (stripOnLeft) lane else music) + studio
         }
         val s = min((w - 24f) / b.width(), (h - 24f) / b.height())
         out.reset(); out.postScale(s, s)
@@ -4821,6 +4822,7 @@ class DrawingView @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 toDoc(event.x, event.y)
                 musicPage = pageAtDoc(tmpPts[0], tmpPts[1])
+                com.inkslate.core.Perform.musicBrush = if (config.tool == com.inkslate.core.Tool.PAN) penConfig else config
                 val started = ArrayList<Float>()
                 add(event.x, event.y, started)
                 musicPts = started
@@ -4847,6 +4849,33 @@ class DrawingView @JvmOverloads constructor(
 
     /** The music tools' marks, in the page's own coordinates. */
     private fun drawPageMarks(canvas: Canvas, marks: List<com.inkslate.core.PageMark>) {
+        for (mark in marks) {
+            val mask = mark.mask
+            if (mask == null) drawPageMarksPrimitive(canvas, listOf(mark)) else {
+                val path = musicMaskPaths.getOrPut(mask) {
+                    android.graphics.Path().apply {
+                        if (mask.baseFull) addRect(0f,0f,mask.width,mask.height,android.graphics.Path.Direction.CW)
+                        for (stroke in mask.strokes) {
+                            val shape = android.graphics.Path().apply {
+                                fillType = android.graphics.Path.FillType.WINDING
+                                for (c in stroke.contours) if (c.size >= 6) {
+                                    moveTo(c[0],c[1]); var i=2
+                                    while (i+1<c.size) { lineTo(c[i],c[i+1]);i+=2 };close()
+                                }
+                            }
+                            op(shape, if (stroke.erase) android.graphics.Path.Op.DIFFERENCE else android.graphics.Path.Op.UNION)
+                        }
+                    }
+                }
+                val saved = canvas.save()
+                canvas.clipPath(path)
+                drawPageMarksPrimitive(canvas,listOf(mark))
+                canvas.restoreToCount(saved)
+            }
+        }
+    }
+    private val musicMaskPaths = java.util.WeakHashMap<com.inkslate.core.PageMark.Mask, android.graphics.Path>()
+    private fun drawPageMarksPrimitive(canvas: Canvas, marks: List<com.inkslate.core.PageMark>) {
         for (m in marks) {
             markPaint.color = m.color
             when (m.kind) {
@@ -4954,6 +4983,7 @@ class DrawingView @JvmOverloads constructor(
         var musicLaneDp: Float = 0f
 
         var musicShelfDp: Float = 0f
+        var studioRailDp: Float = 0f
 
         /** That room is on the left rather than the right. */
         @JvmStatic

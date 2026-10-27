@@ -286,7 +286,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
 
 /** The speed-up settings: from what share of the tempo, and how much faster each time round. */
 @Composable
-private fun SpeedUpMenu(open: Boolean, onDismiss: () -> Unit) {
+internal fun SpeedUpMenu(open: Boolean, onDismiss: () -> Unit) {
     DropdownMenu(open, onDismissRequest = onDismiss) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).width(240.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -304,7 +304,7 @@ private fun SpeedUpMenu(open: Boolean, onDismiss: () -> Unit) {
 
 /** Which instrument the bars are played as: the part's own, or another's. */
 @Composable
-private fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit) {
+internal fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit) {
     DropdownMenu(open, onDismissRequest = onDismiss) {
         DropdownMenuItem(text = { Text("The part's own instrument" + if (ScoreTools.soundAs == null) "  ✓" else "") }, onClick = { ScoreTools.soundAs = null; onDismiss() })
         // The player's own sampled instruments first (see Settings, Instruments).
@@ -352,7 +352,7 @@ internal fun GoToBar(state: SheetsState, onDone: () -> Unit) {
 }
 
 /** The part engraved afresh from its reading, as a PDF beside the app's shared files, handed to the system to open or send. */
-private fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, forName: String? = null): String {
+internal fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, forName: String? = null): String {
     val song = state.current
     val own = state.partShown()?.let { com.inksheets.core.Instruments.partName(it) } ?: file.nameWithoutExtension
     val part = forName?.let { "$it (from $own)" } ?: own
@@ -368,7 +368,7 @@ private fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.core
 
 /** The part re-written for another instrument - sounding the same - and printed afresh. */
 @Composable
-private fun PrintFor(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, onDone: () -> Unit) {
+internal fun PrintFor(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, onDone: () -> Unit) {
     val own = state.partShown()?.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }?.let { com.inksheets.core.Instruments.byId[it] }
     AlertDialog(
         onDismissRequest = onDone,

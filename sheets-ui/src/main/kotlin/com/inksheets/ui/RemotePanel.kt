@@ -123,6 +123,20 @@ import com.inkslate.core.NetAddresses
  * another, a deck of buttons chosen by the player. One per app, like [Companion].
  */
 class RemoteControl(private val state: SheetsState) {
+    internal var transport by mutableStateOf(ConnectionTransport.decode(state.platform.pref("sheets_remote_transport")))
+        private set
+    internal fun chooseTransport(value: ConnectionTransport) {
+        if (transport == value) return
+        val wasHosting = hosting
+        val controlling = target
+        if (wasHosting) stopHosting()
+        transport = value
+        state.platform.setPref("sheets_remote_transport", value.name)
+        if (wasHosting) startHosting()
+        if (controlling != null) connect(lastTarget ?: controlling)
+    }
+    var bluetoothProblem by mutableStateOf<String?>(null)
+        private set
 
     // ---- this device, controlled by remotes ------------------------------------------------
 
@@ -150,9 +164,11 @@ class RemoteControl(private val state: SheetsState) {
     var bluetoothOn by mutableStateOf(false)
         private set
     private var btListening: RemoteBluetooth.Listening? = null
+    @Volatile private var btStarting = false
+    private var btRetryAt = 0L
 
     private fun link() = RemoteLink.pairLink(
-        state.platform.deviceName, NetAddresses.mine(), key, port,
+        state.platform.deviceName, if (transport == ConnectionTransport.BLUETOOTH) emptyList() else NetAddresses.mine(), key, port,
         bt = btListening?.address, channel = btListening?.channel
     )
 
@@ -160,25 +176,33 @@ class RemoteControl(private val state: SheetsState) {
      * Take remotes over Bluetooth as well - round a Wi-Fi that will not carry the connection. Asks
      * for the permission when it is missing; call again once it is given.
      */
-    fun startBluetooth() {
+    fun startBluetooth(ask: Boolean = true) {
         val bt = state.platform.remoteBluetooth ?: return
-        if (host == null || bluetoothOn) return
-        if (!bt.ready()) return
+        if (host == null || bluetoothOn || btStarting || transport == ConnectionTransport.WIFI) return
+        if (!bt.ready(ask)) {
+            bluetoothProblem = "Bluetooth needs permission or must be switched on. No Wi-Fi is required."
+            return
+        }
+        bluetoothProblem = null
+        val startingHost = host
+        btStarting = true
         Thread({
             val l = runCatching { bt.listen { pipe -> host?.take(pipe) ?: pipe.close() } }
                 .onFailure { state.platform.log("Remote: Bluetooth could not start - ${it.message}") }
                 .getOrNull()
             state.platform.onMain {
-                if (host == null) { if (l != null) bt.stopListening(); return@onMain }
+                btStarting = false
+                if (host !== startingHost) { if (l != null) bt.stopListening(); return@onMain }
                 btListening = l
                 bluetoothOn = l != null
+                if (l == null) bluetoothProblem = "Bluetooth could not listen. Check Bluetooth and try again."
                 if (l != null) state.platform.log("Remote: taking remotes over Bluetooth too" + (l.address?.let { " ($it)" } ?: ""))
                 pairLink = link()
             }
         }, "remote-bluetooth").apply { isDaemon = true; start() }
     }
 
-    fun startHosting(): Boolean {
+    fun startHosting(askBluetooth: Boolean = true): Boolean {
         if (host != null) return true
         val name = state.platform.deviceName
         val h = RemoteHost(name, key, port)
@@ -194,18 +218,27 @@ class RemoteControl(private val state: SheetsState) {
         }
         h.onLog = { line -> state.platform.log("Remote: $line") }
         h.onRemotes = { n -> state.platform.onMain { remotes = n; publish() } }
-        if (!h.start()) return false
+        if (!h.start(tcp = transport != ConnectionTransport.BLUETOOTH)) return false
         host = h
         hosting = true
         state.platform.setPref(K_HOSTING, "true")
         pairLink = link()
-        startBluetooth()
+        startBluetooth(askBluetooth)
         libraryVersion = -1L
         // Where this device is, told to every remote whenever it changes: read a few times a
         // second (small, and sent only when different).
         timer = java.util.Timer("remote-state", true).apply {
             schedule(object : java.util.TimerTask() {
-                override fun run() = state.platform.onMain { publish() }
+                override fun run() = state.platform.onMain {
+                    publish()
+                    if (bluetoothOn && state.platform.remoteBluetooth?.ready(ask = false) == false) {
+                        bluetoothOn = false; btListening = null
+                        state.platform.remoteBluetooth?.stopListening()
+                    }
+                    if (transport != ConnectionTransport.WIFI && !bluetoothOn && System.currentTimeMillis() - btRetryAt >= 1500) {
+                        btRetryAt = System.currentTimeMillis(); startBluetooth(ask = false)
+                    }
+                }
             }, 0L, 250L)
         }
         return true
@@ -216,6 +249,8 @@ class RemoteControl(private val state: SheetsState) {
         host?.stop(); host = null
         if (bluetoothOn) state.platform.remoteBluetooth?.let { bt -> Thread({ bt.stopListening() }, "remote-bluetooth").apply { isDaemon = true; start() } }
         bluetoothOn = false
+        btStarting = false
+        bluetoothProblem = null
         btListening = null
         hosting = false
         remotes = 0
@@ -443,6 +478,20 @@ class RemoteControl(private val state: SheetsState) {
 
     /** When the device was last heard from, even by a heartbeat; 0 when not connected. */
     val lastHeard: Long get() = client?.lastHeard ?: 0L
+    val connectedVia: String? get() = client?.via?.let { if (it.startsWith("bt:")) "Bluetooth" else "Network" }
+    /** Fresh immutable snapshots for the workspace's per-device status rows. */
+    val connectedDevices: List<com.inksheets.core.ConnectedPeer> get() {
+        val peers = host?.connectedDevices.orEmpty()
+        val activeClient = client ?: return peers
+        val t = target ?: return peers
+        val route = activeClient.via?.let { if (it.startsWith("bt:")) "Bluetooth" else "Wi-Fi" }
+            ?: if (transport == ConnectionTransport.BLUETOOTH || t.hosts.isEmpty()) "Bluetooth" else "Wi-Fi"
+        val peer = com.inksheets.core.ConnectedPeer(
+            "stand:${t.bt ?: t.hosts.sorted().joinToString(",") + ":" + t.port}",
+            shown?.device?.takeIf { it.isNotBlank() } ?: t.name,
+            route, activeClient.connectionStatus, activeClient.lastHeard)
+        return com.inksheets.core.mergeConnectedPeers(peers + peer)
+    }
 
     fun connect(t: RemoteLink.Target) {
         client?.stop()
@@ -452,7 +501,17 @@ class RemoteControl(private val state: SheetsState) {
         refused = null
         shown = null
         hostLibrary = null
-        target = t
+        val route = when (transport) {
+            ConnectionTransport.BLUETOOTH -> t.copy(hosts = emptyList())
+            ConnectionTransport.WIFI -> t.copy(bt = null, channel = null)
+            ConnectionTransport.AUTO -> t
+        }
+        if (transport == ConnectionTransport.BLUETOOTH && route.bt == null) {
+            target = null
+            bluetoothProblem = "Choose the stand under paired Bluetooth devices, then enter its code. Wi-Fi is not needed."
+            return
+        }
+        target = route
         state.platform.setPref(K_LAST, RemoteLink.pairLink(t))
         val c = RemoteClient(state.platform.deviceName, myId) { line ->
             if (line is RemoteLink.Line.Got) { answered += line.seq; line.why?.let { whys[line.seq] = it } }
@@ -474,10 +533,15 @@ class RemoteControl(private val state: SheetsState) {
         c.onConnected = { on -> state.platform.onMain { connected = on; if (on) blocked = null } }
         c.onBlocked = { at -> state.platform.onMain { blocked = at } }
         // Bluetooth, where the device said it has it: asked for here, on the UI thread.
-        if (t.bt != null) state.platform.remoteBluetooth?.takeIf { it.ready() }?.let { c.bluetooth = it }
+        if (route.bt != null) state.platform.remoteBluetooth?.let { bt ->
+            // Keep the driver attached even while the permission/enable dialog is open:
+            // its quiet connect retries can then recover without requiring another pairing.
+            c.bluetooth = bt
+            bluetoothProblem = if (bt.ready()) null else "Bluetooth needs permission or must be switched on. Retrying when it is ready."
+        }
         c.onLog = { line -> state.platform.log("Remote: $line") }
         client = c
-        c.start(t)
+        c.start(route)
         state.platform.log("Remote: controlling ${t.name}")
     }
 
@@ -581,7 +645,7 @@ class RemoteControl(private val state: SheetsState) {
 
     init {
         loadDeck()
-        if (state.platform.pref(K_HOSTING) == "true") startHosting()
+        if (state.platform.pref(K_HOSTING) == "true") startHosting(askBluetooth = false)
     }
 
     companion object {
@@ -643,8 +707,8 @@ internal fun RemoteScreen(state: SheetsState, onClose: () -> Unit) {
                         Text(
                             when {
                                 noSignal -> "No signal from ${t.name}... trying again"
-                                remote.connected -> "Controlling ${t.name}"
-                                else -> "Reaching ${t.name}... (both on the same Wi-Fi)"
+                                remote.connected -> "Controlling ${t.name} · ${remote.connectedVia ?: "connected"} · heartbeat ${((now - remote.lastHeard).coerceAtLeast(0) / 1000)}s ago"
+                                else -> "Reaching ${t.name} · ${if (t.hosts.isEmpty()) "Bluetooth" else remote.transport.label}"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = if (remote.connected && !noSignal) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
@@ -690,6 +754,8 @@ private fun RemoteSetup(state: SheetsState) {
     }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        TransportChoice(remote.transport, state.platform.remoteBluetooth != null, remote::chooseTransport)
+        remote.bluetoothProblem?.let { Text(it, color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall) }
         remote.refused?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(bottom = 8.dp)) }
         Text("Use this device as a remote", style = MaterialTheme.typography.titleMedium)
         Text(
@@ -716,7 +782,8 @@ private fun RemoteSetup(state: SheetsState) {
                 Icon(Icons.Default.ContentPaste, null); Spacer(Modifier.width(6.dp)); Text("Paste its code")
             }
         }
-        Text("Nearby, letting remotes in", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
+        if (remote.transport != ConnectionTransport.BLUETOOTH) {
+        Text("Nearby on the network", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp))
         if (nearby.isEmpty()) Text("Looking on this Wi-Fi...", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         nearby.forEach { d ->
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -724,13 +791,14 @@ private fun RemoteSetup(state: SheetsState) {
                 OutlinedButton(onClick = { askingCode = d }) { Text("Enter its code") }
             }
         }
+        }
         // Bluetooth: no Wi-Fi needed at all - for networks that will not carry the connection.
-        state.platform.remoteBluetooth?.let { bt ->
+        state.platform.remoteBluetooth?.takeIf { remote.transport != ConnectionTransport.WIFI }?.let { bt ->
             Text("Over Bluetooth", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 10.dp))
             if (paired == null) {
                 OutlinedButton(onClick = { paired = if (bt.ready()) bt.paired() else null }) { Text("Devices paired with this one") }
                 Text(
-                    "Pair the two in the system's Bluetooth settings first. Works where the Wi-Fi blocks the remote (school and work networks).",
+                    "Pair the two in system Bluetooth settings first. This works with Wi-Fi off; enter the stand's six-character code below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -747,7 +815,7 @@ private fun RemoteSetup(state: SheetsState) {
         problem?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp)) }
 
         HorizontalDivider(Modifier.padding(vertical = 16.dp))
-        HostSection(state)
+        HostSection(state, showTransport = false)
     }
 
     askingCode?.let { (name, host, port) ->
@@ -768,16 +836,18 @@ private fun RemoteSetup(state: SheetsState) {
 
 /** Letting remotes control this device: on or off, and the code a remote scans. */
 @Composable
-internal fun HostSection(state: SheetsState) {
+internal fun HostSection(state: SheetsState, showTransport: Boolean = true) {
     val remote = state.remote
     var problem by remember { mutableStateOf<String?>(null) }
+    if (showTransport) TransportChoice(remote.transport, state.platform.remoteBluetooth != null, remote::chooseTransport)
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable {
         problem = if (remote.hosting) { remote.stopHosting(); null } else if (remote.startHosting()) null else "Could not let remotes in. Is another app using port ${RemoteControl.port}?"
     }) {
         Column(Modifier.weight(1f)) {
             Text("Control this device from a remote", style = MaterialTheme.typography.titleMedium)
             Text(
-                if (!remote.hosting) "Off" else when (remote.remotes) { 0 -> "On - no remote connected"; 1 -> "On - 1 remote connected"; else -> "On - ${remote.remotes} remotes connected" },
+                if (!remote.hosting) "Off" else if (remote.transport == ConnectionTransport.BLUETOOTH && !remote.bluetoothOn) "Bluetooth not ready — no remote connected"
+                else when (remote.remotes) { 0 -> "Ready — no remote connected"; 1 -> "1 remote connected"; else -> "${remote.remotes} remotes connected" },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (remote.hosting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -787,8 +857,8 @@ internal fun HostSection(state: SheetsState) {
     problem?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     if (remote.hosting && state.platform.remoteBluetooth != null) {
         Text(
-            if (remote.bluetoothOn) "Over Bluetooth too - for a Wi-Fi that blocks remotes. Pair the remote with this device in the system's Bluetooth settings."
-            else "Bluetooth is off for remotes - tap to use it too (for a Wi-Fi that blocks them)",
+            if (remote.bluetoothOn) "Bluetooth ready · no Wi-Fi needed. Pair the remote with this stand in system Bluetooth settings."
+            else remote.bluetoothProblem ?: "Enable Bluetooth for remotes — Wi-Fi is not required",
             style = MaterialTheme.typography.bodySmall,
             color = if (remote.bluetoothOn) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
             modifier = Modifier.fillMaxWidth()
@@ -797,7 +867,14 @@ internal fun HostSection(state: SheetsState) {
         )
     }
     val link = remote.pairLink
-    if (remote.hosting && link != null) {
+    val scannable = link?.let(RemoteLink::parsePair) != null
+    if (remote.hosting && link != null && !scannable) {
+        Text("Pair with ${state.platform.deviceName} in Bluetooth settings. On the remote, choose it under paired devices and enter:",
+            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+        Text(remote.key.chunked(3).joinToString(" "), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        TextButton(onClick = { remote.pairAgain() }) { Text("New code (disconnects every remote)") }
+    }
+    if (remote.hosting && link != null && scannable) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val narrow = maxWidth < 460.dp
             val code: @Composable () -> Unit = { ScanCode(link, if (narrow) 104.dp else 136.dp) }

@@ -4,6 +4,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.File
 
 /**
@@ -53,14 +56,18 @@ data class Op(
     val kind: String,
     val id: String,
     val field: String,
-    val value: JsonElement = JsonNull
+    val value: JsonElement = JsonNull,
+    /** Observed list before this edit. Older clients ignore it and read the full value. */
+    val base: JsonElement? = null,
+    /** Removal tombstones observed by the author, including items absent from base. */
+    val removals: Map<String, Map<String, Stamp>> = emptyMap()
 ) {
     companion object {
         const val DELETED = "_deleted"
     }
 }
 
-/** The latest value of every field of every record: what the logs add up to. */
+/** The current fields of every record, including item-level projections of observed lists. */
 class LibraryState {
 
     data class Key(val kind: String, val id: String)
@@ -71,13 +78,13 @@ class LibraryState {
 
     /** The same records, by kind: asking for the setlists walks the setlists, not every part too. */
     private val byKind = HashMap<String, LinkedHashMap<String, MutableMap<String, Value>>>()
+    private val collections = HashMap<Triple<String, String, String>, MergedCollection>()
 
     /**
      * Fold one edit in. Returns true when it changed anything.
      *
-     * The latest stamp wins field by field, whatever order edits arrive in and however often the
-     * same one arrives - so reading the logs in any order, or reading one twice, gives the same
-     * library.
+     * Ordinary fields use their latest stamp. Observed lists merge item membership, properties
+     * and ordering separately. Both paths are order-independent and idempotent.
      */
     fun apply(op: Op): Boolean {
         if (op.field in REMEMBERED) {
@@ -91,6 +98,13 @@ class LibraryState {
         first[key]?.let { if (op.at < it) first[key] = op.at } ?: run { first[key] = op.at }
         val fields = records.getOrPut(key) { HashMap<String, Value>().also { byKind.getOrPut(op.kind) { LinkedHashMap() }[op.id] = it } }
         val current = fields[op.field]
+        if (isMergedList(op.kind, op.field)) {
+            val merged = collections.getOrPut(Triple(op.kind, op.id, op.field)) { MergedCollection(if (op.field == "audio") "file" else "id") }
+            merged.apply(op)
+            val value = merged.value()
+            fields[op.field] = Value(maxOf(current?.at ?: op.at, op.at), value)
+            return current?.value != value
+        }
         if (current != null && current.at >= op.at) return false
         fields[op.field] = Value(op.at, op.value)
         return true
@@ -130,8 +144,182 @@ class LibraryState {
 
     fun latestOf(kind: String, id: String, field: String): Stamp? = records[Key(kind, id)]?.get(field)?.at
 
+    /** A collection delta can still supply an item after a later list snapshot was written. */
+    fun keeps(op: Op): Boolean = collections[Triple(op.kind, op.id, op.field)]?.keeps(op.at)
+        ?: (latestOf(op.kind, op.id, op.field) == op.at)
+
+    fun removalContext(kind: String, id: String, field: String): Map<String, Map<String, Stamp>> =
+        collections[Triple(kind, id, field)]?.removalContext().orEmpty()
+
+    companion object {
+        fun isMergedList(kind: String, field: String) = (kind == "song" && field == "audio") || (kind == "setlist" && field == "entries")
+    }
+
     private fun isDeleted(fields: Map<String, Value>): Boolean =
         (fields[Op.DELETED]?.value as? kotlinx.serialization.json.JsonPrimitive)?.content == "true"
+}
+
+/**
+ * Each observed-list edit supplies item deltas. Membership is independent of metadata: changing
+ * a track's speed never revives a track removed by another device. JSON objects merge at their
+ * leaves, so teaching one part does not replace another part's turn times. Ordered lists use
+ * predecessor links, with deterministic sibling and cycle handling for concurrent edits.
+ */
+private class MergedCollection(private val keyField: String) {
+    private data class Cell(val at: Stamp, val source: Stamp, val value: JsonElement?, val sawRemoval: Map<String, Stamp> = emptyMap())
+    private class Item {
+        var alive: Cell? = null
+        val removed = HashMap<String, Cell>()
+        var after: Cell? = null
+        val fields = HashMap<List<String>, Cell>()
+    }
+    private val items = HashMap<String, Item>()
+    private var legacy: Op? = null
+    private val seedStamp = Stamp(Long.MIN_VALUE, 0, "")
+    private val knownFields = if (keyField == "file") setOf("file", "label", "loopStartMs", "loopEndMs", "speed", "pitch", "clickBpm", "beatsPerBar", "firstBeatMs", "volume", "turnsMs", "partTurns")
+        else setOf("id", "songId", "note", "tempo", "color")
+
+    private fun records(value: JsonElement?): LinkedHashMap<String, JsonObject> {
+        val result = LinkedHashMap<String, JsonObject>()
+        (value as? JsonArray)?.forEach { element ->
+            val record = element as? JsonObject ?: return@forEach
+            val key = (record[keyField] as? JsonPrimitive)?.content ?: return@forEach
+            result.putIfAbsent(key, record)
+        }
+        return result
+    }
+    private fun leaves(value: JsonObject): Map<List<String>, JsonElement> {
+        val result = HashMap<List<String>, JsonElement>()
+        fun walk(path: List<String>, v: JsonElement) {
+            if (v is JsonObject && v.isNotEmpty()) v.forEach { (key, child) -> walk(path + key, child) }
+            else result[path] = v
+        }
+        value.forEach { (key, v) -> walk(listOf(key), v) }
+        return result
+    }
+    private fun winner(a: Cell?, b: Cell?): Cell? = when {
+        a == null -> b
+        b == null -> a
+        a.at != b.at -> if (a.at > b.at) a else b
+        a.source != b.source -> if (a.source > b.source) a else b
+        else -> if (a.value.toString() >= b.value.toString()) a else b
+    }
+    private fun Item.field(path: List<String>, cell: Cell) { fields[path] = addWinner(fields[path], cell)!! }
+    private fun covers(a: Map<String, Stamp>, b: Map<String, Stamp>) = b.all { (device, at) -> a[device]?.let { it >= at } == true }
+    private fun addWinner(a: Cell?, b: Cell?): Cell? {
+        if (a == null || b == null) return a ?: b
+        // A total vector order extends causal dominance. Using dominance alone followed by
+        // timestamp for incomparable vectors would not be associative across delivery orders.
+        for (device in (a.sawRemoval.keys + b.sawRemoval.keys).sorted()) {
+            val left = a.sawRemoval[device] ?: seedStamp
+            val right = b.sawRemoval[device] ?: seedStamp
+            if (left != right) return if (left > right) a else b
+        }
+        return winner(a, b)
+    }
+
+    fun apply(op: Op) {
+        if (op.base == null) {
+            if (legacy == null || legacy!!.at < op.at) legacy = op
+            return
+        }
+        val before = records(op.base)
+        val after = records(op.value)
+        var previous: String? = null
+        for ((id, record) in before) {
+            val item = items.getOrPut(id) { Item() }
+            item.alive = addWinner(item.alive, Cell(seedStamp, op.at, JsonPrimitive(true), op.removals[id].orEmpty()))
+            item.after = addWinner(item.after, Cell(seedStamp, op.at, previous?.let(::JsonPrimitive), op.removals[id].orEmpty()))
+            leaves(record).forEach { (path, value) -> item.field(path, Cell(seedStamp, op.at, value, op.removals[id].orEmpty())) }
+            previous = id
+        }
+        for (id in before.keys - after.keys) {
+            val item = items.getOrPut(id) { Item() }
+            item.removed[op.at.device] = winner(item.removed[op.at.device], Cell(op.at, op.at, JsonPrimitive(false)))!!
+        }
+        val reordered = before.keys.filter { it in after } != after.keys.filter { it in before } ||
+            after.keys.any { it !in before && it in op.removals }
+        previous = null
+        for ((id, record) in after) {
+            val item = items.getOrPut(id) { Item() }
+            val old = before[id]
+            if (old == null) item.alive = addWinner(item.alive, Cell(op.at, op.at, JsonPrimitive(true), op.removals[id].orEmpty()))
+            if (old == null || reordered) item.after = addWinner(item.after, Cell(op.at, op.at, previous?.let(::JsonPrimitive), op.removals[id].orEmpty()))
+            val oldLeaves = old?.let(::leaves).orEmpty()
+            val newLeaves = leaves(record)
+            for (path in oldLeaves.keys + newLeaves.keys) if (oldLeaves[path] != newLeaves[path] &&
+                (path in newLeaves || path.first() in knownFields)) {
+                item.field(path, Cell(op.at, op.at, newLeaves[path], op.removals[id].orEmpty()))
+            }
+            previous = id
+        }
+    }
+
+    fun value(): JsonArray {
+        val old = records(legacy?.value)
+        val oldStamp = legacy?.at
+        val ids = (items.keys + old.keys).toSet()
+        val previous = old.keys.zipWithNext().associate { it.second to it.first }
+        fun fallback(id: String, value: JsonElement?) = oldStamp?.let { at ->
+            Cell(at, at, value, items[id]?.removed.orEmpty().filterValues { it.at <= at }.mapValues { it.value.at })
+        }
+        fun alive(id: String): Boolean {
+            val item = items[id]
+            // Legacy authors did not send a causal removal context. Their latest full snapshot
+            // retains its old LWW meaning; new authors only restore removals they actually saw.
+            val oldCell = oldStamp?.let { at -> Cell(at, at, JsonPrimitive(id in old), item?.removed.orEmpty().filterValues { it.at <= at }.mapValues { it.value.at }) }
+            val add = addWinner(item?.alive, oldCell) ?: return false
+            val removed = item?.removed.orEmpty().mapValues { it.value.at }
+            return (add.value as? JsonPrimitive)?.content == "true" &&
+                covers(add.sawRemoval, removed)
+        }
+        fun anchor(id: String) = addWinner(items[id]?.after, fallback(id, previous[id]?.let(::JsonPrimitive)))
+        val children = ids.groupBy { id ->
+            (anchor(id)?.value as? JsonPrimitive)?.content?.takeIf { it in ids && it != id }
+        }
+        val visited = HashSet<String>()
+        val ordered = ArrayList<String>()
+        val compare = compareByDescending<String> { anchor(it)?.at ?: seedStamp }.thenBy { it }
+        fun visit(id: String) {
+            if (!visited.add(id)) return
+            if (alive(id)) ordered += id
+            children[id].orEmpty().sortedWith(compare).forEach(::visit)
+        }
+        children[null].orEmpty().sortedWith(compare).forEach(::visit)
+        // A concurrent reorder can create a predecessor cycle. Break it deterministically.
+        ids.sorted().forEach(::visit)
+        return JsonArray(ordered.map { id ->
+            val item = items[id]
+            val baseline = old[id]?.let(::leaves).orEmpty()
+            val flat = (item?.fields.orEmpty().keys + baseline.keys).associateWith { path ->
+                addWinner(item?.fields?.get(path), fallback(id, baseline[path]))?.takeIf { cell ->
+                    val removal = item?.removed.orEmpty().mapValues { it.value.at }
+                    covers(cell.sawRemoval, removal)
+                }?.value
+            }.filterValues { it != null }
+            val root = LinkedHashMap<String, Any>()
+            flat.entries.sortedWith(compareBy<Map.Entry<List<String>, JsonElement?>> { it.key.size }.thenBy { it.key.joinToString("\u0000") }).forEach { (path, value) ->
+                var into = root
+                for (key in path.dropLast(1)) {
+                    @Suppress("UNCHECKED_CAST")
+                    val next = into[key] as? LinkedHashMap<String, Any> ?: LinkedHashMap<String, Any>().also { into[key] = it }
+                    into = next
+                }
+                into[path.last()] = value!!
+            }
+            fun json(map: Map<String, Any>): JsonObject = JsonObject(map.mapValues { (_, v) ->
+                @Suppress("UNCHECKED_CAST")
+                if (v is Map<*, *>) json(v as Map<String, Any>) else v as JsonElement
+            })
+            json(root)
+        })
+    }
+
+    fun keeps(at: Stamp): Boolean = legacy?.at == at || items.values.any { item ->
+        item.alive?.source == at || item.removed.values.any { it.source == at } || item.after?.source == at || item.fields.values.any { it.source == at }
+    }
+
+    fun removalContext(): Map<String, Map<String, Stamp>> = items.filterValues { it.removed.isNotEmpty() }.mapValues { (_, item) -> item.removed.mapValues { it.value.at } }
 }
 
 /**
@@ -206,18 +394,22 @@ class LibraryLog(val root: File, val device: String) {
     }
 
     /**
-     * Rewrite this device's own log keeping only the edits that are still the latest for their
-     * field. The file is replaced in one rename, so a device reading it sees the old or the new,
-     * never half of each.
+     * Rewrite this device's own log keeping edits still supplying current scalar or collection
+     * state, plus uninterpreted data. The file is replaced in one rename, so a device reading it
+     * sees the old or the new, never half of each.
      */
     @Synchronized
     fun compact(state: LibraryState) {
         if (!own.isFile) return
-        val kept = own.readLines().mapNotNull { line ->
-            runCatching { json.decodeFromString(Op.serializer(), line) }.getOrNull()
-        }.filter { op -> state.latestOf(op.kind, op.id, op.field) == op.at }
+        // Keep the original JSON for retained operations: a newer client may have added
+        // operation-level fields this version does not understand. Unreadable complete lines
+        // also remain recoverable rather than being silently discarded by maintenance.
+        val kept = own.readLines().filter { line ->
+            val op = runCatching { json.decodeFromString(Op.serializer(), line) }.getOrNull()
+            op == null || state.keeps(op)
+        }
         val temp = File(dir, ".$device.jsonl.tmp")
-        temp.writeText(kept.joinToString("") { json.encodeToString(Op.serializer(), it) + "\n" })
+        temp.writeText(kept.joinToString("") { it + "\n" })
         if (!temp.renameTo(own)) {
             own.delete()
             temp.renameTo(own)

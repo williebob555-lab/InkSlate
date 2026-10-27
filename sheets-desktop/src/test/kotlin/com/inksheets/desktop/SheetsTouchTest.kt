@@ -41,7 +41,7 @@ class SheetsTouchTest {
     fun reset() {
         SimulatedTouch.on = false
         AppFlavor.onHomeShown = null; AppFlavor.onHome = null; AppFlavor.settingsSection = null
-        AppFlavor.musicView = false; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
+        AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
         AppFlavor.home = null; AppFlavor.paneOverlay = null
         com.inkslate.core.Perform.onPosition = null
     }
@@ -120,14 +120,15 @@ class SheetsTouchTest {
             tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Metronome settings"), useUnmergedTree = true).onFirst())
             shot("metronome")
             println("after tapping Metronome: page ${page()}")
-            // Off again, so its clicks do not run on under the rest.
-            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Metronome settings"), useUnmergedTree = true).onFirst())
+            // Close the settings panel explicitly; its settings launcher is not a toggle.
+            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Close"), useUnmergedTree = true).onFirst())
+            assertTrue("Metronome settings closed", !sheets().metronomeOpen)
 
             // Pages: a tap at the right, one at the left, a flick each way.
             tap(0.93f, 0.5f)
             shot("tap-right")
             assertEquals("a tap at the right turns on", first + 1, page())
-            tap(0.07f, 0.5f)
+            tapAt(Offset(AppFlavor.studioRailDp + (w-AppFlavor.studioRailDp)*.07f,h*.5f))
             assertEquals("a tap at the left turns back", first, page())
             drag(0.7f, 0.5f, 0.25f, 0.5f, 6)
             assertEquals("a flick turns on", first + 1, page())

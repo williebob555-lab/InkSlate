@@ -44,6 +44,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 
 private const val K_URGENT_COLOUR = "sheets_urgent_colour"
 
@@ -51,6 +53,7 @@ private const val K_URGENT_COLOUR = "sheets_urgent_colour"
  * What a leader writes to the band: a line of text, with a quick "Next up" and "Look up", to
  * everyone or only some instruments. Everyone by default.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
@@ -73,7 +76,7 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
     }
     Column {
         Text("Message the band", style = MaterialTheme.typography.titleSmall)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             state.playing?.let { (id, index) ->
                 val next = state.library?.setlist(id)?.entries?.getOrNull(index + 1)?.let { e -> state.library?.song(e.songId)?.title }
                 if (next != null) AssistChip(onClick = { send("Next up: $next") }, label = { Text("Next up: $next") })
@@ -90,14 +93,14 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
             }
             TextButton(onClick = { editingPresets = true }) { Text("Edit...") }
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 text, { text = it },
                 placeholder = { Text("A message for the band") },
                 singleLine = true,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.fillMaxWidth()
             )
-            TextButton(onClick = { send(text) }, enabled = text.isNotBlank()) { Text("Send") }
+            androidx.compose.material3.Button(onClick = { send(text) }, enabled = text.isNotBlank(), modifier = Modifier.align(Alignment.End).padding(top = 6.dp)) { Text("Send message") }
         }
         // Kept for next time, with who it is for and whether it covers the music.
         if (text.isNotBlank() && state.presets.none { it.text == text.trim() }) {
@@ -113,7 +116,7 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("Cover the music")
                 Text(
-                    "Big, over the page, until each player taps it away - for between songs, or stopping now.",
+                    "Show until each player dismisses it.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -121,18 +124,18 @@ internal fun SendNote(state: SheetsState, onSent: (String) -> Unit) {
             androidx.compose.material3.Switch(checked = urgent, onCheckedChange = { urgent = it })
         }
         // The colour it covers the music in - also what Stop uses.
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
+        androidx.compose.foundation.layout.FlowRow(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text("Colour", style = MaterialTheme.typography.labelLarge)
             FilterChip(selected = colour == null, onClick = {
                 colour = null; state.platform.setPref(K_URGENT_COLOUR, null)
             }, label = { Text("Warning") })
-            for (c in MARK_COLOURS) {
+            for ((index, c) in MARK_COLOURS.withIndex()) {
                 androidx.compose.foundation.layout.Box(
-                    Modifier.size(28.dp).background(androidx.compose.ui.graphics.Color(c), androidx.compose.foundation.shape.CircleShape)
+                    Modifier.size(36.dp).semantics { contentDescription = "Message colour ${index + 1}" }.background(androidx.compose.ui.graphics.Color(c), androidx.compose.foundation.shape.CircleShape)
                         .then(if (c == colour) Modifier.border(3.dp, MaterialTheme.colorScheme.onSurface, androidx.compose.foundation.shape.CircleShape) else Modifier)
                         .clickable { colour = c; state.platform.setPref(K_URGENT_COLOUR, c.toString()) }
                 )

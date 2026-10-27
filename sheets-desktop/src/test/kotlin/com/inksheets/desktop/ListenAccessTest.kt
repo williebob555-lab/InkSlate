@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inksheets.core.AudioTrack
 import com.inksheets.core.Part
@@ -60,7 +61,7 @@ class ListenAccessTest {
             runDesktopComposeUiTest(width = width, height = height) {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
                 waitForIdle()
-                onNodeWithText("Listen").assertIsDisplayed()
+                onNodeWithContentDescription("Listen and turn the pages").assertIsDisplayed()
             }
         }
     }

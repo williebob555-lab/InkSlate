@@ -482,7 +482,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             }
-            if (!musicSettings || category == "Storage & files") {
+            if (!musicSettings) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Companion files")
 

@@ -60,6 +60,15 @@ private val AUDIO_EXTENSIONS = setOf("mp3", "wav", "m4a", "aac", "ogg", "flac", 
 
 /** The one player, shared by the panel and the play button on the strip, so both see one state. */
 internal object Recording {
+    data class Issue(val songId: String?, val track: AudioTrack, val root: String?, val message: String)
+    var issue by mutableStateOf<Issue?>(null)
+        private set
+    var loading by mutableStateOf(false)
+        private set
+    var interruption by mutableStateOf<String?>(null)
+        private set
+    private var loadedRoot: String? = null
+    private val requests = java.util.concurrent.atomic.AtomicLong()
     var player: AudioPlayer? = null
     var loadedFile by mutableStateOf<String?>(null)
     var playing by mutableStateOf(false)
@@ -68,17 +77,33 @@ internal object Recording {
         player ?: state.platform.audioPlayer()?.also { player = it }
 
     /** Load [track] (off the UI thread) and apply its speed, pitch and loop. */
-    fun load(state: SheetsState, track: AudioTrack): Boolean {
-        val p = playerFor(state) ?: return false
-        if (loadedFile != track.file) {
-            val file = state.fileOf(track.file) ?: return false
-            if (!p.load(file)) return false
+    @Synchronized
+    fun load(state: SheetsState, track: AudioTrack, forSong: String? = null, requestToken: Long? = null): Boolean {
+        fun failed(reason: String): Boolean {
+            state.platform.log("Recording ${track.file}: $reason")
+            state.platform.onMain {
+                if (requestToken == null || requests.get() == requestToken) {
+                    issue = Issue(forSong ?: state.current?.id ?: songId, track, state.root?.absolutePath, reason)
+                    loading = false; playing = false
+                }
+            }
+            return false
+        }
+        val p = playerFor(state) ?: return failed("Audio playback is unavailable on this device")
+        if (loadedFile != track.file || loadedRoot != state.root?.absolutePath) {
+            val file = state.fileOf(track.file)?.takeIf { it.isFile } ?: return failed("Recording file is missing on this device")
+            val ok = runCatching { p.load(file) }.onFailure { state.platform.log("Audio load failed: ${it.message}") }.getOrDefault(false)
+            if (!ok) { loadedFile = null; loadedRoot = null; return failed("This recording could not be read") }
             loadedFile = track.file
+            loadedRoot = state.root?.absolutePath
         }
         p.speed = track.speed
         p.pitch = track.pitch
         p.volume = track.volume
         p.setLoop(track.loopStartMs, track.loopEndMs)
+        state.platform.onMain {
+            if (requestToken == null || requests.get() == requestToken) { issue = null; interruption = null; loading = false }
+        }
         return true
     }
 
@@ -86,26 +111,36 @@ internal object Recording {
      * Looking at [track] in the list: it is loaded for when Play is pressed on it, unless something
      * is playing - what plays is never stopped or swapped by looking at another row.
      */
-    fun peek(state: SheetsState, track: AudioTrack): Boolean {
-        if (loadedFile == track.file) return true
+    fun peek(state: SheetsState, track: AudioTrack, forSong: String? = null): Boolean {
+        if (loadedFile == track.file && loadedRoot == state.root?.absolutePath) return true
         if (playing || player?.playing == true || Click.purpose == Click.Purpose.PLAYBACK) return true
-        return load(state, track)
+        return load(state, track, forSong)
     }
 
     /** [track]'s speed, pitch, volume and loop changed in the list: heard only if it is the one loaded. */
     fun apply(track: AudioTrack) {
         if (loadedFile != track.file) return
+        if (this.track?.file == track.file) this.track = track
         player?.let { p -> p.speed = track.speed; p.pitch = track.pitch; p.volume = track.volume; p.setLoop(track.loopStartMs, track.loopEndMs) }
     }
 
     /** The strip's play button and the pedal: the current song's first recording, played or paused. */
     fun toggle(state: SheetsState) {
-        val p = playerFor(state) ?: return
-        if (p.playing || Click.purpose == Click.Purpose.PLAYBACK) { pause(state); return }
-        val track = state.current?.audio?.firstOrNull() ?: return
+        val p = playerFor(state)
+        if (p?.playing == true || Click.purpose == Click.Purpose.PLAYBACK) { pause(state); return }
+        val track = state.current?.audio?.firstOrNull() ?: run { state.audioOpen = true; return }
         val song = state.current
+        requestPlay(state, track, song)
+    }
+
+    fun requestPlay(state: SheetsState, track: AudioTrack, song: Song?) {
+        val token = requests.incrementAndGet()
+        loading = true
+        issue = null
         Thread {
-            if (load(state, track)) state.platform.onMain { play(state, track, song) }
+            if (load(state, track, song?.id, token)) state.platform.onMain {
+                if (requests.get() == token) play(state, track, song)
+            }
         }.apply { isDaemon = true; start() }
     }
 
@@ -173,16 +208,24 @@ internal object Recording {
                 while (true) {
                     Thread.sleep(300)
                     val p = player ?: break
+                    if (!session) break
                     val still = p.playing || Click.purpose == Click.Purpose.PLAYBACK
                     quiet = if (still) 0 else quiet + 1
                     // Twice in a row: a count-in handing over to the player is not an end.
-                    if (quiet >= 2) { state.platform.onMain { if (player?.playing != true && Click.purpose != Click.Purpose.PLAYBACK) playing = false }; break }
+                    state.platform.onMain {
+                        if (player !== p) return@onMain
+                        interruption = p.interruptionReason
+                        if (still) playing = true else if (quiet >= 2) playing = false
+                        if (p.interruptionReason != null && Click.purpose == Click.Purpose.PLAYBACK) Click.stop(state)
+                    }
                 }
             } finally { watching = false }
         }, "recording-watch").apply { isDaemon = true; start() }
     }
 
     fun pause(state: SheetsState) {
+        requests.incrementAndGet()
+        loading = false
         player?.pause()
         playing = false
         if (Click.purpose == Click.Purpose.PLAYBACK) Click.stop(state)
@@ -194,6 +237,41 @@ internal object Recording {
     fun end(state: SheetsState) {
         pause(state)
         session = false
+        issue = null; interruption = null
+    }
+
+    fun dismissIssue() { issue = null }
+
+    fun editTrack(state: SheetsState, track: AudioTrack, change: (AudioTrack) -> AudioTrack) {
+        val current = songId?.let { state.library?.song(it) }?.takeIf { s -> s.audio.any { it.file == track.file } }
+            ?: state.current ?: return
+        val latest = current.audio.firstOrNull { it.file == track.file } ?: return
+        val updated = change(latest)
+        state.change { editSong(current.id) { audio = current.audio.map { if (it.file == track.file) updated else it } } }
+        apply(updated)
+    }
+
+    fun markLoop(state: SheetsState, position: Long) {
+        val track = track ?: return
+        editTrack(state,track) { old ->
+            val start=old.loopStartMs
+            if (start == null || old.loopEndMs != null || position <= start) old.copy(loopStartMs=position,loopEndMs=null)
+            else old.copy(loopEndMs=position)
+        }
+    }
+
+    fun retry(state: SheetsState) {
+        val problem = issue ?: return
+        val song = problem.songId?.let { state.library?.song(it) }
+        requestPlay(state, song?.audio?.firstOrNull { it.file == problem.track.file } ?: problem.track, song)
+    }
+
+    fun locate(state: SheetsState, replacement: String) {
+        val problem = issue ?: return
+        val song = problem.songId?.let { state.library?.song(it) } ?: state.current ?: return
+        state.change { editSong(song.id) { audio = song.audio.map { if (it.file == problem.track.file) it.copy(file = replacement) else it } } }
+        issue = null
+        loadedFile = null; loadedRoot = null
     }
 
     /** Back or on by [seconds] (a minus goes back), within the recording. */
@@ -256,6 +334,8 @@ internal object Recording {
 
 /** Recording yourself: the microphone into a WAV in the music folder, paired with the song after. */
 internal object SelfRecorder {
+    private var receipt: com.inksheets.core.RecordingRecovery.Take? = null
+    val activeFile: String? get() = if (recording) receipt?.file else null
     var recording by mutableStateOf(false)
     var seconds by mutableStateOf(0)
     private var writer: com.inksheets.core.WavWriter? = null
@@ -268,7 +348,9 @@ internal object SelfRecorder {
         val mic = state.platform.microphone ?: return false
         val root = state.root ?: return false
         val stamp = java.time.LocalDateTime.now().withNano(0).toString().replace(':', '-')
-        val file = java.io.File(root, "Recordings/${folderName(song.title)}/$stamp.wav")
+        var file = java.io.File(root, "Recordings/${folderName(song.title)}/$stamp.wav")
+        var number = 2
+        while (file.exists()) file = java.io.File(root, "Recordings/${folderName(song.title)}/$stamp (${number++}).wav")
         file.parentFile?.mkdirs()
         val w = com.inksheets.core.WavWriter(file, mic.sampleRate)
         // Counted in first when a count-in is set; the count-in itself is left out of the take, so
@@ -279,6 +361,14 @@ internal object SelfRecorder {
         clicked = e != null && (bars > 0 || clickOn)
         bpm = e?.settings?.bpm
         beatsPerBar = e?.settings?.beatsPerBar
+        val rel = state.relative(file) ?: run { w.close(); return false }
+        val label = "Me, " + java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("d MMM HH:mm"))
+        val recovery = com.inksheets.core.RecordingRecovery(root, state.platform.deviceId)
+        val take = com.inksheets.core.RecordingRecovery.Take(state.platform.deviceId, song.id, rel, label,
+            if (clicked) bpm else null, if (clicked) beatsPerBar else null)
+        try { recovery.begin(take) } catch (error: Exception) {
+            w.close(); file.delete(); state.platform.log("Could not protect recording: ${error.message}"); return false
+        }
         var skip = if (e != null && bars > 0) (mic.sampleRate * e.msFor(bars) / 1000.0).toLong() else 0L
         val started = Ears.listen(state, "record") { whole ->
             var chunk = whole
@@ -294,12 +384,16 @@ internal object SelfRecorder {
         if (!started) {
             w.close()
             file.delete()
+            recovery.finish(take)
             return false
         }
         writer = w
+        receipt = take
         this.song = song
         seconds = 0
         recording = true
+        val current = state.library?.song(song.id) ?: song
+        state.change { editSong(song.id) { audio = current.audio + recovery.track(take) } }
         if (clicked) Click.countInThen(state, Click.Purpose.RECORD, keepGoing = clickOn) { }
         return true
     }
@@ -323,7 +417,9 @@ internal object SelfRecorder {
         // Made to a click: its tempo kept, so a click played with it later is in time.
         val track = if (clicked) AudioTrack(file = rel, label = label, clickBpm = bpm, beatsPerBar = beatsPerBar, firstBeatMs = 0)
             else AudioTrack(file = rel, label = label)
-        state.change { editSong(s.id) { audio = current.audio + track } }
+        state.change { editSong(s.id) { audio = if (current.audio.any { it.file == rel }) current.audio else current.audio + track } }
+        receipt?.let { take -> state.root?.let { com.inksheets.core.RecordingRecovery(it, state.platform.deviceId).finish(take) } }
+        receipt = null
     }
 }
 
@@ -336,14 +432,17 @@ internal object SelfRecorder {
 @Composable
 internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = false, onClose: () -> Unit) {
     var tracks by remember { mutableStateOf(state.library?.song(song.id)?.audio ?: song.audio) }
+    LaunchedEffect(state.version, song.id) { tracks = state.library?.song(song.id)?.audio ?: song.audio }
     var picking by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf(0) }
-    var renaming by remember { mutableStateOf<Int?>(null) }
+    var renaming by remember { mutableStateOf<String?>(null) }
     var couldNotRecord by remember { mutableStateOf(false) }
 
     fun save(updated: List<AudioTrack>) {
-        tracks = updated
-        state.change { editSong(song.id) { audio = updated } }
+        val latest = state.library?.song(song.id)?.audio ?: song.audio
+        val merged = mergeAudioEdits(tracks, updated, latest)
+        tracks = merged
+        state.change { editSong(song.id) { audio = merged } }
     }
 
     if (picking) {
@@ -368,6 +467,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
         buttons = if (movable) null else ({ TextButton(onClick = onClose) { Text("Close") } })
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
+            PlaybackProblem(state)
             @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
             androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (SelfRecorder.recording) {
@@ -463,7 +563,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                                 if (i < tracks.lastIndex) {
                                     androidx.compose.material3.DropdownMenuItem(text = { Text("Move down") }, onClick = { menu = false; move(i + 1) })
                                 }
-                                androidx.compose.material3.DropdownMenuItem(text = { Text("Rename...") }, onClick = { menu = false; renaming = i })
+                                androidx.compose.material3.DropdownMenuItem(text = { Text("Rename...") }, onClick = { menu = false; renaming = t.file })
                                 androidx.compose.material3.DropdownMenuItem(
                                     text = { Text("Unpair", color = MaterialTheme.colorScheme.error) },
                                     onClick = {
@@ -492,7 +592,8 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
         }
     }
 
-    renaming?.let { i ->
+    renaming?.let { file ->
+        val i = tracks.indexOfFirst { it.file == file }
         val t = tracks.getOrNull(i)
         if (t == null) renaming = null else AskName(
             title = "Name this recording", initial = t.label.orEmpty(), confirm = "Rename",
@@ -525,7 +626,7 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
 
     LaunchedEffect(track.file) {
         // Not while another plays: it is loaded when Play is pressed on this one.
-        if (!loaded) failed = !withContext(Dispatchers.IO) { Recording.peek(state, track) }
+        if (!loaded) failed = !withContext(Dispatchers.IO) { Recording.peek(state, track, songId) }
     }
     LaunchedEffect(loaded) {
         while (loaded) {
@@ -554,7 +655,7 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
                 else if (loaded) Recording.play(state, track, now)
                 else scope.launch {
                     if (Recording.playing) Recording.pause(state)
-                    val ok = withContext(Dispatchers.IO) { Recording.load(state, track) }
+                    val ok = withContext(Dispatchers.IO) { Recording.load(state, track, songId) }
                     failed = !ok
                     if (ok) Recording.play(state, track, now)
                 }
@@ -617,7 +718,7 @@ private fun clock(ms: Long): String {
 
 /** Choosing a recording inside the music folder, so it syncs with the song. */
 @Composable
-private fun AudioFilePicker(state: SheetsState, song: Song, onChosen: (String) -> Unit, onDismiss: () -> Unit) {
+internal fun AudioFilePicker(state: SheetsState, song: Song, onChosen: (String) -> Unit, onDismiss: () -> Unit) {
     val root = state.root ?: return
     // The system's picker: one already in the music folder is paired, one from anywhere else is
     // copied in first.

@@ -75,6 +75,8 @@ interface SheetsPlatform {
 
     /** Space below the fitted music page, measured from the adaptive shelf. */
     fun setMusicShelfHeight(dp: Float) {}
+    /** A measured Studio rail, separate from the legacy tool-strip lanes. */
+    fun setStudioRailWidth(dp: Float) {}
 
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?
@@ -105,6 +107,10 @@ interface SheetsPlatform {
 
     /** A watch paired with this device, to turn pages with a flick (experimental); null where there can be none. */
     val watch: WatchLink? get() = null
+
+    /** Windows downloads the watch release bundle and opens its guided setup; phones show the setup guide. */
+    val canInstallWatch: Boolean get() = false
+    fun installWatch(done: (String?) -> Unit) { done("Use InkSheets on Windows to install or update the watch app.") }
 
     /** [old]'s tab shows [new] instead, where it was in the row: another part of the same song. */
     fun swapPart(old: File, new: File) {}
@@ -210,6 +216,8 @@ interface AudioPlayer {
     fun play()
     fun pause()
     val playing: Boolean
+    /** Why playback was interrupted by the system, when available. */
+    val interruptionReason: String? get() = null
     fun seek(ms: Long)
     val positionMs: Long
     val durationMs: Long
@@ -270,6 +278,8 @@ interface PagePeek : java.io.Closeable {
 interface MeshRadio {
     /** Whether it can run now; asks for what it needs (permission, Bluetooth on) if not. */
     fun ready(): Boolean
+    /** A quiet retry after permission/enable dialogs; false must not repeatedly prompt. */
+    fun ready(ask: Boolean): Boolean = ready()
     /** Start listening; [onFrame] off the UI thread. */
     fun start(onFrame: (ByteArray) -> Unit): Boolean
     /** What this device broadcasts from now on, taken in turn - replacing what it sent before. */

@@ -1138,7 +1138,7 @@ fun EditorScreen(
                 }
             }
             paperBox(clamped)?.let {
-                viewport.fitClear(it, padding = 8f, lane = AppFlavor.stripLaneDp * density, laneOnLeft = AppFlavor.stripOnLeft, otherLane = AppFlavor.musicLaneDp * density, bottomLane = AppFlavor.musicShelfDp * density)
+                viewport.fitClear(it, padding = 8f, lane = AppFlavor.stripLaneDp * density, laneOnLeft = AppFlavor.stripOnLeft, otherLane = AppFlavor.musicLaneDp * density, bottomLane = AppFlavor.musicShelfDp * density, studioLane = AppFlavor.studioRailDp * density)
                 fittedScale = viewport.scale
                 return
             }

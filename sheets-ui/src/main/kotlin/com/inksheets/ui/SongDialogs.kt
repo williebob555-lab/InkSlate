@@ -1,6 +1,31 @@
 package com.inksheets.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Style
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material.icons.filled.Close
@@ -60,6 +85,7 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
     var time by remember { mutableStateOf(song.timeSignature.orEmpty()) }
     var tempo by remember { mutableStateOf(song.tempo?.toString().orEmpty()) }
     var tags by remember { mutableStateOf((song.genres + song.tags).joinToString(", ")) }
+    var notes by remember { mutableStateOf(song.notes.orEmpty()) }
     val parts = remember { mutableStateListOf(*song.parts.toTypedArray()) }
     var colour by remember { mutableStateOf(song.color) }
     var choosingColour by remember { mutableStateOf(false) }
@@ -85,12 +111,12 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
     }
 
     SheetDialog(
-        title = if (assignments) "Part assignments — ${song.title}" else "Song details — ${song.title}",
+        title = song.title,
         onDismiss = onClose,
         wide = true,
         buttons = {
             TextButton(onClick = onClose) { Text("Cancel") }
-            TextButton(enabled = validRanges, onClick = {
+            Button(enabled = validRanges, onClick = {
                 // Only what was changed here is written: the dialog shows the song as it was when
                 // opened, and a part that arrived meanwhile (or an instrument read in the
                 // background) must not be overwritten by that old picture of it.
@@ -107,6 +133,7 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
                         if (bpm != song.tempo) { this.tempo = bpm; this.tempoRead = false }
                         if (list(tags) != song.genres + song.tags) this.tags = list(tags)
                         if (colour != song.color) this.color = colour
+                        if (notes.trim().ifEmpty { null } != song.notes) this.notes = notes.trim().ifEmpty { null }
                     }
                     val before = song.parts.associateBy { it.id }
                     val now = this.song(song.id)?.parts.orEmpty().associateBy { it.id }
@@ -130,22 +157,35 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
             }) { Text("Save") }
         }
     ) {
+        BoxWithConstraints {
+        val short = maxHeight < 360.dp
         Column {
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !assignments, onClick = { assignments = false },
-                    label = { Text("Details") }, leadingIcon = { Icon(Icons.Default.Description, null) })
-                FilterChip(selected = assignments, onClick = { assignments = true },
-                    label = { Text("Parts (${parts.size})") }, leadingIcon = { Icon(Icons.Default.LibraryMusic, null) })
+            TabRow(selectedTabIndex = if (assignments) 1 else 0, containerColor = Color.Transparent) {
+                Tab(selected = !assignments, onClick = { assignments = false }) {
+                    Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Icon(Icons.Default.Description, null, Modifier.size(19.dp)); Text("Details")
+                    }
+                }
+                Tab(selected = assignments, onClick = { assignments = true }) {
+                    Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Icon(Icons.Default.LibraryMusic, null, Modifier.size(19.dp)); Text("Parts (${parts.size})")
+                    }
+                }
             }
             HorizontalDivider()
             if (!validRanges) Text("A part has an invalid page range. Check the Parts tab before saving.",
                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(vertical = 4.dp))
-            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                .testTag(if (assignments) "part-assignments-body" else "song-details-body")) {
             if (!assignments) {
-            Field("Title", title) { title = it }
-            Field("Composer", composers) { composers = it }
-            Field("Arranger", arrangers) { arrangers = it }
+            EditorSection(Icons.Default.Person, "Title & credits") {
+                Field("Title", title) { title = it }
+                AdaptiveFieldPair(
+                    first = { Field("Composer", composers) { composers = it } },
+                    second = { Field("Arranger", arrangers) { arrangers = it } })
+            }
+            EditorSection(Icons.Default.MusicNote, "Musical details", MaterialTheme.colorScheme.tertiary) {
             Row {
                 Box(Modifier.weight(1f)) { Field("Key", key) { key = it } }
                 Spacer(Modifier.size(8.dp))
@@ -185,17 +225,36 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
                     }
                 }
             }
-            Field("Tags and genres", tags) { tags = it }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
-                Text("Colour", Modifier.weight(1f))
-                ColourBar(colour)
-                TextButton(onClick = { choosingColour = true }) { Text(if (colour == null) "Choose" else "Change") }
+            }
+            EditorSection(Icons.Default.Notes, "Rehearsal notes") {
+                OutlinedTextField(notes, { notes = it }, placeholder = { Text("What to remember when playing this piece") },
+                    minLines = 2, modifier = Modifier.fillMaxWidth().testTag("song-notes"))
+            }
+            EditorSection(Icons.Default.Style, "Organize", MaterialTheme.colorScheme.tertiary) {
+                Field("Tags and genres", tags) { tags = it }
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 6.dp)) {
+                    Icon(Icons.Default.Palette, null, tint = colour?.let { Color(it) } ?: MaterialTheme.colorScheme.primary)
+                    Text("Colour", Modifier.weight(1f).padding(start = 8.dp))
+                    ColourBar(colour)
+                    TextButton(onClick = { choosingColour = true }) { Text(if (colour == null) "Choose" else "Change") }
+                }
+            }
+            HorizontalDivider(Modifier.padding(top = 12.dp))
+            TextButton(onClick = { assignments = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.LibraryMusic, null)
+                Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
+                    Text("${parts.size} " + if (parts.size == 1) "part" else "parts", style = MaterialTheme.typography.titleSmall)
+                    Text(parts.map { Instruments.partName(it) }.distinct().joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Icon(Icons.Default.ArrowForward, "Edit parts")
             }
 
             } else {
-            Text("File assignments", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp))
-            Text("These describe the files. Your playing instrument stays separate.", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+            if (!short) Text("Part assignments", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+            Text(if (short) "Edit files directly · manual assignments override detection" else "Edit directly in each row. Manual assignments override detection.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = if (short) 6.dp else 0.dp, bottom = if (short) 2.dp else 8.dp))
             // Two parts for one instrument are usually two versions of the piece, or two pieces
             // sharing a name: only the first opens, so say so and offer the way out.
             val doubled = parts.filter { it.instrument != null }.groupBy { it.instrument to it.chair }.filter { (_, v) -> v.size > 1 }.values.map { it.first() }
@@ -209,47 +268,11 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
                 )
             }
             parts.forEachIndexed { i, part ->
-                // Two lines: what the part is, then what can be done with it - so a phone never
-                // squeezes the name into a column a word wide beside the controls.
-                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-                  Row(verticalAlignment = Alignment.CenterVertically) {
-                    // No instrument yet: its first page right here, to read which it is. A tap
-                    // shows that part alone, bigger.
-                    if (part.instrument == null) {
-                        PartThumbnail(state, song, part, Modifier.padding(end = 8.dp)) { state.peeking = song to part }
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(Instruments.partName(part), style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            part.file.substringAfterLast('/') + (part.firstPage?.let { f -> "  ·  pages $f" + (part.lastPage?.takeIf { it != f }?.let { "-$it" } ?: "") } ?: ""),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis
-                        )
-                        val how = when (part.source) {
-                            InstrumentSource.TEXT, InstrumentSource.OCR -> "read from the page: ${part.label.orEmpty()}"
-                            InstrumentSource.FILE_NAME -> "read from the file name"
-                            InstrumentSource.PERSON -> "set by you"
-                            InstrumentSource.UNKNOWN -> "not known"
-                        }
-                        Text(how, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                  }
-                  @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                  androidx.compose.foundation.layout.FlowRow(verticalArrangement = Arrangement.Center, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    InstrumentPicker(part.instrument) { chosen ->
-                        parts[i] = part.copy(instrument = chosen, source = InstrumentSource.PERSON)
-                    }
-                    if (part.instrument != null) ChairPicker(part.chair) { chair ->
-                        parts[i] = part.copy(chair = chair, source = InstrumentSource.PERSON)
-                    }
-                    PartPageRange(part, onChange = { first, last ->
-                        parts[i] = part.copy(firstPage = first, lastPage = last)
-                    })
-                    TextButton(onClick = { state.peeking = song to part }) { Text("Look") }
-                    // A duo, or a part printed for several: it shows for each of them.
-                    if (part.instrument != null) AlsoFor(part) { also ->
-                        parts[i] = part.copy(also = also, source = InstrumentSource.PERSON)
-                    }
+                PartAssignmentRow(state, song, part,
+                    onInstrument = { parts[i] = part.copy(instrument = it, source = InstrumentSource.PERSON) },
+                    onChair = { parts[i] = part.copy(chair = it, source = InstrumentSource.PERSON) },
+                    onRange = { first, last -> parts[i] = part.copy(firstPage = first, lastPage = last) },
+                    onAlso = { parts[i] = part.copy(also = it, source = InstrumentSource.PERSON) }) {
                     var menu by remember { mutableStateOf(false) }
                     Box {
                         androidx.compose.material3.IconButton(onClick = { menu = true }) {
@@ -290,7 +313,6 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
                             )
                         }
                     }
-                  }
                 }
                 HorizontalDivider()
             }
@@ -298,6 +320,7 @@ internal fun SongEditorDialog(state: SheetsState, song: Song, initialParts: Bool
                 color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 8.dp))
             }
             }
+        }
         }
     }
 
@@ -311,20 +334,127 @@ internal fun validPartPageRange(first: Int?, last: Int?): Boolean =
     (first == null || first >= 1) && (last == null || last >= 1) && (last == null || last >= (first ?: 1))
 
 @Composable
+private fun EditorSection(icon: ImageVector, title: String, accent: Color = MaterialTheme.colorScheme.primary,
+                          content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, null, Modifier.size(20.dp), tint = accent)
+            Text(title, color = accent, style = MaterialTheme.typography.titleSmall)
+            HorizontalDivider(Modifier.weight(1f), color = accent.copy(alpha = .2f))
+        }
+        content()
+    }
+}
+
+@Composable
+private fun AdaptiveFieldPair(first: @Composable () -> Unit, second: @Composable () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (maxWidth >= 500.dp) Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(Modifier.weight(1f)) { first() }; Box(Modifier.weight(1f)) { second() }
+        } else Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { first(); second() }
+    }
+}
+
+/** The file/source and its controls keep the same columns across rows; phones reflow as a unit. */
+@Composable
+private fun PartAssignmentRow(state: SheetsState, song: Song, part: Part,
+                              onInstrument: (String?) -> Unit, onChair: (Int?) -> Unit,
+                              onRange: (Int?, Int?) -> Unit, onAlso: (List<String>) -> Unit,
+                              options: @Composable () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        val wide = maxWidth >= 760.dp
+        val medium = maxWidth >= 530.dp
+        val accent = when (part.source) {
+            InstrumentSource.PERSON -> Color(0xFF2C8A6B)
+            InstrumentSource.UNKNOWN -> if (part.instrument == null) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant
+            else -> MaterialTheme.colorScheme.primary
+        }
+        val source = when (part.source) {
+            InstrumentSource.PERSON -> "Set by you"
+            InstrumentSource.FILE_NAME -> "Detected from filename"
+            InstrumentSource.TEXT, InstrumentSource.OCR -> "Detected from page" + part.label?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+            InstrumentSource.UNKNOWN -> if (part.instrument == null) "Needs assignment" else "Assignment source unavailable"
+        }
+        val file: @Composable () -> Unit = {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (part.instrument == null) PartThumbnail(state, song, part) { state.peeking = song to part }
+                else Surface(color = accent.copy(alpha = .1f), shape = RoundedCornerShape(8.dp)) {
+                    Icon(Icons.Default.Description, null, Modifier.padding(9.dp).size(20.dp), tint = accent)
+                }
+                Column(Modifier.weight(1f)) {
+                    Text(part.file.substringAfterLast('/').substringAfterLast('\\'), style = MaterialTheme.typography.titleSmall,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Icon(if (part.source == InstrumentSource.PERSON) Icons.Default.CheckCircle else if (part.source == InstrumentSource.UNKNOWN) Icons.Default.HelpOutline else Icons.Default.AutoAwesome,
+                            null, Modifier.size(12.dp), tint = accent)
+                        Text(source, style = MaterialTheme.typography.labelSmall, color = accent, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+        val instrument: @Composable () -> Unit = {
+            Column {
+                Text("Instrument", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                InstrumentPicker(part.instrument, Modifier.fillMaxWidth(), outlined = true, onChosen = onInstrument)
+            }
+        }
+        val chair: @Composable () -> Unit = {
+            Column {
+                Text("Chair", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ChairPicker(part.chair, outlined = true, onChosen = onChair)
+            }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (wide) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1f)) { file() }
+                Box(Modifier.width(174.dp)) { instrument() }
+                Box(Modifier.width(70.dp)) { chair() }
+                PartPageRange(part, onChange = onRange)
+                options()
+            } else {
+                file()
+                if (medium) Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.weight(1f)) { instrument() }
+                    chair()
+                    PartPageRange(part, onChange = onRange)
+                    options()
+                } else {
+                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.weight(1f)) { instrument() }; chair()
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PartPageRange(part, onChange = onRange)
+                        Spacer(Modifier.weight(1f))
+                        options()
+                    }
+                }
+            }
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.Center) {
+                TextButton(onClick = { state.peeking = song to part }) {
+                    Icon(Icons.Default.Visibility, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("Preview file")
+                }
+                if (part.instrument != null) AlsoFor(part, onAlso)
+            }
+        }
+    }
+}
+
+@Composable
 private fun PartPageRange(part: Part, onChange: (Int?, Int?) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedTextField(value = part.firstPage?.toString().orEmpty(),
             onValueChange = { value -> if (value.all(Char::isDigit) && (value.isEmpty() || value.toIntOrNull() != null)) onChange(value.toIntOrNull(), part.lastPage) },
-            label = { Text("First page") }, placeholder = { Text("1") }, singleLine = true,
+            label = { Text("First") }, placeholder = { Text("1") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             isError = !validPartPageRange(part.firstPage, part.lastPage),
-            modifier = Modifier.size(width = 112.dp, height = 64.dp).testTag("part-first-${part.id}"))
+            modifier = Modifier.size(width = 76.dp, height = 64.dp).testTag("part-first-${part.id}"))
         OutlinedTextField(value = part.lastPage?.toString().orEmpty(),
             onValueChange = { value -> if (value.all(Char::isDigit) && (value.isEmpty() || value.toIntOrNull() != null)) onChange(part.firstPage, value.toIntOrNull()) },
-            label = { Text("Last page") }, placeholder = { Text("End") }, singleLine = true,
+            label = { Text("Last") }, placeholder = { Text("End") }, singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             isError = !validPartPageRange(part.firstPage, part.lastPage),
-            modifier = Modifier.size(width = 112.dp, height = 64.dp).testTag("part-last-${part.id}"))
+            modifier = Modifier.size(width = 76.dp, height = 64.dp).testTag("part-last-${part.id}"))
     }
 }
 
@@ -368,13 +498,15 @@ private fun AlsoFor(part: Part, onChange: (List<String>) -> Unit) {
 
 /** Which of several parts for one instrument: 1st, 2nd, 3rd... or just the one. */
 @Composable
-internal fun ChairPicker(current: Int?, onChosen: (Int?) -> Unit) {
+internal fun ChairPicker(current: Int?, outlined: Boolean = false, onChosen: (Int?) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        TextButton(onClick = { open = true }) {
-            Text(current?.toString() ?: "–")
+        val label: @Composable () -> Unit = {
+            Text(current?.toString() ?: "Any")
             Icon(Icons.Default.ArrowDropDown, null)
         }
+        if (outlined) OutlinedButton(onClick = { open = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)) { label() }
+        else TextButton(onClick = { open = true }) { label() }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(text = { Text("Just the one") }, onClick = { open = false; onChosen(null) })
             for (n in 1..6) DropdownMenuItem(text = { Text("Part $n") }, onClick = { open = false; onChosen(n) })
@@ -383,13 +515,18 @@ internal fun ChairPicker(current: Int?, onChosen: (Int?) -> Unit) {
 }
 
 @Composable
-internal fun InstrumentPicker(current: String?, onChosen: (String?) -> Unit) {
+internal fun InstrumentPicker(current: String?, modifier: Modifier = Modifier, outlined: Boolean = false, onChosen: (String?) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    Box {
-        TextButton(onClick = { open = true }) {
-            Text(current?.let { Instruments.byId[it]?.name } ?: "Which instrument?")
+    Box(modifier) {
+        val label: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {
+            Text(current?.let { Instruments.byId[it]?.name ?: it } ?: "Unassigned",
+                modifier = if (outlined) Modifier.weight(1f) else Modifier,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
             Icon(Icons.Default.ArrowDropDown, null)
         }
+        if (outlined) OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp), content = label)
+        else TextButton(onClick = { open = true }, content = label)
         var query by remember { mutableStateOf("") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false; query = "" }) {
             ListSearch(Instruments.all.size, query, { query = it }, "Find an instrument", Modifier.padding(horizontal = 8.dp))

@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,6 +110,8 @@ internal fun FloatingPanel(
         var size by remember { mutableStateOf(androidx.compose.ui.geometry.Size(wide, with(density) { 260.dp.toPx() })) }
         androidx.compose.runtime.DisposableEffect(title) { onDispose { PanelSpots.open.remove(title) } }
         val shown = Offset(at.x.coerceIn(lo, hi), at.y.coerceIn(0f, (room.y - with(density) { 64.dp.toPx() }).coerceAtLeast(0f)))
+        val latestShown by rememberUpdatedState(shown)
+        val latestLimits by rememberUpdatedState(androidx.compose.ui.geometry.Rect(lo, 0f, hi, (room.y - with(density) { 64.dp.toPx() }).coerceAtLeast(0f)))
         // Where it stands now, for the next panel opened to stand clear of.
         androidx.compose.runtime.SideEffect { PanelSpots.open[title] = androidx.compose.ui.geometry.Rect(shown, size) }
         Surface(
@@ -129,7 +132,7 @@ internal fun FloatingPanel(
                             var from = Offset.Zero
                             var startedAt = 0L
                             detectDragGestures(
-                                onDragStart = { at = shown; from = shown; startedAt = System.currentTimeMillis() },
+                                onDragStart = { at = latestShown; from = latestShown; startedAt = System.currentTimeMillis() },
                                 onDragEnd = {
                                     val moved = at - from
                                     val quick = System.currentTimeMillis() - startedAt < 350
@@ -139,7 +142,8 @@ internal fun FloatingPanel(
                                 }
                             ) { change, amount ->
                                 change.consume()
-                                at += amount
+                                val next = at + amount
+                                at = Offset(next.x.coerceIn(latestLimits.left, latestLimits.right), next.y.coerceIn(latestLimits.top, latestLimits.bottom))
                                 PanelSpots.at[title] = at
                             }
                         }

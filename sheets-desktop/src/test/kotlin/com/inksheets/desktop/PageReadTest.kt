@@ -7,6 +7,9 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performMouseInput
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -41,7 +44,7 @@ class PageReadTest {
         SimulatedTouch.on = false
         ScoreTools.open = false
         AppFlavor.home = null; AppFlavor.paneOverlay = null; AppFlavor.onHomeShown = null; AppFlavor.onHome = null; AppFlavor.settingsSection = null
-        AppFlavor.musicView = false; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
+        AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
     }
 
     private fun DesktopComposeUiTest.settle(frames: Int = 12) = repeat(frames) { mainClock.advanceTimeBy(16); Thread.sleep(4) }
@@ -52,7 +55,7 @@ class PageReadTest {
         assumeTrue(src.isFile)
         val lib = File("build/page-library").apply { deleteRecursively(); mkdirs() }
         val part = File(lib, "Be Glad.pdf").also { src.copyTo(it) }
-        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath) }
+        val sheets = installInkSheets { it.setPref("sheets_library", lib.absolutePath); it.setPref("sheets_read_music", "true"); it.setPref("sheets_strip_collapsed", "false") }
         val home = AppFlavor.home!!
         var openFile: ((File) -> Unit)? = null
         AppFlavor.home = { open, settings -> openFile = open; home(open, settings) }
@@ -84,28 +87,30 @@ class PageReadTest {
             // To the third page, by taps at the right edge.
             repeat(2) { tapAt(Offset(1600 * 0.93f, 500f)) }
             assertEquals("on the third page", 2, sheets().pageShown.first)
-            runOnIdle { ScoreTools.open = true }
+            runOnIdle { ScoreTools.open = true; sheets().scorePanelOpen = true }
             repeat(10) { settle() }
             shot("strip-unread")
-            assertTrue("the whole part offered", shown("Read"))
-            assertTrue("this page offered", shown("Page 3"))
+            assertTrue("the whole part offered", shown("Read whole part"))
+            assertTrue("this page offered", shown("Read page 3"))
 
-            tapText("Page 3")
+            onNodeWithText("Read page 3").performClick()
             waitRead()
             shot("page-3-read")
             val one = ScoreTools.scoreHere(sheets())!!
             println("after page 3: read ${one.readPages}, ${one.measures.size} bars, numbers ${one.measures.map { it.number }}, sure ${one.measures.count { it.sure }}")
             assertEquals("just the third page read", listOf(2), one.readPages)
             assertTrue("its bars all on it", one.measures.isNotEmpty() && one.measures.all { it.page == 2 })
-            assertTrue("no longer offered on a page read", !shown("Page 3"))
+            assertTrue("the directory reports the page read", shown("Page 3 is read"))
+            onNodeWithText("Done").performClick()
 
             // On to the fourth: not read, so offered; read, it carries on from the third.
             tapAt(Offset(1600 * 0.93f, 500f))
             assertEquals("on the fourth page", 3, sheets().pageShown.first)
+            runOnIdle { sheets().scorePanelOpen = true }
             settle(20)
             shot("page-4-offered")
-            assertTrue("the next page offered", shown("Page 4"))
-            tapText("Page 4")
+            assertTrue("the next page offered", shown("Read page 4"))
+            onNodeWithText("Read page 4").performClick()
             waitRead()
             shot("page-4-read")
             val two = ScoreTools.scoreHere(sheets())!!

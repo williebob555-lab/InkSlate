@@ -252,7 +252,7 @@ class T2(val t: DesktopComposeUiTest, val sheets: () -> SheetsState, val w: Floa
 fun resetFlavor() {
     SimulatedTouch.on = false
     AppFlavor.onHomeShown = null; AppFlavor.onHome = null; AppFlavor.settingsSection = null
-    AppFlavor.musicView = false; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
+    AppFlavor.musicView = false; AppFlavor.studioRailDp = 0f; AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f; AppFlavor.fingerPans = false; AppFlavor.alwaysFullscreen = false
     AppFlavor.home = null; AppFlavor.paneOverlay = null
     com.inkslate.core.Perform.onPosition = null
 }

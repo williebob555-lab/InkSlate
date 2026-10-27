@@ -492,6 +492,7 @@ interface RemoteBluetooth {
 
     /** Asks for anything missing (permission, Bluetooth off); true when it can be used. */
     fun ready(): Boolean
+    fun ready(ask: Boolean): Boolean = ready()
 
     companion object {
         /** InkSheets' remote service, as Bluetooth looks it up. */
@@ -548,6 +549,7 @@ class RemoteHost(
     private val clients = ConcurrentHashMap.newKeySet<Client>()
     @Volatile private var server: ServerSocket? = null
     @Volatile private var running = false
+    private val runGeneration = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var lastState: String? = null
     @Volatile private var lastLibrary: String? = null
 
@@ -568,25 +570,48 @@ class RemoteHost(
 
     /** Remotes connected now: one each, however many times one has connected. */
     val remotes: Int get() = clients.filter { it.admitted }.distinctBy { it.id.ifBlank { it.toString() } }.size
+    val connectedDevices: List<ConnectedPeer> get() {
+        val now = System.currentTimeMillis()
+        return mergeConnectedPeers(clients.filter { it.admitted && it.open }.map { c ->
+            val id = c.id.takeIf { it.isNotBlank() }?.let { "remote:$it" } ?: "legacy:${c.address}:${System.identityHashCode(c)}"
+            ConnectedPeer(id, c.name.ifBlank { "Remote ${id.takeLast(6)}" },
+                if (c.address.startsWith("bt:")) "Bluetooth" else "Wi-Fi", peerStatus(c.heard, now, disconnectMs = silentMs), c.heard)
+        })
+    }
+    val connectionStatus: ConnectionStatus get() {
+        val peers = clients.filter { it.admitted && it.open }
+        if (peers.isEmpty()) return ConnectionStatus.DISCONNECTED
+        val age = System.currentTimeMillis() - peers.maxOf { it.heard }
+        return when {
+            age >= silentMs -> ConnectionStatus.DISCONNECTED
+            age >= minOf(4_000L, silentMs) -> ConnectionStatus.RECONNECTING
+            else -> ConnectionStatus.CONNECTED
+        }
+    }
 
-    fun start(): Boolean = runCatching {
+    fun start(tcp: Boolean = true): Boolean = runCatching {
+        val generation = runGeneration.incrementAndGet()
+        if (tcp) {
         val socket = ServerSocket().apply { reuseAddress = true; bind(InetSocketAddress(port)) }
         server = socket
         running = true
         Thread({
-            while (running) {
-                val s = runCatching { socket.accept() }.getOrNull() ?: continue
+            while (running && runGeneration.get() == generation) {
+                val s = runCatching { socket.accept() }.getOrNull() ?: break
+                if (runGeneration.get() != generation) { s.close(); break }
                 runCatching { s.tcpNoDelay = true }
                 take(SocketPipe(s))
             }
         }, "remote-accept").apply { isDaemon = true; start() }
+        }
+        running = true
         Thread({
             val announce = runCatching { DatagramSocket().apply { broadcast = true } }.getOrNull()
             val bytes = RemoteLink.announcement(name, port).toByteArray()
             var tick = 0
-            while (running) {
+            while (running && runGeneration.get() == generation) {
                 // Heard by a remote looking for devices nearby, every few seconds.
-                if (tick++ % 2 == 0) runCatching {
+                if (tcp && tick++ % 2 == 0) runCatching {
                     announce?.send(DatagramPacket(bytes, bytes.size, InetAddress.getByName("255.255.255.255"), RemoteLink.ANNOUNCE_PORT))
                 }
                 val now = System.currentTimeMillis()
@@ -642,8 +667,9 @@ class RemoteHost(
                 while (c.open) {
                     // Until the key is right a line may only be short; after it, a command is small too.
                     val line = reader.readLineBounded(if (c.admitted) MAX_LINE else MAX_LINE_UNKNOWN) ?: break
+                    val parsed = RemoteLink.read(line) ?: continue
                     c.heard = System.currentTimeMillis()
-                    when (val got = RemoteLink.read(line)) {
+                    when (val got = parsed) {
                         is RemoteLink.Line.Joined -> {
                             if (!RemoteLink.sameKey(got.hello.key, key)) {
                                 onLog?.invoke("A remote (${got.hello.name.ifBlank { c.name }}, ${c.address}) gave the wrong key - turned away")
@@ -720,6 +746,7 @@ class RemoteHost(
 
     fun stop() {
         running = false
+        runGeneration.incrementAndGet()
         runCatching { server?.close() }
         clients.forEach { it.open = false; it.pipe.close() }
         clients.clear()
@@ -768,6 +795,8 @@ class RemoteClient(
     private var seq = 0
     /** The address that answered last, tried first next time. */
     @Volatile private var lastGood: String? = null
+    private val liveness = LinkLiveness(disconnectAfterMs = silentMs.toLong(), reconnectAfterMs = minOf(4_000L, silentMs.toLong()))
+    val connectionStatus: ConnectionStatus get() = liveness.status()
 
     /** Told true once the device is heard from, and false on losing it. Off the UI thread. */
     var onConnected: ((Boolean) -> Unit)? = null
@@ -792,9 +821,11 @@ class RemoteClient(
     fun start(target: RemoteLink.Target) {
         stop()
         wanted = target
+        lastHeard = 0L
+        val generation = liveness.begin()
         Thread({
             var failures = 0
-            while (wanted === target) {
+            while (wanted === target && liveness.current(generation)) {
                 val p = open(target)
                 if (p == null) {
                     if (failures++ % 15 == 0) onLog?.invoke(
@@ -805,7 +836,7 @@ class RemoteClient(
                     continue
                 }
                 failures = 0
-                if (wanted !== target) { p.close(); break }
+                if (wanted !== target || !liveness.current(generation)) { p.close(); break }
                 val at = p.address
                 pipe = p
                 val o = runCatching {
@@ -814,6 +845,13 @@ class RemoteClient(
                     }
                 }.getOrNull()
                 out = o
+                if (o == null) {
+                    p.close()
+                    if (pipe === p) { pipe = null; out = null; via = null }
+                    if (wanted === target && liveness.current(generation)) onLog?.invoke("Could not send greeting to ${target.name}; retrying")
+                    sleepWhileWanted(target, 300)
+                    continue
+                }
                 val lastRead = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
                 // Pings, so the device can tell this remote from one that has gone; and silence
                 // from the device ends the connection - Bluetooth has no read timeout of its own.
@@ -822,7 +860,7 @@ class RemoteClient(
                         try { Thread.sleep(pingEveryMs) } catch (_: InterruptedException) { break }
                         if (pipe !== p) break
                         if (System.currentTimeMillis() - lastRead.get() > silentMs) { p.close(); break }
-                        if (runCatching { synchronized(o) { o.write(RemoteLink.PING + "\n"); o.flush() } }.isFailure) break
+                        if (runCatching { synchronized(o) { o.write(RemoteLink.PING + "\n"); o.flush() } }.isFailure) { p.close(); break }
                     }
                 }, "remote-client-ping").apply { isDaemon = true; start() }
                 var refused = false
@@ -831,8 +869,12 @@ class RemoteClient(
                     val reader = BufferedReader(InputStreamReader(p.input, Charsets.UTF_8))
                     while (wanted === target) {
                         val line = reader.readLine() ?: break
+                        if (wanted !== target || pipe !== p || !liveness.current(generation)) break
+                        val got = RemoteLink.read(line) ?: continue
+                        if (got is RemoteLink.Line.Refused) { refused = true; onLine(got); break }
                         lastRead.set(System.currentTimeMillis())
                         lastHeard = lastRead.get()
+                        liveness.received(generation)
                         if (!heard) {
                             heard = true
                             lastGood = at
@@ -841,8 +883,6 @@ class RemoteClient(
                             onLog?.invoke("Connected to ${target.name} " + if (at.startsWith("bt:")) "over Bluetooth" else "at $at")
                             onConnected?.invoke(true)
                         }
-                        val got = RemoteLink.read(line) ?: continue
-                        if (got is RemoteLink.Line.Refused) { refused = true; onLine(got); break }
                         if (got !is RemoteLink.Line.Ping) onLine(got)
                     }
                 }.exceptionOrNull()
@@ -857,9 +897,15 @@ class RemoteClient(
                         else -> "${target.name} hung up"
                     }
                 )
-                if (heard) onConnected?.invoke(false)
+                if (wanted === target && liveness.current(generation)) {
+                    if (heard) liveness.lost(generation)
+                    if (heard) onConnected?.invoke(false)
+                }
                 // Told the key is wrong: trying again would be told the same.
-                if (refused) { if (wanted === target) wanted = null; break }
+                if (refused) {
+                    if (wanted === target && liveness.current(generation)) { wanted = null; liveness.stop() }
+                    break
+                }
                 // Heard nothing at all: a network that lets a connection open and then carries
                 // nothing (seen on eduroam: the key arrived, not one byte after it, either way).
                 // Every other way - Bluetooth, a tailnet - is tried before this one from now on.
@@ -956,6 +1002,8 @@ class RemoteClient(
 
     fun stop() {
         wanted = null
+        liveness.stop()
+        lastHeard = 0L
         val p = pipe
         pipe = null
         out = null

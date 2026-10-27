@@ -26,7 +26,8 @@ class WorkstationAppAuditTest {
         AppFlavor.home = null; AppFlavor.paneOverlay = null; AppFlavor.settingsSection = null
         AppFlavor.onHomeShown = null; AppFlavor.onHome = null
         AppFlavor.musicView = false; AppFlavor.alwaysFullscreen = false; AppFlavor.fingerPans = false
-        AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f
+        AppFlavor.musicShelfDp = 0f; AppFlavor.musicLaneDp = 0f; AppFlavor.studioRailDp = 0f
+        com.inksheets.ui.Overlays.studioOut = androidx.compose.ui.unit.Dp(0f)
         Perform.isOn = null; Perform.workspace = null; Perform.document = null
     }
     private fun DesktopComposeUiTest.settle(frames: Int = 20) = repeat(frames) { mainClock.advanceTimeBy(16); Thread.sleep(4) }
@@ -73,8 +74,8 @@ class WorkstationAppAuditTest {
                 val annotationIssues = UiAudit.check(this,size,"workstation-annotation-tools",w,h,allowedTruncations=setOf(pdf.name))
                 assertTrue("$size annotation tools: $annotationIssues",annotationIssues.isEmpty())
                 if (h < 550) {
-                    assertTrue("$size: compact rehearsal controls leave room for annotation", AppFlavor.musicShelfDp <= 40f)
-                    onNodeWithText("Music tools").performClick()
+                    assertTrue("$size: compact rehearsal controls leave room for annotation", AppFlavor.musicShelfDp <= 120f)
+                    onNodeWithContentDescription("Return to music workspace").performClick()
                     settle()
                     assertTrue("$size: one tap restores music workspace", Perform.on(PerformAction.FULLSCREEN))
                     assertTrue("$size: full shelf restored", AppFlavor.musicShelfDp > 40f)

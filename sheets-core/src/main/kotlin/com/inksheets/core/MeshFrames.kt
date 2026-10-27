@@ -21,11 +21,19 @@ object MeshFrames {
     private const val VERSION = 1
     private const val STATE = 1
     private const val NOTE = 2
+    private const val BEACON = 3
+    private const val PRESENCE = 4
     const val NOTE_PIECE = 10
     /** A message is at most this many pieces - 150 bytes, about a sentence. */
     const val NOTE_PIECES = 15
 
     sealed interface Frame { val session: Int; val hops: Int }
+
+    /** Fresh leader evidence even while no page or song changes. Name is a discovery label. */
+    data class Beacon(override val session: Int, val seq: Long, val name: String, override val hops: Int = 0) : Frame
+
+    /** A follower acknowledges the last leader beacon it actually received. IDs are unsigned 32-bit. */
+    data class Presence(override val session: Int, val participant: Long, val seq: Long, val leaderSeq: Long, override val hops: Int = 0, val name: String = "") : Frame
 
     data class State(
         override val session: Int,
@@ -49,6 +57,13 @@ object MeshFrames {
     ) : Frame
 
     fun sessionOf(leaderName: String): Int = (hash(leaderName.trim().lowercase(), 2) and 0xFFFF).toInt()
+    fun participantOf(deviceId: String): Long = hash(deviceId, 4)
+
+    private fun shortName(name: String, maxBytes: Int): ByteArray {
+        var label = name
+        while (label.toByteArray(Charsets.UTF_8).size > maxBytes) label = label.dropLast(Character.charCount(label.codePointBefore(label.length)))
+        return label.toByteArray(Charsets.UTF_8)
+    }
 
     /** Six bytes from a song's title, the same in every library that has the song. */
     fun songKey(title: String): Long = hash(Library.matchKey(title), 6)
@@ -65,6 +80,20 @@ object MeshFrames {
     }
 
     fun encode(f: Frame): ByteArray = when (f) {
+        is Beacon -> {
+            var label = f.name
+            while (label.toByteArray(Charsets.UTF_8).size > 12) label = label.dropLast(Character.charCount(label.codePointBefore(label.length)))
+            val bytes = label.toByteArray(Charsets.UTF_8)
+            ByteBuffer.allocate(8 + bytes.size).apply {
+                put(((VERSION shl 4) or BEACON).toByte()); putShort(f.session.toShort())
+                putInt(f.seq.toInt()); put(f.hops.toByte()); put(bytes)
+            }.array()
+        }
+        is Presence -> ByteBuffer.allocate(16 + shortName(f.name, 4).size).apply {
+            put(((VERSION shl 4) or PRESENCE).toByte()); putShort(f.session.toShort())
+            putInt(f.participant.toInt()); putInt(f.seq.toInt()); putInt(f.leaderSeq.toInt()); put(f.hops.toByte())
+            put(shortName(f.name, 4))
+        }.array()
         is State -> ByteBuffer.allocate(18).apply {
             put(((VERSION shl 4) or STATE).toByte())
             putShort(f.session.toShort())
@@ -91,6 +120,24 @@ object MeshFrames {
         val head = buf.get().toInt() and 0xF
         val session = buf.short.toInt() and 0xFFFF
         when (head) {
+            BEACON -> {
+                if (b.size !in 8..MAX_BYTES) return null
+                val seq = buf.int.toLong() and 0xFFFFFFFFL
+                val hops = buf.get().toInt() and 0xFF
+                if (hops > MAX_HOPS) return null
+                val label = ByteArray(buf.remaining()).also { buf.get(it) }.toString(Charsets.UTF_8)
+                Beacon(session, seq, label, hops)
+            }
+            PRESENCE -> {
+                if (b.size !in 16..MAX_BYTES) return null
+                val participant = buf.int.toLong() and 0xFFFFFFFFL
+                val seq = buf.int.toLong() and 0xFFFFFFFFL
+                val leaderSeq = buf.int.toLong() and 0xFFFFFFFFL
+                val hops = buf.get().toInt() and 0xFF
+                if (hops > MAX_HOPS) return null
+                val name = ByteArray(buf.remaining()).also { buf.get(it) }.toString(Charsets.UTF_8)
+                Presence(session, participant, seq, leaderSeq, hops, name)
+            }
             STATE -> {
                 val seq = buf.int.toLong() and 0xFFFFFFFFL
                 var key = 0L

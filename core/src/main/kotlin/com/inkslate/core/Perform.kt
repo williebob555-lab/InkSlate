@@ -75,6 +75,7 @@ object Perform {
     var isOn: ((PerformAction) -> Boolean)? = null
 
     fun run(action: PerformAction): Boolean {
+        if (action == PerformAction.UNDO && musicTool && musicUndo?.invoke() == true) return true
         if (action.forWorkspace) return workspace?.invoke(action) ?: false
         if (!action.forDocument) return app?.invoke(action) ?: false
         if (document?.invoke(action) == true) return true
@@ -156,6 +157,9 @@ object Perform {
      */
     @Volatile
     var musicGesture: ((path: String, page: Int, points: FloatArray, done: Boolean) -> Unit)? = null
+    /** Current annotation brush for a selective clean mask; normal ink settings remain unchanged. */
+    var musicBrush: ToolConfig = ToolConfig()
+    var musicUndo: (() -> Boolean)? = null
 
     /** Show a page (0-based) of the document in front; set by whichever editor has focus. */
     @Volatile
@@ -332,8 +336,10 @@ object QuickTools {
  * [FILL] one or more outlines filled together (even-odd, so a whole note keeps its hole), [LINE]
  * a stroke through the points [width] wide. [color] is ARGB, its alpha how see-through.
  */
-class PageMark(val kind: Kind, val contours: List<FloatArray>, val color: Int, val width: Float = 0f) {
+class PageMark(val kind: Kind, val contours: List<FloatArray>, val color: Int, val width: Float = 0f, val mask: Mask? = null) {
     enum class Kind { FILL, LINE }
+    class MaskStroke(val contours: List<FloatArray>, val erase: Boolean)
+    class Mask(val strokes: List<MaskStroke>, val baseFull: Boolean = false, val width: Float = 100000f, val height: Float = 100000f)
 
     companion object {
         fun rect(left: Float, top: Float, right: Float, bottom: Float, color: Int) =

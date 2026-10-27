@@ -14,6 +14,13 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.runDesktopComposeUiTest
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import com.inksheets.core.Part
 import com.inksheets.core.Song
 import com.inksheets.core.omr.Box as OmrBox
@@ -37,7 +44,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 import javax.imageio.ImageIO
 
-/** The music tools' strip, laptop and phone: every button on screen, in its own lane. Pictures to -Dinksheets.shots. */
+/** Direct score actions and the full directory remain reachable on laptop and phone. */
 @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
 class MusicStripShots {
     @get:Rule
@@ -58,7 +65,7 @@ class MusicStripShots {
     }
 
     @Test
-    fun `the music tools stand in their own lane`() {
+    fun `the dock and score directory keep the original score capabilities reachable`() {
         val root = tmp.newFolder("Music")
         File(root, "Band").mkdirs()
         File(root, "Band/Tune - Trumpet.pdf").writeText("x")
@@ -81,15 +88,24 @@ class MusicStripShots {
                     waitForIdle()
                     runOnIdle { ScoreTools.open = true; ScoreTools.select(3..5) }
                     waitForIdle()
-                    for (d in listOf("Play the bars selected, or from this page", "Play the other parts with yours, or without it", "Go to a bar by its number", "Put the music tools away")) {
-                        val node = onNode(hasContentDescription(d)).fetchSemanticsNode()
+                    for (d in listOf("Play notes", "Play other parts", "Go to bar", "Review recognized notes")) {
+                        val target = onNode(hasContentDescription(d))
+                        target.performScrollTo().assertIsDisplayed().assertIsEnabled()
+                        val node = target.fetchSemanticsNode()
                         val b = node.boundsInRoot
                         assertTrue("$name: $d on screen", b.top >= 0f && b.bottom <= h.toFloat() && b.left >= 0f && b.right <= w.toFloat())
                     }
+                    onAllNodes(hasContentDescription("All score tools")).onLast().performScrollTo().performClick()
+                    onNodeWithText("Score tools").assertIsDisplayed()
+                    onNodeWithText("Done").assertIsDisplayed()
+                    for (tool in listOf("Select bars", "Tempo ramp", "Playback sound", "Cue notes", "Save MIDI", "Clean PDF", "PDF for another instrument")) {
+                        onNodeWithTag("score-action-$tool").performScrollTo().assertIsDisplayed()
+                    }
                     if (shots != null) {
                         File(shots).mkdirs()
-                        ImageIO.write(onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage(), "png", File(shots, "music-strip-$name.png"))
+                        ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(shots, "music-strip-$name.png"))
                     }
+                    onNodeWithText("Done").performClick()
                     runOnIdle { ScoreTools.close(state) }
                 }
             }

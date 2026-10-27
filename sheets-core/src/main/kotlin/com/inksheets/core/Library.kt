@@ -110,7 +110,14 @@ data class Bookmark(
     /** Its place in the Bookmarks list when put in order by hand; null for after the rest. */
     val rank: Double? = null,
     /** When it was made, 0 for bookmarks from before this was kept. */
-    val at: Long = 0
+    val at: Long = 0,
+    /** A named piece/excerpt inside a book; null keeps the original page bookmark behavior. */
+    val excerptTitle: String? = null,
+    /** Last page of an excerpt, inclusive and 1-based like [page]; null means one page. */
+    val endPage: Int? = null,
+    /** Excerpt-specific rehearsal reminder and notes, separate from the containing book. */
+    val reminder: String? = null,
+    val notes: String? = null
 ) {
     /** The same place, whatever its colour or order: which part, which page, which name. */
     fun samePlace(other: Bookmark) = part == other.part && page == other.page && label == other.label
@@ -834,7 +841,23 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         internal val ops = ArrayList<Op>()
 
         fun put(field: String, value: JsonElement) {
-            ops += Op(clock.tick(), kind, id, field, value)
+            val base = if (LibraryState.isMergedList(kind, field))
+                ops.lastOrNull { it.field == field }?.value ?: state.fields(kind, id)?.get(field)?.value ?: kotlinx.serialization.json.JsonArray(emptyList())
+            else null
+            val removals = if (base != null) state.removalContext(kind, id, field).toMutableMap() else mutableMapOf()
+            if (base != null) {
+                val key = if (field == "audio") "file" else "id"
+                fun ids(value: JsonElement?) = (value as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull {
+                    ((it as? JsonObject)?.get(key) as? JsonPrimitive)?.content
+                }.toSet()
+                // A caller may set a list more than once within one edit transaction.
+                ops.filter { it.field == field && it.base != null }.forEach { prior ->
+                    (ids(prior.base) - ids(prior.value)).forEach { item ->
+                        removals[item] = removals[item].orEmpty() + (prior.at.device to prior.at)
+                    }
+                }
+            }
+            ops += Op(clock.tick(), kind, id, field, value, base = base, removals = removals)
         }
 
         fun put(field: String, value: String?) = put(field, value?.let(::JsonPrimitive) ?: JsonNull)

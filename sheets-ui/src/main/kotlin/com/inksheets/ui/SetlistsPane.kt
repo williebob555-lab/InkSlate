@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -176,7 +177,14 @@ internal fun SetlistsPane(state: SheetsState) {
             AddButton("New setlist") { naming = Naming.NewSetlist(folderId) }
         }
         HorizontalDivider()
-        ListSearch(library.setlists.size + library.folders.size, query, { query = it }, "Find a setlist", Modifier.padding(horizontal = 8.dp))
+        OutlinedTextField(value = query, onValueChange = { query = it }, singleLine = true,
+            placeholder = { Text("Search setlists and folders…", maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+            leadingIcon = { Icon(androidx.compose.material.icons.Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary) },
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                unfocusedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                focusedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                unfocusedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).heightIn(min = 56.dp))
         // How they are listed: folders stay first, in name order; the setlists follow the choice.
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 2.dp),

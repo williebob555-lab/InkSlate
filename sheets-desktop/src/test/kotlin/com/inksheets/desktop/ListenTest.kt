@@ -116,9 +116,10 @@ class ListenTest {
             }
             said.forEach { (t, w) -> println("%6.1f s  %s".format(t, w)) }
             println("turns at ${turns.map { "%.1f".format(it) }} s heard; stopped: ${com.inksheets.ui.Listener.status}")
-            // Each turn was said before it came - counted down - and said after as done.
+            // Guessed page positions are explicitly estimated, rather than a misleading exact countdown.
+            assertTrue("estimated following was never disclosed: $said", said.any { it.second.contains("page turns estimated") })
+            assertTrue("guessed turns must not claim exact countdowns: $said", said.none { it.second.startsWith("Turn in") })
             for ((i, t) in turns.withIndex()) {
-                assertTrue("no countdown before turn ${i + 1}: $said", said.any { (at, w) -> w.startsWith("Turn in") && at in t - 15.0..t })
                 assertTrue("turn ${i + 1} not shown as done: $said", said.any { (at, w) -> w == "Turned to page ${i + 2} (guessed)" && at in t - 0.5..t + 2.0 })
             }
             assertTrue("it never said it hears nothing wrongly: $said", said.none { it.second.startsWith("Hears nothing") })

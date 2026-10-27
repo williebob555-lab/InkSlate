@@ -18,6 +18,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -672,6 +673,9 @@ fun DocumentCanvas(
                     // A music tool in hand: the press is its - which bars to select, which to clean -
                     // not a mark and not a page turn. Two fingers still move the page.
                     if (com.inkslate.core.Perform.musicTool && musicPath != null && !PenInput.gesturing) {
+                        val mode = if (down.type == PointerType.Stylus) com.inkslate.core.InputMode.PEN else if (down.type == PointerType.Mouse) com.inkslate.core.InputMode.MOUSE else com.inkslate.core.InputMode.TOUCH
+                        val requested = tools.configFor(mode)
+                        com.inkslate.core.Perform.musicBrush = if (requested.tool == com.inkslate.core.Tool.PAN) tools.configFor(com.inkslate.core.InputMode.PEN) else requested
                         val start = viewport.screenToDoc(down.position)
                         val page = slotAt(start.x, start.y) ?: return@awaitEachGesture
                         val pts = ArrayList<Float>()
@@ -1543,6 +1547,33 @@ private val markPaths = java.util.WeakHashMap<com.inkslate.core.PageMark, androi
 
 /** The music tools' marks, in the page's own coordinates. */
 private fun DrawScope.drawPageMarks(marks: List<com.inkslate.core.PageMark>) {
+    for (mark in marks) {
+        val mask = mark.mask
+        if (mask == null) drawPageMarksPrimitive(listOf(mark)) else {
+            val path = musicMaskPaths.getOrPut(mask) { musicMaskPath(mask) }
+            clipPath(path) { drawPageMarksPrimitive(listOf(mark)) }
+        }
+    }
+}
+
+private val musicMaskPaths = java.util.WeakHashMap<com.inkslate.core.PageMark.Mask, androidx.compose.ui.graphics.Path>()
+private fun musicMaskPath(mask: com.inkslate.core.PageMark.Mask): androidx.compose.ui.graphics.Path {
+    var result = androidx.compose.ui.graphics.Path()
+    if (mask.baseFull) result.addRect(androidx.compose.ui.geometry.Rect(0f, 0f, mask.width, mask.height))
+    for (stroke in mask.strokes) {
+        val shape = androidx.compose.ui.graphics.Path().apply {
+            fillType = androidx.compose.ui.graphics.PathFillType.NonZero
+            for (c in stroke.contours) if (c.size >= 6) {
+                moveTo(c[0], c[1]); var i = 2
+                while (i + 1 < c.size) { lineTo(c[i],c[i+1]); i += 2 }; close()
+            }
+        }
+        result = androidx.compose.ui.graphics.Path.combine(if (stroke.erase) androidx.compose.ui.graphics.PathOperation.Difference else androidx.compose.ui.graphics.PathOperation.Union, result, shape)
+    }
+    return result
+}
+
+private fun DrawScope.drawPageMarksPrimitive(marks: List<com.inkslate.core.PageMark>) {
     for (m in marks) {
         val color = Color(m.color)
         when (m.kind) {

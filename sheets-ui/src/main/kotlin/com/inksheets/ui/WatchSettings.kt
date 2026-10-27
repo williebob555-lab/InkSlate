@@ -50,6 +50,22 @@ internal fun WatchSettings(state: SheetsState) {
     val watch = state.watch
     var naming by remember { mutableStateOf<String?>(null) }
     var choosing by remember { mutableStateOf<String?>(null) }
+    var setupBusy by remember { mutableStateOf(false) }
+    var setupResult by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .45f), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Watch app · install or update", style = MaterialTheme.typography.titleSmall)
+            Text(if (state.platform.canInstallWatch) "Guided setup downloads the watch app from your InkSheets update channel. Updates keep your calibrations."
+                else "First installation uses InkSheets on Windows: open Watch settings there, then Install / update watch. The wizard pairs with your watch and keeps calibrations on updates.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.platform.canInstallWatch) OutlinedButton(enabled = !setupBusy, onClick = {
+                setupBusy = true; setupResult = null
+                state.platform.installWatch { problem -> setupBusy = false; setupResult = problem ?: "Setup opened. Follow the watch pairing steps in the installer window." }
+            }) { Text(if (setupBusy) "Downloading watch setup…" else "Install / update watch") }
+            else Text("Use the phone and watch apps from the same release. After setup, open InkSheets on the watch once.", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp))
+            setupResult?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp)) }
+        }
+    }
     Row(
         Modifier.fillMaxWidth().clickable(enabled = watch.available) { watch.turn(!watch.on) }.padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
