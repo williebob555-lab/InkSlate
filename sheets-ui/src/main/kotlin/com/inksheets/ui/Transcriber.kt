@@ -421,7 +421,9 @@ internal object Transcriber {
             com.inkslate.core.RenderGate.pause()
             // Pause between neural-reader chunks as well as pages while writing or playing.
             // An explicit request/cancellation may finish the current page to release its slot.
-            while (automaticPass && !backgroundAllowed() && !queue.hasRequestedWork() && !queue.activeCancelled()) {
+            // Fix's explicit look-again jobs share this pool. Let the current background
+            // page finish so it cannot hold those foreground jobs behind a paused chunk.
+            while (automaticPass && !ScoreTools.checking && !backgroundAllowed() && !queue.hasRequestedWork() && !queue.activeCancelled()) {
                 try { Thread.sleep(30) } catch (_: InterruptedException) { Thread.currentThread().interrupt(); break }
             }
         }
