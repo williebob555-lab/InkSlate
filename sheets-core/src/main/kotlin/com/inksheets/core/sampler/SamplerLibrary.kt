@@ -75,7 +75,8 @@ class SamplerLibrary(val store: File) {
         val key = norm(instrument)
         val name = assigned[key] ?: return null
         val inst = loadedBy[name] ?: return null
-        return patches.getOrPut(name) { Synth.sampledPatch(inst) }
+        val tongued=Synth.patchFor(instrument,bank=null).tonguedSlurredRepeats
+        return patches.getOrPut("$name|$tongued") { Synth.sampledPatch(inst,tonguedSlurredRepeats=tongued) }
     }
 
     private fun norm(s: String?) = (s ?: "").substringBefore('|').trim().lowercase()

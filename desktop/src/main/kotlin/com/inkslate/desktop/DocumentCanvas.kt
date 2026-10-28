@@ -1543,42 +1543,45 @@ internal fun DrawScope.drawSelection(box: InkBox, scale: Float) {
 }
 
 /** Outlines made once per mark: a page of clean music is a few thousand of them, drawn every frame. */
-private val markPaths = java.util.WeakHashMap<com.inkslate.core.PageMark, androidx.compose.ui.graphics.Path>()
+private val markPaths = java.util.WeakHashMap<List<FloatArray>, androidx.compose.ui.graphics.Path>()
 
 /** The music tools' marks, in the page's own coordinates. */
 private fun DrawScope.drawPageMarks(marks: List<com.inkslate.core.PageMark>) {
-    for (mark in marks) {
-        val mask = mark.mask
-        if (mask == null) drawPageMarksPrimitive(listOf(mark)) else {
+    var i=0
+    while(i<marks.size) {
+        val mask = marks[i].mask
+        var end=i+1
+        while(end<marks.size && marks[end].mask===mask)end++
+        val group=marks.subList(i,end)
+        if (mask == null) drawPageMarksPrimitive(group) else {
             val path = musicMaskPaths.getOrPut(mask) { musicMaskPath(mask) }
-            clipPath(path) { drawPageMarksPrimitive(listOf(mark)) }
+            clipPath(path) { drawPageMarksPrimitive(group) }
         }
+        i=end
     }
 }
 
 private val musicMaskPaths = java.util.WeakHashMap<com.inkslate.core.PageMark.Mask, androidx.compose.ui.graphics.Path>()
-private fun musicMaskPath(mask: com.inkslate.core.PageMark.Mask): androidx.compose.ui.graphics.Path {
-    var result = androidx.compose.ui.graphics.Path()
-    if (mask.baseFull) result.addRect(androidx.compose.ui.geometry.Rect(0f, 0f, mask.width, mask.height))
-    for (stroke in mask.strokes) {
-        val shape = androidx.compose.ui.graphics.Path().apply {
-            fillType = androidx.compose.ui.graphics.PathFillType.NonZero
-            for (c in stroke.contours) if (c.size >= 6) {
-                moveTo(c[0], c[1]); var i = 2
-                while (i + 1 < c.size) { lineTo(c[i],c[i+1]); i += 2 }; close()
-            }
+private val incrementalMusicMasks = com.inkslate.core.MusicMaskCache<androidx.compose.ui.graphics.Path>(
+    empty = { mask -> androidx.compose.ui.graphics.Path().apply {
+        if(mask.baseFull)addRect(androidx.compose.ui.geometry.Rect(0f,0f,mask.width,mask.height))
+    } },
+    copy = { old -> androidx.compose.ui.graphics.Path().apply {fillType=old.fillType;addPath(old)} },
+    apply = { before,stroke ->
+        val shape=androidx.compose.ui.graphics.Path().apply {
+            fillType=androidx.compose.ui.graphics.PathFillType.NonZero
+            for(c in stroke.contours)if(c.size>=6){moveTo(c[0],c[1]);var i=2;while(i+1<c.size){lineTo(c[i],c[i+1]);i+=2};close()}
         }
-        result = androidx.compose.ui.graphics.Path.combine(if (stroke.erase) androidx.compose.ui.graphics.PathOperation.Difference else androidx.compose.ui.graphics.PathOperation.Union, result, shape)
+        androidx.compose.ui.graphics.Path.combine(if(stroke.erase)androidx.compose.ui.graphics.PathOperation.Difference else androidx.compose.ui.graphics.PathOperation.Union,before,shape)
     }
-    return result
-}
-
+)
+private fun musicMaskPath(mask:com.inkslate.core.PageMark.Mask)=incrementalMusicMasks.path(mask)
 private fun DrawScope.drawPageMarksPrimitive(marks: List<com.inkslate.core.PageMark>) {
     for (m in marks) {
         val color = Color(m.color)
         when (m.kind) {
             com.inkslate.core.PageMark.Kind.FILL -> {
-                val path = markPaths.getOrPut(m) {
+                val path = markPaths.getOrPut(m.contours) {
                     androidx.compose.ui.graphics.Path().apply {
                         fillType = androidx.compose.ui.graphics.PathFillType.EvenOdd
                         for (c in m.contours) {

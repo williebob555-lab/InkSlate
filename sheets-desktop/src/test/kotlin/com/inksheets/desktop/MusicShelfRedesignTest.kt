@@ -73,6 +73,10 @@ class MusicShelfRedesignTest {
     }
 
     private fun setup(name: String): Pair<SheetsState, Platform> {
+        // Standalone dock fixture has no editor palette. Do not inherit a prior
+        // full-app test's annotation callbacks or its open palette state.
+        com.inkslate.core.Perform.isOn=null
+        com.inkslate.core.Perform.workspace=null
         val root = tmp.newFolder(name)
         val platform = Platform(root)
         val state = SheetsState(platform)
@@ -121,7 +125,7 @@ class MusicShelfRedesignTest {
                 waitForIdle()
                 onAllNodesWithContentDescription("Arrange music shelf").onFirst().performClick()
                 waitForIdle()
-                onNodeWithContentDescription("Move Timing later").performClick()
+                onNodeWithContentDescription("Move Timing later").performScrollTo().performClick()
                 runOnIdle { assertEquals(ShelfWidget.RECORDING, state.shelf.order.first()) }
                 onNodeWithText("Reset").performClick()
                 runOnIdle { assertEquals(ShelfWidget.TIMING, state.shelf.order.first()) }

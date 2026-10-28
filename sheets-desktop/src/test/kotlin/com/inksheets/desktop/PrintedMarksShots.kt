@@ -27,11 +27,16 @@ class PrintedMarksShots {
         val file = File(music, "Imported/PEP BAND/Music/Party Medley/Party Medley - Trumpet in Bb 1.pdf")
         assumeTrue(file.isFile)
         val (ink, _) = OmrRealPagesTest().renderAt(file, 0)!!
-        val reading = Recognizer().read(ink, 0, printed = PdfPrinted.read(file, 0))
+        val printed=PdfPrinted.read(file,0)
+        val reading = Recognizer().read(ink, 0, printed = printed)
         val notes = reading.measures.flatMap { it.events.filterIsInstance<Note>() }
         val arts = notes.flatMap { it.articulations }.groupingBy { it }.eachCount()
         val dirs = reading.measures.flatMap { it.directions }.groupingBy { if (it.kind == "dynamic") "dynamic ${it.text}" else it.kind }.eachCount()
         println("MARKS: ${notes.size} notes; articulations $arts; ties ${notes.count { it.tie }}; directions $dirs")
+        if(notes.none{it.tie})printed?.arcs?.take(20)?.forEach{arc->
+            val heads=printed.heads.sortedBy{kotlin.math.abs(arc.x0-(it.x+it.width))+kotlin.math.abs(arc.y0-it.y)}.take(2)
+            println("UNMATCHED ARC $arc nearest heads $heads")
+        }
         assertTrue("accents read", (arts["accent"] ?: 0) > 5)
         assertTrue("some ties read", notes.count { it.tie } > 0)
         val shots = System.getProperty("inksheets.shots") ?: return

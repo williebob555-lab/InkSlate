@@ -485,7 +485,7 @@ internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = fals
                     }
                 } else {
                     Button(
-                        onClick = { couldNotRecord = !SelfRecorder.start(state, song) },
+                        onClick = { couldNotRecord = !SelfRecorder.start(state, song); if(!couldNotRecord && movable) onClose() },
                         enabled = state.platform.microphone != null
                     ) {
                         Icon(Icons.Default.Mic, null)

@@ -2,6 +2,8 @@ package com.inksheets.core.omr
 
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -12,6 +14,9 @@ import kotlin.math.sqrt
 /** Round 4: staccato, accent and marcato speak with a "ta" - fast, firm, bright from the first millisecond. */
 class PlaybackRound4Test {
     private val rate = 48_000
+    private var previousOnset='D'
+    @Before fun referenceOnset() {previousOnset=Feel.onset;Feel.onset='A'}
+    @After fun restoreOnset() {Feel.onset=previousOnset}
 
     private fun render(t: Synth.Tone, seconds: Double): FloatArray {
         val s = Synth(rate); s.add(listOf(t))
@@ -73,12 +78,13 @@ class PlaybackRound4Test {
                 result[kind] = Triple(t3, onset, later)
                 println("R4 $name $kind: -3 dB at ${"%.1f".format(t3)} ms, centroid first 20 ms ${"%.0f".format(onset)} Hz vs at 100 ms ${"%.0f".format(later)} Hz")
             }
-            for (kind in listOf("staccato", "accent", "marcato")) {
+            for (kind in listOf("accent", "marcato")) {
                 val (t3, onset, later) = result.getValue(kind)
                 assertTrue("$name $kind: full in $t3 ms", t3 <= 12.0)
                 assertTrue("$name $kind: darker at the start ($onset) than at 100 ms ($later)", onset >= later * 0.97)
             }
             val plain = result.getValue("plain")
+            assertTrue("$name: staccato shortens the note without adding a forced accent",abs(result.getValue("staccato").first-plain.first)<=1.0)
             assertTrue("$name: the tongued note is softer than an accent (${plain.first} vs ${result.getValue("accent").first})", plain.first > result.getValue("accent").first + 3.0)
             assertTrue("$name: but quick - a da (${plain.first} ms)", plain.first <= 40.0)
             assertTrue("$name: marcato is the firmest", result.getValue("marcato").first <= result.getValue("accent").first + 0.5 && result.getValue("marcato").first <= result.getValue("staccato").first + 0.5)

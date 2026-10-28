@@ -77,6 +77,7 @@ interface SheetsPlatform {
     fun setMusicShelfHeight(dp: Float) {}
     /** A measured Studio rail, separate from the legacy tool-strip lanes. */
     fun setStudioRailWidth(dp: Float) {}
+    fun setStudioRailSide(onRight:Boolean) {}
 
     /** Sound out, for the metronome; null where there is none. */
     val audioOut: AudioOut?

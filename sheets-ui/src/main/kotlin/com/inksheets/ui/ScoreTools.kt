@@ -887,7 +887,11 @@ internal object ScoreTools {
         val path = s.currentPath ?: return
         if (scoreHere(s)?.hasRead(s.pageShown.first) != true) return
         maskBrushEnabled = !maskBrushEnabled
-        if (maskBrushEnabled) { hiddenClean = hiddenClean - path; tool = Tool.CLEAN }
+        if (maskBrushEnabled) {
+            hiddenClean = hiddenClean - path; tool = Tool.CLEAN
+            s.stripCollapsed=false
+            if(Perform.on(com.inkslate.core.PerformAction.FULLSCREEN)) Perform.run(com.inkslate.core.PerformAction.FULLSCREEN)
+        }
         else { CleanMasks.cancel(s,path); tool = Tool.NONE }
         syncTool(); changed()
     }
@@ -1067,9 +1071,9 @@ internal object ScoreTools {
                 cached.mask?.strokes == brush?.strokes && cached.flash == flash) return cached.marks
         }
         val k = scaleOf(score, page, width) ?: return null
-        val maskStrokes = brush?.strokes?.map { stroke -> PageMark.MaskStroke(stroke.contours.map { polygon -> FloatArray(polygon.size) { polygon[it] * k } },stroke.erase) }
-        val partialMask = maskStrokes?.let { PageMark.Mask(it,false,width,height) }
-        val fullMask = maskStrokes?.let { PageMark.Mask(it,true,width,height) }
+        val maskStrokes = brush?.strokes?.map {stroke -> scaledMaskStroke(stroke,k)}
+        val partialMask = maskStrokes?.let { PageMark.Mask(it,false,width,height,key) }
+        val fullMask = maskStrokes?.let { PageMark.Mask(it,true,width,height,key) }
         val out = ArrayList<PageMark>()
         for ((index, m) in score.measures.withIndex()) {
             if (m.page != page) continue
@@ -1175,10 +1179,27 @@ internal object ScoreTools {
      * spacing at the bar's left and right ends ([Measure.lines]) - so a bar redrawn on a scan whose
      * staff runs aslant meets the print either side of it without a step.
      */
+    private val scaledStrokes=java.util.WeakHashMap<PageMark.MaskStroke,MutableMap<Float,PageMark.MaskStroke>>()
+    private fun scaledMaskStroke(stroke:PageMark.MaskStroke,k:Float):PageMark.MaskStroke {
+        val scales=scaledStrokes.getOrPut(stroke){linkedMapOf()}
+        scales[k]?.let{return it}
+        if(scales.size>=3)scales.clear()
+        return PageMark.MaskStroke(stroke.contours.map {p->FloatArray(p.size){p[it]*k}},stroke.erase).also{scales[k]=it}
+    }
+    private val cleanDrawings=object:LinkedHashMap<Measure,Engraver.Drawing>(128,.75f,true) {
+        override fun removeEldestEntry(eldest:MutableMap.MutableEntry<Measure,Engraver.Drawing>?)=size>256
+    }
+    private fun cleanDrawing(m:Measure)=cleanDrawings.getOrPut(m){if(m.bars>1)Engraver.multiRest(m)else Engraver.aligned(m)}
+    private data class EngravingKey(val measure:Measure,val scale:Float,val color:Int)
+    private val engravingCache=object:LinkedHashMap<EngravingKey,List<PageMark>>(128,.75f,true) {
+        override fun removeEldestEntry(eldest:MutableMap.MutableEntry<EngravingKey,List<PageMark>>?)=size>256
+    }
     internal fun engraved(m: Measure, k: Float, color: Int): List<PageMark> {
+        val cacheKey=EngravingKey(m,k,color)
+        engravingCache[cacheKey]?.let{return it}
         // A multi-bar rest redrawn as one: its staff, bar and count (the underlay leaves the print's be).
         if (m.bars > 1 && color != INK) return emptyList()
-        val d = if (m.bars > 1) Engraver.multiRest(m) else Engraver.aligned(m)
+        val d = cleanDrawing(m)
         val out = ArrayList<PageMark>()
         // The print's own weight: its staff lines as thick as printed, so every stroke drawn - stems,
         // barlines, hairpins, ledger lines - is that much heavier or lighter than the engraver's own,
@@ -1200,15 +1221,22 @@ internal object ScoreTools {
                 val w = if (staffLine && m.lineWidth > 0f) m.lineWidth * k * 0.85f else (mark.w * weight * spAt(mark.x1)).coerceAtLeast(0.4f)
                 out += PageMark.line(px(mark.x1), py(mark.x1, mark.y1), px(mark.x2), py(mark.x2, mark.y2), w, if (staffLine) STAFF else color)
             }
-            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(spAt(mark.x) * mark.scale, px(mark.x), py(mark.x, mark.y)), color)
+            is Engraver.Symbol -> out += PageMark(PageMark.Kind.FILL, MusicGlyphs[mark.name].polygons(1f,0f,0f).map { polygon ->
+                FloatArray(polygon.size) { i ->
+                    val pair=i-i%2
+                    val xs=mark.x+polygon[pair]*mark.scaleX
+                    if(i%2==0)px(xs) else py(xs,mark.y+polygon[pair+1]*mark.scaleY)
+                }
+            }, color)
             is Engraver.Slab -> out += PageMark(PageMark.Kind.FILL, listOf(FloatArray(mark.points.size) { i -> if (i % 2 == 0) px(mark.points[i]) else py(mark.points[i - 1], mark.points[i]) }), color)
         }
+        engravingCache[cacheKey]=out
         return out
     }
 
     /** How far above the top line and below the bottom one bar [m] redrawn reaches, in spaces: three at least. */
     private fun reachOf(m: Measure): Pair<Float, Float> {
-        val d = if (m.bars > 1) Engraver.multiRest(m) else Engraver.aligned(m)
+        val d = cleanDrawing(m)
         var top = 0f; var bottom = 4f
         for (mark in d.marks) when (mark) {
             is Engraver.Stroke -> { top = minOf(top, mark.y1, mark.y2); bottom = maxOf(bottom, mark.y1, mark.y2) }

@@ -76,7 +76,8 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
         var stage = 0
         var env = 0f
         private val sus = (group?.sustain ?: 1.0).toFloat()
-        private val atkStep = 1f / max(1.0, max(group?.attack ?: 0.0, 0.004) * rate).toFloat()
+        private val attackSeconds = if (tone.attack == Synth.Attack.SOFT) max(group?.attack ?: 0.0, min(0.045, max(0.012, tone.length * 0.3 / rate))) else max(group?.attack ?: 0.0, 0.004)
+        private val atkStep = 1f / max(1.0, attackSeconds * rate).toFloat()
         private val decStep = (1f - sus) / max(1.0, (group?.decay ?: 0.0) * rate).toFloat()
         private var relStep = 0f
         var fadeInLen = 0; private var fadeInPos = 0
@@ -90,8 +91,11 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
 
         fun release() {
             if (oneShot || stage == 3) return
-            // A short clean release: the recording own tail would fill the silence between tongued notes.
-            val len = max(0.02, min(group?.release ?: 0.1, 0.06)) * rate
+            // Wind tonguing and detached notes need a clean gap. Bowed/plucked
+            // instruments keep the preset's natural release instead of a universal 60 ms cut.
+            val declared = group?.release ?: 0.1
+            val detached = tone.patch.tonguedSlurredRepeats || tone.art and Synth.ART_STACCATO != 0
+            val len = max(0.004, if (detached) min(declared, 0.06) else declared) * rate
             relStep = env / len.toFloat()
             stage = 3
         }
@@ -106,7 +110,7 @@ class SampledVoice(private val inst: SampledInstrument, private val rate: Int, f
             if (tone.endVelocity != tone.velocity || tone.ramp > 0) w = Synth.amplitude(tone.velocityAt(t)) / Synth.amplitude(tone.velocity)
             if (tone.accent > 0f) {
                 val x = t / (0.11 * rate)
-                if (x > 0 && x < 1) { val h = sin(PI * x); w *= (1.0 + tone.accent * 0.25 * h * h).toFloat() }
+                if (x > 0 && x < 1) { val h = sin(PI * x); w *= (1.0 + tone.accent * 0.24 * h * h).toFloat() }
             }
             return w
         }

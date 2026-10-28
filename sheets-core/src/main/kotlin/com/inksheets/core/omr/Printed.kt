@@ -58,7 +58,8 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
                       /** Learned: a head's beams or flags (0-3), its dots, and how likely it is there at all. */
                       val beams: Int = -1, val dots: Int = -1, val confidence: Float = 1f,
                       /** Learned: the odds behind those (see [Note.odds]). */
-                      val odds: List<Float> = emptyList())
+                      val odds: List<Float> = emptyList(),
+                      val bounds:List<Float> = emptyList())
     /** A stem: upright at [x], from [y0] (top) to [y1]. */
     data class Stem(val x: Float, val y0: Float, val y1: Float)
     /** A beam: a filled slab across [x0]..[x1], its middle at [y0] and [y1] at each end, [thick] thick. */
@@ -78,7 +79,7 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
     fun scaled(pixelWidth: Int): Printed {
         val k = pixelWidth / width
         return Printed(width * k, height * k,
-            symbols.map { it.copy(x = it.x * k, y = it.y * k, width = it.width * k, size = it.size * k) },
+            symbols.map { it.copy(x = it.x * k, y = it.y * k, width = it.width * k, size = it.size * k, bounds = it.bounds.map { v -> v*k }) },
             stems.map { Stem(it.x * k, it.y0 * k, it.y1 * k) },
             beams.map { Beam(it.x0 * k, it.y0 * k, it.x1 * k, it.y1 * k, it.thick * k) },
             arcs.map { Arc(it.x0 * k, it.y0 * k, it.x1 * k, it.y1 * k, it.bulge * k) },
@@ -88,6 +89,11 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
     val heads get() = symbols.filter { it.kind == Kind.HEAD_BLACK || it.kind == Kind.HEAD_HALF || it.kind == Kind.HEAD_WHOLE }
 
     companion object {
+        fun boundsOf(contours:List<FloatArray>,x:Float,y:Float,size:Float):List<Float> {
+            var l=Float.POSITIVE_INFINITY;var t=l;var r=Float.NEGATIVE_INFINITY;var b=r
+            for(c in contours)for(i in 0 until c.size-1 step 2){l=min(l,c[i]);r=max(r,c[i]);t=min(t,c[i+1]);b=max(b,c[i+1])}
+            return if(l.isFinite() && r>l && b>t && size>0f)listOf(x+l*size,y+t*size,x+r*size,y+b*size)else emptyList()
+        }
         /** The markings a word of dynamic letters can be. */
         val DYNAMICS = setOf("ppp", "pp", "p", "mp", "mf", "f", "ff", "fff", "fp", "sf", "sfz", "sfp", "sffz", "sfpp", "fz", "rf", "rfz", "sp")
 
@@ -221,7 +227,7 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
          * True when it was named; false for a music-font character its code says nothing about - to
          * be told by its outline instead ([glyph]).
          */
-        fun char(font: String, code: Int, text: String?, x: Float, y: Float, advance: Float, size: Float): Boolean {
+        fun char(font: String, code: Int, text: String?, x: Float, y: Float, advance: Float, size: Float, bounds:List<Float> = emptyList()): Boolean {
             if (text == null || text.codePointCount(0, text.length) != 1) return !isMusicFont(font)
             val cp = text.codePointAt(0)
             if (!isMusicFont(font)) {
@@ -236,14 +242,14 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
             codesToText.getOrPut(font) { HashMap() }[code] = text
             val family = familyOf(font)
             val kind = kindOf(cp)
-            if (kind != Kind.OTHER) { symbols += Symbol(kind, x, y, advance, size, digitOf(cp)); return true }
+            if (kind != Kind.OTHER) { symbols += Symbol(kind, x, y, advance, size, digitOf(cp), bounds=bounds); return true }
             // Opus's "p" is a tuplet's italic 3; its left quotation mark, the bar-repeat sign.
             if (family == "opus" || family == "helsinki") when (cp) {
                 'p'.code -> { symbols += Symbol(Kind.TEXT_DIGIT, x, y, advance, size, 3); return true }
                 0x2018 -> { symbols += Symbol(Kind.BAR_REPEAT, x, y, advance, size); return true }
             }
             val mark = markOf(family, cp) ?: return false
-            symbols += Symbol(mark.first, x, y, advance, size, name = mark.second)
+            symbols += Symbol(mark.first, x, y, advance, size, name = mark.second, bounds=bounds)
             return true
         }
 
@@ -263,7 +269,7 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
                     if (m != null) {
                         var mx0 = Float.MAX_VALUE; var mx1 = -Float.MAX_VALUE
                         for (c in contours) for (i in c.indices step 2) { mx0 = min(mx0, c[i]); mx1 = max(mx1, c[i]) }
-                        symbols += Symbol(m.kind, x + mx0 * size, y, (mx1 - mx0) * size, size, m.digit, m.name)
+                        symbols += Symbol(m.kind, x + mx0 * size, y, (mx1 - mx0) * size, size, m.digit, m.name, bounds=boundsOf(contours,x,y,size))
                     }
                     return
                 }
@@ -279,7 +285,7 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
                 return
             }
             val m = GlyphShapes.classify(contours.map { c -> FloatArray(c.size) { c[it] * 4f } }) ?: return
-            symbols += Symbol(m.kind, x + x0 * size, y, w * size, size, m.digit, m.name)
+            symbols += Symbol(m.kind, x + x0 * size, y, w * size, size, m.digit, m.name, bounds=boundsOf(contours,x,y,size))
         }
 
         /** A special font's character whose outline measures [w] x [h] ems, centred at ([cx], [cy]). */

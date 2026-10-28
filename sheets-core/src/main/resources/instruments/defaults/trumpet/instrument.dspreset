@@ -1,0 +1,34 @@
+<DecentSampler>
+  <groups>
+    <group name="default" tags="default" attack="0.004" release="0.08">
+      <sample path="default-60-v1.wav" rootNote="60" loNote="60" hiNote="61" loVel="0" hiVel="95" start="0" loopEnabled="true" loopStart="76800" loopEnd="140115" loopCrossfade="1920" volume="18.45446dB" />
+      <sample path="default-60-v3.wav" rootNote="60" loNote="60" hiNote="61" loVel="96" hiVel="127" start="0" loopEnabled="true" loopStart="24000" loopEnd="54502" loopCrossfade="1920" volume="4.53890dB" />
+      <sample path="default-63-v1.wav" rootNote="63" loNote="62" hiNote="65" loVel="0" hiVel="95" start="0" loopEnabled="true" loopStart="57600" loopEnd="88601" loopCrossfade="1920" volume="16.52331dB" />
+      <sample path="default-63-v3.wav" rootNote="63" loNote="62" hiNote="65" loVel="96" hiVel="127" start="0" loopEnabled="true" loopStart="57600" loopEnd="89544" loopCrossfade="1920" volume="-0.29053dB" />
+      <sample path="default-67-v1.wav" rootNote="67" loNote="66" hiNote="68" loVel="0" hiVel="95" start="0" loopEnabled="true" loopStart="38400" loopEnd="70183" loopCrossfade="1920" volume="17.21163dB" />
+      <sample path="default-67-v3.wav" rootNote="67" loNote="66" hiNote="68" loVel="96" hiVel="127" start="0" loopEnabled="true" loopStart="76800" loopEnd="110669" loopCrossfade="1920" volume="-3.49163dB" />
+      <sample path="default-70-v1.wav" rootNote="70" loNote="69" hiNote="72" loVel="0" hiVel="95" start="0" loopEnabled="true" loopStart="28800" loopEnd="84317" loopCrossfade="1920" volume="15.17333dB" />
+      <sample path="default-70-v3.wav" rootNote="70" loNote="69" hiNote="72" loVel="96" hiVel="127" start="0" loopEnabled="true" loopStart="38400" loopEnd="120824" loopCrossfade="1920" volume="0.55633dB" />
+      <sample path="default-74-v1.wav" rootNote="74" loNote="73" hiNote="75" loVel="0" hiVel="95" start="0" loopEnabled="true" loopStart="67200" loopEnd="109250" loopCrossfade="1920" volume="6.70541dB" />
+      <sample path="default-74-v3.wav" rootNote="74" loNote="73" hiNote="75" loVel="96" hiVel="127" start="0" loopEnabled="true" loopStart="19200" loopEnd="52258" loopCrossfade="1920" volume="-3.76735dB" />
+      <sample path="default-77-v1.wav" rootNote="77" loNote="76" hiNote="77" loVel="0" hiVel="95" start="0" loopEnabled="true" loopStart="57600" loopEnd="122030" loopCrossfade="1920" volume="6.55304dB" />
+      <sample path="default-77-v3.wav" rootNote="77" loNote="76" hiNote="77" loVel="96" hiVel="127" start="0" loopEnabled="true" loopStart="48000" loopEnd="109507" loopCrossfade="1920" volume="-2.40700dB" />
+    </group>
+    <group name="staccato" tags="staccato" attack="0.004" release="0.08">
+      <sample path="staccato-60-v1.wav" rootNote="60" loNote="60" hiNote="61" loVel="0" hiVel="95" start="0" volume="33.90059dB" />
+      <sample path="staccato-60-v3.wav" rootNote="60" loNote="60" hiNote="61" loVel="96" hiVel="127" start="0" volume="15.55894dB" />
+      <sample path="staccato-63-v1.wav" rootNote="63" loNote="62" hiNote="64" loVel="0" hiVel="95" start="0" volume="30.09536dB" />
+      <sample path="staccato-63-v3.wav" rootNote="63" loNote="62" hiNote="64" loVel="96" hiVel="127" start="0" volume="12.16454dB" />
+      <sample path="staccato-65-v1.wav" rootNote="65" loNote="65" hiNote="66" loVel="0" hiVel="95" start="0" volume="26.32034dB" />
+      <sample path="staccato-65-v3.wav" rootNote="65" loNote="65" hiNote="66" loVel="96" hiVel="127" start="0" volume="18.24333dB" />
+      <sample path="staccato-67-v1.wav" rootNote="67" loNote="67" hiNote="68" loVel="0" hiVel="95" start="0" volume="28.43462dB" />
+      <sample path="staccato-67-v3.wav" rootNote="67" loNote="67" hiNote="68" loVel="96" hiVel="127" start="0" volume="14.13237dB" />
+      <sample path="staccato-70-v1.wav" rootNote="70" loNote="69" hiNote="72" loVel="0" hiVel="95" start="0" volume="24.74972dB" />
+      <sample path="staccato-70-v3.wav" rootNote="70" loNote="69" hiNote="72" loVel="96" hiVel="127" start="0" volume="9.01412dB" />
+      <sample path="staccato-74-v1.wav" rootNote="74" loNote="73" hiNote="75" loVel="0" hiVel="95" start="0" volume="19.18075dB" />
+      <sample path="staccato-74-v3.wav" rootNote="74" loNote="73" hiNote="75" loVel="96" hiVel="127" start="0" volume="4.05292dB" />
+      <sample path="staccato-77-v1.wav" rootNote="77" loNote="76" hiNote="77" loVel="0" hiVel="95" start="0" volume="18.35021dB" />
+      <sample path="staccato-77-v3.wav" rootNote="77" loNote="76" hiNote="77" loVel="96" hiVel="127" start="0" volume="2.92186dB" />
+    </group>
+  </groups>
+</DecentSampler>

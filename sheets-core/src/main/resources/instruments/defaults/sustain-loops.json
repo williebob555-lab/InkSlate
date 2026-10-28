@@ -1,0 +1,1251 @@
+{
+  "clarinet/default-58-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 38400,
+    "loop_end": 76338,
+    "crossfade": 1920,
+    "loop_seconds": 1.581,
+    "correlation": 0.99554,
+    "level_ratio": 1.00024,
+    "blend_rms_db": 0.0297,
+    "seam_step": 0.0016183535257975265,
+    "native_max_step": 0.03033447265625
+  },
+  "clarinet/default-58-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 48000,
+    "loop_end": 77359,
+    "crossfade": 1920,
+    "loop_seconds": 1.223,
+    "correlation": 0.99455,
+    "level_ratio": 1.01219,
+    "blend_rms_db": -0.0349,
+    "seam_step": 0.02250041961669922,
+    "native_max_step": 0.07965087890625
+  },
+  "clarinet/default-62-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 33600,
+    "loop_end": 90074,
+    "crossfade": 1920,
+    "loop_seconds": 2.353,
+    "correlation": 0.99545,
+    "level_ratio": 0.9993,
+    "blend_rms_db": -0.0113,
+    "seam_step": 0.002840487162272136,
+    "native_max_step": 0.0216064453125
+  },
+  "clarinet/default-62-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 38400,
+    "loop_end": 67345,
+    "crossfade": 1920,
+    "loop_seconds": 1.206,
+    "correlation": 0.99889,
+    "level_ratio": 0.99472,
+    "blend_rms_db": 0.0135,
+    "seam_step": 0.006869967778523764,
+    "native_max_step": 0.030181884765625
+  },
+  "clarinet/default-65-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 117569,
+    "crossfade": 1920,
+    "loop_seconds": 1.699,
+    "correlation": 0.99944,
+    "level_ratio": 0.99956,
+    "blend_rms_db": 0.0075,
+    "seam_step": 0.002686341603597004,
+    "native_max_step": 0.025146484375
+  },
+  "clarinet/default-65-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 133321,
+    "crossfade": 1920,
+    "loop_seconds": 2.355,
+    "correlation": 0.99382,
+    "level_ratio": 1.00286,
+    "blend_rms_db": -0.0065,
+    "seam_step": 0.00024113655090332586,
+    "native_max_step": 0.089080810546875
+  },
+  "clarinet/default-70-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 67200,
+    "loop_end": 121040,
+    "crossfade": 1920,
+    "loop_seconds": 2.243,
+    "correlation": 0.9976,
+    "level_ratio": 0.99995,
+    "blend_rms_db": -0.0207,
+    "seam_step": 0.007236067454020181,
+    "native_max_step": 0.0904541015625
+  },
+  "clarinet/default-70-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 76800,
+    "loop_end": 108774,
+    "crossfade": 1920,
+    "loop_seconds": 1.332,
+    "correlation": 0.99835,
+    "level_ratio": 0.96591,
+    "blend_rms_db": -0.0031,
+    "seam_step": 0.007535330454508465,
+    "native_max_step": 0.144256591796875
+  },
+  "clarinet/default-74-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 19200,
+    "loop_end": 48004,
+    "crossfade": 1920,
+    "loop_seconds": 1.2,
+    "correlation": 0.99146,
+    "level_ratio": 1.00056,
+    "blend_rms_db": -0.0219,
+    "seam_step": 0.012151877085367838,
+    "native_max_step": 0.04840087890625
+  },
+  "clarinet/default-74-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 6.0,
+    "loop_start": 76800,
+    "loop_end": 106107,
+    "crossfade": 1920,
+    "loop_seconds": 1.221,
+    "correlation": 0.98332,
+    "level_ratio": 0.99957,
+    "blend_rms_db": -0.0479,
+    "seam_step": 0.002935775121053058,
+    "native_max_step": 0.024322509765625
+  },
+  "clarinet/default-74-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 57600,
+    "loop_end": 88059,
+    "crossfade": 1920,
+    "loop_seconds": 1.269,
+    "correlation": 0.99758,
+    "level_ratio": 0.96611,
+    "blend_rms_db": -0.0076,
+    "seam_step": 0.032013654708862305,
+    "native_max_step": 0.104278564453125
+  },
+  "clarinet/default-77-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 76800,
+    "loop_end": 143959,
+    "crossfade": 1920,
+    "loop_seconds": 2.798,
+    "correlation": 0.99066,
+    "level_ratio": 0.95111,
+    "blend_rms_db": 0.0009,
+    "seam_step": 0.0034798622131347653,
+    "native_max_step": 0.01702880859375
+  },
+  "clarinet/default-77-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 57600,
+    "loop_end": 91383,
+    "crossfade": 1920,
+    "loop_seconds": 1.408,
+    "correlation": 0.99345,
+    "level_ratio": 0.9999,
+    "blend_rms_db": -0.0591,
+    "seam_step": 0.019617255528767905,
+    "native_max_step": 0.19403076171875
+  },
+  "clarinet/staccato-58-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-58-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-62-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-62-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-65-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-65-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-70-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-70-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-74-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-74-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-74-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-77-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "clarinet/staccato-77-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/default-48-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 96922,
+    "crossfade": 1920,
+    "loop_seconds": 1.238,
+    "correlation": 0.99674,
+    "level_ratio": 1.00035,
+    "blend_rms_db": -0.012,
+    "seam_step": 0.0014661153157552085,
+    "native_max_step": 0.0072021484375
+  },
+  "tenor-sax/default-48-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 114962,
+    "crossfade": 1920,
+    "loop_seconds": 1.59,
+    "correlation": 0.9968,
+    "level_ratio": 0.99858,
+    "blend_rms_db": -0.0017,
+    "seam_step": 0.00024353663126627616,
+    "native_max_step": 0.014739990234375
+  },
+  "tenor-sax/default-50-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 57600,
+    "loop_end": 103532,
+    "crossfade": 1920,
+    "loop_seconds": 1.914,
+    "correlation": 0.9984,
+    "level_ratio": 1.00016,
+    "blend_rms_db": -0.0248,
+    "seam_step": 0.0016172726949056013,
+    "native_max_step": 0.0059814453125
+  },
+  "tenor-sax/default-50-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 33600,
+    "loop_end": 68577,
+    "crossfade": 1920,
+    "loop_seconds": 1.457,
+    "correlation": 0.99913,
+    "level_ratio": 1.00035,
+    "blend_rms_db": -0.0129,
+    "seam_step": 0.004485718409220377,
+    "native_max_step": 0.1475830078125
+  },
+  "tenor-sax/default-52-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 67200,
+    "loop_end": 97636,
+    "crossfade": 1920,
+    "loop_seconds": 1.268,
+    "correlation": 0.99905,
+    "level_ratio": 1.00002,
+    "blend_rms_db": -0.0059,
+    "seam_step": 0.005890162785847981,
+    "native_max_step": 0.0230712890625
+  },
+  "tenor-sax/default-52-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 88767,
+    "crossfade": 1920,
+    "loop_seconds": 1.299,
+    "correlation": 0.9993,
+    "level_ratio": 1.0,
+    "blend_rms_db": 0.0024,
+    "seam_step": 0.00161828994750976,
+    "native_max_step": 0.02484130859375
+  },
+  "tenor-sax/default-54-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 86400,
+    "crossfade": 1920,
+    "loop_seconds": 1.2,
+    "correlation": 0.99643,
+    "level_ratio": 0.99975,
+    "blend_rms_db": -0.0103,
+    "seam_step": 0.0009441534678141308,
+    "native_max_step": 0.04351806640625
+  },
+  "tenor-sax/default-54-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 105860,
+    "crossfade": 1920,
+    "loop_seconds": 1.211,
+    "correlation": 0.99893,
+    "level_ratio": 0.99842,
+    "blend_rms_db": 0.0073,
+    "seam_step": 0.006774346033732094,
+    "native_max_step": 0.07232666015625
+  },
+  "tenor-sax/default-56-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 111133,
+    "crossfade": 1920,
+    "loop_seconds": 1.431,
+    "correlation": 0.99783,
+    "level_ratio": 0.99945,
+    "blend_rms_db": -0.0119,
+    "seam_step": 0.0016783396402994775,
+    "native_max_step": 0.035491943359375
+  },
+  "tenor-sax/default-56-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 87078,
+    "crossfade": 1920,
+    "loop_seconds": 1.228,
+    "correlation": 0.99549,
+    "level_ratio": 0.9801,
+    "blend_rms_db": -0.0105,
+    "seam_step": 0.01821894645690918,
+    "native_max_step": 0.069793701171875
+  },
+  "tenor-sax/default-58-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 33600,
+    "loop_end": 67272,
+    "crossfade": 1920,
+    "loop_seconds": 1.403,
+    "correlation": 0.99528,
+    "level_ratio": 1.00024,
+    "blend_rms_db": -0.0518,
+    "seam_step": 0.002227973937988282,
+    "native_max_step": 0.01373291015625
+  },
+  "tenor-sax/default-58-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 88185,
+    "crossfade": 1920,
+    "loop_seconds": 1.274,
+    "correlation": 0.99636,
+    "level_ratio": 0.99708,
+    "blend_rms_db": 0.0086,
+    "seam_step": 0.007902193069458007,
+    "native_max_step": 0.043548583984375
+  },
+  "tenor-sax/default-60-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 105874,
+    "crossfade": 1920,
+    "loop_seconds": 1.211,
+    "correlation": 0.99486,
+    "level_ratio": 0.94335,
+    "blend_rms_db": -0.0213,
+    "seam_step": 0.0006407737731933592,
+    "native_max_step": 0.013214111328125
+  },
+  "tenor-sax/default-60-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 113584,
+    "crossfade": 1920,
+    "loop_seconds": 1.533,
+    "correlation": 0.97545,
+    "level_ratio": 0.99278,
+    "blend_rms_db": -0.0346,
+    "seam_step": 0.0031135400136311844,
+    "native_max_step": 0.04742431640625
+  },
+  "tenor-sax/default-62-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 115708,
+    "crossfade": 1920,
+    "loop_seconds": 1.621,
+    "correlation": 0.99507,
+    "level_ratio": 0.99907,
+    "blend_rms_db": -0.0081,
+    "seam_step": 0.002500804265340169,
+    "native_max_step": 0.007080078125
+  },
+  "tenor-sax/default-62-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 106840,
+    "crossfade": 1920,
+    "loop_seconds": 1.652,
+    "correlation": 0.99797,
+    "level_ratio": 1.00042,
+    "blend_rms_db": 0.0008,
+    "seam_step": 0.010801808039347341,
+    "native_max_step": 0.031402587890625
+  },
+  "tenor-sax/default-64-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 28800,
+    "loop_end": 57994,
+    "crossfade": 1920,
+    "loop_seconds": 1.216,
+    "correlation": 0.99945,
+    "level_ratio": 1.00001,
+    "blend_rms_db": -0.0148,
+    "seam_step": 0.003967205683390304,
+    "native_max_step": 0.0947265625
+  },
+  "tenor-sax/default-64-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 96691,
+    "crossfade": 1920,
+    "loop_seconds": 1.229,
+    "correlation": 0.99793,
+    "level_ratio": 0.99989,
+    "blend_rms_db": -0.0115,
+    "seam_step": 0.006716012954711914,
+    "native_max_step": 0.04351806640625
+  },
+  "tenor-sax/default-66-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 33600,
+    "loop_end": 62402,
+    "crossfade": 1920,
+    "loop_seconds": 1.2,
+    "correlation": 0.99967,
+    "level_ratio": 0.9915,
+    "blend_rms_db": 0.007,
+    "seam_step": 0.009095080693562825,
+    "native_max_step": 0.038421630859375
+  },
+  "tenor-sax/default-66-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 28800,
+    "loop_end": 94509,
+    "crossfade": 1920,
+    "loop_seconds": 2.738,
+    "correlation": 0.99549,
+    "level_ratio": 1.0,
+    "blend_rms_db": 0.0087,
+    "seam_step": 0.01272589365641276,
+    "native_max_step": 0.0230712890625
+  },
+  "tenor-sax/default-68-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 110479,
+    "crossfade": 1920,
+    "loop_seconds": 2.203,
+    "correlation": 0.99765,
+    "level_ratio": 1.00016,
+    "blend_rms_db": 0.0006,
+    "seam_step": 0.0018306414286295598,
+    "native_max_step": 0.039459228515625
+  },
+  "tenor-sax/default-68-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 106271,
+    "crossfade": 1920,
+    "loop_seconds": 1.228,
+    "correlation": 0.99595,
+    "level_ratio": 1.0009,
+    "blend_rms_db": -0.0059,
+    "seam_step": 0.018582916259765624,
+    "native_max_step": 0.0296630859375
+  },
+  "tenor-sax/default-70-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 127663,
+    "crossfade": 1920,
+    "loop_seconds": 2.119,
+    "correlation": 0.99675,
+    "level_ratio": 0.99811,
+    "blend_rms_db": -0.025,
+    "seam_step": 0.0004880905151367198,
+    "native_max_step": 0.0321044921875
+  },
+  "tenor-sax/default-70-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 28800,
+    "loop_end": 61183,
+    "crossfade": 1920,
+    "loop_seconds": 1.349,
+    "correlation": 0.99272,
+    "level_ratio": 1.00278,
+    "blend_rms_db": 0.038,
+    "seam_step": 0.004636255900065105,
+    "native_max_step": 0.110565185546875
+  },
+  "tenor-sax/default-72-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 96143,
+    "crossfade": 1920,
+    "loop_seconds": 1.206,
+    "correlation": 0.99478,
+    "level_ratio": 0.96796,
+    "blend_rms_db": 0.0267,
+    "seam_step": 0.0014345010121663412,
+    "native_max_step": 0.0162353515625
+  },
+  "tenor-sax/default-72-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 106203,
+    "crossfade": 1920,
+    "loop_seconds": 1.225,
+    "correlation": 0.99528,
+    "level_ratio": 1.00059,
+    "blend_rms_db": 0.0066,
+    "seam_step": 0.00042761166890462055,
+    "native_max_step": 0.017364501953125
+  },
+  "tenor-sax/staccato-48-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-50-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-50-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-52-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-52-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-54-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-54-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-56-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-56-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-57-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-57-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-60-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-60-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-62-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-62-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-64-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-64-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-66-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-66-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0
+  },
+  "tenor-sax/staccato-68-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-68-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 4.0
+  },
+  "tenor-sax/staccato-70-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-70-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-72-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "tenor-sax/staccato-72-v2.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/default-46-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 4.0,
+    "loop_start": 38400,
+    "loop_end": 95655,
+    "crossfade": 1920,
+    "loop_seconds": 2.386,
+    "correlation": 0.9846,
+    "level_ratio": 1.00401,
+    "blend_rms_db": -0.0195,
+    "seam_step": 6.098747253417968e-05,
+    "native_max_step": 0.001800537109375
+  },
+  "trombone/default-46-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 48000,
+    "loop_end": 86505,
+    "crossfade": 1920,
+    "loop_seconds": 1.604,
+    "correlation": 0.99528,
+    "level_ratio": 0.99904,
+    "blend_rms_db": 0.0177,
+    "seam_step": 0.0006706237792968757,
+    "native_max_step": 0.017730712890625
+  },
+  "trombone/default-50-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 6.0,
+    "loop_start": 57600,
+    "loop_end": 115959,
+    "crossfade": 1920,
+    "loop_seconds": 2.432,
+    "correlation": 0.98717,
+    "level_ratio": 1.00176,
+    "blend_rms_db": 0.0504,
+    "seam_step": 9.1552734375e-05,
+    "native_max_step": 0.0032958984375
+  },
+  "trombone/default-50-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 33600,
+    "loop_end": 69887,
+    "crossfade": 1920,
+    "loop_seconds": 1.512,
+    "correlation": 0.9959,
+    "level_ratio": 1.0007,
+    "blend_rms_db": -0.0235,
+    "seam_step": 0.0019223531087239586,
+    "native_max_step": 0.00970458984375
+  },
+  "trombone/default-53-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 4.0,
+    "loop_start": 76800,
+    "loop_end": 145937,
+    "crossfade": 1920,
+    "loop_seconds": 2.881,
+    "correlation": 0.99381,
+    "level_ratio": 0.99412,
+    "blend_rms_db": 0.024,
+    "seam_step": 9.150505065917973e-05,
+    "native_max_step": 0.000457763671875
+  },
+  "trombone/default-53-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 4.0,
+    "loop_start": 48000,
+    "loop_end": 85387,
+    "crossfade": 1920,
+    "loop_seconds": 1.558,
+    "correlation": 0.99579,
+    "level_ratio": 0.983,
+    "blend_rms_db": -0.0206,
+    "seam_step": 0.0017390886942545564,
+    "native_max_step": 0.019622802734375
+  },
+  "trombone/default-60-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 24000,
+    "loop_end": 75830,
+    "crossfade": 1920,
+    "loop_seconds": 2.16,
+    "correlation": 0.99518,
+    "level_ratio": 0.99993,
+    "blend_rms_db": -0.0103,
+    "seam_step": 0.00021319389343261736,
+    "native_max_step": 0.003509521484375
+  },
+  "trombone/default-60-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 48000,
+    "loop_end": 106435,
+    "crossfade": 1920,
+    "loop_seconds": 2.435,
+    "correlation": 0.99487,
+    "level_ratio": 0.99953,
+    "blend_rms_db": 0.026,
+    "seam_step": 0.004454104105631511,
+    "native_max_step": 0.048370361328125
+  },
+  "trombone/default-61-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 4.0,
+    "loop_start": 76800,
+    "loop_end": 109097,
+    "crossfade": 1920,
+    "loop_seconds": 1.346,
+    "correlation": 0.99643,
+    "level_ratio": 0.99879,
+    "blend_rms_db": 0.0004,
+    "seam_step": 0.0007937272389729817,
+    "native_max_step": 0.006591796875
+  },
+  "trombone/default-61-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 76800,
+    "loop_end": 118795,
+    "crossfade": 1920,
+    "loop_seconds": 1.75,
+    "correlation": 0.99869,
+    "level_ratio": 0.97367,
+    "blend_rms_db": -0.0122,
+    "seam_step": 0.003295548756917316,
+    "native_max_step": 0.0496826171875
+  },
+  "trombone/default-63-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 4.0,
+    "loop_start": 57600,
+    "loop_end": 130416,
+    "crossfade": 1920,
+    "loop_seconds": 3.034,
+    "correlation": 0.9958,
+    "level_ratio": 1.00119,
+    "blend_rms_db": -0.0147,
+    "seam_step": 0.0003051598866780599,
+    "native_max_step": 0.004302978515625
+  },
+  "trombone/default-63-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 38400,
+    "loop_end": 79515,
+    "crossfade": 1920,
+    "loop_seconds": 1.713,
+    "correlation": 0.99247,
+    "level_ratio": 1.00164,
+    "blend_rms_db": 0.0313,
+    "seam_step": 0.0021970272064208984,
+    "native_max_step": 0.078460693359375
+  },
+  "trombone/default-65-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 57600,
+    "loop_end": 126119,
+    "crossfade": 1920,
+    "loop_seconds": 2.855,
+    "correlation": 0.99903,
+    "level_ratio": 1.00074,
+    "blend_rms_db": 0.0386,
+    "seam_step": 0.000946044921875,
+    "native_max_step": 0.0087890625
+  },
+  "trombone/default-65-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 2.0,
+    "loop_start": 67200,
+    "loop_end": 99433,
+    "crossfade": 1920,
+    "loop_seconds": 1.343,
+    "correlation": 0.99739,
+    "level_ratio": 0.99945,
+    "blend_rms_db": -0.0275,
+    "seam_step": 0.006618054707845045,
+    "native_max_step": 0.048309326171875
+  },
+  "trombone/staccato-46-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-46-v4.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-53-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-53-v4.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-58-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-58-v4.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-62-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-62-v4.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-65-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trombone/staccato-65-v4.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/default-60-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 140115,
+    "crossfade": 1920,
+    "loop_seconds": 2.638,
+    "correlation": 0.99062,
+    "level_ratio": 0.9998,
+    "blend_rms_db": 0.0762,
+    "seam_step": 0.0027457396189371746,
+    "native_max_step": 0.032073974609375
+  },
+  "trumpet/default-60-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 24000,
+    "loop_end": 54502,
+    "crossfade": 1920,
+    "loop_seconds": 1.271,
+    "correlation": 0.97995,
+    "level_ratio": 0.9982,
+    "blend_rms_db": 0.0658,
+    "seam_step": 0.0013948599497477232,
+    "native_max_step": 0.113006591796875
+  },
+  "trumpet/default-63-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 88601,
+    "crossfade": 1920,
+    "loop_seconds": 1.292,
+    "correlation": 0.99244,
+    "level_ratio": 1.0007,
+    "blend_rms_db": 0.0206,
+    "seam_step": 0.00433346430460612,
+    "native_max_step": 0.04949951171875
+  },
+  "trumpet/default-63-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 89544,
+    "crossfade": 1920,
+    "loop_seconds": 1.331,
+    "correlation": 0.99278,
+    "level_ratio": 1.00049,
+    "blend_rms_db": -0.0604,
+    "seam_step": 0.028523524602254227,
+    "native_max_step": 0.49615478515625
+  },
+  "trumpet/default-67-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 38400,
+    "loop_end": 70183,
+    "crossfade": 1920,
+    "loop_seconds": 1.324,
+    "correlation": 0.98289,
+    "level_ratio": 0.9923,
+    "blend_rms_db": -0.0465,
+    "seam_step": 0.0003668626149495452,
+    "native_max_step": 0.017547607421875
+  },
+  "trumpet/default-67-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 110669,
+    "crossfade": 1920,
+    "loop_seconds": 1.411,
+    "correlation": 0.99154,
+    "level_ratio": 1.00146,
+    "blend_rms_db": -0.0386,
+    "seam_step": 0.03937562306722009,
+    "native_max_step": 0.259307861328125
+  },
+  "trumpet/default-70-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 28800,
+    "loop_end": 84317,
+    "crossfade": 1920,
+    "loop_seconds": 2.313,
+    "correlation": 0.98902,
+    "level_ratio": 0.99987,
+    "blend_rms_db": -0.0148,
+    "seam_step": 0.0025353272755940758,
+    "native_max_step": 0.066680908203125
+  },
+  "trumpet/default-70-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 38400,
+    "loop_end": 120824,
+    "crossfade": 1920,
+    "loop_seconds": 3.434,
+    "correlation": 0.99354,
+    "level_ratio": 1.00849,
+    "blend_rms_db": -0.0097,
+    "seam_step": 0.0011053880055745431,
+    "native_max_step": 0.135589599609375
+  },
+  "trumpet/default-74-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 109250,
+    "crossfade": 1920,
+    "loop_seconds": 1.752,
+    "correlation": 0.99876,
+    "level_ratio": 1.00041,
+    "blend_rms_db": -0.0178,
+    "seam_step": 0.009339396158854166,
+    "native_max_step": 0.05279541015625
+  },
+  "trumpet/default-74-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 19200,
+    "loop_end": 52258,
+    "crossfade": 1920,
+    "loop_seconds": 1.377,
+    "correlation": 0.98897,
+    "level_ratio": 0.99188,
+    "blend_rms_db": 0.0263,
+    "seam_step": 0.06826729774475099,
+    "native_max_step": 0.195709228515625
+  },
+  "trumpet/default-77-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 122030,
+    "crossfade": 1920,
+    "loop_seconds": 2.685,
+    "correlation": 0.99101,
+    "level_ratio": 0.99594,
+    "blend_rms_db": -0.0237,
+    "seam_step": 0.020841026306152345,
+    "native_max_step": 0.090087890625
+  },
+  "trumpet/default-77-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 48000,
+    "loop_end": 109507,
+    "crossfade": 1920,
+    "loop_seconds": 2.563,
+    "correlation": 0.99585,
+    "level_ratio": 1.00661,
+    "blend_rms_db": 0.0693,
+    "seam_step": 0.036868890126546205,
+    "native_max_step": 0.098907470703125
+  },
+  "trumpet/staccato-60-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-60-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-63-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-63-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-65-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-65-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-67-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-67-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-70-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-70-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-74-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-74-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-77-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet/staccato-77-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0
+  },
+  "trumpet-muted/default-60-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 24000,
+    "loop_end": 56276,
+    "crossfade": 1920,
+    "loop_seconds": 1.345,
+    "correlation": 0.93775,
+    "level_ratio": 1.04474,
+    "blend_rms_db": 0.091,
+    "seam_step": 0.0016172885894775392,
+    "native_max_step": 0.007720947265625
+  },
+  "trumpet-muted/default-60-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 97252,
+    "crossfade": 1920,
+    "loop_seconds": 1.252,
+    "correlation": 0.90055,
+    "level_ratio": 0.99952,
+    "blend_rms_db": 0.096,
+    "seam_step": 0.01056849161783854,
+    "native_max_step": 0.052581787109375
+  },
+  "trumpet-muted/default-62-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 48000,
+    "loop_end": 80077,
+    "crossfade": 1920,
+    "loop_seconds": 1.337,
+    "correlation": 0.95075,
+    "level_ratio": 0.99167,
+    "blend_rms_db": -0.0996,
+    "seam_step": 0.00024425188700358074,
+    "native_max_step": 0.001190185546875
+  },
+  "trumpet-muted/default-62-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 95777,
+    "crossfade": 1920,
+    "loop_seconds": 1.591,
+    "correlation": 0.94551,
+    "level_ratio": 1.0026,
+    "blend_rms_db": -0.2006,
+    "seam_step": 0.007538477579752605,
+    "native_max_step": 0.041900634765625
+  },
+  "trumpet-muted/default-67-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 109258,
+    "crossfade": 1920,
+    "loop_seconds": 1.352,
+    "correlation": 0.97854,
+    "level_ratio": 1.04354,
+    "blend_rms_db": -0.0871,
+    "seam_step": 0.0003046512603759764,
+    "native_max_step": 0.010101318359375
+  },
+  "trumpet-muted/default-67-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 103613,
+    "crossfade": 1920,
+    "loop_seconds": 1.517,
+    "correlation": 0.97636,
+    "level_ratio": 0.99984,
+    "blend_rms_db": -0.0536,
+    "seam_step": 0.00036422411600748814,
+    "native_max_step": 0.147979736328125
+  },
+  "trumpet-muted/default-70-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 67200,
+    "loop_end": 113530,
+    "crossfade": 1920,
+    "loop_seconds": 1.93,
+    "correlation": 0.97311,
+    "level_ratio": 0.99978,
+    "blend_rms_db": -0.0578,
+    "seam_step": 0.0007016499837239583,
+    "native_max_step": 0.003875732421875
+  },
+  "trumpet-muted/default-70-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 33600,
+    "loop_end": 78113,
+    "crossfade": 1920,
+    "loop_seconds": 1.855,
+    "correlation": 0.97932,
+    "level_ratio": 0.99662,
+    "blend_rms_db": -0.0424,
+    "seam_step": 0.028896156946818033,
+    "native_max_step": 0.110137939453125
+  },
+  "trumpet-muted/default-74-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 76800,
+    "loop_end": 116886,
+    "crossfade": 1920,
+    "loop_seconds": 1.67,
+    "correlation": 0.97996,
+    "level_ratio": 0.99636,
+    "blend_rms_db": 0.0462,
+    "seam_step": 0.004794279734293619,
+    "native_max_step": 0.012725830078125
+  },
+  "trumpet-muted/default-74-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 57600,
+    "loop_end": 110616,
+    "crossfade": 1920,
+    "loop_seconds": 2.209,
+    "correlation": 0.9524,
+    "level_ratio": 1.00197,
+    "blend_rms_db": -0.0715,
+    "seam_step": 0.008816289901733401,
+    "native_max_step": 0.1107177734375
+  },
+  "trumpet-muted/default-77-v1.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 33600,
+    "loop_end": 77417,
+    "crossfade": 1920,
+    "loop_seconds": 1.826,
+    "correlation": 0.98859,
+    "level_ratio": 1.0012,
+    "blend_rms_db": 0.0255,
+    "seam_step": 0.0030822277069091804,
+    "native_max_step": 0.015228271484375
+  },
+  "trumpet-muted/default-77-v3.wav": {
+    "offset": 0,
+    "original_onset_ms": 0.0,
+    "loop_start": 48000,
+    "loop_end": 88912,
+    "crossfade": 1920,
+    "loop_seconds": 1.705,
+    "correlation": 0.97943,
+    "level_ratio": 0.99557,
+    "blend_rms_db": -0.1411,
+    "seam_step": 0.04122316042582194,
+    "native_max_step": 0.246734619140625
+  }
+}

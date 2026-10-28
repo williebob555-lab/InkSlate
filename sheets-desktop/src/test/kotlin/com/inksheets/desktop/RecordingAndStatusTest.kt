@@ -15,6 +15,28 @@ import java.io.File
 
 @OptIn(ExperimentalTestApi::class)
 class RecordingAndStatusTest {
+    @Test fun `recording controls dock outside score and collapse to status when a take starts`() {
+        val (state,_)=setup("record-drawer")
+        try {
+            state.audioOpen=true
+            runDesktopComposeUiTest(width=640,height=360) {
+                setContent {MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
+                waitForIdle()
+                runOnIdle {
+                    assertTrue(ReaderPanels.open)
+                    assertTrue("Score must retain visible space",state.shelfHeight<240f)
+                }
+                onNodeWithText("Record yourself").performClick()
+                waitForIdle()
+                runOnIdle {
+                    assertTrue(SelfRecorder.recording)
+                    assertFalse(state.audioOpen)
+                    assertFalse(ReaderPanels.open)
+                    assertTrue("Taking a recording leaves most of the score visible",state.shelfHeight<120f)
+                }
+            }
+        } finally {cleanup(state)}
+    }
     @get:Rule val tmp = TemporaryFolder()
     private class Player : AudioPlayer {
         var readable = true

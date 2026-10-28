@@ -179,7 +179,10 @@ class Synth(val sampleRate: Int) {
         /** Harmonic levels measured from recordings, by register and loudness (see [Voicing]); then the brass law above is not used. */
         val voicing: Voicing? = null,
         /** Between the two recordings [voicing] holds: 0 the dark, lyrical one, 1 the sweet-spot one (the default). */
-        val toneBlend: Double = 1.0
+        val toneBlend: Double = 1.0,
+        val tonguedSlurredRepeats:Boolean = spectral || brass,
+        /** Optional recorded muted voice, selected by score instructions rather than dynamics. */
+        val mutedVariant: Patch? = null
     )
 
     /**
@@ -294,14 +297,14 @@ class Synth(val sampleRate: Int) {
         const val ART_MARCATO = 8
 
         /** A patch playing [inst]'s recordings. */
-        fun sampledPatch(inst: SampledInstrument, gain: Float = 0.3f) = Patch(FloatArray(1), 0.0, 0.0, 1f, 0.1, gain = gain, sampled = inst)
+        fun sampledPatch(inst: SampledInstrument, gain: Float = 0.3f, tonguedSlurredRepeats:Boolean=false, mutedVariant:Patch?=null) = Patch(FloatArray(1), 0.0, 0.0, 1f, 0.1, gain = gain, sampled = inst,tonguedSlurredRepeats=tonguedSlurredRepeats,mutedVariant=mutedVariant)
 
         /**
          * The patch for instrument id [instrument] (see [Midi.program]): the recordings assigned to it in
          * [com.inksheets.core.sampler.SamplerLibrary.active] where there are any, else the synthesised voice.
          */
         fun patchFor(instrument: String?, bank: com.inksheets.core.sampler.SamplerLibrary? = com.inksheets.core.sampler.SamplerLibrary.active): Patch =
-            bank?.patchFor(instrument) ?: patchFor(Midi.program(instrument))
+            bank?.patchFor(instrument) ?: BuiltInVoices.forId(instrument) ?: patchFor(Midi.program(instrument))
 
         /** How high a spectral voice's harmonics go: above this a wind instrument has little to say. */
         const val SPECTRAL_TOP = 9000.0
@@ -333,18 +336,29 @@ class Synth(val sampleRate: Int) {
         fun patchFor(program: Int): Patch = when (program) {
             in 0..7 -> PIANO
             in 8..15 -> MALLET
+            in 24..31 -> BuiltInVoices.guitar
             in 32..39 -> BASS
-            in 40..51 -> STRINGS
+            40 -> BuiltInVoices.violin
+            41 -> BuiltInVoices.viola
+            42 -> BuiltInVoices.cello
+            43 -> BuiltInVoices.doubleBass
+            in 44..51 -> STRINGS
             in 52..55 -> VOICE
             56, 59 -> BRASS
             57 -> TROMBONE
             58 -> LOW_BRASS
             60 -> HORN
             61, 62, 63 -> BRASS
-            in 64..67 -> SAX
-            68, 69, 70 -> DOUBLE_REED
+            64 -> BuiltInVoices.sopranoSax
+            65 -> BuiltInVoices.altoSax
+            66 -> BuiltInVoices.tenorSax
+            67 -> BuiltInVoices.bariSax
+            68 -> DOUBLE_REED
+            69 -> BuiltInVoices.englishHorn
+            70 -> BuiltInVoices.bassoon
             71 -> CLARINET
-            in 72..79 -> FLUTE
+            72 -> BuiltInVoices.piccolo
+            in 73..79 -> FLUTE
             else -> PIANO
         }
 
@@ -369,6 +383,8 @@ class Synth(val sampleRate: Int) {
      * One note to play: from sample [start] for [length] samples. [accent] (0-1): struck harder - a
      * quicker, brighter start that stands out from the notes round it and falls back at once.
      */
+    enum class Attack { AUTO, SOFT, NORMAL, FIRM }
+
     class Tone(
         val midi: Int, val start: Long, val length: Long, val velocity: Float, val patch: Patch, val accent: Float = 0f,
         /** How loud it has become by its end: a swell into a high point, a taper away from it. */
@@ -385,7 +401,9 @@ class Synth(val sampleRate: Int) {
         /** The loudness the player meant, before the band's balance (picks a sampled instrument's velocity layer); -1: as [velocity]. */
         val layer: Float = -1f,
         /** The planned vibrato this note takes part in (see [Vibrato]); null: the patch's own steady one. */
-        val vib: Vibrato? = null
+        val vib: Vibrato? = null,
+        /** Note-specific tongue intent; AUTO preserves direct callers' established envelope. */
+        val attack: Attack = Attack.AUTO
     ) {
         /** The loudness [t] samples into the tone: along its line from start to end, arriving from the note before over [ramp] when a new dynamic. */
         fun velocityAt(t: Double): Float {
@@ -488,7 +506,7 @@ class Synth(val sampleRate: Int) {
         if (ratio <= 0.0 || kotlin.math.abs(ratio - 1.0) < 1e-6) return
         val now = position
         fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
-        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
+        fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib, t.attack)
         val shifted = pending.map { moved(it) }
         pending.clear(); pending += shifted
         for (v in voices) {
@@ -594,7 +612,7 @@ class Synth(val sampleRate: Int) {
                     val ov = max(8L, (ms * 0.001 * sampleRate).toLong())
                     val h = ov / 2
                     carrier.fadeAt = t.start - h; carrier.fadeLen = ov
-                    val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
+                    val shifted = Tone(t.midi, t.start - h, t.length + h, t.velocity, t.patch, t.accent, t.endVelocity, true, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib, t.attack)
                     val nv = Voice(shifted)
                     // The two tones meet in quadrature at the join's centre, so that their blend keeps its power (two
                     // sounds of near pitch would otherwise beat through the overlap).
@@ -785,21 +803,23 @@ class Synth(val sampleRate: Int) {
         val tone = v.tone
         val p = tone.patch
         return if (v.xfade > 0) v.xfade.toDouble() else if (tone.legato && !v.continued) 0.012 * sr
+        else if (tone.attack == Attack.SOFT && p.fade <= 0) min(0.045 * sr, max(0.012 * sr, tone.length * 0.3))
         else if (p.fade > 0) max(0.004 * sr, p.attack * sr)
         else when (onset) {
             'B' -> (if (hard > 0) 0.018 - 0.006 * hard else 0.025) * sr
             // (a plain note after a rest grows as slowly as the instrument does; a struck one is quicker)
-            'C', 'D' -> (if (hard > 0) 0.030 - 0.015 * hard else max(0.030, p.attack)) * sr
+            'C', 'D' -> max(0.030, p.attack) * (1.0 - 0.5 * hard) * sr
             else -> if (hard > 0) (0.012 - 0.006 * hard) * sr else max(0.012 * sr, p.attack * sr * 0.55)
         }
     }
 
-    /** How firmly a note is struck, 0-1: a marcato 1, an accent 0.8, a staccato 0.6, a plain tongued note 0. */
+    /** How firmly a note is struck, 0-1. Short articulation alone does not imply an accent. */
     private fun hardness(t: Tone): Double {
+        if(t.attack==Attack.SOFT)return 0.0
         var h = t.accent.toDouble()
+        if(t.attack==Attack.FIRM)h=max(h,.8)
         if (t.art and ART_MARCATO != 0) h = max(h, 1.0)
         if (t.art and ART_ACCENT != 0) h = max(h, 0.8)
-        if (t.art and ART_STACCATO != 0) h = max(h, 0.6)
         return h
     }
 
@@ -835,8 +855,8 @@ class Synth(val sampleRate: Int) {
             // B: a small overshoot, +1.5 dB at most, peaking at 35 ms and settled by 120 ms (accent and marcato only).
             'B' -> { val x = t / (0.035 * sr); 1.0 + (if (accent > 0 || tone.art and (ART_ACCENT or ART_MARCATO) != 0) 0.13 * hard else 0.0) * (if (x > 0) x * x * exp(2 * (1 - x)) else 0.0) }
             // C, D: firmness is a touch more level for a moment - never a separate transient.
-            'C', 'D' -> (1.0 + 0.12 * hard * exp(-t / (0.08 * sr))) * (1.0 + accent * 0.25 * hump(t / (0.11 * sr)))
-            else -> 1.0 + accent * 0.25 * hump(t / (0.11 * sr))
+            'C', 'D' -> (1.0 + 0.12 * hard * exp(-t / (0.08 * sr))) * (1.0 + accent * 0.24 * hump(t / (0.11 * sr)))
+            else -> 1.0 + accent * 0.24 * hump(t / (0.11 * sr))
         }
         val vel = velAt(tone, t)
         var g = env * boost * p.gain * (if (p.spectral) amplitude(vel) else vel)

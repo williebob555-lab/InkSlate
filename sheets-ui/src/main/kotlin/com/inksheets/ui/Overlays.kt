@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 internal object Overlays {
     var bottomOut by mutableStateOf(0.dp)
     var studioOut by mutableStateOf(0.dp)
+    var studioOnRight by mutableStateOf(false)
     /** How wide each strip is when out (measured; 0 where it is not shown at all), and which side the action strip is on. */
     var actionOut by mutableStateOf(0.dp)
     var musicOut by mutableStateOf(0.dp)
@@ -71,8 +72,8 @@ internal object Overlays {
         val out = maxOf(action, music)
         return if (out == 0.dp) 0.dp else if (stripsAside) TAB else out
     }
-    val left: Dp get() = side(true) + studioOut
-    val right: Dp get() = side(false)
+    val left: Dp get() = side(true) + if(studioOnRight)0.dp else studioOut
+    val right: Dp get() = side(false) + if(studioOnRight)studioOut else 0.dp
 
     val TAB = 22.dp
 

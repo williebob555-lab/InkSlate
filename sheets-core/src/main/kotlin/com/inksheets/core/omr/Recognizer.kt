@@ -1718,7 +1718,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     maybe = maybe,
                     graces = graceNotes.sortedBy { it.x },
                     showsClef = i == 0 && showsClef, showsKey = i == 0 && showsKey, showsTime = (i == 0 && showsTime) || timeHere,
-                    lines = lines, lineWidth = t.toFloat(), start = from
+                    lines = lines, lineWidth = t.toFloat(), start = from,
+                    sourceSymbols=printed?.symbols.orEmpty().filter {p-> p.x>=box.left-s.space && p.x<(events.minOfOrNull{it.x} ?:to.toFloat()) && abs(p.y-(s.top+s.bottom)/2)<s.space*6 }
+                        .filter{it.kind in setOf(Printed.Kind.CLEF_G,Printed.Kind.CLEF_F,Printed.Kind.CLEF_C,Printed.Kind.FLAT,Printed.Kind.SHARP,Printed.Kind.NATURAL,Printed.Kind.TIME_DIGIT,Printed.Kind.TIME_COMMON,Printed.Kind.TIME_CUT)}.mapNotNull{sourceGlyph(it,s.space)}
                 )
                 val doubts = ArrayList<String>()
                 val q = m.quarters
@@ -1751,12 +1753,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 // A repeat starting at a line's start sits just after the clef and key.
                 val starts = (span.first in b && dotsAfter(span.first)) || (i == 0 && dotsAt(x - (s.space * 0.5f).toInt(), x + (s.space * 2.5f).toInt()))
                 val ends = span.second in b && dotsBefore(span.second)
-                // A curve read as a slur that is a tie (from a tied note, or short - a tie's end
-                // arriving over the barline) is the tie's: drawn once, as a tie.
-                val tiedAt = events.filterIsInstance<Note>().filter { it.tie }.map { it.x + s.space * 1.2f }
-                val directions = if (!stated) emptyList() else printedDirections(s, span.first, span.second).filterNot { d ->
-                    d.kind == "slur" && (d.x2 - d.x < s.space * 3f || tiedAt.any { abs(it - d.x) < s.space * 1.5f })
-                }
+                // A short slur is still a slur. Length or sharing a tie's start cannot erase
+                // phrasing; the arc classifier removes only curves supported as actual ties.
+                val directions = if (!stated) emptyList() else printedDirections(s, span.first, span.second)
                 val done = m.copy(doubts = doubts, repeatStart = starts, repeatEnd = ends, directions = directions, repeatsBar = repeatsBar)
                 measures += done
                 pendingTimeChoices?.let { timeChoices[measures.size - 1] = it }; pendingTimeChoices = null
@@ -1958,8 +1957,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val keptNow = Workers.map(measures.toList()) { m ->
             if (m.bars > 1) m else {
                 val staffBars = measures.filter { it.staff == m.staff && it.bars == 1 }
-                val (kept, shades) = keptIn(healed, staves[m.staff], m, staffBars)
-                m.copy(kept = kept, keptShade = shades)
+                val decorations = ArrayList<SourceDecoration>()
+                val (kept, shades) = keptIn(healed, staves[m.staff], m, staffBars, decorations)
+                m.copy(kept = kept, keptShade = shades, sourceDecorations = decorations)
             }
         }
         for (i in measures.indices) measures[i] = keptNow[i]
@@ -3175,6 +3175,46 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     /** A head let go, as the note it would be: its value by its kind, stem and flags, its dot, its pitch in the key. */
+    private fun sourceGlyph(symbol:Printed.Symbol,sp:Float,step:Int?=null):SourceGlyph? {
+        val name=when(symbol.kind) {
+            Printed.Kind.HEAD_BLACK->"noteheadBlack";Printed.Kind.HEAD_HALF->"noteheadHalf";Printed.Kind.HEAD_WHOLE->"noteheadWhole"
+            Printed.Kind.REST_1->"restWhole";Printed.Kind.REST_2->"restHalf";Printed.Kind.REST_4->"restQuarter"
+            Printed.Kind.REST_8->"rest8th";Printed.Kind.REST_16->"rest16th";Printed.Kind.REST_32->"rest32nd"
+            Printed.Kind.FLAT->"accidentalFlat";Printed.Kind.SHARP->"accidentalSharp";Printed.Kind.NATURAL->"accidentalNatural"
+            Printed.Kind.DOUBLE_FLAT->"accidentalDoubleFlat";Printed.Kind.DOUBLE_SHARP->"accidentalDoubleSharp"
+            Printed.Kind.CLEF_G->"gClef";Printed.Kind.CLEF_F->"fClef";Printed.Kind.CLEF_C->"cClef"
+            Printed.Kind.TIME_DIGIT->"timeSig${symbol.digit}";Printed.Kind.TIME_COMMON->"timeSigCommon";Printed.Kind.TIME_CUT->"timeSigCutCommon"
+            else->return null
+        }
+        val canonical=MusicGlyphs.all[name] ?: return null
+        val bounds=symbol.bounds.takeIf{it.size==4 && it.all(Float::isFinite)} ?: canonical.bounds.let{listOf(symbol.x+it[0]*sp,symbol.y+it[1]*sp,symbol.x+it[2]*sp,symbol.y+it[3]*sp)}
+        return SourceGlyph(name,SourcePoint(bounds[0],bounds[1]),bounds[2]-bounds[0],bounds[3]-bounds[1],step,SourcePoint(symbol.x,symbol.y))
+    }
+    private fun noteGeometry(clean:Ink,s:Staff,heads:List<Head>,duration:Duration):NoteGeometry {
+        val sp=s.space
+        val observed=heads.map {h->
+            val sym=symbolOf[h]
+            val bounds=sym?.bounds?.takeIf{it.size==4}
+            if(bounds!=null)SourceHead(h.step,SourcePoint((bounds[0]+bounds[2])/2,(bounds[1]+bounds[3])/2),bounds[2]-bounds[0],bounds[3]-bounds[1])
+            else {
+                val glyph=MusicGlyphs[h.kind].bounds
+                val fitted=if(h.kind=="noteheadBlack")headSize(clean,sym ?: Printed.Symbol(Printed.Kind.HEAD_BLACK,h.x.toFloat(),h.y.toFloat(),sp*1.18f),sp)else null
+                val scale=(fitted?.div(glyph[2]-glyph[0]) ?: 1f).coerceIn(.65f,1.5f)*sp
+                SourceHead(h.step,SourcePoint(h.x+(glyph[0]+glyph[2])*scale/2,h.y+(glyph[1]+glyph[3])*scale/2),(glyph[2]-glyph[0])*scale,(glyph[3]-glyph[1])*scale)
+            }
+        }
+        val stemHead=heads.firstOrNull{it.stemX>=0 && it.stemEnd!=0}
+        val stem=stemHead?.let{h->SourceLine(SourcePoint(h.stemX.toFloat(),if(h.up)heads.maxOf{it.y}.toFloat()else heads.minOf{it.y}.toFloat()),SourcePoint(h.stemX.toFloat(),h.stemEnd.toFloat()),sp*Engraver.STEM)}
+        val beams=if(duration.base>=8 && stemHead!=null)printed?.beams.orEmpty().filter{b->stemHead.stemX>=b.x0-sp*.4f && stemHead.stemX<=b.x1+sp*.4f && abs(b.yAt(stemHead.stemX.toFloat())-stemHead.stemEnd)<sp*2}.map{SourceLine(SourcePoint(it.x0,it.y0),SourcePoint(it.x1,it.y1),it.thick)}else emptyList()
+        val accidentals=printed?.symbols.orEmpty().filter{it.kind in setOf(Printed.Kind.FLAT,Printed.Kind.SHARP,Printed.Kind.NATURAL,Printed.Kind.DOUBLE_FLAT,Printed.Kind.DOUBLE_SHARP)}.mapNotNull{a->
+            heads.minByOrNull{abs(it.y-a.y)}?.takeIf{h->h.x-a.x in sp*.3f..sp*3f && abs(h.y-a.y)<sp*.45f}?.let{h->sourceGlyph(a,sp,h.step)}
+        }
+        val right=observed.maxOfOrNull{it.center.x+it.width/2} ?:0f
+        val dots=printed?.symbols.orEmpty().filter{it.kind==Printed.Kind.DOT && it.x in right..right+sp*(duration.dots+1.4f) && heads.any{h->abs(h.y-it.y)<sp*.8f}}.map{d->
+            d.bounds.takeIf{it.size==4}?.let{SourcePoint((it[0]+it[2])/2,(it[1]+it[3])/2)} ?:SourcePoint(d.x,d.y)
+        }
+        return NoteGeometry(observed,stem,beams,accidentals,dots,duration)
+    }
     private fun maybeNote(clean: Ink, s: Staff, h: Head, carry: Carry): Note {
         dots(clean, s, h)
         val base = when (h.kind) {
@@ -3282,11 +3322,16 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
         }
         // A tie: a curve from beside one of its heads, level, to the next head at that height (or the line's end).
-        val tied = p.arcs.any { a ->
-            abs(a.y1 - a.y0) < sp * 0.8f && a.x1 - a.x0 > sp * 0.8f && syms.any { h -> a.x0 > h.x + h.width * 0.3f && a.x0 < h.x + h.width + sp * 1.2f && abs(a.y0 - h.y) < sp * 1.2f } &&
-                (a.x1 > s.right - sp * 1.5f || p.heads.any { o -> o.x > right && o.x - a.x1 < sp * 1.2f && a.x1 - o.x < o.width + sp * 0.4f && syms.any { h -> abs(o.y - h.y) < sp * 0.3f } })
-        }
+        val tied = syms.any { printedTieFrom(s,it) }
         return out.distinct() to tied
+    }
+
+    private fun printedTieFrom(s:Staff,head:Printed.Symbol):Boolean {
+        val p=printed ?: return false
+        val sp=s.space
+        return p.arcs.any { a -> p.tieEndpoints(a)?.first==head ||
+            (a.x1>s.right-sp*1.5f && abs(a.y1-a.y0)<sp*.6f && a.x0-(head.x+head.width) in -sp*.2f..sp*.6f && abs(a.y0-head.y) in sp*.2f..sp*.9f)
+        }
     }
 
     /**
@@ -3305,12 +3350,17 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             for (k in 0 until seq.size - 1) {
                 val a = seq[k].third as? Note ?: continue
                 val b = seq[k + 1].third as? Note ?: continue
-                val shared = a.steps.filter { it in b.steps }
+                val shared = a.steps.filter {step->
+                    val ai=a.steps.indexOf(step);val bi=b.steps.indexOf(step)
+                    bi>=0 && a.pitches.getOrNull(ai)?.midi==b.pitches.getOrNull(bi)?.midi
+                }
                 if (shared.isEmpty()) continue
-                if (shared.any { st -> tieBetween(ink, s, a.x + headW, b.x, st, sp) }) {
+                val tied=shared.filter {st->a.tie || tieBetween(ink, s, a.x + headW, b.x, st, sp)}
+                if (tied.isNotEmpty()) {
                     val (mi, ei, _) = seq[k]
                     val m = measures[mi]
-                    measures[mi] = m.copy(events = m.events.mapIndexed { i, e -> if (i == ei && e is Note) e.copy(tie = true) else e })
+                    val pitches=tied.mapNotNull{st->a.pitches.getOrNull(a.steps.indexOf(st))?.midi}
+                    measures[mi] = m.copy(events = m.events.mapIndexed { i, e -> if (i == ei && e is Note) e.copy(tie = true,tiedPitches=pitches) else e })
                 }
             }
         }
@@ -3694,7 +3744,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         for (b in p.symbols) if (b.kind == Printed.Kind.BREATH && b.x >= from && b.x < to && near(b.y)) out += Direction("breath", b.x, above = true)
         // Words: how to play it ("rit.", "a tempo", "cresc.", "legato"), at the word's place - a
         // word over the bar's start may stand just before it.
-        for (w in p.symbols) if (w.kind == Printed.Kind.WORD && w.x >= from - sp && w.x < to - sp && near(w.y)) out += Direction("text", w.x, w.x + w.width, w.name, above = w.y < s.top)
+        out += musicTextDirections(p.symbols.filter { w -> w.kind == Printed.Kind.WORD && w.x >= from - sp && w.x < to - sp && near(w.y) }, sp, s.top.toFloat())
         // Slurs: every curve that is not a note's tie, in each bar it crosses.
         for (a in p.arcs) {
             if (a.x1 < from || a.x0 >= to || !near((a.y0 + a.y1) / 2)) continue
@@ -3707,9 +3757,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
 
     /** A curve from beside a head to the next head at its height: a tie, not a slur. */
     private fun tieLike(a: Printed.Arc): Boolean {
-        val p = printed ?: return false
-        return p.heads.any { h -> a.x0 > h.x + h.width * 0.3f && a.x0 - (h.x + h.width) < p.heads.first().width * 1.5f && abs(a.y0 - h.y) < h.width } &&
-            p.heads.any { o -> o.x >= a.x1 - o.width * 1.5f && o.x - a.x1 < o.width * 1.5f && abs(a.y1 - o.y) < o.width }
+        return printed?.tieEndpoints(a)!=null
     }
 
     /** The printed rests in [from]..[to] on [s] (the staff they are nearest), with their dots. */
@@ -3728,7 +3776,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             if (staves.any { o -> o !== s && abs((o.top + o.bottom) / 2f - r.y) < abs(mid - r.y) && r.x >= o.left && r.x <= o.right }) return@mapNotNull null
             val dotted = p.symbols.any { d -> d.kind == Printed.Kind.DOT && d.x > r.x + r.width * 0.8f && d.x < r.x + r.width + sp * 1.2f && abs(d.y - r.y) < sp * 1.5f }
-            Rest(Duration(base, if (dotted) 1 else 0), r.x, ((r.y - s.lineY(0, r.x.roundToInt())) / (sp / 2)).roundToInt()) to 1f
+            Rest(Duration(base, if (dotted) 1 else 0), r.x, ((r.y - s.lineY(0, r.x.roundToInt())) / (sp / 2)).roundToInt(),geometry=sourceGlyph(r,sp)) to 1f
         }
     }
 
@@ -3893,7 +3941,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         return n
     }
 
-    private fun keptIn(clean: Ink, s: Staff, m: Measure, staffBars: List<Measure>): Pair<List<IntArray>, List<Int>> {
+    private fun keptIn(clean: Ink, s: Staff, m: Measure, staffBars: List<Measure>, decorations: MutableList<SourceDecoration>): Pair<List<IntArray>, List<Int>> {
         val sp = s.space
         val mid = (m.box.left + m.box.right) / 2
         val x0 = m.box.left; val x1 = m.box.right
@@ -3968,7 +4016,23 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // redraw covers go - heads, stems, flags and beams where printed - and what is joined to
             // them (a tie leaving a head, an accent touching a stem) is kept as printed.
             val near = staffBars.filter { o -> o.box.right >= l && o.box.left <= r }
-            if (near.any { o -> redrawnBy(o, heads = false) }) continue
+            if (near.any { o -> redrawnBy(o, heads = false) }) {
+                if (stated && owns(px)) {
+                    val note = m.events.filterIsInstance<Note>().firstOrNull { n ->
+                        n.articulations.isNotEmpty() && w <= sp * 1.6f && h <= sp * 1.6f && l <= n.x + headW && r >= n.x &&
+                            n.steps.any { st -> abs((t+b)/2f-s.y(st,n.x.roundToInt())) in sp*.6f..sp*4f }
+                    }
+                    val direction = if (note == null) m.directions.filter { it.kind in setOf("dynamic","cresc","dim") }
+                        .sortedBy { if(it.kind=="dynamic")0 else 1 }.firstOrNull { d ->
+                            l <= d.x2+sp && r >= d.x-sp && if(d.above)b<top else t>bottom
+                        } else null
+                    if (note != null || direction != null) {
+                        val contours = Outline.loops(px).map { loop -> Outline.simplified(loop).let { sl -> IntArray(sl.size) { sl[it].toInt() } } }
+                        decorations += SourceDecoration(contours,note?.x,note?.steps.orEmpty(),note?.articulations.orEmpty(),direction)
+                    }
+                }
+                continue
+            }
             // Any part of it the redraw covers goes (a head, a stem - whole or a piece a scan broke off -
             // a flag, a beam); what is left of it is kept as printed.
             val rest = ArrayList<Int>()
@@ -4099,10 +4163,13 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 Pitch.fromDiatonic(d, alter)
             }
             val (marks, tied) = if (printed?.learned == false) printedMarks(s, c) else emptyList<String>() to false
+            val tiedKeys=if(tied)c.mapIndexedNotNull { index,head ->
+                symbolOf[head]?.takeIf{printedTieFrom(s,it)}?.let{pitches.getOrNull(index)?.midi}
+            }else emptyList()
             // Its stem's direction where its stem was seen (a trained reader's head whose stem was not found on the page: unknown).
             val seen = h.stemX >= 0 && (this.printed?.learned != true || h.stemEnd != 0)
             events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { seen }, c.minOf { it.score }, marks, tied,
-                odds = symbolOf[h]?.odds.orEmpty())
+                odds = symbolOf[h]?.odds.orEmpty(),geometry=noteGeometry(clean,s,c,dur),tiedPitches=tiedKeys)
         }
         // As printed: where each stem ends, and which notes one beam joins - a stroke along from one
         // stem's end to the next's - so a redrawn bar keeps the print's groups and their slant.

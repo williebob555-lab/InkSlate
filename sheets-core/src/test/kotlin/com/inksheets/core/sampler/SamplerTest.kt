@@ -320,6 +320,8 @@ lokey=0 hikey=127 pitch_keycenter=60
         lib.assign("euphonium", "Warm Euph")
         assertTrue(lib.patchFor("euphonium|1")!!.sampled === inst)
         assertTrue(Synth.patchFor("euphonium", lib).sampled === inst)
+        lib.assign("baritone", "Warm Euph")
+        assertTrue("Sampled baritone keeps wind repeated-note articulation",lib.patchFor("baritone")!!.tonguedSlurredRepeats)
         assertNull(Synth.patchFor("trumpet", lib).sampled)
         assertTrue(Synth.patchFor("trumpet", lib) === Synth.BRASS)
         val again = SamplerLibrary(store)
@@ -330,6 +332,48 @@ lokey=0 hikey=127 pitch_keycenter=60
         again.assign("euphonium", null)
         assertNull(again.patchFor("euphonium"))
         assertNull(SamplerLibrary(store).assignedTo("euphonium"))
+    }
+
+    @Test
+    fun `missing high-register articulation falls back to that register without extreme sample shifting`() {
+        val p = Preset()
+        p.groups += GroupSpec(name = "Accent", zones = mutableListOf(ZoneSpec(path = "low", root = 36, lo = 30, hi = 45)))
+        p.groups += GroupSpec(name = "Sustain", zones = mutableListOf(ZoneSpec(path = "high", root = 84, lo = 72, hi = 96)))
+        val inst = SampledInstrument.build(p, null) { Pcm(FloatArray(1000) { .2f }, rate) }
+        val high = inst.pick(84, 80, listOf(Art.ACCENT), Trigger.ATTACK, 1)!!
+        assertEquals(84, high.zone.root)
+        assertEquals(Art.DEFAULT, high.group.art)
+        val low = inst.pick(36, 80, listOf(Art.ACCENT), Trigger.ATTACK, 1)!!
+        assertEquals(Art.ACCENT, low.group.art)
+        assertNull(inst.pick(84, 80, emptyList(), Trigger.RELEASE, 1))
+    }
+
+    @Test
+    fun `natural string release survives while tongued wind and staccato releases leave a gap`() {
+        val p = Preset(groups = mutableListOf(GroupSpec(name = "Sustain", release = .3,
+            zones = mutableListOf(ZoneSpec(path = "held", root = 69)))))
+        val inst = SampledInstrument.build(p, null) { Pcm(sine(441.0, 2.0), rate) }
+        fun tail(wind: Boolean = false, art: Int = 0): Double {
+            val patch = Synth.sampledPatch(inst, tonguedSlurredRepeats = wind)
+            val out = render(inst, 1.0, listOf(tone(69, 0.0, .5, patch, art = art)))
+            return rms(out, (.64 * rate).toInt(), (.68 * rate).toInt())
+        }
+        assertTrue("a declared 300 ms string release should remain audible", tail() > .04)
+        assertTrue("wind tonguing needs the gap", tail(wind = true) < .001)
+        assertTrue("staccato should not ring through the gap", tail(art = Synth.ART_STACCATO) < .001)
+    }
+
+    @Test
+    fun `accent emphasis settles back into the same sampled tone`() {
+        val p = Preset(groups = mutableListOf(GroupSpec(name = "Sustain",
+            zones = mutableListOf(ZoneSpec(path = "held", root = 69)))))
+        val inst = SampledInstrument.build(p, null) { Pcm(sine(441.0, 1.5), rate) }
+        val patch = Synth.sampledPatch(inst)
+        val normal = tone(69, 0.0, 1.0, patch)
+        val accented = Synth.Tone(69, 0, rate.toLong(), .7f, patch, accent = .8f, art = Synth.ART_ACCENT)
+        val a = render(inst, 1.2, listOf(normal)); val b = render(inst, 1.2, listOf(accented))
+        assertTrue(rms(b, rate / 25, rate / 12) > rms(a, rate / 25, rate / 12) * 1.08)
+        assertEquals(rms(a, rate / 3, rate / 2), rms(b, rate / 3, rate / 2), .00001)
     }
 
     // ---- speed ----------------------------------------------------------------------------------

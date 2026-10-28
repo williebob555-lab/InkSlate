@@ -329,7 +329,8 @@ class SheetsScreensTest {
         }
         assertTrue("copied into the library", File(root, ".inksheets/instruments/My Euphonium/samples/Bb2.wav").isFile)
         assertTrue("a euphonium part plays with it", com.inksheets.ui.SampledInstrumentsTesting.sampled(state, "euphonium-bc"))
-        assertFalse("a trumpet part keeps the built-in voice", com.inksheets.ui.SampledInstrumentsTesting.sampled(state, "trumpet"))
+        assertTrue("custom euphonium must not take over the trumpet",com.inksheets.core.sampler.SamplerLibrary.active!!.assignedTo("trumpet")==null)
+        assertTrue("a trumpet part uses its recorded default", com.inksheets.ui.SampledInstrumentsTesting.sampled(state, "trumpet"))
     }
 
     @Test

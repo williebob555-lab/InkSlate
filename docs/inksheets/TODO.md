@@ -1,5 +1,20 @@
 # InkSheets — TODO (the workstation)
 
+## Current follow-up — 2026-10-28
+
+User requires continuous implementation and a tested GitHub build, not status-only turns. Trumpet timbre polishing is explicitly deprioritized. Retain the dark option; the real tenor sax prototype was accepted. Full suite and Android/watch packaging are in progress; latest published build remains test.300 until the next release is verified.
+
+- [x] Viewer editors use reserved extended bars; recording drawer closes when capture starts, leaving live stop/status controls.
+- [x] Right/left Studio preference; single-row footer from 600dp; original Fix and full annotation palette retained.
+- [x] Mask selection opens original brush palette. Cache completed mask paths and glyph geometry; preserve fill rules while copying native paths so erased holes stay erased.
+- [x] Source head/rest/stem/beam/preamble anchors with correction fallback; real PDF position checks and comparison crops. Preserve native articulations/dynamics/hairpins by their original contours while their semantic owner remains unchanged.
+- [x] Direct lead/follow shortcuts outside Studio scrolling; keep preferred message presets directly accessible.
+- [x] Separate phrase slurs from ties; partial chord ties retain untied attacks. Accent emphasis settles into the phrase; staccato alone does not imply extra force.
+- [x] Resource-backed recorded defaults with bounded decoding cache, user sample overrides, long sustain loops and source-layer level balancing. Current pack covers trumpet/open+straight mute, trombone, clarinet and tenor sax. Other instruments retain synthesized fallback; euphonium/sax-family coverage remains incomplete.
+- [ ] Finish combined regression and inspect final layouts/crops; publish and verify matching APK/MSI/RPM/watch assets.
+
+See `review/FOLLOWUP-20261028.md` for scope, evidence and known limits.
+
 ## Reliability and music overlays — approved 2026-10-26
 
 **Latest direction 2026-10-27:** Approved HTML demos are the visual baseline, not merely inspiration for regrouped old buttons. Implement real metronome lights, recording waveform, device rows, page/navigation footer, and externally separated dock settings. Replace legacy music sidebars with adaptive Shelf/Studio/Auto constrained layouts; preserve original InkSlate annotation palette. Keep consistent landscape-style home actions in portrait, prominent search, color hierarchy, manual song/setlist colors and alphabetical grouping. Redo Play together, Details and Part assignments against demos; remove obsolete companion-file option in InkSheets. Add easier watch installation/update and excerpt bookmarks (range/title/reminder/notes), plus continue-last-setlist.

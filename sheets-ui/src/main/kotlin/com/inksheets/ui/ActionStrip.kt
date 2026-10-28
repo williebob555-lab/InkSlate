@@ -108,6 +108,11 @@ import com.inkslate.core.PerformAction
  */
 @Composable
 fun BoxScope.ActionStrip(state: SheetsState) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalReaderPanelState provides state) { ReaderActions(state) }
+}
+
+@Composable private fun BoxScope.ReaderActions(state: SheetsState) {
+    if(state.groupMessageOpen) SendNoteDialog(state){state.groupMessageOpen=false}
     // The app's, not this page's: a tap on the middle of the page opens and closes it too.
     val collapsed = state.stripCollapsed
     var menu by remember { mutableStateOf(false) }
@@ -394,9 +399,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 private fun ReaderFooter(state:SheetsState) {
     var more by remember { mutableStateOf(false) }
     var excerpt by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val narrow=maxWidth<760.dp
+        val narrow=maxWidth<600.dp
         val toolsOut=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
         @Composable fun Mini(icon:ImageVector,label:String,description:String,active:Boolean=false,action:()->Unit) {
             Column(Modifier.width(38.dp).height(40.dp).clip(RoundedCornerShape(7.dp))
@@ -416,10 +420,6 @@ private fun ReaderFooter(state:SheetsState) {
             Mini(if(toolsOut)Icons.Default.Close else Icons.Default.Construction,if(toolsOut)"Hide"else"Tools",if(toolsOut)"Hide annotation tools"else"All tools",toolsOut){Perform.run(PerformAction.FULLSCREEN)}
             Mini(Icons.Default.Description,"Pages","Manage file pages"){Perform.openPages?.invoke()}
             Mini(Icons.Default.Bookmark,"Excerpt","Bookmark excerpt"){excerpt=true}
-            if(state.companion.leading) {
-                Mini(Icons.Default.Campaign,"Message","Message the band"){message=true}
-                state.presets.filter {it.onStrip}.forEach {preset ->TextButton(onClick={state.sendPreset(preset)}){Text(preset.text,style=MaterialTheme.typography.labelSmall)}}
-            }
         }
         val navigation:@Composable RowScope.()->Unit={
             IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")}
@@ -468,7 +468,6 @@ private fun ReaderFooter(state:SheetsState) {
         }
     }
     if(excerpt) state.current?.let {BookmarkEditorDialog(state,it,null){excerpt=false}}
-    if(message) SendNoteDialog(state){message=false}
 }
 
 private fun partName(p: com.inksheets.core.Part): String =

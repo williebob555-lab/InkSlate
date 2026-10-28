@@ -39,6 +39,7 @@ class MusicDockLifecycleTest {
         override val microphone: Microphone? = null
         override fun onMain(block: () -> Unit) = block()
         override fun setStudioRailWidth(dp: Float) { AppFlavor.studioRailDp = dp }
+        override fun setStudioRailSide(onRight:Boolean){AppFlavor.studioRailOnRight=onRight}
         override fun setMusicShelfHeight(dp: Float) { AppFlavor.musicShelfDp = dp }
     }
     private fun state(): SheetsState {
@@ -51,6 +52,18 @@ class MusicDockLifecycleTest {
         state.pageShown = 0 to 3
         state.homeInFront = false; state.stripCollapsed = false
         return state
+    }
+    @Test fun `right rail persists and reserves the right edge independently of annotation handedness`() {
+        val state=state();state.shelf.chooseView(MusicDockView.STUDIO);state.shelf.chooseRailSide(StudioRailSide.RIGHT)
+        runDesktopComposeUiTest(width=1280,height=800) {
+            setContent {MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
+            runOnIdle {
+                assertTrue(AppFlavor.studioRailOnRight)
+                assertEquals(0f,Overlays.left.value,.01f)
+                assertEquals(236f,Overlays.right.value,.01f)
+                assertEquals(StudioRailSide.RIGHT,MusicShelfPreferences(state.platform).railSide)
+            }
+        }
     }
 
     @Test fun `studio reservation clears on Home and disposal and returns on reopening`() {

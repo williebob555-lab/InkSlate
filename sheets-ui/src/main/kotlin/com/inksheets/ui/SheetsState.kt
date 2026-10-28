@@ -22,6 +22,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     var shelfHeight by mutableStateOf(0f)
     var arrangingShelf by mutableStateOf(false)
     var scorePanelOpen by mutableStateOf(false)
+    var groupMessageOpen by mutableStateOf(false)
     var pageAspect by mutableStateOf(.707f)
     var recoveredRecordingSongs by mutableStateOf<List<String>>(emptyList())
 

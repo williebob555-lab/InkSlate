@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.inksheets.core.omr.Synth
 import com.inksheets.core.sampler.SampledInstrument
 import com.inksheets.core.sampler.SamplerLibrary
+import com.inksheets.core.sampler.BundledInstruments
 import java.io.File
 
 /**
@@ -66,7 +67,10 @@ internal object SampledInstruments {
         val lib = SamplerLibrary(dir)
         SamplerLibrary.active = lib
         loadedFor = dir.path
+        val shownInstrument = state.partShown()?.instrument
         Thread({
+            runCatching { BundledInstruments.defaults.patchFor(shownInstrument) }
+                .onFailure { state.platform.log("Recorded default: ${it.message}") }
             runCatching { lib.scan(dir) }.onFailure { state.platform.log("Instruments: ${it.message}") }
             state.platform.onMain { version++ }
         }, "load-instruments").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
@@ -76,10 +80,15 @@ internal object SampledInstruments {
     /** The patch [id] plays with: "sampled:<name>" (one chosen in the Sound menu), else its assigned instrument, else the synthesised one. */
     fun patchFor(state: SheetsState, id: String?): Synth.Patch {
         val lib = ensure(state)
-        if (id != null && id.startsWith(PICKED)) lib.get(id.removePrefix(PICKED))?.let { return Synth.sampledPatch(it) }
+        if (id != null && id.startsWith(PICKED)) lib.get(id.removePrefix(PICKED))?.let {
+            val tongued=Synth.patchFor(state.partShown()?.instrument,bank=null).tonguedSlurredRepeats
+            return Synth.sampledPatch(it,tonguedSlurredRepeats=tongued)
+        }
         // A part's seat ("euphonium-bc", "baritone-tc") plays as its instrument does.
         val base = id?.replace(Regex("-(tc|bc)$"), "")
-        return lib.patchFor(id) ?: lib.patchFor(base) ?: Synth.patchFor(com.inksheets.core.omr.Midi.program(id))
+        return lib.patchFor(id) ?: lib.patchFor(base)
+            ?: runCatching { BundledInstruments.defaults.patchFor(id) }.getOrNull()
+            ?: Synth.patchFor(id, bank = null)
     }
 
     const val PICKED = "sampled:"
@@ -150,7 +159,7 @@ internal fun InstrumentsSettings(state: SheetsState) {
     val plays = remember(v) { lib.assignments() }
     Column(Modifier.fillMaxWidth().padding(start = 12.dp, bottom = 6.dp)) {
         Text("Instruments", style = MaterialTheme.typography.titleSmall)
-        Text("Your own sampled instruments (DecentSampler or SFZ) play the parts you set them to.",
+        Text("Recorded defaults play automatically where included. Add your own DecentSampler or SFZ instruments to override them.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         for (inst in loaded) {
             var choosing by remember { mutableStateOf(false) }

@@ -916,6 +916,11 @@ internal fun SheetDialog(
     movable: Boolean = false,
     content: @Composable () -> Unit
 ) {
+    val reader=LocalReaderPanelState.current
+    if(reader!=null && !reader.homeInFront && !ScoreTools.checking && !LocalInsideReaderPanel.current && title !in setOf("Metronome","Tuner")) {
+        ReaderPanel(title,onDismiss,buttons,content)
+        return
+    }
     if (movable) {
         FloatingPanel(title = title, onClose = onDismiss, width = if (wide) 760.dp else 360.dp, footer = buttons, scroll = false, content = content)
         return

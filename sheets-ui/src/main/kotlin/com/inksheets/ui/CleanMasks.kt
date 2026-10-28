@@ -30,6 +30,7 @@ object CleanMasks {
         val pages = linkedMapOf<Int, List<PageMark.MaskStroke>>()
         val undo = arrayListOf<Pair<Int, List<PageMark.MaskStroke>>>()
         var preview: Pair<Int, PageMark.MaskStroke>? = null
+        var previewAt=0L
     }
     private val states = WeakHashMap<SheetsState, MutableMap<String, FileMasks>>()
 
@@ -77,6 +78,11 @@ object CleanMasks {
             return
         }
         val erase = config.tool == Tool.ERASER
+        if(!done) {
+            val now=System.nanoTime()
+            if(data.preview!=null && now-data.previewAt<16_000_000L)return
+            data.previewAt=now
+        }
         val width = (if (erase) config.eraserRadius * 2f else config.strokeWidth) / pageScale
         if (!width.isFinite() || width <= 0f) {
             data.preview = null

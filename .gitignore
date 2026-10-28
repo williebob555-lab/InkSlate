@@ -38,3 +38,4 @@ train/runs/
 train/.venv*/
 train/*.log
 train/__pycache__/
+scripts/__pycache__/

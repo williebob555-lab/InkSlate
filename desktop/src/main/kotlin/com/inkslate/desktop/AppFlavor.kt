@@ -124,6 +124,7 @@ object AppFlavor {
 
     var musicShelfDp: Float = 0f
     var studioRailDp: Float = 0f
+    var studioRailOnRight: Boolean = false
 
     /** How a page turn in music is shown: "slide", "fade" or "none". */
     @Volatile

@@ -339,7 +339,7 @@ object QuickTools {
 class PageMark(val kind: Kind, val contours: List<FloatArray>, val color: Int, val width: Float = 0f, val mask: Mask? = null) {
     enum class Kind { FILL, LINE }
     class MaskStroke(val contours: List<FloatArray>, val erase: Boolean)
-    class Mask(val strokes: List<MaskStroke>, val baseFull: Boolean = false, val width: Float = 100000f, val height: Float = 100000f)
+    class Mask(val strokes: List<MaskStroke>, val baseFull: Boolean = false, val width: Float = 100000f, val height: Float = 100000f, val sourceKey:Any?=null)
 
     companion object {
         fun rect(left: Float, top: Float, right: Float, bottom: Float, color: Int) =

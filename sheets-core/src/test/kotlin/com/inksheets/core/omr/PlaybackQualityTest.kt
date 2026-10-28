@@ -231,13 +231,13 @@ class PlaybackQualityTest {
     }
 
     @Test
-    fun `a slur joining two notes of one pitch is a tie, over a barline and over a line break`() {
+    fun `a phrase slur retains repeated note attacks while an explicit tie survives a line break`() {
         // Over a barline: the slur runs on past the first bar's edge.
         val run = Direction("slur", 20f + 3 * 90f, 400f + 20f + 5f)
         val b1 = bar(1, notes(0, listOf(46, 48, 50, 53)), dirs = listOf(run))
         val b2 = bar(2, notes(400, listOf(53, 51, 50, 48)), left = 400, dirs = listOf(run))
         val p = played(listOf(b1, b2))
-        assertEquals("a slur between two like notes is a tie", 7, onsets(p))
+        assertEquals("a phrase slur must not swallow a repeated note", 8, onsets(p))
         // Over a line break: the next bar is on another staff of the page, key shown again.
         val key = Key(-2)
         val c1 = bar(1, notes(0, listOf(46, 48, 50, 53), ties = setOf(3)), key = key)

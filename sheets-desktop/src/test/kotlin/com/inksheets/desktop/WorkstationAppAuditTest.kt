@@ -69,6 +69,15 @@ class WorkstationAppAuditTest {
                 assertTrue("$size: music area remains",AppFlavor.musicShelfDp<h*.42)
                 val issues=UiAudit.check(this,size,"workstation-real-score",w,h,allowedTruncations=setOf(pdf.name))
                 assertTrue("$size: $issues",issues.isEmpty())
+                if (AppFlavor.studioRailDp > 0f) {
+                    runOnIdle { s.shelf.chooseRailSide(com.inksheets.ui.StudioRailSide.RIGHT) }
+                    settle(15)
+                    assertTrue("$size: Studio is on the chosen right edge", AppFlavor.studioRailOnRight)
+                    val rightIssues=UiAudit.check(this,size,"workstation-right-studio-score",w,h,allowedTruncations=setOf(pdf.name))
+                    assertTrue("$size right Studio: $rightIssues",rightIssues.isEmpty())
+                    runOnIdle { s.shelf.chooseRailSide(com.inksheets.ui.StudioRailSide.LEFT) }
+                    settle(10)
+                }
                 runOnIdle { Perform.run(PerformAction.FULLSCREEN) }
                 settle(20)
                 val annotationIssues = UiAudit.check(this,size,"workstation-annotation-tools",w,h,allowedTruncations=setOf(pdf.name))

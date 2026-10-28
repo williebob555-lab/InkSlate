@@ -164,7 +164,7 @@ class Viewport {
      * portrait one) for buttons. When the margin left by fitting is already that wide nothing
      * changes and the page stays centred; otherwise it is fitted into what the lane leaves.
      */
-    fun fitClear(box: Box, padding: Float, lane: Float, laneOnLeft: Boolean = false, otherLane: Float = 0f, bottomLane: Float = 0f, studioLane: Float = 0f) {
+    fun fitClear(box: Box, padding: Float, lane: Float, laneOnLeft: Boolean = false, otherLane: Float = 0f, bottomLane: Float = 0f, studioLane: Float = 0f, studioOnRight:Boolean=false) {
         fit(box, padding)
         if ((lane <= 0f && otherLane <= 0f && bottomLane <= 0f && studioLane <= 0f) || viewSize.width <= 0f || viewSize.height <= 0f) return
         // The lane is always down a side, and always kept whatever the page's shape, so every
@@ -174,7 +174,7 @@ class Viewport {
         val h = (viewSize.height - bottomLane).coerceAtLeast(padding * 2f + 1f)
         val s = min((w - padding * 2f) / box.width, (h - padding * 2f) / box.height).coerceIn(MIN_SCALE, MAX_SCALE)
         scale = s
-        val leftLane = (if (laneOnLeft) lane else otherLane) + studioLane
+        val leftLane = (if (laneOnLeft) lane else otherLane) + if(studioOnRight)0f else studioLane
         offset = Offset(box.centerX - w / (2f * s) - leftLane / s, box.centerY - h / (2f * s))
     }
 

@@ -1,5 +1,8 @@
 package com.inksheets.ui
 
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -54,8 +57,8 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
     val shown = Transcriber.shown
     var all by remember { mutableStateOf(false) }
     var said by remember { mutableStateOf<String?>(null) }
-    FloatingPanel(title = "The music, read", onClose = onClose, width = 520.dp) {
-        Column(Modifier.fillMaxWidth()) {
+    SheetDialog(title = "The music, read", onDismiss = onClose, wide = true, movable = true) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Transcriber.busy?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
             if (shown == null) {
                 if (Transcriber.busy == null) Text("Nothing read yet.", style = MaterialTheme.typography.bodyMedium)

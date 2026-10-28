@@ -56,17 +56,22 @@ class SampledInstrument(
     fun pick(midi: Int, vel: Int, prefer: List<Art>, trigger: Trigger, seed: Long): Pick? {
         val order = ArrayList<Art?>(prefer.filter { it != Art.DEFAULT }); order += Art.DEFAULT; order += null
         val r = hash01(seed)
-        for (kind in order) {
-            val pool = groups.filter { it.trigger == trigger && (kind == null || it.art == kind) }
-            if (pool.isEmpty()) continue
-            val exact = ArrayList<Zone>()
-            for (g in pool) for (z in g.zones)
-                if (midi in z.keyLow..z.keyHigh && vel in z.velLow..z.velHigh && (r >= z.randLo && (r < z.randHi || z.randHi >= 1.0))) exact += z
+        val pools = order.map { kind -> groups.filter { it.trigger == trigger && (kind == null || it.art == kind) }.flatMap { it.zones } }
+        // Prefer a recording mapped to this register over stretching an unrelated
+        // articulation from the other end of the instrument's range.
+        for (all in pools) {
+            val keyed = all.filter { midi in it.keyLow..it.keyHigh && r >= it.randLo && (r < it.randHi || it.randHi >= 1.0) }
+            val exact = keyed.filter { vel in it.velLow..it.velHigh }
             if (exact.isNotEmpty()) return choose(exact, midi, r)
-            // Release samples are an extra: none for this key means none, not the nearest.
-            if (trigger == Trigger.RELEASE) continue
+            if (trigger != Trigger.RELEASE && keyed.isNotEmpty()) {
+                val best = keyed.minOf { gap(vel, it.velLow, it.velHigh) }
+                return choose(keyed.filter { gap(vel, it.velLow, it.velHigh) == best }, midi, r)
+            }
+        }
+        // Release samples are optional extras, never shifted in from another key.
+        if (trigger == Trigger.RELEASE) return null
+        for (all in pools) {
             // Nothing exactly there: the nearest zone in key, then velocity.
-            val all = pool.flatMap { it.zones }
             if (all.isEmpty()) continue
             val best = all.minByOrNull { z -> gap(midi, z.keyLow, z.keyHigh) * 4.0 + gap(vel, z.velLow, z.velHigh) * 0.05 } ?: continue
             val near = all.filter { it.keyLow == best.keyLow && it.keyHigh == best.keyHigh && vel in it.velLow..it.velHigh }.ifEmpty { listOf(best) }

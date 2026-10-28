@@ -1,0 +1,687 @@
+[
+  {
+    "sample": "clarinet/default-58-v1.wav",
+    "body_rms": 0.015027741624186353,
+    "gain_db": 18.04575053056867
+  },
+  {
+    "sample": "clarinet/default-58-v3.wav",
+    "body_rms": 0.03949916702738931,
+    "gain_db": 9.65186617765002
+  },
+  {
+    "sample": "clarinet/default-62-v1.wav",
+    "body_rms": 0.03431357277257503,
+    "gain_db": 10.87430612693337
+  },
+  {
+    "sample": "clarinet/default-62-v3.wav",
+    "body_rms": 0.07155338753687739,
+    "gain_db": 4.491020935068051
+  },
+  {
+    "sample": "clarinet/default-65-v1.wav",
+    "body_rms": 0.03458624873742371,
+    "gain_db": 10.805555710722336
+  },
+  {
+    "sample": "clarinet/default-65-v3.wav",
+    "body_rms": 0.06870946070302002,
+    "gain_db": 4.843294124962353
+  },
+  {
+    "sample": "clarinet/default-70-v1.wav",
+    "body_rms": 0.04104556572519411,
+    "gain_db": 9.318300003706705
+  },
+  {
+    "sample": "clarinet/default-70-v3.wav",
+    "body_rms": 0.11832044647881657,
+    "gain_db": 0.12242892515811489
+  },
+  {
+    "sample": "clarinet/default-74-v2.wav",
+    "body_rms": 0.05793833336359888,
+    "gain_db": 6.324304955652421
+  },
+  {
+    "sample": "clarinet/default-74-v3.wav",
+    "body_rms": 0.07999466092833787,
+    "gain_db": 3.522404882798357
+  },
+  {
+    "sample": "clarinet/default-77-v1.wav",
+    "body_rms": 0.02607532466183377,
+    "gain_db": 13.259030430973377
+  },
+  {
+    "sample": "clarinet/default-77-v3.wav",
+    "body_rms": 0.0595520968209079,
+    "gain_db": 6.085683770246448
+  },
+  {
+    "sample": "clarinet/staccato-58-v1.wav",
+    "body_rms": 0.014901163467294025,
+    "gain_db": 18.119221341030507
+  },
+  {
+    "sample": "clarinet/staccato-58-v3.wav",
+    "body_rms": 0.05496535153372775,
+    "gain_db": 6.781844723611651
+  },
+  {
+    "sample": "clarinet/staccato-62-v1.wav",
+    "body_rms": 0.04279040544268989,
+    "gain_db": 8.956696891349209
+  },
+  {
+    "sample": "clarinet/staccato-62-v3.wav",
+    "body_rms": 0.10112446304040318,
+    "gain_db": 1.486500349526695
+  },
+  {
+    "sample": "clarinet/staccato-65-v1.wav",
+    "body_rms": 0.03061764653828798,
+    "gain_db": 11.864188819257087
+  },
+  {
+    "sample": "clarinet/staccato-65-v3.wav",
+    "body_rms": 0.07255812238019507,
+    "gain_db": 4.369904205752694
+  },
+  {
+    "sample": "clarinet/staccato-70-v1.wav",
+    "body_rms": 0.02387088886688983,
+    "gain_db": 14.026253103198536
+  },
+  {
+    "sample": "clarinet/staccato-70-v3.wav",
+    "body_rms": 0.13740397352452888,
+    "gain_db": -1.1763609205376815
+  },
+  {
+    "sample": "clarinet/staccato-74-v2.wav",
+    "body_rms": 0.03881625716930314,
+    "gain_db": 9.803351790417844
+  },
+  {
+    "sample": "clarinet/staccato-74-v3.wav",
+    "body_rms": 0.10532075506202374,
+    "gain_db": 1.1333456414600847
+  },
+  {
+    "sample": "clarinet/staccato-77-v1.wav",
+    "body_rms": 0.03138345806709816,
+    "gain_db": 11.649609006096775
+  },
+  {
+    "sample": "clarinet/staccato-77-v3.wav",
+    "body_rms": 0.13024627110265433,
+    "gain_db": -0.7116810485789326
+  },
+  {
+    "sample": "tenor-sax/default-48-v2.wav",
+    "body_rms": 0.021600600683572283,
+    "gain_db": 14.894308351699149
+  },
+  {
+    "sample": "tenor-sax/default-48-v3.wav",
+    "body_rms": 0.03616946067745387,
+    "gain_db": 10.416784259987175
+  },
+  {
+    "sample": "tenor-sax/default-50-v2.wav",
+    "body_rms": 0.026058087084455818,
+    "gain_db": 13.26477429830043
+  },
+  {
+    "sample": "tenor-sax/default-50-v3.wav",
+    "body_rms": 0.05420387528246674,
+    "gain_db": 6.9030181740864105
+  },
+  {
+    "sample": "tenor-sax/default-52-v2.wav",
+    "body_rms": 0.037147956709451646,
+    "gain_db": 10.184926305569563
+  },
+  {
+    "sample": "tenor-sax/default-52-v3.wav",
+    "body_rms": 0.05436829194624365,
+    "gain_db": 6.876711135655583
+  },
+  {
+    "sample": "tenor-sax/default-54-v2.wav",
+    "body_rms": 0.03161045096557456,
+    "gain_db": 11.587011087385509
+  },
+  {
+    "sample": "tenor-sax/default-54-v3.wav",
+    "body_rms": 0.04898549029197755,
+    "gain_db": 7.782275736422786
+  },
+  {
+    "sample": "tenor-sax/default-56-v2.wav",
+    "body_rms": 0.025206891751983863,
+    "gain_db": 13.553238993687584
+  },
+  {
+    "sample": "tenor-sax/default-56-v3.wav",
+    "body_rms": 0.040599444949102746,
+    "gain_db": 9.413222996792667
+  },
+  {
+    "sample": "tenor-sax/default-58-v2.wav",
+    "body_rms": 0.012361027390113776,
+    "gain_db": 19.742533545841432
+  },
+  {
+    "sample": "tenor-sax/default-58-v3.wav",
+    "body_rms": 0.024928387239571432,
+    "gain_db": 13.649741272747173
+  },
+  {
+    "sample": "tenor-sax/default-60-v2.wav",
+    "body_rms": 0.01243825544570807,
+    "gain_db": 19.688435486578072
+  },
+  {
+    "sample": "tenor-sax/default-60-v3.wav",
+    "body_rms": 0.0381467067929646,
+    "gain_db": 9.954483896039893
+  },
+  {
+    "sample": "tenor-sax/default-62-v2.wav",
+    "body_rms": 0.019167348202213517,
+    "gain_db": 15.932384270911466
+  },
+  {
+    "sample": "tenor-sax/default-62-v3.wav",
+    "body_rms": 0.053260804693794,
+    "gain_db": 7.055470446661859
+  },
+  {
+    "sample": "tenor-sax/default-64-v2.wav",
+    "body_rms": 0.039664443141432734,
+    "gain_db": 9.615597690926613
+  },
+  {
+    "sample": "tenor-sax/default-64-v3.wav",
+    "body_rms": 0.07759286531232572,
+    "gain_db": 3.787189129278223
+  },
+  {
+    "sample": "tenor-sax/default-66-v2.wav",
+    "body_rms": 0.03236410971642032,
+    "gain_db": 11.38235162516591
+  },
+  {
+    "sample": "tenor-sax/default-66-v3.wav",
+    "body_rms": 0.05350553378527816,
+    "gain_db": 7.0156508999199465
+  },
+  {
+    "sample": "tenor-sax/default-68-v2.wav",
+    "body_rms": 0.026129834240590646,
+    "gain_db": 13.240891826769658
+  },
+  {
+    "sample": "tenor-sax/default-68-v3.wav",
+    "body_rms": 0.04625715293783106,
+    "gain_db": 8.2800469399994
+  },
+  {
+    "sample": "tenor-sax/default-70-v2.wav",
+    "body_rms": 0.020074256965699866,
+    "gain_db": 15.530835337996422
+  },
+  {
+    "sample": "tenor-sax/default-70-v3.wav",
+    "body_rms": 0.03124373095144521,
+    "gain_db": 11.688367134596545
+  },
+  {
+    "sample": "tenor-sax/default-72-v2.wav",
+    "body_rms": 0.017146082613218837,
+    "gain_db": 16.900326682702357
+  },
+  {
+    "sample": "tenor-sax/default-72-v3.wav",
+    "body_rms": 0.020057551489696828,
+    "gain_db": 15.538066605904817
+  },
+  {
+    "sample": "tenor-sax/staccato-48-v2.wav",
+    "body_rms": 0.03961389213934217,
+    "gain_db": 9.626674625960753
+  },
+  {
+    "sample": "tenor-sax/staccato-50-v1.wav",
+    "body_rms": 0.03095587998715871,
+    "gain_db": 11.768761835456774
+  },
+  {
+    "sample": "tenor-sax/staccato-50-v2.wav",
+    "body_rms": 0.04605464012921556,
+    "gain_db": 8.318157059397123
+  },
+  {
+    "sample": "tenor-sax/staccato-52-v1.wav",
+    "body_rms": 0.03200220937511404,
+    "gain_db": 11.480025675618144
+  },
+  {
+    "sample": "tenor-sax/staccato-52-v2.wav",
+    "body_rms": 0.051911033533316595,
+    "gain_db": 7.278431408161518
+  },
+  {
+    "sample": "tenor-sax/staccato-54-v1.wav",
+    "body_rms": 0.028237112212913557,
+    "gain_db": 12.567219326986656
+  },
+  {
+    "sample": "tenor-sax/staccato-54-v2.wav",
+    "body_rms": 0.04429325128259587,
+    "gain_db": 8.65687371658232
+  },
+  {
+    "sample": "tenor-sax/staccato-56-v1.wav",
+    "body_rms": 0.02893633979048983,
+    "gain_db": 12.354753009566394
+  },
+  {
+    "sample": "tenor-sax/staccato-56-v2.wav",
+    "body_rms": 0.04366141246982022,
+    "gain_db": 8.78166929581427
+  },
+  {
+    "sample": "tenor-sax/staccato-57-v1.wav",
+    "body_rms": 0.02944395052149651,
+    "gain_db": 12.203703335779409
+  },
+  {
+    "sample": "tenor-sax/staccato-57-v2.wav",
+    "body_rms": 0.03978358761638775,
+    "gain_db": 9.589546031083769
+  },
+  {
+    "sample": "tenor-sax/staccato-60-v1.wav",
+    "body_rms": 0.021865339495913662,
+    "gain_db": 14.788500423344777
+  },
+  {
+    "sample": "tenor-sax/staccato-60-v2.wav",
+    "body_rms": 0.03620579333713699,
+    "gain_db": 10.408063558331026
+  },
+  {
+    "sample": "tenor-sax/staccato-62-v1.wav",
+    "body_rms": 0.022773190206063287,
+    "gain_db": 14.435147451520908
+  },
+  {
+    "sample": "tenor-sax/staccato-62-v2.wav",
+    "body_rms": 0.038256304336280945,
+    "gain_db": 9.92956464731601
+  },
+  {
+    "sample": "tenor-sax/staccato-64-v1.wav",
+    "body_rms": 0.05561027170262756,
+    "gain_db": 6.680524581484763
+  },
+  {
+    "sample": "tenor-sax/staccato-64-v2.wav",
+    "body_rms": 0.07108870595054304,
+    "gain_db": 4.547612746854354
+  },
+  {
+    "sample": "tenor-sax/staccato-66-v1.wav",
+    "body_rms": 0.037424938570761644,
+    "gain_db": 10.120402997645295
+  },
+  {
+    "sample": "tenor-sax/staccato-66-v2.wav",
+    "body_rms": 0.04736734781635821,
+    "gain_db": 8.074043551479498
+  },
+  {
+    "sample": "tenor-sax/staccato-68-v1.wav",
+    "body_rms": 0.030204044463977845,
+    "gain_db": 11.982322902351505
+  },
+  {
+    "sample": "tenor-sax/staccato-68-v2.wav",
+    "body_rms": 0.03976748847727538,
+    "gain_db": 9.593061642798242
+  },
+  {
+    "sample": "tenor-sax/staccato-70-v1.wav",
+    "body_rms": 0.020645653500418238,
+    "gain_db": 15.28705223642929
+  },
+  {
+    "sample": "tenor-sax/staccato-70-v2.wav",
+    "body_rms": 0.02633629882244577,
+    "gain_db": 13.172530096084337
+  },
+  {
+    "sample": "tenor-sax/staccato-72-v1.wav",
+    "body_rms": 0.01636872865529449,
+    "gain_db": 17.30332593189715
+  },
+  {
+    "sample": "tenor-sax/staccato-72-v2.wav",
+    "body_rms": 0.032397507716856365,
+    "gain_db": 11.373392881294656
+  },
+  {
+    "sample": "trombone/default-46-v1.wav",
+    "body_rms": 0.0017407479573414884,
+    "gain_db": 36.76890703634069
+  },
+  {
+    "sample": "trombone/default-46-v3.wav",
+    "body_rms": 0.014396954382916327,
+    "gain_db": 18.41821234930987
+  },
+  {
+    "sample": "trombone/default-50-v1.wav",
+    "body_rms": 0.0014799803151356752,
+    "gain_db": 38.17850614122642
+  },
+  {
+    "sample": "trombone/default-50-v3.wav",
+    "body_rms": 0.01255984507939996,
+    "gain_db": 19.603939269197536
+  },
+  {
+    "sample": "trombone/default-53-v1.wav",
+    "body_rms": 0.0017529942747960788,
+    "gain_db": 36.70801496677233
+  },
+  {
+    "sample": "trombone/default-53-v3.wav",
+    "body_rms": 0.01576369758377793,
+    "gain_db": 17.630463028591322
+  },
+  {
+    "sample": "trombone/default-60-v1.wav",
+    "body_rms": 0.003303643230236564,
+    "gain_db": 31.20376211109482
+  },
+  {
+    "sample": "trombone/default-60-v3.wav",
+    "body_rms": 0.021791019626159303,
+    "gain_db": 14.818073884036147
+  },
+  {
+    "sample": "trombone/default-61-v1.wav",
+    "body_rms": 0.003911823015883865,
+    "gain_db": 29.736040968803653
+  },
+  {
+    "sample": "trombone/default-61-v3.wav",
+    "body_rms": 0.03493413239257264,
+    "gain_db": 10.71862568507318
+  },
+  {
+    "sample": "trombone/default-63-v1.wav",
+    "body_rms": 0.0029588118723374544,
+    "gain_db": 32.16127786784529
+  },
+  {
+    "sample": "trombone/default-63-v3.wav",
+    "body_rms": 0.03291872581152703,
+    "gain_db": 11.23476458925618
+  },
+  {
+    "sample": "trombone/default-65-v1.wav",
+    "body_rms": 0.005727982568024324,
+    "gain_db": 26.42359116869382
+  },
+  {
+    "sample": "trombone/default-65-v3.wav",
+    "body_rms": 0.04946585957028117,
+    "gain_db": 7.697513716310161
+  },
+  {
+    "sample": "trombone/staccato-46-v1.wav",
+    "body_rms": 0.0026899920707219365,
+    "gain_db": 32.98860492422615
+  },
+  {
+    "sample": "trombone/staccato-46-v4.wav",
+    "body_rms": 0.0489004891709406,
+    "gain_db": 7.797360849654886
+  },
+  {
+    "sample": "trombone/staccato-53-v1.wav",
+    "body_rms": 0.0037334449739222513,
+    "gain_db": 30.141429825334267
+  },
+  {
+    "sample": "trombone/staccato-53-v4.wav",
+    "body_rms": 0.03942105931250511,
+    "gain_db": 9.66905911396919
+  },
+  {
+    "sample": "trombone/staccato-58-v1.wav",
+    "body_rms": 0.007695531666486031,
+    "gain_db": 23.85885232884427
+  },
+  {
+    "sample": "trombone/staccato-58-v4.wav",
+    "body_rms": 0.0650440981020205,
+    "gain_db": 5.319466997699358
+  },
+  {
+    "sample": "trombone/staccato-62-v1.wav",
+    "body_rms": 0.00834892039588849,
+    "gain_db": 23.151018516482004
+  },
+  {
+    "sample": "trombone/staccato-62-v4.wav",
+    "body_rms": 0.07739330800999558,
+    "gain_db": 3.809556720208844
+  },
+  {
+    "sample": "trombone/staccato-65-v1.wav",
+    "body_rms": 0.016651389863293082,
+    "gain_db": 17.154615137358654
+  },
+  {
+    "sample": "trombone/staccato-65-v4.wav",
+    "body_rms": 0.07432002143484603,
+    "gain_db": 4.161508396118612
+  },
+  {
+    "sample": "trumpet/default-60-v1.wav",
+    "body_rms": 0.014336992855317587,
+    "gain_db": 18.45446354465968
+  },
+  {
+    "sample": "trumpet/default-60-v3.wav",
+    "body_rms": 0.07116007693027014,
+    "gain_db": 4.5388967425029
+  },
+  {
+    "sample": "trumpet/default-63-v1.wav",
+    "body_rms": 0.017906698257520535,
+    "gain_db": 16.523314611821633
+  },
+  {
+    "sample": "trumpet/default-63-v3.wav",
+    "body_rms": 0.1240817604103663,
+    "gain_db": -0.2905340071192266
+  },
+  {
+    "sample": "trumpet/default-67-v1.wav",
+    "body_rms": 0.016542447378713104,
+    "gain_db": 17.21162968428575
+  },
+  {
+    "sample": "trumpet/default-67-v3.wav",
+    "body_rms": 0.179375376252404,
+    "gain_db": -3.491631579889298
+  },
+  {
+    "sample": "trumpet/default-70-v1.wav",
+    "body_rms": 0.020917742710206143,
+    "gain_db": 15.173328584155378
+  },
+  {
+    "sample": "trumpet/default-70-v3.wav",
+    "body_rms": 0.11255492636628053,
+    "gain_db": 0.5563347570792027
+  },
+  {
+    "sample": "trumpet/default-74-v1.wav",
+    "body_rms": 0.05545119156307276,
+    "gain_db": 6.705407262481645
+  },
+  {
+    "sample": "trumpet/default-74-v3.wav",
+    "body_rms": 0.1851605935069033,
+    "gain_db": -3.767346362736283
+  },
+  {
+    "sample": "trumpet/default-77-v1.wav",
+    "body_rms": 0.05643250411804248,
+    "gain_db": 6.553038482087629
+  },
+  {
+    "sample": "trumpet/default-77-v3.wav",
+    "body_rms": 0.15831832975839844,
+    "gain_db": -2.4069990682824525
+  },
+  {
+    "sample": "trumpet/staccato-60-v1.wav",
+    "body_rms": 0.002421874062134619,
+    "gain_db": 33.90059380081533
+  },
+  {
+    "sample": "trumpet/staccato-60-v3.wav",
+    "body_rms": 0.020009413248649483,
+    "gain_db": 15.558937847488563
+  },
+  {
+    "sample": "trumpet/staccato-63-v1.wav",
+    "body_rms": 0.003753300651990368,
+    "gain_db": 30.095357835884865
+  },
+  {
+    "sample": "trumpet/staccato-63-v3.wav",
+    "body_rms": 0.029576992359230055,
+    "gain_db": 12.164544738147836
+  },
+  {
+    "sample": "trumpet/staccato-65-v1.wav",
+    "body_rms": 0.005796476254275878,
+    "gain_db": 26.320343699301304
+  },
+  {
+    "sample": "trumpet/staccato-65-v3.wav",
+    "body_rms": 0.014689767188991449,
+    "gain_db": 18.243326662516388
+  },
+  {
+    "sample": "trumpet/staccato-67-v1.wav",
+    "body_rms": 0.004544125810454301,
+    "gain_db": 28.434617982607655
+  },
+  {
+    "sample": "trumpet/staccato-67-v3.wav",
+    "body_rms": 0.023581024411173036,
+    "gain_db": 14.132371563569324
+  },
+  {
+    "sample": "trumpet/staccato-70-v1.wav",
+    "body_rms": 0.006945365813181447,
+    "gain_db": 24.749722420668668
+  },
+  {
+    "sample": "trumpet/staccato-70-v3.wav",
+    "body_rms": 0.04250843067684402,
+    "gain_db": 9.014123480733769
+  },
+  {
+    "sample": "trumpet/staccato-74-v1.wav",
+    "body_rms": 0.013186924117027495,
+    "gain_db": 19.18075477921961
+  },
+  {
+    "sample": "trumpet/staccato-74-v3.wav",
+    "body_rms": 0.07525500937455326,
+    "gain_db": 4.05291663727826
+  },
+  {
+    "sample": "trumpet/staccato-77-v1.wav",
+    "body_rms": 0.01451010748612159,
+    "gain_db": 18.350212329735214
+  },
+  {
+    "sample": "trumpet/staccato-77-v3.wav",
+    "body_rms": 0.08572123658207004,
+    "gain_db": 2.921856373300995
+  },
+  {
+    "sample": "trumpet-muted/default-60-v1.wav",
+    "body_rms": 0.002361893750658609,
+    "gain_db": 34.118417779708544
+  },
+  {
+    "sample": "trumpet-muted/default-60-v3.wav",
+    "body_rms": 0.01243545123895839,
+    "gain_db": 19.69039394261054
+  },
+  {
+    "sample": "trumpet-muted/default-62-v1.wav",
+    "body_rms": 0.002509710433532879,
+    "gain_db": 33.59115259789242
+  },
+  {
+    "sample": "trumpet-muted/default-62-v3.wav",
+    "body_rms": 0.014492950095927812,
+    "gain_db": 18.360488985199083
+  },
+  {
+    "sample": "trumpet-muted/default-67-v1.wav",
+    "body_rms": 0.00783372673422949,
+    "gain_db": 23.70425656340469
+  },
+  {
+    "sample": "trumpet-muted/default-67-v3.wav",
+    "body_rms": 0.045320476068013364,
+    "gain_db": 8.457735655896137
+  },
+  {
+    "sample": "trumpet-muted/default-70-v1.wav",
+    "body_rms": 0.006529348726607451,
+    "gain_db": 25.286227630968202
+  },
+  {
+    "sample": "trumpet-muted/default-70-v3.wav",
+    "body_rms": 0.04216351810749972,
+    "gain_db": 9.084888099382317
+  },
+  {
+    "sample": "trumpet-muted/default-74-v1.wav",
+    "body_rms": 0.015569977496490273,
+    "gain_db": 17.73786522342074
+  },
+  {
+    "sample": "trumpet-muted/default-74-v3.wav",
+    "body_rms": 0.05405120324561543,
+    "gain_db": 6.927517594531437
+  },
+  {
+    "sample": "trumpet-muted/default-77-v1.wav",
+    "body_rms": 0.010906796752363578,
+    "gain_db": 20.829680517872085
+  },
+  {
+    "sample": "trumpet-muted/default-77-v3.wav",
+    "body_rms": 0.07976686743020364,
+    "gain_db": 3.547174181718063
+  }
+]

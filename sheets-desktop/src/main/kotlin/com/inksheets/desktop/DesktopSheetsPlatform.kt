@@ -193,6 +193,11 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         com.inkslate.desktop.AppFlavor.studioRailDp = dp
         com.inkslate.core.Perform.recentre?.invoke()
     }
+    override fun setStudioRailSide(onRight:Boolean) {
+        if(com.inkslate.desktop.AppFlavor.studioRailOnRight==onRight)return
+        com.inkslate.desktop.AppFlavor.studioRailOnRight=onRight
+        com.inkslate.core.Perform.recentre?.invoke()
+    }
 
     override var readingMode: com.inkslate.core.ReadingMode
         get() = com.inkslate.desktop.AppFlavor.readingMode.value

@@ -28,14 +28,14 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
     val active=Recording.session || SelfRecorder.recording || SharedMetronome.running || Listener.active || ScoreTools.barNow()!=null || Click.counting>0 || Transcriber.busy!=null
     val issue=Recording.issue!=null && Recording.issue?.root==state.root?.absolutePath
     val expanded=!state.stripCollapsed && !state.homeInFront
-    val visible=(expanded || active || issue || Recording.loading) && !state.homeInFront && !ScoreTools.checking
+    val visible=(expanded || active || issue || Recording.loading || ReaderPanels.open) && !state.homeInFront && !ScoreTools.checking
     var controllers by remember { mutableStateOf(false) }
     var goTo by remember { mutableStateOf(false) }
     var position by remember { mutableStateOf(0L) }
     LaunchedEffect(Recording.session) { while(Recording.session) { position=Recording.player?.positionMs ?:0;delay(100) } }
     DisposableEffect(state) { onDispose {
         state.shelfHeight=0f;Overlays.bottomOut=0.dp;Overlays.studioOut=0.dp
-        state.platform.setMusicShelfHeight(0f);state.platform.setStudioRailWidth(0f)
+        state.platform.setMusicShelfHeight(0f);state.platform.setStudioRailWidth(0f);state.platform.setStudioRailSide(false);Overlays.studioOnRight=false
     } }
     BoxWithConstraints(Modifier.matchParentSize()) {
         val viewportWidth=maxWidth
@@ -44,23 +44,30 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
         // A wide floating editor gets the rail's space temporarily on a small display.
         // Keep page/transport controls below it and restore the chosen widgets on close.
         val panelNeedsSpace=Overlays.wanted?.let {it+252.dp>maxWidth}==true
-        val widgets=if(expanded && !issue && !essentials && !panelNeedsSpace)state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) }else emptyList()
+        val widgets=if(expanded && !issue && !essentials && !panelNeedsSpace && !ReaderPanels.open && !SelfRecorder.recording)state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }else emptyList()
         val widgetHeight=if(maxHeight<440.dp || (active && maxHeight<700.dp))116.dp else 132.dp
         val layout=if(widgets.isEmpty())MusicDockView.SHELF else chooseMusicDock(state.shelf.view,maxWidth.value,maxHeight.value,state.pageAspect,widgetHeight.value)
         val rail=visible && layout==MusicDockView.STUDIO
-        LaunchedEffect(visible,bottom,rail) {
-            val height=if(visible)bottom else 0f
+        val railRight=state.shelf.railSide==StudioRailSide.RIGHT
+        LaunchedEffect(visible,bottom,rail,railRight,ReaderPanels.height) {
+            ReaderPanels.base=bottom
+            val height=if(visible)bottom+ReaderPanels.height else 0f
             state.shelfHeight=height;Overlays.bottomOut=height.dp
             state.platform.setMusicShelfHeight(height)
             Overlays.studioOut=if(rail)236.dp else 0.dp
+            Overlays.studioOnRight=railRight
+            state.platform.setStudioRailSide(railRight)
             state.platform.setStudioRailWidth(if(rail)236f else 0f)
         }
-        if(rail) Surface(tonalElevation=2.dp,modifier=Modifier.align(Alignment.TopStart).width(236.dp)
+        if(rail) Surface(tonalElevation=2.dp,modifier=Modifier.align(if(railRight)Alignment.TopEnd else Alignment.TopStart).width(236.dp)
             .fillMaxHeight().padding(bottom=bottom.dp)) {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
+            Column {
+                if(state.companion.leading || state.companion.following!=null) SessionQuickActions(state,quick=true)
+                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 widgets.forEach { widget ->
                     Box(Modifier.fillMaxWidth().height(132.dp)) { MusicDockWidget(state,widget,position,{controllers=true},{goTo=true}) }
                     HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f))
+                }
                 }
             }
         }
@@ -105,6 +112,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
                         VerticalDivider(Modifier.height(widgetHeight).padding(vertical=8.dp),color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
                     }
                 }
+                if(expanded && !rail && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
                 if(active) MusicLiveStatus(state,position)
                 if(expanded) {
                     HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
@@ -190,6 +198,10 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
                 MusicDockView.entries.forEach {view ->FilterChip(selected=state.shelf.view==view,onClick={state.shelf.chooseView(view)},label={Text(view.label)})}
             }
             Text("Auto chooses the layout that leaves the music larger.",style=MaterialTheme.typography.bodySmall)
+            Text("Rail side",style=MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                StudioRailSide.entries.forEach {side->FilterChip(selected=state.shelf.railSide==side,onClick={state.shelf.chooseRailSide(side)},label={Text(side.label)})}
+            }
             state.shelf.order.forEachIndexed {index,widget ->
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     Checkbox(widget !in state.shelf.hidden,{state.shelf.show(widget,it)})

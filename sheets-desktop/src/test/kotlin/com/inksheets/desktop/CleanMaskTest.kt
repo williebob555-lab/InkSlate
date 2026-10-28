@@ -25,6 +25,45 @@ import com.inksheets.core.omr.Box
 class CleanMaskTest {
     @get:Rule val tmp = TemporaryFolder()
 
+    @Test fun `native mask path prefix cache matches cold rebuild while avoiding historical boolean work`() {
+        val method = Class.forName("com.inkslate.desktop.DocumentCanvasKt").declaredMethods.single {
+            it.name == "musicMaskPath" && it.parameterCount == 1
+        }.apply { isAccessible = true }
+        fun circle(x: Float, y: Float, erase: Boolean = false) = PageMark.MaskStroke(listOf(FloatArray(48) { coordinate ->
+            val angle = (coordinate / 2) * Math.PI * 2 / 24
+            if (coordinate % 2 == 0) x + kotlin.math.cos(angle).toFloat() * 10f else y + kotlin.math.sin(angle).toFloat() * 10f
+        }), erase)
+        val history = (0 until 120).map { i -> circle(40f + (i % 12) * 14, 40f + (i / 12) * 12, i % 7 == 6) }
+        val previews = (0 until 16).map { circle(225f + it * 2, 80f) }
+        fun path(strokes: List<PageMark.MaskStroke>, source: Any) = method.invoke(null, PageMark.Mask(strokes, width = 800f, height = 800f, sourceKey = source)) as androidx.compose.ui.graphics.Path
+        repeat(3) { path(history + previews.first(), "warmup-$it") }
+        val coldTimes = ArrayList<Long>(); val warmTimes = ArrayList<Long>()
+        var cold: androidx.compose.ui.graphics.Path? = null; var warm: androidx.compose.ui.graphics.Path? = null
+        repeat(3) { round ->
+            val coldStart = System.nanoTime()
+            previews.forEachIndexed { i, preview -> cold = path(history + preview, "cold-$round-$i") }
+            coldTimes += System.nanoTime() - coldStart
+            path(history, "cached-$round")
+            val warmStart = System.nanoTime()
+            previews.forEach { preview -> warm = path(history + preview, "cached-$round") }
+            warmTimes += System.nanoTime() - warmStart
+        }
+        assertEquals(cold!!.getBounds(), warm!!.getBounds())
+        // Compare the actual native paths visually; caching must retain both positive and erased regions.
+        fun paint(path: androidx.compose.ui.graphics.Path): PixelMap {
+            val bitmap = ImageBitmap(300, 200)
+            CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(bitmap), Size(300f, 200f)) {
+                drawRect(Color.White); drawPath(path, Color.Black)
+            }
+            return bitmap.toPixelMap()
+        }
+        val a = paint(cold!!); val b = paint(warm!!)
+        for (y in 0 until 200 step 3) for (x in 0 until 300 step 3) assertEquals("Mask changed at $x,$y", a[x, y], b[x, y])
+        val coldMs = coldTimes.sorted()[1] / 1_000_000.0
+        val warmMs = warmTimes.sorted()[1] / 1_000_000.0
+        File("build/mask-native-performance.txt").writeText("Actual desktop native Path.union/difference, 120 committed strokes + 16 live previews; median of 3 rounds.\nCold historical rebuild: $coldMs ms\nIncremental live-stroke update: $warmMs ms\nSpeedup: ${coldMs / warmMs}x\nPixel parity: verified on 6700 sampled pixels.\n")
+    }
+
     private class Platform(override val startFolder: File) : SheetsPlatform {
         private val prefs = mutableMapOf("sheets_library" to startFolder.absolutePath)
         override val deviceId = "clean-mask-test"

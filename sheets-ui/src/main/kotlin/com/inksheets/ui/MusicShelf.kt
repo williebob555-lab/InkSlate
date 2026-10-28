@@ -28,10 +28,13 @@ import com.inkslate.core.Perform
 import com.inkslate.core.PerformAction
 import java.io.File
 
-internal enum class ShelfWidget(val label: String) { TIMING("Timing"), RECORDING("Recording"), SCORE("Score"), DEVICES("Devices") }
+internal enum class ShelfWidget(val label: String) { TIMING("Timing"), RECORDING("Recording"), SCORE("Score"), DEVICES("Devices"), SESSION("Group") }
 
 /** Device-local layout preferences. A missing/corrupt preference always leaves a usable shelf. */
 internal class MusicShelfPreferences(private val platform: SheetsPlatform) {
+    var railSide by mutableStateOf(StudioRailSide.entries.firstOrNull{it.name==platform.pref("sheets_dock_side")} ?: StudioRailSide.LEFT)
+        private set
+    fun chooseRailSide(side:StudioRailSide){railSide=side;platform.setPref("sheets_dock_side",side.name)}
     var view by mutableStateOf(MusicDockView.entries.firstOrNull { it.name == platform.pref("sheets_dock_view") } ?: MusicDockView.AUTO)
         private set
     fun chooseView(value: MusicDockView) { view=value;platform.setPref("sheets_dock_view",value.name) }

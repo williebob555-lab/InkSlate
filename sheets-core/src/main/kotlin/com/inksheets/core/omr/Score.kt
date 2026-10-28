@@ -147,7 +147,11 @@ data class Note(
     /** Notes of a bar with the same non-zero number share one beam, as printed. */
     val beam: Int = 0,
     /** Its [articulations] were seen on a picture of the page: kept there as printed, not drawn again. */
-    val marksSeen: Boolean = false
+    val marksSeen: Boolean = false,
+    /** Original observed page anchors; optional so old readings and hand corrections remain valid. */
+    val geometry: NoteGeometry? = null,
+    /** MIDI pitches with verified outgoing tie endpoints. Empty with tie=true is the legacy form. */
+    val tiedPitches: List<Int> = emptyList()
 ) : Event()
 
 /**
@@ -175,8 +179,33 @@ data class Rest(
     override val duration: Duration,
     override val x: Float,
     /** Its height on the staff (steps down from the top line), where known: in two voices, which voice's it is. */
-    val step: Int? = null
+    val step: Int? = null,
+    val geometry: SourceGlyph? = null
 ) : Event()
+
+/** All source geometry is in absolute reading-page pixels, never reflow coordinates. */
+@Serializable data class SourcePoint(val x: Float, val y: Float)
+@Serializable data class SourceHead(val step: Int, val center: SourcePoint, val width: Float, val height: Float)
+@Serializable data class SourceLine(val start: SourcePoint, val end: SourcePoint, val thickness: Float = 1f)
+/** Canonical MusicGlyphs name; origin is the observed bounding box's top left. */
+@Serializable data class SourceGlyph(val kind: String, val origin: SourcePoint, val width: Float, val height: Float,
+    val step: Int? = null, val anchor: SourcePoint? = null)
+/** A recognized decoration's original outline, owned by its unchanged musical meaning. */
+@Serializable data class SourceDecoration(
+    @Serializable(with = OutlinesSerializer::class) val contours: List<IntArray>,
+    val noteX: Float? = null,
+    val steps: List<Int> = emptyList(),
+    val articulations: List<String> = emptyList(),
+    val direction: Direction? = null
+)
+@Serializable data class NoteGeometry(
+    val heads: List<SourceHead> = emptyList(),
+    val stem: SourceLine? = null,
+    val beams: List<SourceLine> = emptyList(),
+    val accidentals: List<SourceGlyph> = emptyList(),
+    val dots: List<SourcePoint> = emptyList(),
+    val duration: Duration? = null
+)
 
 /** A box on a page, in pixels. */
 @Serializable
@@ -249,7 +278,10 @@ data class Measure(
     @Serializable(with = OutlinesSerializer::class)
     val kept: List<IntArray> = emptyList(),
     /** How dark each of [kept]'s loops is printed, 0 black - 255 paper (pencil and highlighter come back light). */
-    val keptShade: List<Int> = emptyList()
+    val keptShade: List<Int> = emptyList(),
+    /** Original clef/key/time symbols, in canonical glyph names, at observed source bounds. */
+    val sourceSymbols: List<SourceGlyph> = emptyList(),
+    val sourceDecorations: List<SourceDecoration> = emptyList()
 ) {
     /** Line [i] (0 the top) at [x] across the bar (page pixels), as printed. */
     fun lineAt(i: Int, x: Float): Float {

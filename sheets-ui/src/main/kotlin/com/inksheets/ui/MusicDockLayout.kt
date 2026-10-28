@@ -1,6 +1,7 @@
 package com.inksheets.ui
 
 internal enum class MusicDockView(val label: String) { AUTO("Auto"), SHELF("Music shelf"), STUDIO("Studio rail") }
+internal enum class StudioRailSide(val label:String) { LEFT("Left"), RIGHT("Right") }
 internal fun chooseMusicDock(view: MusicDockView, width: Float, height: Float, pageAspect: Float,
                              shelfHeight: Float, railWidth: Float = 236f): MusicDockView {
     if (width < 560 || height < 260) return MusicDockView.SHELF

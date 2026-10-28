@@ -14,6 +14,16 @@ import org.junit.Test
  * coasts a shorter distance.
  */
 class ViewportTest {
+    @Test fun `studio rail can reserve either edge without moving music under it`() {
+        val page=Box(0f,0f,612f,792f)
+        for(right in listOf(false,true)) {
+            val vp=Viewport().apply{viewSize=androidx.compose.ui.geometry.Size(1280f,800f);content=page}
+            vp.fitClear(page,8f,0f,bottomLane=40f,studioLane=236f,studioOnRight=right)
+            val a=vp.docToScreen(0f,0f);val b=vp.docToScreen(612f,792f)
+            assertTrue(if(right)b.x<=1044f else a.x>=236f)
+            assertTrue(b.y<=760f)
+        }
+    }
 
     @Test
     fun `music shelf and either annotation side leave every page wholly clear`() {

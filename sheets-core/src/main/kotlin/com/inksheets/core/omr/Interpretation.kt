@@ -46,6 +46,8 @@ object Interpretation {
     ) {
         var slurred = false          // joined to the note after it
         var tie = false              // held on into the next note of its pitch, not struck again
+        var tieKeys: Set<Int> = emptySet() // empty with tie=true is the legacy whole-note tie
+        var muted = false
         var level = 0.68f            // its loudness, 0-1 (mf 0.68)
         var endLevel = 0.68f         // where its loudness has gone by its end (a swell, a taper)
         var accent = 0f
@@ -99,6 +101,7 @@ object Interpretation {
         val breaks = ArrayList<Triple<Double, Float, Boolean>>()
         var level = LEVELS.getValue("mf")
         var pendingStruck: String? = null
+        var muted = false
         var stepNext = false
         val pinsDone = HashSet<String>()
         // A hairpin that runs to its bar's end (to the end of the line, often) goes on into the next
@@ -107,7 +110,10 @@ object Interpretation {
         var carryBars = 0
         for ((bi, m) in bars.withIndex()) {
             val start = barQ[bi]
+            val techniques = m?.directions.orEmpty().filter { it.kind == "text" }
+                .mapNotNull { d -> muteInstruction(d.text)?.let { d.x to it } }.sortedBy { it.first }
             if (m == null || m.bars > 1 || m.events.all { it is Rest }) {
+                techniques.lastOrNull()?.let { muted = it.second }
                 // Resting: whatever came before ends there.
                 breaks += Triple(start, 0.9f, false)
                 continue
@@ -135,6 +141,7 @@ object Interpretation {
             val graces = m.gracesBefore()
             var q = 0.0
             var di = 0
+            var ti = 0
             val played = lengths[bi]
             // Carried in from the bar before: spread over this one, unless it starts afresh.
             val carrying = if (carryBars > 0 && dyn.none { it.x < m.box.left + sp * 6 } && pins.none { it.x < m.box.left + sp * 4 }) carry else 0f
@@ -142,6 +149,9 @@ object Interpretation {
             for ((i, e) in m.events.withIndex()) {
                 if (q >= played - 1e-9) break
                 val len = min(e.duration.quarters, played - q)
+                while (ti < techniques.size && techniques[ti].first <= e.x + sp) {
+                    muted = techniques[ti++].second
+                }
                 var steppedHere = false
                 while (di < dyn.size && dyn[di].x <= e.x + sp) {
                     val t = dyn[di].text.lowercase()
@@ -160,6 +170,7 @@ object Interpretation {
                     val nextX = m.events.getOrNull(i + 1)?.x ?: Float.MAX_VALUE
                     val p = Planned(start + q, len, keys, e.articulations, graces[e].orEmpty().map { g -> (drums?.keys(g) ?: g.pitches.map { it.midi }).toIntArray() },
                         bi, q, "fermata" in e.articulations, breaths.any { it > e.x && it < nextX })
+                    p.muted = muted
                     var v = level
                     for (h in pins) if (e.x >= h.x && e.x <= h.x2 && h.x2 > h.x) {
                         val f = ((e.x - h.x) / (h.x2 - h.x)).coerceIn(0f, 1f)
@@ -184,9 +195,9 @@ object Interpretation {
                     p.slurred = slurs.any { s ->
                         e.x >= s.x - sp * 0.5f && e.x <= s.x2 + sp * 0.5f &&
                             (e.x < s.x2 - sp * 0.8f || (s.x2 >= m.box.right - sp && e === lastUnder(m, s, sp)))
-                    } || e.tie
+                    }
                     // A tie carries on into the next note: one sound, not two.
-                    if (e.tie) { p.slurred = true; p.tie = true }
+                    if (e.tie) { p.tie = true; p.tieKeys = e.tiedPitches.toSet() }
                     notes += p
                     // A breath is taken from the note before it - the beat after it comes on time.
                     if (p.breathAfter) breaks += Triple(start + q + len, BREATH, false)
@@ -202,6 +213,7 @@ object Interpretation {
                 }
                 q += len
             }
+            while (ti < techniques.size) muted = techniques[ti++].second
             // A hairpin that ended within this bar leaves the music where it got to (not back where it began).
             for (h in pins) {
                 val key = "${m.page}/${m.staff}/${h.x}/${h.x2}"
@@ -231,8 +243,9 @@ object Interpretation {
             var j = i
             while (j < notes.size - 1 && notes[j].slurred && abs(notes[j].q + notes[j].len - notes[j + 1].q) < 1e-6) j++
             val first = notes[i]; val last = notes[j]
-            if (j == i + 1 && drums == null && !first.tie && first.keys.isNotEmpty() && first.keys.contentEquals(last.keys)) { first.tie = true }
-            else if (j > i && last.q + last.len - first.q >= bar * 0.9) breaks += Triple(last.q + last.len, 0.86f, false)
+            // Equal pitch does not turn a phrase slur into a tie. Only the reader's explicit
+            // tie evidence may suppress a written note's attack.
+            if (j > i && last.q + last.len - first.q >= bar * 0.9) breaks += Triple(last.q + last.len, 0.86f, false)
             i = j + 1
         }
     }
@@ -360,6 +373,14 @@ object Interpretation {
     private const val DETACHED = -1.0
     private const val DETACHED_ACCENT = -2.0
 
+    /** Mute instructions persist until explicitly cancelled, independently of loudness. */
+    internal fun muteInstruction(text: String): Boolean? {
+        val t = text.lowercase().trim()
+        if (Regex("\\b(senza\\s*sord\\w*|senza\\s+mute|without\\s+mute|remove\\s+(the\\s+)?mute|unmuted|open)\\b").containsMatchIn(t)) return false
+        if (Regex("\\b(con\\s*sord\\w*|with\\s+(a\\s+)?mute|muted|mute)\\b").containsMatchIn(t)) return true
+        return null
+    }
+
     private fun tempoWord(text: String): Int? {
         // "poco rit.", "molto rall.", "a little slower": the word that says it, wherever it comes.
         val w = text.lowercase().trim('.', ' ').removePrefix("poco a poco ").removePrefix("poco ").removePrefix("molto ").removePrefix("più ").removePrefix("piu ")
@@ -457,7 +478,7 @@ object Interpretation {
               drums: DrumKind? = null): List<Synth.Tone> {
         val out = ArrayList<Synth.Tone>()
         fun sample(q: Double) = at + Math.round(map.seconds(q) * rate)
-        val sounds = drums?.patch ?: patch
+        val baseSounds = drums?.patch ?: patch
         // Sounding now, by pitch: a slurred or tied note carries into the next of its pitch.
         var held = HashMap<Int, IntArray>()
         val notes = plan.notes
@@ -471,15 +492,19 @@ object Interpretation {
             val secs = if (n.subito) 0.12 else max(max(0.6, dB / 14.0), min(3.0, noteSecs))
             ramps += Ramp(sample(n.q), (secs * rate).toLong(), ref)
         }
-        val vibrato = vibratoPlans(plan, notes, map, rate, at, sounds, drums, ::sample)
+        val vibrato = vibratoPlans(plan, notes, map, rate, at, baseSounds, drums, ::sample)
         for ((i, n) in notes.withIndex()) {
+            val sounds = if (n.muted) baseSounds.mutedVariant ?: baseSounds else baseSounds
             val start = sample(n.q)
             val nominal = sample(n.q + n.len) - start
             val next = notes.getOrNull(i + 1)
             val prev = notes.getOrNull(i - 1)
             val nextTouches = next != null && abs(n.q + n.len - next.q) < 1e-6
             val joined = prev != null && (prev.sounding == JOINED || prev.tie) && abs(prev.q + prev.len - n.q) < 1e-6
-            val joinsNext = drums == null && n.sounding == JOINED && nextTouches
+            val repeatsNext = sounds.tonguedSlurredRepeats && nextTouches && !n.tie && n.keys.contentEquals(next!!.keys)
+            val separated = n.articulations.any { it == "staccato" || it == "staccatissimo" || it == "marcato" }
+            val softRepeat = sounds.tonguedSlurredRepeats && joined && prev!!.sounding == JOINED && prev.keys.contentEquals(n.keys) && !separated
+            val joinsNext = drums == null && (n.tie || (n.sounding == JOINED && !repeatsNext)) && nextTouches
             val feel = Feel.now
             // The note's own release - a natural decay (brass 80-150 ms): what is heard goes on after the hold.
             val rel = (sounds.release * rate).toLong()
@@ -493,7 +518,8 @@ object Interpretation {
                 val gap = max(nominal * feel.gap, rate * feel.gapMinMs / 1000).coerceAtMost(nominal * 0.35)
                 var hold = when (n.sounding) {
                     TENUTO -> nominal - (rate * 0.02).toLong()
-                    DETACHED, DETACHED_ACCENT, JOINED -> nominal - gap.toLong() - (rel * 0.3).toLong()
+                    JOINED -> nominal - (if (repeatsNext) min(nominal * 0.04, rate * 0.012) else gap).toLong() - (rel * 0.3).toLong()
+                    DETACHED, DETACHED_ACCENT -> nominal - gap.toLong() - (rel * 0.3).toLong()
                     // Staccato and marcato: a share of the note, the release (shorter for staccato) making up the rest.
                     else -> (nominal * n.sounding).toLong() - (if (n.sounding < 0.5) rate * 0.025 else rel * 0.3).toLong()
                 }
@@ -527,22 +553,29 @@ object Interpretation {
             }
             val keys = n.keys.map { sound(it, transpose, drums) }
             val a = n.articulations
-            val art = (if ("staccato" in a) Synth.ART_STACCATO else 0) or (if ("accent" in a) Synth.ART_ACCENT else 0) or
+            val art = (if ("staccato" in a || "staccatissimo" in a) Synth.ART_STACCATO else 0) or (if ("accent" in a) Synth.ART_ACCENT else 0) or
                 (if ("tenuto" in a) Synth.ART_TENUTO else 0) or (if ("marcato" in a) Synth.ART_MARCATO else 0)
             val layer = (n.level * 1.1f).coerceIn(0.05f, 1.5f)
             for ((ki, k) in keys.withIndex()) {
                 // Tied into: the sound carries on - its tone stretched to this note's end, not struck again.
-                if (drums == null && prev != null && prev.tie && joined && n.keys[ki] in prev.keys) {
+                if (drums == null && prev != null && prev.tie && joined && n.keys[ki] in prev.keys && (prev.tieKeys.isEmpty() || n.keys[ki] in prev.tieKeys)) {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
-                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib)
+                        out[last] = Synth.Tone(t.midi, t.start, start + length - t.start, t.velocity, t.patch, t.accent, vEnd, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib, t.attack)
                         continue
                     }
                 }
                 // A slurred line, one note at a time: each moves over from the last, not struck anew.
-                val from = if (joined && drums == null && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
-                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = joined && drums == null, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer, vib = vibrato[i])
+                val flowing = joined && prev!!.sounding == JOINED && !softRepeat && !separated && drums == null
+                val from = if (flowing && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
+                val attack = when {
+                    flowing -> Synth.Attack.AUTO
+                    "accent" in a || "marcato" in a || n.accent >= 0.8f -> Synth.Attack.FIRM
+                    softRepeat -> Synth.Attack.SOFT
+                    else -> Synth.Attack.NORMAL
+                }
+                out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = flowing, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer, vib = vibrato[i], attack = attack)
             }
         }
         return out

@@ -73,7 +73,7 @@ object PdfPrinted {
                         // Small and round: a dot, at its middle. Anything else: told by its outline.
                         if (Printed.specialKind(w, h) != null) b.specialChar(name, w, h, p.xDirAdj + (xs.max() + xs.min()) / 2 * size, p.yDirAdj + (ys.max() + ys.min()) / 2 * size, size)
                         else b.glyph(name, shape, p.xDirAdj, p.yDirAdj, size)
-                    } else if (!b.char(name, code, charOf(font, code) ?: p.unicode, p.xDirAdj, p.yDirAdj, p.widthDirAdj, size)) {
+                    } else if (!b.char(name, code, charOf(font, code) ?: p.unicode, p.xDirAdj, p.yDirAdj, p.widthDirAdj, size, if(Printed.isMusicFont(name))outline(font,code)?.let { Printed.boundsOf(it,p.xDirAdj,p.yDirAdj,size) }.orEmpty() else emptyList())) {
                         outline(font, code)?.let { b.glyph(name, it, p.xDirAdj, p.yDirAdj, size) }
                     }
                 }

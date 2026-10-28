@@ -32,13 +32,14 @@ internal fun widgetColor(widget: ShelfWidget) = when(widget) {
     ShelfWidget.RECORDING -> Color(0xFF337EC9)
     ShelfWidget.SCORE -> Color(0xFF8B62BA)
     ShelfWidget.DEVICES -> Color(0xFF2C977D)
+    ShelfWidget.SESSION -> Color(0xFFC06B46)
 }
 
 @Composable
 internal fun DockAction(icon: ImageVector, label: String, description: String = label,
                         enabled: Boolean = true, active: Boolean = false, onClick: () -> Unit) {
     val color = if(active)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-    Row(Modifier.width(68.dp).height(if(LocalDockDense.current)28.dp else 32.dp).background(if(active)MaterialTheme.colorScheme.primaryContainer else Color.Transparent,RoundedCornerShape(7.dp))
+    Row(Modifier.widthIn(min=68.dp).height(if(LocalDockDense.current)28.dp else 32.dp).background(if(active)MaterialTheme.colorScheme.primaryContainer else Color.Transparent,RoundedCornerShape(7.dp))
         .semantics { selected = active }.clickable(enabled=enabled,onClick=onClick).padding(horizontal=3.dp),
         verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center) {
         Icon(icon,description,Modifier.size(16.dp),tint=color.copy(alpha=if(enabled)1f else .28f))
@@ -60,6 +61,7 @@ private fun WidgetHeading(widget: ShelfWidget, title: String, actionDescription:
 internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: Long, controllers: () -> Unit, goToBar: () -> Unit) {
     Column(Modifier.fillMaxSize().background(widgetColor(widget).copy(alpha=.065f)).padding(horizontal=10.dp,vertical=if(LocalDockDense.current)4.dp else 5.dp)) {
         when(widget) {
+            ShelfWidget.SESSION -> SessionWidget(state)
             ShelfWidget.TIMING -> {
                 val taps=remember { mutableStateListOf<Long>() }
                 WidgetHeading(widget,"Timing","Timing settings") { state.metronomeOpen=true }

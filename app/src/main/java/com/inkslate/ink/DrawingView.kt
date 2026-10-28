@@ -2554,7 +2554,7 @@ class DrawingView @JvmOverloads constructor(
         if (fitWholePage && (lane > 0f || music > 0f || studio > 0f)) {
             w -= lane + music + studio
             // The strip's lane on its side, the music tools' on the other.
-            laneShift = (if (stripOnLeft) lane else music) + studio
+            laneShift = (if (stripOnLeft) lane else music) + if(studioRailOnRight)0f else studio
         }
         val s = min((w - 24f) / b.width(), (h - 24f) / b.height())
         out.reset(); out.postScale(s, s)
@@ -4845,35 +4845,37 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private val markPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val markPaths = java.util.WeakHashMap<com.inkslate.core.PageMark, android.graphics.Path>()
+    private val markPaths = java.util.WeakHashMap<List<FloatArray>, android.graphics.Path>()
 
     /** The music tools' marks, in the page's own coordinates. */
     private fun drawPageMarks(canvas: Canvas, marks: List<com.inkslate.core.PageMark>) {
-        for (mark in marks) {
-            val mask = mark.mask
-            if (mask == null) drawPageMarksPrimitive(canvas, listOf(mark)) else {
-                val path = musicMaskPaths.getOrPut(mask) {
-                    android.graphics.Path().apply {
-                        if (mask.baseFull) addRect(0f,0f,mask.width,mask.height,android.graphics.Path.Direction.CW)
-                        for (stroke in mask.strokes) {
-                            val shape = android.graphics.Path().apply {
-                                fillType = android.graphics.Path.FillType.WINDING
-                                for (c in stroke.contours) if (c.size >= 6) {
-                                    moveTo(c[0],c[1]); var i=2
-                                    while (i+1<c.size) { lineTo(c[i],c[i+1]);i+=2 };close()
-                                }
-                            }
-                            op(shape, if (stroke.erase) android.graphics.Path.Op.DIFFERENCE else android.graphics.Path.Op.UNION)
-                        }
-                    }
-                }
+        var i=0
+        while(i<marks.size) {
+            val mask = marks[i].mask
+            var end=i+1
+            while(end<marks.size && marks[end].mask===mask)end++
+            val group=marks.subList(i,end)
+            if (mask == null) drawPageMarksPrimitive(canvas, group) else {
+                val path = musicMaskPaths.getOrPut(mask) { incrementalMusicMasks.path(mask) }
                 val saved = canvas.save()
                 canvas.clipPath(path)
-                drawPageMarksPrimitive(canvas,listOf(mark))
+                drawPageMarksPrimitive(canvas,group)
                 canvas.restoreToCount(saved)
             }
+            i=end
         }
     }
+    private val incrementalMusicMasks = com.inkslate.core.MusicMaskCache<android.graphics.Path>(
+        empty={ mask -> android.graphics.Path().apply {if(mask.baseFull)addRect(0f,0f,mask.width,mask.height,android.graphics.Path.Direction.CW)} },
+        copy={ old -> android.graphics.Path(old) },
+        apply={ before,stroke ->
+            val shape=android.graphics.Path().apply {
+                fillType=android.graphics.Path.FillType.WINDING
+                for(c in stroke.contours)if(c.size>=6){moveTo(c[0],c[1]);var i=2;while(i+1<c.size){lineTo(c[i],c[i+1]);i+=2};close()}
+            }
+            before.apply {op(shape,if(stroke.erase)android.graphics.Path.Op.DIFFERENCE else android.graphics.Path.Op.UNION)}
+        }
+    )
     private val musicMaskPaths = java.util.WeakHashMap<com.inkslate.core.PageMark.Mask, android.graphics.Path>()
     private fun drawPageMarksPrimitive(canvas: Canvas, marks: List<com.inkslate.core.PageMark>) {
         for (m in marks) {
@@ -4881,7 +4883,7 @@ class DrawingView @JvmOverloads constructor(
             when (m.kind) {
                 com.inkslate.core.PageMark.Kind.FILL -> {
                     markPaint.style = Paint.Style.FILL
-                    val path = markPaths.getOrPut(m) {
+                    val path = markPaths.getOrPut(m.contours) {
                         android.graphics.Path().apply {
                             fillType = android.graphics.Path.FillType.EVEN_ODD
                             for (c in m.contours) {
@@ -4984,6 +4986,7 @@ class DrawingView @JvmOverloads constructor(
 
         var musicShelfDp: Float = 0f
         var studioRailDp: Float = 0f
+        var studioRailOnRight: Boolean = false
 
         /** That room is on the left rather than the right. */
         @JvmStatic
