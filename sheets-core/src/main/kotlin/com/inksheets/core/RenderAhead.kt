@@ -40,7 +40,7 @@ class RenderAhead(
     /** Start rendering; returns once the ring is filled ([prefillMs] at least) so the first read has sound to give. */
     @Synchronized
     fun start(prefillMs: Int = 120) {
-        if (running) return
+        if (running || thread?.isAlive==true) return
         running = true
         thread = Thread({
             val buf = FloatArray(block)
@@ -66,6 +66,27 @@ class RenderAhead(
         running = false
         thread?.join(300)
         thread = null
+    }
+
+    /** Freeze synthesis while retaining every queued sample and the synth's voice state. */
+    @Synchronized
+    fun pause(): Boolean {
+        running=false
+        // Give one in-flight block a short chance to finish; never strand a UI behind a decoder.
+        // Its result stays in the ring even if it finishes after this bounded wait.
+        thread?.join(50)
+        val stopped=thread?.isAlive!=true
+        if(stopped) thread=null
+        return stopped
+    }
+
+    /** Continue the retained queue; do not render or discard a replacement prefill. */
+    @Synchronized
+    fun resume(): Boolean {
+        // An unusually slow old fill must not race a second producer or lose its queued result.
+        if(!running && thread?.isAlive==true) return false
+        start(prefillMs=0)
+        return true
     }
 
     /** The next samples, [out] overwritten; never blocks. */

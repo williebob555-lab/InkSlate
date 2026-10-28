@@ -1422,7 +1422,7 @@ internal object ScoreTools {
                 override fun run() {
                     val now = Triple(p.bar, p.bpm.toInt(), p.round)
                     s.platform.onMain {
-                        if (player !== p) return@onMain
+                        if (player !== p || paused!=null) return@onMain
                         // The tempo changed (the metronome, a remote, a pedal): the music goes on at it, smoothly.
                         if (!(ramp && loop) && kotlin.math.abs(SharedMetronome.bpm - p.bpm) > 0.01) p.setTempo(SharedMetronome.bpm)
                         if (p.finished) { stop(s); return@onMain }
@@ -1547,7 +1547,7 @@ internal object ScoreTools {
                 schedule(object : java.util.TimerTask() {
                     override fun run() {
                         s.platform.onMain {
-                            if (ensemble !== p) return@onMain
+                            if (ensemble !== p || paused!=null) return@onMain
                             if (p.finished) { stop(s); return@onMain }
                             if (kotlin.math.abs(SharedMetronome.bpm - p.tempo) > 0.01) p.setTempo(SharedMetronome.bpm)
                             val now = Triple(p.bar + offset, SharedMetronome.bpm.toInt(), 0)
@@ -1657,6 +1657,7 @@ internal object ScoreTools {
 
     /** The sound stopped, where it was kept or not. */
     private fun halt() {
+        pausedPlayback=null
         ensemble?.let { ensemble = null; Sound.stop(WHO) }
         watcher?.cancel(); watcher = null
         if (player != null) Sound.stop(WHO)
@@ -1673,6 +1674,7 @@ internal object ScoreTools {
     /** Stopped part way, to go on from: the bar it stopped in (null when not paused). */
     var paused by mutableStateOf<Int?>(null)
         private set
+    private var pausedPlayback: Triple<Int,Int,Int>? = null
 
     /** Whether what plays (or played last) is the band rather than this part alone. */
     var bandMode by mutableStateOf(false)
@@ -1683,22 +1685,34 @@ internal object ScoreTools {
 
     /** Stop where it is, to go on from there. */
     fun pause(s: SheetsState) {
-        val bar = playing?.first ?: return
-        halt()
-        paused = bar
+        val now=playing ?: return
+        if(Sound.pause(WHO)) {
+            pausedPlayback=now
+            playing=null
+        } else halt()
+        paused = now.first
         syncTool()
         changed()
     }
 
     /** Go on from where it was paused. */
-    fun resume(s: SheetsState) { paused?.let { playFromBar(s, it) } }
+    fun resume(s: SheetsState) {
+        val bar=paused ?: return
+        val saved=pausedPlayback
+        if(saved!=null && (player!=null || ensemble!=null)) {
+            if(Sound.resume(s,WHO)) {
+                paused=null;pausedPlayback=null;playing=saved
+                syncTool();changed()
+            } else said="Playback is still pausing; try Resume again"
+        } else playFromBar(s,bar)
+    }
 
     /** Play from bar [bar] (as numbered on this part's page) - the band or this part alone, as before. */
     fun playFromBar(s: SheetsState, bar: Int) {
         val wasPaused = paused != null && playing == null
         if (wasPaused && paused != bar) {
             // Paused: the place moved, still paused - shown, ready to go on from.
-            paused = bar; goTo(s, bar); changed(); return
+            halt();paused = bar;playbackProgress=0f;goTo(s, bar);changed();return
         }
         if (bandMode) playBand(s, bar) else play(s, bar)
     }
