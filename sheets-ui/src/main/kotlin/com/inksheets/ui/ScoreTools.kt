@@ -1415,18 +1415,25 @@ internal object ScoreTools {
         playbackProgress = 0f
         playing = Triple(range.first, start.toInt(), 0)
         syncTool()
-        Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
+        fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.bpm,p.round,p.finished)
+        val history=com.inksheets.core.omr.PlaybackHistory(cursor())
+        Sound.play(s, WHO, ahead = true) { buf ->
+            val at=p.synth.position;val before=cursor()
+            p.fill(buf)
+            history.record(at,p.synth.position,before,cursor())
+        }
         var lastBar = -1
         watcher = java.util.Timer("score-play", true).apply {
             schedule(object : java.util.TimerTask() {
                 override fun run() {
-                    val now = Triple(p.bar, p.bpm.toInt(), p.round)
                     s.platform.onMain {
                         if (player !== p || paused!=null) return@onMain
                         // The tempo changed (the metronome, a remote, a pedal): the music goes on at it, smoothly.
                         if (!(ramp && loop) && kotlin.math.abs(SharedMetronome.bpm - p.bpm) > 0.01) p.setTempo(SharedMetronome.bpm)
-                        if (p.finished) { stop(s); return@onMain }
-                        val progress = p.barProgress
+                        val heard=history.at(Sound.consumedFrames(WHO) ?: 0L)
+                        if (heard.finished) { stop(s); return@onMain }
+                        val now=Triple(heard.bar,heard.tempo.toInt(),heard.round)
+                        val progress = heard.progress
                         if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
                             playing = now; playbackProgress = progress; changed()
                         }
@@ -1541,17 +1548,24 @@ internal object ScoreTools {
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
             ensemble = p
             syncTool()
-            Sound.play(s, WHO, ahead = true) { buf -> p.fill(buf) }
+            fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.tempo,finished=p.finished)
+            val history=com.inksheets.core.omr.PlaybackHistory(cursor())
+            Sound.play(s, WHO, ahead = true) { buf ->
+                val at=p.synth.position;val before=cursor()
+                p.fill(buf)
+                history.record(at,p.synth.position,before,cursor())
+            }
             var lastBar = -1
             watcher = java.util.Timer("band-play", true).apply {
                 schedule(object : java.util.TimerTask() {
                     override fun run() {
                         s.platform.onMain {
                             if (ensemble !== p || paused!=null) return@onMain
-                            if (p.finished) { stop(s); return@onMain }
                             if (kotlin.math.abs(SharedMetronome.bpm - p.tempo) > 0.01) p.setTempo(SharedMetronome.bpm)
-                            val now = Triple(p.bar + offset, SharedMetronome.bpm.toInt(), 0)
-                            val progress = p.barProgress
+                            val heard=history.at(Sound.consumedFrames(WHO) ?: 0L)
+                            if (heard.finished) { stop(s); return@onMain }
+                            val now = Triple(heard.bar + offset, heard.tempo.toInt(), 0)
+                            val progress = heard.progress
                             if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
                                 playing = now; playbackProgress = progress; changed()
                             }

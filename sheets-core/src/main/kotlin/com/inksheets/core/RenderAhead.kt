@@ -24,6 +24,8 @@ class RenderAhead(
     /** Samples written / read since the start (single writer, single reader). */
     @Volatile private var written = 0L
     @Volatile private var consumed = 0L
+    /** Actual source frames handed to the output; underrun silence does not move this cursor. */
+    val consumedFrames: Long get()=consumed
     @Volatile private var running = false
     private var thread: Thread? = null
 

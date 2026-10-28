@@ -39,6 +39,8 @@ internal object Sound {
     }
 
     fun playing(who: String) = sources.containsKey(who)
+    /** The source cursor handed to AudioOut; no guessed subtraction for the device's own latency. */
+    fun consumedFrames(who: String): Long? = ahead[who]?.consumedFrames
 
     /** Silence this source without losing its queued audio, note tails or repeat position. */
     fun pause(who: String): Boolean {

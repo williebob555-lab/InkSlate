@@ -10,6 +10,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
+import com.inkslate.core.Perform
 
 class ScorePlaybackPauseTest {
     @get:Rule val tmp=TemporaryFolder()
@@ -75,7 +76,9 @@ class ScorePlaybackPauseTest {
         try {
             SharedMetronome.bpm=120.0
             ScoreTools.play(state)
-            await { ScoreTools.playbackProgress>.02f }
+            // The fake output must consume audio: rendering ahead alone must not move the rail.
+            var supplied=0
+            await { if(supplied<1600) { platform.audioOut.pull(80);supplied+=80 };ScoreTools.playbackProgress>.02f }
             ScoreTools.pause(state)
             val progress=ScoreTools.playbackProgress
             assertTrue(progress>.02f)
@@ -88,5 +91,29 @@ class ScorePlaybackPauseTest {
             assertNotNull(ScoreTools.playing)
             assertEquals("Resume retains the same rail position",progress,ScoreTools.playbackProgress,0f)
         } finally { ScoreTools.stop(state);ScoreTools.scoreSource=null;SharedMetronome.bpm=tempo;ScoreTools.close(state) }
+    }
+
+    @Test fun futureRenderedBarsCannotMoveCursorOrTurnPageBeforeOutputConsumesThem() {
+        val platform=Platform(tmp.newFolder());val state=SheetsState(platform)
+        state.currentPath=File(platform.startFolder,"short-score.pdf").apply { writeText("fixture") }.absolutePath
+        state.pageShown=0 to 2;ScoreTools.install(state)
+        val bar=Measure(1,0,0,Box(0,0,300,40),10f,Clef.TREBLE,Key(0),TimeSig(1,16),
+            listOf(Note(listOf(4),listOf(Pitch(0,4)),Duration(16),30f)))
+        ScoreTools.scoreSource={Score(listOf(bar,bar.copy(number=2,page=1)),2,listOf(400,400))}
+        val tempo=SharedMetronome.bpm;val jump=Perform.jumpTo
+        var jumps=0
+        try {
+            Perform.jumpTo={ _,page -> jumps++;state.pageShown=page to 2 }
+            SharedMetronome.bpm=120.0
+            ScoreTools.play(state)
+            Thread.sleep(220)
+            assertEquals(0L,Sound.consumedFrames("score"))
+            assertEquals(1,ScoreTools.playing?.first)
+            assertEquals(0f,ScoreTools.playbackProgress,0f)
+            assertEquals(0,jumps)
+            var supplied=0
+            await { if(supplied<2000) { platform.audioOut.pull(80);supplied+=80 };jumps>0 }
+            assertEquals(1,state.pageShown.first)
+        } finally { ScoreTools.stop(state);ScoreTools.scoreSource=null;SharedMetronome.bpm=tempo;Perform.jumpTo=jump;ScoreTools.close(state) }
     }
 }
