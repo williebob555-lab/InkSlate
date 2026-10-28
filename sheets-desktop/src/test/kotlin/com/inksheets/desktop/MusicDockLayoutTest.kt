@@ -27,14 +27,14 @@ class MusicDockLayoutTest {
     @Test fun `waveform preserves real peaks through long recording compaction and silent audio`() {
         assertTrue(WaveformEnvelope().finish().isEmpty())
         val silence=WaveformEnvelope().apply{add(FloatArray(20000))}.finish()
-        assertEquals(80,silence.size)
+        assertEquals(4096,silence.size)
         assertTrue(silence.all{it==0f})
         val envelope=WaveformEnvelope()
         repeat(600){chunk -> envelope.add(FloatArray(4096){if(chunk in 200..250) .8f else .1f})}
         val result=envelope.finish()
-        assertEquals(80,result.size)
+        assertEquals(4096,result.size)
         assertTrue(result.all{it.isFinite() && it in 0f..1f})
-        assertTrue(result.slice(25..35).any{it>.9f})
+        assertTrue(result.slice(result.size*25/80..result.size*35/80).any{it>.9f})
         assertTrue(result.first()<.2f)
         assertTrue(result.last()<.2f)
     }

@@ -125,7 +125,7 @@ class MusicDockLifecycleTest {
             onNodeWithText("Lead",useUnmergedTree=true).assertIsDisplayed()
             val issues=UiAudit.check(this,"phone-small-land","dock-floating-panel",640,360)
             assertTrue(issues.joinToString(),issues.isEmpty())
-            runOnIdle {state.companionOpen=false}
+            onNodeWithContentDescription("Compact categories").performClick()
             waitForIdle()
             runOnIdle {assertEquals(236f,AppFlavor.studioRailDp,.01f)}
         }

@@ -98,8 +98,8 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
             Column {
                 PlaybackProblem(state)
                 if(state.expandedMusicCategory!=null) {
-                    val footerHeight=if(viewportWidth<600.dp)80.dp else 40.dp
-                    val categoryHeight=minOf(420.dp,maxOf(216.dp,viewportHeight*.44f),(viewportHeight-footerHeight-80.dp-(if(active)40.dp else 0.dp)).coerceAtLeast(128.dp))
+                    val footerHeight=if(viewportWidth<600.dp)88.dp else 48.dp
+                    val categoryHeight=minOf(420.dp,maxOf(216.dp,viewportHeight*.44f),(viewportHeight-footerHeight-128.dp-(if(active)40.dp else 0.dp)).coerceAtLeast(128.dp))
                     Box(Modifier.fillMaxWidth().height(categoryHeight)){MusicCategoryBar(state,position)}
                 }
                 if(Recording.loading) Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {

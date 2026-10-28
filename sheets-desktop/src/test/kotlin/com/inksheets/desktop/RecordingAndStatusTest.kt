@@ -25,7 +25,7 @@ class RecordingAndStatusTest {
                 runOnIdle {
                     assertEquals(ShelfWidget.RECORDING,state.expandedMusicCategory)
                     assertFalse(ReaderPanels.open)
-                    assertTrue("Score must retain visible space",state.shelfHeight<240f)
+                    assertTrue("Score must retain visible space; shelf=${state.shelfHeight}",state.shelfHeight<240f)
                 }
                 onNodeWithText("Record yourself").performClick()
                 waitForIdle()

@@ -86,7 +86,7 @@ internal val LocalMusicCategoryContent=staticCompositionLocalOf<InlineMusicPages
                 val close={state.expandedMusicCategory=null}
                 when(category) {
                     ShelfWidget.TIMING -> if(state.musicCategoryPage=="tuner")TunerDialog(state,close)else MetronomeDialog(state,close)
-                    ShelfWidget.RECORDING -> state.current?.let{AudioDialog(state,it,onClose=close)}
+                    ShelfWidget.RECORDING -> state.current?.let{AudioDialog(state,it,movable=true,onClose=close)}
                     ShelfWidget.SCORE -> if(state.musicCategoryPage=="reading")ReadMusicPanel(state,close)else ScoreToolsPanel(state,close)
                     ShelfWidget.DEVICES -> if(state.musicCategoryPage=="controllers")SheetDialog("Pedals & watch",onDismiss={state.musicCategoryPage=null}) {
                         Column(Modifier.verticalScroll(rememberScrollState())){ControllerSettings(state);WatchSettings(state)}
