@@ -2,6 +2,8 @@
 
 ## Current follow-up — 2026-10-28
 
+Latest delivered: **1.2.2-test.309**, source e93c0eb. All CI jobs and matching phone/watch/Windows/Fedora publication verified. Includes the current category/reading/Fix/crop/setlist scope, precise pause/resume, smooth audio mixing, excerpt-scoped playback and consumed-audio cursor timing. See review/TEST-CANDIDATE-20261028.md for evidence and remaining device/manual-version-refresh checks.
+
 ### Latest user scope — full category bars, playback editing and automatic reading
 
 Implement all of these while preserving annotation/Fix features; test small-screen controls rather than accepting slivers of content:

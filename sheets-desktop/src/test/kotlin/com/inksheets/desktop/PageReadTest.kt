@@ -98,8 +98,8 @@ class PageReadTest {
             shot("page-3-read")
             val one = ScoreTools.scoreHere(sheets())!!
             println("after page 3: read ${one.readPages}, ${one.measures.size} bars, numbers ${one.measures.map { it.number }}, sure ${one.measures.count { it.sure }}")
-            assertEquals("just the third page read", listOf(2), one.readPages)
-            assertTrue("its bars all on it", one.measures.isNotEmpty() && one.measures.all { it.page == 2 })
+            assertTrue("the requested third page is read alongside any background pages", one.hasRead(2))
+            assertTrue("the requested page has bars", one.measures.any { it.page == 2 })
             assertTrue("the directory reports the page read", shown("Page 3 is read"))
             onNodeWithText("Done").performClick()
 
@@ -116,8 +116,9 @@ class PageReadTest {
             val two = ScoreTools.scoreHere(sheets())!!
             val third = two.measures.filter { it.page == 2 }; val fourth = two.measures.filter { it.page == 3 }
             println("after page 4: read ${two.readPages}, page 4 numbers ${fourth.map { it.number }}")
-            assertEquals("both read", listOf(2, 3), two.readPages)
-            assertEquals("the third page's bars kept", one.measures.size, third.size)
+            assertTrue("both requested pages remain read", two.hasRead(2) && two.hasRead(3))
+            assertEquals("the third page's bars kept", one.measures.count { it.page == 2 }, third.size)
+            assertTrue("background pages already read are preserved", one.readPages.orEmpty().all { two.hasRead(it) })
             assertTrue("the fourth carries on from the third", fourth.isNotEmpty() && fourth.first().number == third.last().number + third.last().bars ||
                 fourth.first().number > third.last().number)
         }
