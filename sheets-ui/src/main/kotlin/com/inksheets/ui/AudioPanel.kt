@@ -431,12 +431,12 @@ internal object SelfRecorder {
  */
 @Composable
 internal fun AudioDialog(state: SheetsState, song: Song, movable: Boolean = false, onClose: () -> Unit) {
-    var tracks by remember { mutableStateOf(state.library?.song(song.id)?.audio ?: song.audio) }
+    var tracks by remember(song.id) { mutableStateOf(state.library?.song(song.id)?.audio ?: song.audio) }
     LaunchedEffect(state.version, song.id) { tracks = state.library?.song(song.id)?.audio ?: song.audio }
-    var picking by remember { mutableStateOf(false) }
-    var selected by remember { mutableStateOf(0) }
-    var renaming by remember { mutableStateOf<String?>(null) }
-    var couldNotRecord by remember { mutableStateOf(false) }
+    var picking by remember(song.id) { mutableStateOf(false) }
+    var selected by remember(song.id) { mutableStateOf(0) }
+    var renaming by remember(song.id) { mutableStateOf<String?>(null) }
+    var couldNotRecord by remember(song.id) { mutableStateOf(false) }
 
     fun save(updated: List<AudioTrack>) {
         val latest = state.library?.song(song.id)?.audio ?: song.audio

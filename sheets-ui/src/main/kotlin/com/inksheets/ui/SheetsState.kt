@@ -185,6 +185,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         get() = stripCollapsedState
         set(v) {
             stripCollapsedState = v
+            if(v) { expandedMusicCategory=null; musicCategoryPage=null }
             platform.setPref(K_COLLAPSED, v.toString())
             platform.setStripLane(!v)
         }
