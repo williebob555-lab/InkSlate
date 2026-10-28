@@ -167,6 +167,7 @@ fun DocumentCanvas(
     images: (String) -> ImageBitmap? = { null },
     /** Trim each page to its printed area, hiding the margins a textbook gives up. */
     cropMargins: Boolean = false,
+    pageCrops: Map<String, com.inkslate.core.PageCrop> = emptyMap(),
     /** The words a highlighter path crossed, when this document has a text layer at all. */
     wordsUnder: ((Int, List<Pair<Float, Float>>) -> List<InkBox>)? = null,
     /** Set when this document is a canvas that grows to fit what is written on it. */
@@ -227,18 +228,20 @@ fun DocumentCanvas(
     // The shapes belong to this document and nothing else; holding them past it is just memory.
     DisposableEffect(source) { onDispose { InkGeometry.clear() } }
 
-    val slots = remember(extents, layout, currentPage, canvas, cropMargins, contentBoxes.size) {
+    val visibleBoxes = extents.mapIndexed { i, e ->
+        pageCrops[i.toString()]?.box(e.width, e.height) ?: if (cropMargins) contentBoxes[i] else null
+    }
+    val slots = remember(extents, layout, currentPage, canvas, visibleBoxes) {
         val effective = when {
             canvas != null -> listOf(PageExtent(canvas.width, canvas.height))
-            cropMargins -> extents.mapIndexed { i, e ->
-                contentBoxes[i]?.let { PageExtent(it.width, it.height) } ?: e
+            else -> extents.mapIndexed { i, e ->
+                visibleBoxes[i]?.let { PageExtent(it.width, it.height) } ?: e
             }
-            else -> extents
         }
         val origins = PageArranger.arrange(effective, layout, currentPage, canvas?.box)
         effective.mapIndexed { i, e ->
             val (x, y) = origins[i]
-            val box = if (canvas == null && cropMargins) contentBoxes[i] else null
+            val box = if (canvas == null) visibleBoxes[i] else null
             PageSlot(
                 i, e.width, e.height, x, y,
                 inkLeft = canvas?.left ?: box?.left ?: 0f,
@@ -469,7 +472,7 @@ fun DocumentCanvas(
         // A page at a time, the next pages are drawn before they are asked for - whole, at the
         // sharpness this one is shown at - so a turn, however quick, lands on a finished page
         // rather than on blank paper waiting for it.
-        if (layout == PageLayout.SINGLE && canvas == null && !cropMargins) {
+        if (layout == PageLayout.SINGLE && canvas == null && !cropMargins && pageCrops.isEmpty()) {
             for (i in listOf(currentPage + 1, currentPage - 1) + (2..AHEAD).map { currentPage + it }) {
                 if (i !in extents.indices || i in rasters) continue
                 val e = extents[i]
@@ -819,7 +822,7 @@ fun DocumentCanvas(
                                 tools = tools,
                                 textMeasurer = textMeasurer,
                                 pageFilter = pageFilter,
-                                crop = if (cropMargins) contentBoxes[slot.index] else null,
+                                crop = visibleBoxes[slot.index],
                                 scale = vp.scale,
                                 ruler = tools.ruler?.takeIf {
                                     tools.rulerVisible && tools.rulerOwner === rulerOwner &&
@@ -1100,11 +1103,13 @@ private fun DrawScope.drawPage(
         // A cropped page is laid out at its content's size while the picture is still of the whole
         // page, so it is drawn shifted by the trimmed margin. Stroke coordinates stay relative to
         // the whole page, which is what makes turning the crop on and off unable to move ink.
-        overview?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter) }
-        tile?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter, tileAlpha) }
+        clipRect(0f, 0f, slot.width, slot.height) {
+            overview?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter) }
+            tile?.let { drawTile(it, -(crop?.left ?: 0f), -(crop?.top ?: 0f), pageFilter, tileAlpha) }
+        }
         RenderStats.addRaster(System.nanoTime() - pageAt)
     }
-    if (!marks.isNullOrEmpty()) translate(-slot.inkLeft, -slot.inkTop) { drawPageMarks(marks) }
+    if (!marks.isNullOrEmpty()) clipRect(0f, 0f, slot.width, slot.height) { translate(-slot.inkLeft, -slot.inkTop) { drawPageMarks(marks) } }
 
     // Ink is stored in page coordinates, which for a canvas are the canvas's own - so the whole
     // layer shifts by the canvas origin and nothing else changes. Taken from the slot rather than
@@ -1112,10 +1117,10 @@ private fun DrawScope.drawPage(
     // being the same number is the whole point.
     translate(-slot.inkLeft, -slot.inkTop) {
     clipRect(
-        if (canvas != null) canvas.left else 0f,
-        if (canvas != null) canvas.top else 0f,
-        if (canvas != null) canvas.right else slot.width,
-        if (canvas != null) canvas.bottom else slot.height
+        if (canvas != null) canvas.left else slot.inkLeft,
+        if (canvas != null) canvas.top else slot.inkTop,
+        if (canvas != null) canvas.right else slot.inkLeft + slot.width,
+        if (canvas != null) canvas.bottom else slot.inkTop + slot.height
     ) {
         // Already grouped per page and ordered highlighter-first by the caller. Doing it here
         // meant filtering and sorting every mark in the document on every frame, and a frame

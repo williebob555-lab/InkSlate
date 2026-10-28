@@ -138,7 +138,8 @@ internal object ScoreTools {
 
     /** A part's reading with its bars numbered, rests counted and wrong bars marked - but no bar fixed, by hand or carried over. */
     private fun baseOf(path: String): Score? =
-        (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { read ->
+        (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { original ->
+            val read=com.inksheets.core.omr.MeasureStructure.apply(original,structuresOf(path))
             // Bars you said are wrong, though read as sure: in doubt, until fixed.
             val wrong = wrongOf(path)
             val marked = if (wrong.isEmpty()) read else read.copy(measures = read.measures.map { m ->
@@ -225,14 +226,43 @@ internal object ScoreTools {
     fun setRestCount(s: SheetsState, number: Int, count: Int) {
         val path = s.currentPath ?: return
         val f = restsOf(path)
-        f[number] = count
+        val before=scoreHere(s)
+        val shown=before?.measures?.firstOrNull { it.number==number }
+        val source=(scoreSource?.invoke(path) ?: Transcriber.cached(s,File(path)))?.let { com.inksheets.core.omr.MeasureStructure.apply(it,structuresOf(path)) }
+        val address=source?.measures?.firstOrNull { shown!=null && it.page==shown.page && it.staff==shown.staff && it.box==shown.box }?.number ?: number
+        f[address] = count.coerceIn(1,999)
+        restCounting=false
         keep(restKey(path), path, f.entries.joinToString(",") { "${it.key}=${it.value}" })
+        val delta=count.coerceIn(1,999)-(shown?.bars ?: 1)
+        if(delta!=0 && before!=null) {
+            val originalNumber=renumberedBack(path,number)
+            val numbers=numbersOf(path)
+            val movedNumbers=numbers.mapKeys { (n,_) -> if(n>originalNumber) n+delta else n }
+            numbers.clear();numbers.putAll(movedNumbers)
+            keep(numberKey(path),path,numbers.entries.joinToString(",") { "${it.key}=${it.value}" })
+            baseOf(path)?.let { after -> remapAnnotations(path,before,after) }
+        }
         if (wrongOf(path).remove(number)) saveWrong(path)
         scoreHere(s)?.measures?.firstOrNull { it.number == number }?.let { m ->
             scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w -> Transcriber.recordRest(s, File(path), m, w, count) }
         }
         changed()
         if (checking) next(s)
+    }
+
+    /** Follow unchanged source boxes when an earlier rest's count changes the displayed numbers. */
+    private fun remapAnnotations(path: String,before: Score,after: Score) {
+        fun number(n: Int): Int {
+            val old=before.measures.firstOrNull { it.number==n } ?: return n
+            return after.measures.firstOrNull { it.page==old.page && it.staff==old.staff && it.box==old.box }?.number ?: n
+        }
+        fun <T> move(map: MutableMap<Int,T>) { val moved=map.mapKeys { (n,_) -> number(n) };map.clear();map.putAll(moved) }
+        val fixed=fixesOf(path);move(fixed);keep(fixKey(path),path,com.inksheets.core.omr.Scores.encodeFixes(fixed))
+        val sig=sigsOf(path);move(sig);keep(sigKey(path),path,com.inksheets.core.omr.Signatures.encode(sig))
+        val w=wrongOf(path);val movedWrong=w.map(::number);w.clear();w.addAll(movedWrong);saveWrong(path)
+        val clean=cleanedIn(path);val movedClean=clean.map(::number);clean.clear();clean.addAll(movedClean);saveCleaned(path)
+        val carried=carriedOf(path);val movedCarried=carried.map { it.copy(bar=number(it.bar)) };carried.clear();carried.addAll(movedCarried);saveCarried(path)
+        checkBars=checkBars.map(::number)
     }
 
     /** Clefs, keys and times put right, by part: the bar each starts at to what it is. Kept with the part's settings. */
@@ -661,7 +691,7 @@ internal object ScoreTools {
 
     private fun showBar(s: SheetsState) {
         rejected = ArrayList(); noneCount = 0; askedAgain = false; focus = null; looked = emptyList(); looking = false; lookedDeeper = false; lookToken++
-        barPicture = null; editing = null; sigDraft = null; numbering = false
+        barPicture = null; editing = null; sigDraft = null; numbering = false;cancelSplit();restCounting=false
         val m = barUp(s) ?: run { endCheck(); return }
         // The second looks taken as its page was read: ready at once, no waiting on a look now.
         val ready = s.currentPath?.let { Transcriber.lookedFor(s, File(it), m) }.orEmpty()
@@ -798,16 +828,71 @@ internal object ScoreTools {
         changed()
     }
 
-    /** Bar up is not one bar as read (part of one, or two run together): noted for teaching, and on to the next. */
+    private fun structureKey(path: String)="sheets_structure:"+(state?.relative(File(path)) ?: path)
+    private fun structuresOf(path: String)=com.inksheets.core.omr.MeasureStructure.decode(kept(structureKey(path),path))
+    var splitting by mutableStateOf(false)
+    var restCounting by mutableStateOf(false)
+    var splitCuts by mutableStateOf<List<Float>>(emptyList())
+    fun cancelSplit() { splitting=false;splitCuts=emptyList() }
+    fun toggleSplitBoundary(x: Float) {
+        val close=splitCuts.firstOrNull { kotlin.math.abs(it-x)<12f }
+        splitCuts=if(close!=null) splitCuts-close else (splitCuts+x).sorted()
+    }
+    fun previewSplit(s: SheetsState): List<Measure> = barUp(s)?.let {
+        com.inksheets.core.omr.MeasureStructure.split(it,splitCuts)
+    }.orEmpty()
+
+    /** Open a source boundary editor; nothing changes until its preview is accepted. */
     fun notOneBar(s: SheetsState) {
+        val m=barUp(s) ?: return
+        splitting=true
+        val count=kotlin.math.round(m.events.sumOf { it.duration.quarters }/m.time.quarters).toInt().coerceIn(2,8)
+        splitCuts=(1 until count).map { m.box.left+m.box.width*it.toFloat()/count }
+    }
+
+    fun applySplit(s: SheetsState) {
         val path = s.currentPath ?: return
         val m = barUp(s) ?: return
-        scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
-            val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
-            Transcriber.recordNotABar(s, File(path), read, w)
+        val before=scoreHere(s) ?: return
+        val width=before.pageWidths.getOrNull(m.page)?.takeIf { it>0 } ?: return
+        val pieces=previewSplit(s)
+        if(pieces.size<2) return
+        val delta=pieces.size-1
+        fun <T> shift(map: MutableMap<Int,T>,after: Int=m.number) {
+            val moved=map.mapKeys { (n,_) -> if(n>after) n+delta else n };map.clear();map.putAll(moved)
         }
-        said = "Bar ${m.number} noted as not one bar"
-        next(s)
+        val raw=(scoreSource?.invoke(path) ?: Transcriber.cached(s,File(path))) ?: return
+        val structured=com.inksheets.core.omr.MeasureStructure.apply(raw,structuresOf(path))
+        val rawNumber=structured.measures.firstOrNull { it.page==m.page && it.staff==m.staff && it.box==m.box }?.number ?: return
+        val beforeNumbering=renumberedBack(path,m.number)
+        val rests=restsOf(path);shift(rests,rawNumber);keep(restKey(path),path,rests.entries.joinToString(",") { "${it.key}=${it.value}" })
+        val numbers=numbersOf(path);shift(numbers,beforeNumbering);keep(numberKey(path),path,numbers.entries.joinToString(",") { "${it.key}=${it.value}" })
+        val correction=com.inksheets.core.omr.MeasureStructure.correction(m,width,splitCuts)
+        keep(structureKey(path),path,com.inksheets.core.omr.MeasureStructure.encode(structuresOf(path)+correction))
+        val after=baseOf(path) ?: return
+        val newPieces=after.measures.filter { it.page==m.page && it.staff==m.staff && it.box.left>=m.box.left && it.box.right<=m.box.right }
+        fun remap(number: Int): Int {
+            val old=before.measures.firstOrNull { it.number==number } ?: return number
+            return after.measures.firstOrNull { it.page==old.page && it.staff==old.staff && it.box==old.box }?.number
+                ?: if(number==m.number) newPieces.firstOrNull()?.number ?: number else number
+        }
+        fun <T> move(map: MutableMap<Int,T>) { val moved=map.mapKeys { (n,_) -> remap(n) };map.clear();map.putAll(moved) }
+        val fixes=fixesOf(path)
+        val hadOwn=fixes.containsKey(m.number) || carriedOf(path).any { it.bar==m.number }
+        move(fixes)
+        if(hadOwn) { fixes.remove(remap(m.number));newPieces.zip(pieces).forEach { (target,source) -> fixes[target.number]=source.events } }
+        keep(fixKey(path),path,com.inksheets.core.omr.Scores.encodeFixes(fixes))
+        val sig=sigsOf(path);move(sig);keep(sigKey(path),path,com.inksheets.core.omr.Signatures.encode(sig))
+        val wrong=wrongOf(path);val shiftedWrong=wrong.map(::remap);wrong.clear();wrong.addAll(shiftedWrong);saveWrong(path)
+        val clean=cleanedIn(path);val movedClean=clean.map(::remap).toMutableSet()
+        if(m.number in clean) movedClean.addAll(newPieces.map { it.number })
+        cleaned[path]=movedClean;keep(keyOf(path),path,movedClean.sorted().joinToString(","))
+        val carried=carriedOf(path);val movedCarried=carried.filterNot { it.bar==m.number }.map { it.copy(bar=remap(it.bar)) };carried.clear();carried.addAll(movedCarried);saveCarried(path)
+        Transcriber.recordNotABar(s,File(path),m,width)
+        val pending=checkBars.drop(checkAt+1).map(::remap)
+        cancelSplit();history.clear();changed()
+        startCheckOf(s,(newPieces.map { it.number }+pending).distinct())
+        said="Split into ${pieces.size} bars; check each reading"
     }
 
     /**
@@ -836,6 +921,7 @@ internal object ScoreTools {
     }
 
     fun endCheck() {
+        cancelSplit();restCounting=false
         checking = false
         editing = null
         sigDraft = null
@@ -958,8 +1044,9 @@ internal object ScoreTools {
         if (maskBrushEnabled) {
             val s = state ?: return
             if (!score.hasRead(page)) return
-            CleanMasks.gesture(s,path,page,pts,done,Perform.musicBrush,k)
-            changed()
+            // One accepted preview/commit invalidates the overlay once. Throttled pointer
+            // samples must leave its geometry/version cache intact until there is new ink.
+            if (CleanMasks.gesture(s,path,page,pts,done,Perform.musicBrush,k,notify=false)) changed()
             return
         }
         val bars = (0 until pts.size / 2).mapNotNull { i -> barAt(score, page, pts[2 * i], pts[2 * i + 1], k)?.number }
@@ -1656,8 +1743,16 @@ internal object ScoreTools {
      * click now the music's), or the click asked for with playback in the metronome's settings.
      */
     private fun takeClick(s: SheetsState): Boolean {
+        val wanted=playbackClick(s)
         val going = SharedMetronome.running
         if (going) Click.stop(s)
-        return going || Click.withPlayback(s)
+        return wanted
+    }
+    fun playbackClick(s:SheetsState):Boolean = s.platform.pref("sheets_click_notes")?.toBooleanStrictOrNull()
+        ?: (SharedMetronome.running || Click.withPlayback(s))
+    fun setPlaybackClick(s:SheetsState,on:Boolean) {
+        s.platform.setPref("sheets_click_notes",on.toString())
+        player?.synth?.clickEnabled=on
+        ensemble?.synth?.clickEnabled=on
     }
 }

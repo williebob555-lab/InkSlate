@@ -35,6 +35,7 @@ class PageSlot(val index: Int, val width: Float, val height: Float) {
      */
     var cropRect: RectF? = null
     var cropEnabled: Boolean = false
+    var manualCrop: RectF? = null
 
     /**
      * The extent of a canvas that grows to fit its content, in page coordinates.
@@ -50,7 +51,7 @@ class PageSlot(val index: Int, val width: Float, val height: Float) {
     /** The part of [canvasRect] the document's own page covers, and can supply a raster for. */
     var paperRect: RectF? = null
 
-    private val crop: RectF? get() = canvasRect ?: (if (cropEnabled) cropRect else null)
+    private val crop: RectF? get() = canvasRect ?: manualCrop ?: (if (cropEnabled) cropRect else null)
 
     /** Offset from the full page to the visible area. */
     val cropLeft: Float get() = crop?.left ?: 0f

@@ -916,6 +916,10 @@ internal fun SheetDialog(
     movable: Boolean = false,
     content: @Composable () -> Unit
 ) {
+      if(LocalMusicCategoryContent.current!=null) {
+          InlineMusicPage(title,onDismiss,buttons,content=content)
+          return
+      }
     val reader=LocalReaderPanelState.current
     if(reader!=null && !reader.homeInFront && !ScoreTools.checking && !LocalInsideReaderPanel.current && title !in setOf("Metronome","Tuner")) {
         ReaderPanel(title,onDismiss,buttons,content)

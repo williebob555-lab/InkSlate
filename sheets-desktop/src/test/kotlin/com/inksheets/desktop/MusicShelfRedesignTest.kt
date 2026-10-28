@@ -165,7 +165,11 @@ class MusicShelfRedesignTest {
             onNodeWithContentDescription("Remote").assertIsDisplayed()
             onNodeWithText("Score").performClick()
             waitForIdle()
-            onNodeWithContentDescription("Read notes").assertIsDisplayed()
+            onNodeWithContentDescription("All score tools").performClick()
+            waitForIdle()
+            onNodeWithText("Score tools").assertIsDisplayed()
+            onNodeWithContentDescription("Compact categories").assertIsDisplayed()
+            runOnIdle { assertEquals(ShelfWidget.SCORE,state.expandedMusicCategory) }
             assertTrue(!state.arrangingShelf)
         }
     }

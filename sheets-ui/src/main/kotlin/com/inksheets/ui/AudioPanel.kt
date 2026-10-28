@@ -639,6 +639,45 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
     }
 
     Column {
+        val book=state.library?.song(songId)
+        var pairing by remember(track.file) { mutableStateOf(false) }
+        var rangeOpen by remember(track.file) { mutableStateOf(false) }
+        var rangeStart by remember(track.file) { mutableStateOf((track.excerptStartPage ?: 1).toString()) }
+        var rangeEnd by remember(track.file) { mutableStateOf((track.excerptEndPage ?: track.excerptStartPage ?: 1).toString()) }
+        if(rangeOpen) {
+            val start=rangeStart.toIntOrNull()
+            val end=rangeEnd.toIntOrNull()
+            androidx.compose.material3.AlertDialog(onDismissRequest={rangeOpen=false},title={Text("Pair with pages")},text={
+                Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text("Page numbers in the current part, inclusive.")
+                    androidx.compose.material3.OutlinedTextField(value=rangeStart,onValueChange={rangeStart=it},label={Text("First page")},singleLine=true)
+                    androidx.compose.material3.OutlinedTextField(value=rangeEnd,onValueChange={rangeEnd=it},label={Text("Last page")},singleLine=true)
+                }
+            },confirmButton={TextButton(enabled=start!=null && end!=null && start>0 && end>=start,onClick={
+                update { it.copy(excerptPart=book?.let(state::partFor)?.id,excerptStartPage=start,excerptEndPage=end,excerptTitle=null) };rangeOpen=false
+            }) {Text("Pair")}},dismissButton={TextButton(onClick={rangeOpen=false}) {Text("Cancel")}})
+        }
+        Text("Paired with",style=MaterialTheme.typography.labelMedium)
+        androidx.compose.foundation.layout.Box {
+            TextButton(onClick={pairing=true}) {
+                Text(track.excerptTitle?.let { "$it · pp. ${track.excerptStartPage}–${track.excerptEndPage ?: track.excerptStartPage}" }
+                    ?: track.excerptStartPage?.let { "Pages $it–${track.excerptEndPage ?: it}" } ?: "Whole piece")
+            }
+            androidx.compose.material3.DropdownMenu(expanded=pairing,onDismissRequest={pairing=false}) {
+                androidx.compose.material3.DropdownMenuItem(text={Text("Whole piece")},onClick={
+                    pairing=false;update { it.copy(excerptPart=null,excerptStartPage=null,excerptEndPage=null,excerptTitle=null) }
+                })
+                androidx.compose.material3.DropdownMenuItem(text={Text("Page range…")},onClick={pairing=false;rangeOpen=true})
+                book?.bookmarks?.filter { it.excerptTitle != null }?.sortedBy { it.page }?.forEach { mark ->
+                    androidx.compose.material3.DropdownMenuItem(text={Text("${mark.excerptTitle} · pp. ${mark.page}–${mark.endPage ?: mark.page}")},onClick={
+                        pairing=false;update { it.copy(excerptPart=mark.part,excerptStartPage=mark.page,excerptEndPage=mark.endPage ?: mark.page,excerptTitle=mark.excerptTitle) }
+                    })
+                }
+                if(state.current?.id==songId) androidx.compose.material3.DropdownMenuItem(text={Text("Current page (${state.pageShown.first+1})")},onClick={
+                    pairing=false;update { it.copy(excerptPart=state.partShown()?.id,excerptStartPage=state.pageShown.first+1,excerptEndPage=state.pageShown.first+1,excerptTitle=null) }
+                })
+            }
+        }
         if (player == null) {
             Text("This device cannot play recordings.", color = MaterialTheme.colorScheme.error)
             return@Column
@@ -670,6 +709,16 @@ private fun TrackControls(state: SheetsState, songId: String, track: AudioTrack,
             onValueChange = { player.seek((it * duration).toLong()); position = (it * duration).toLong() },
             enabled = loaded
         )
+
+        RecordingWaveform(state,track,position,duration,loaded,expanded=true,
+            onLoopChange={ start,end -> update { it.copy(loopStartMs=start,loopEndMs=end) } },
+            onLoopMark={ at -> update { old ->
+                val start=old.loopStartMs
+                if(start==null || old.loopEndMs!=null || at<=start) old.copy(loopStartMs=at,loopEndMs=null)
+                else old.copy(loopEndMs=at)
+            } })
+        Text("Tap to seek. Drag the loop's top bar to move it; drag either handle to trim. Zoom centers on the loop.",
+            style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
 
         Text("Loop a passage", style = MaterialTheme.typography.labelMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

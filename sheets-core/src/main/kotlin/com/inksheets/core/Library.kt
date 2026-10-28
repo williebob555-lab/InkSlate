@@ -77,7 +77,12 @@ data class AudioTrack(
      * The same, per part (by part id): the bass part's three pages turn at other moments than
      * the trombone part's two. Turns not learned yet are -1.
      */
-    val partTurns: Map<String, List<Long>> = emptyMap()
+    val partTurns: Map<String, List<Long>> = emptyMap(),
+    /** Optional excerpt association inside a methodbook. Pages are inclusive and 1-based. */
+    val excerptPart: String? = null,
+    val excerptStartPage: Int? = null,
+    val excerptEndPage: Int? = null,
+    val excerptTitle: String? = null
 ) {
     /**
      * Where [partId]'s [pages] pages turn in this recording, when every turn is known; null
@@ -191,7 +196,9 @@ data class Setlist(
     /** When it was made, on any device. */
     val created: Long = 0,
     /** When it was last opened to play, on any device; 0 for never. */
-    val opened: Long = 0
+    val opened: Long = 0,
+    /** Preferred instrument for this set; opening it asks before changing the player. */
+    val defaultInstrument: String? = null
 )
 
 /**
@@ -906,6 +913,7 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
     private fun setlist(id: String, f: Map<String, JsonElement>) = Setlist(
         id = id,
         name = f.string("name") ?: "Untitled setlist",
+        defaultInstrument = f.string("defaultInstrument"),
         folderId = f.string("folder"),
         entries = f.list("entries", ENTRY_LIST),
         order = f.string("order")?.toDoubleOrNull() ?: 0.0,
@@ -1026,6 +1034,7 @@ class SongEdit internal constructor(private val edit: Library.Edit) {
 }
 
 class SetlistEdit internal constructor(private val edit: Library.Edit) {
+    var defaultInstrument: String? = null; set(v) { field = v; edit.put("defaultInstrument", v?.trim()?.takeIf { it.isNotEmpty() }) }
     var name: String? = null; set(v) { field = v; edit.put("name", v) }
     var folderId: String? = null; set(v) { field = v; edit.put("folder", v) }
     var entries: List<SetlistEntry>? = null; set(v) { field = v; edit.put("entries", v.orEmpty(), Library.ENTRY_LIST) }

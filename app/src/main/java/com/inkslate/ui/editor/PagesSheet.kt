@@ -137,9 +137,12 @@ fun PagesSheet(
     onApply: (List<PlannedPage>) -> Unit,
     onExport: (pages: List<Int>) -> Unit,
     onDismiss: () -> Unit,
+    pageCrops: Map<String, com.inkslate.core.PageCrop> = emptyMap(),
+    onCrop: ((List<Int>, com.inkslate.core.PageCrop?) -> Unit)? = null,
     /** More actions for the picked pages, from the app this runs in. */
     extraActions: (@Composable (pages: List<Int>, close: () -> Unit) -> Unit)? = null
 ) {
+    var cropPages by remember { mutableStateOf<List<Int>?>(null) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var plan by remember(pageCount) { mutableStateOf(PageArrangement.identity(pageCount)) }
     // The pages in hand, by uid rather than position, as on Windows. Copying or moving them
@@ -174,6 +177,16 @@ fun PagesSheet(
 
     val changed = !PageArrangement.isUnchanged(plan, pageCount)
     val pickedAt = PagePlan.indicesOf(plan, picked)
+    cropPages?.let { pages ->
+        PageCropDialog(
+            thumbnail = thumbs["doc:${pages.first()}:0"]?.asImageBitmap(),
+            initial = pageCrops[pages.first().toString()] ?: com.inkslate.core.PageCrop(),
+            count = pages.size,
+            onApply = { crop -> onCrop?.invoke(pages, crop); cropPages = null },
+            onDismiss = { cropPages = null }
+        )
+    }
+
     // New pages go after the last picked one, or at the end when nothing is picked.
     val inHand = pickedAt.lastOrNull() ?: plan.lastIndex
     val inHandPage = plan.getOrNull(inHand)
@@ -347,6 +360,13 @@ fun PagesSheet(
                             pickedAt.none { plan[it].isNew },
                         onClick = { onExport(pickedAt.map { plan[it].source }.sorted()) }
                     ) { Icon(Icons.Default.Share, "Export") }
+                    if (onCrop != null) {
+                        TextButton(
+                            enabled = !changed && pickedAt.isNotEmpty() && pickedAt.none { plan[it].isNew },
+                            onClick = { cropPages = pickedAt.map { plan[it].source }.sorted() }
+                        ) { Text("Crop pages") }
+                    }
+
                     if (extraActions != null && !changed && pickedAt.isNotEmpty() && pickedAt.none { plan[it].isNew }) {
                         extraActions(pickedAt.map { plan[it].source }.sorted(), onDismiss)
                     }

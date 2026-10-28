@@ -875,6 +875,24 @@ class DrawingView @JvmOverloads constructor(
     private var highlightRects: List<RectF> = emptyList()
     private var highlightPage: Int = -1
 
+    var pageCrops: Map<String, com.inkslate.core.PageCrop> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            applyPageCrops()
+            relayout()
+            fitToScreen()
+            invalidate()
+        }
+
+    private fun applyPageCrops() {
+        slots.forEach { slot ->
+            slot.manualCrop = pageCrops[slot.index.toString()]?.box(slot.width, slot.height)?.let {
+                RectF(it.left, it.top, it.right, it.bottom)
+            }
+        }
+    }
+
     /** Trim each page to its content, hiding print margins. */
     var cropMargins: Boolean = false
         set(value) {
@@ -1677,6 +1695,7 @@ class DrawingView @JvmOverloads constructor(
             slots.add(PageSlot(i, w, h).also { it.bitmap = keep[i] })
         }
         applyCanvasToSlots()
+        applyPageCrops()
         if (currentPage >= slots.size) currentPage = maxOf(0, slots.size - 1)
         relayout()
         if (resetView) {
@@ -2750,6 +2769,10 @@ class DrawingView @JvmOverloads constructor(
             canvas.translate(-slot.cropLeft, -slot.cropTop)
 
             val canvasRect = slot.canvasRect
+            if (canvasRect == null) canvas.clipRect(
+                slot.cropLeft, slot.cropTop,
+                slot.cropLeft + slot.visibleWidth, slot.cropTop + slot.visibleHeight
+            )
             // Where the document's own page actually is. For an ordinary page that is the page;
             // for a canvas that has grown it is the part the raster covers, and everything
             // outside it is paper this view draws itself.
@@ -3075,6 +3098,7 @@ class DrawingView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if(event.actionMasked==MotionEvent.ACTION_DOWN || event.actionMasked==MotionEvent.ACTION_MOVE)com.inkslate.core.RenderGate.touch(1800)
         val action = event.actionMasked
 
         if (action == MotionEvent.ACTION_DOWN) { stopFling(); clearHighlight() }

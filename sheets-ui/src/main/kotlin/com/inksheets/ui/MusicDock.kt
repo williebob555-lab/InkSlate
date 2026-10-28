@@ -24,34 +24,56 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope.() -> Unit) {
     val density=LocalDensity.current
+    val panels=remember(state){ReaderPanels.forState(state)}
+    LaunchedEffect(state.root,state.currentPath,state.version,state.readMusic,state.homeInFront,ScoreTools.checking) {
+        while(!state.homeInFront && state.readMusic && !ScoreTools.checking) {
+            if(state.platform.inForeground)Transcriber.background(state)
+            delay(2000)
+        }
+        Transcriber.pauseBackground(state,true)
+    }
+    LaunchedEffect(state.metronomeOpen,state.tunerOpen,state.audioOpen,state.companionOpen,state.scorePanelOpen,state.readMusicOpen,state.groupMessageOpen) {
+        if(!state.homeInFront && !ScoreTools.checking) when {
+            state.metronomeOpen -> state.expandMusicCategory(ShelfWidget.TIMING)
+            state.tunerOpen -> state.expandMusicCategory(ShelfWidget.TIMING,"tuner")
+            state.audioOpen -> state.expandMusicCategory(ShelfWidget.RECORDING)
+            state.companionOpen -> state.expandMusicCategory(ShelfWidget.DEVICES)
+            state.scorePanelOpen -> state.expandMusicCategory(ShelfWidget.SCORE)
+            state.readMusicOpen -> state.expandMusicCategory(ShelfWidget.SCORE,"reading")
+            state.groupMessageOpen -> state.expandMusicCategory(ShelfWidget.SESSION,"message")
+        }
+    }
     var bottom by remember { mutableStateOf(0f) }
     val active=Recording.session || SelfRecorder.recording || SharedMetronome.running || Listener.active || ScoreTools.barNow()!=null || Click.counting>0 || Transcriber.busy!=null
     val issue=Recording.issue!=null && Recording.issue?.root==state.root?.absolutePath
     val expanded=!state.stripCollapsed && !state.homeInFront
-    val visible=(expanded || active || issue || Recording.loading || ReaderPanels.open) && !state.homeInFront && !ScoreTools.checking
+    val visible=(expanded || active || issue || Recording.loading || panels.open || state.expandedMusicCategory!=null) && !state.homeInFront && !ScoreTools.checking
     var controllers by remember { mutableStateOf(false) }
     var goTo by remember { mutableStateOf(false) }
     var position by remember { mutableStateOf(0L) }
     LaunchedEffect(Recording.session) { while(Recording.session) { position=Recording.player?.positionMs ?:0;delay(100) } }
     DisposableEffect(state) { onDispose {
+        Transcriber.stopBackground(state)
+        panels.base=0f
         state.shelfHeight=0f;Overlays.bottomOut=0.dp;Overlays.studioOut=0.dp
         state.platform.setMusicShelfHeight(0f);state.platform.setStudioRailWidth(0f);state.platform.setStudioRailSide(false);Overlays.studioOnRight=false
     } }
     BoxWithConstraints(Modifier.matchParentSize()) {
         val viewportWidth=maxWidth
+        val viewportHeight=maxHeight
         val annotation=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
         val essentials=annotation && maxHeight<340.dp
         // A wide floating editor gets the rail's space temporarily on a small display.
         // Keep page/transport controls below it and restore the chosen widgets on close.
         val panelNeedsSpace=Overlays.wanted?.let {it+252.dp>maxWidth}==true
-        val widgets=if(expanded && !issue && !essentials && !panelNeedsSpace && !ReaderPanels.open && !SelfRecorder.recording)state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }else emptyList()
+        val widgets=if(expanded && state.expandedMusicCategory==null && !issue && !essentials && !panelNeedsSpace && !panels.open && !SelfRecorder.recording)state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }else emptyList()
         val widgetHeight=if(maxHeight<440.dp || (active && maxHeight<700.dp))116.dp else 132.dp
         val layout=if(widgets.isEmpty())MusicDockView.SHELF else chooseMusicDock(state.shelf.view,maxWidth.value,maxHeight.value,state.pageAspect,widgetHeight.value)
         val rail=visible && layout==MusicDockView.STUDIO
         val railRight=state.shelf.railSide==StudioRailSide.RIGHT
-        LaunchedEffect(visible,bottom,rail,railRight,ReaderPanels.height) {
-            ReaderPanels.base=bottom
-            val height=if(visible)bottom+ReaderPanels.height else 0f
+        LaunchedEffect(visible,bottom,rail,railRight,panels.height) {
+            panels.base=bottom
+            val height=if(visible)bottom+panels.height else 0f
             state.shelfHeight=height;Overlays.bottomOut=height.dp
             state.platform.setMusicShelfHeight(height)
             Overlays.studioOut=if(rail)236.dp else 0.dp
@@ -75,12 +97,17 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
             .onSizeChanged { bottom=with(density){it.height.toDp().value} }) {
             Column {
                 PlaybackProblem(state)
+                if(state.expandedMusicCategory!=null) {
+                    val footerHeight=if(viewportWidth<600.dp)80.dp else 40.dp
+                    val categoryHeight=minOf(420.dp,maxOf(216.dp,viewportHeight*.44f),(viewportHeight-footerHeight-80.dp-(if(active)40.dp else 0.dp)).coerceAtLeast(128.dp))
+                    Box(Modifier.fillMaxWidth().height(categoryHeight)){MusicCategoryBar(state,position)}
+                }
                 if(Recording.loading) Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(15.dp),strokeWidth=2.dp)
                     Text("Opening recording…",Modifier.weight(1f).padding(start=8.dp),style=MaterialTheme.typography.labelSmall)
                     TextButton(onClick={Recording.end(state)}) {Text("Cancel playback")}
                 }
-                if(essentials && expanded) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically) {
+                if(essentials && expanded && state.expandedMusicCategory==null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically) {
                     DockAction(Icons.Default.MusicNote,"Music","Return to music workspace") {Perform.run(PerformAction.FULLSCREEN)}
                     DockAction(Icons.Default.Timer,"${SharedMetronome.bpm.toInt()}","Metronome settings") {state.metronomeOpen=true}
                     DockAction(Icons.Default.PlayArrow,"Click","Start or pause metronome",active=SharedMetronome.running) {Click.toggle(state)}
@@ -112,7 +139,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
                         VerticalDivider(Modifier.height(widgetHeight).padding(vertical=8.dp),color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
                     }
                 }
-                if(expanded && !rail && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
+                if(expanded && !rail && state.expandedMusicCategory==null && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
                 if(active) MusicLiveStatus(state,position)
                 if(expanded) {
                     HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
@@ -126,7 +153,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
         if(!visible && !ScoreTools.checking && !state.homeInFront) IconButton(onClick={state.stripCollapsed=false},modifier=Modifier.align(Alignment.BottomEnd)) {Icon(Icons.Default.UnfoldMore,"Show buttons")}
     }
     if(state.arrangingShelf) DockWorkspaceEditor(state) {state.arrangingShelf=false}
-    if(state.scorePanelOpen && !ScoreTools.checking) ScoreToolsPanel(state) {state.scorePanelOpen=false}
+    if(state.scorePanelOpen && (state.homeInFront || ScoreTools.checking)) ScoreToolsPanel(state) {state.scorePanelOpen=false}
     if(controllers) SheetDialog("Pedals & watch",onDismiss={controllers=false},wide=true) {Column(Modifier.verticalScroll(rememberScrollState())) {ControllerSettings(state);WatchSettings(state)}}
     if(goTo) GoToBar(state) {goTo=false}
 }

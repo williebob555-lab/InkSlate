@@ -421,11 +421,58 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
     var colouringSong by remember { mutableStateOf<com.inksheets.core.Song?>(null) }
     val version = state.version
     val songs = remember(version) { library.songs.associateBy { it.id } }
+    val preferred = setlist.defaultInstrument
+    val instrumentName = preferred?.let { com.inksheets.core.Instruments.byId[it]?.name ?: it }
+    val decisionKey = setlist.id + ":" + preferred.orEmpty()
+    val alreadyPlaying = preferred == null || state.profile?.instruments.orEmpty().any {
+        com.inksheets.core.PartChoice.seat(it).first == preferred
+    }
+    var promptDismissed by remember(setlist.id, preferred) {
+        mutableStateOf(decisionKey in state.declinedSetlistInstruments)
+    }
+    var instrumentMenu by remember(setlist.id) { mutableStateOf(false) }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
             Text(setlist.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            Box {
+                TextButton(onClick = { instrumentMenu = true }) {
+                    Text(instrumentName ?: "Default instrument", maxLines = 1)
+                }
+                DropdownMenu(expanded = instrumentMenu, onDismissRequest = { instrumentMenu = false }) {
+                    DropdownMenuItem(text = { Text("No default instrument") }, onClick = {
+                        instrumentMenu = false
+                        state.change { editSetlist(setlist.id) { defaultInstrument = null } }
+                    })
+                    com.inksheets.core.Instruments.all.forEach { instrument ->
+                        DropdownMenuItem(text = { Text(instrument.name) }, onClick = {
+                            instrumentMenu = false
+                            state.change { editSetlist(setlist.id) { defaultInstrument = instrument.id } }
+                        })
+                    }
+                }
+                DropdownMenu(
+                    expanded = !alreadyPlaying && !promptDismissed && !instrumentMenu,
+                    onDismissRequest = {
+                        state.declinedSetlistInstruments.add(decisionKey)
+                        promptDismissed = true
+                    }
+                ) {
+                    DropdownMenuItem(text = { Text("Switch to $instrumentName") }, onClick = {
+                        promptDismissed = true
+                        val profile = state.profiles.firstOrNull { profile ->
+                            profile.instruments.firstOrNull()?.let { com.inksheets.core.PartChoice.seat(it).first } == preferred
+                        }
+                        if (profile != null) state.chooseProfile(profile.id)
+                        else preferred?.let { state.chooseOneOff(it) }
+                    })
+                    DropdownMenuItem(text = { Text("Keep current instrument") }, onClick = {
+                        state.declinedSetlistInstruments.add(decisionKey)
+                        promptDismissed = true
+                    })
+                }
+            }
             if (state.playing?.first == setlist.id) {
                 TextButton(onClick = { state.closeSetlist() }) {
                     Icon(Icons.Default.Close, null)

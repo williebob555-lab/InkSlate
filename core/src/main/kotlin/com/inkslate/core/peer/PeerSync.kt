@@ -37,6 +37,7 @@ object PeerSync {
                 append(it.page).append(':').append(it.label).append('|')
             }
             doc.bookmarksRemoved.keys.sorted().forEach { append('-').append(it).append('|') }
+            doc.pageCrops.toSortedMap().forEach { (page, crop) -> append("crop:").append(page).append(':').append(crop).append('|') }
             append('#').append(doc.canvas?.toString().orEmpty())
         }
         val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
@@ -94,6 +95,7 @@ object PeerSync {
             ours.docId, strokes, deletions,
             bookmarks = if (metaDiffers) ours.bookmarks else null,
             bookmarksRemoved = if (metaDiffers) ours.bookmarksRemoved else null,
+            pageCrops = if (metaDiffers) ours.pageCrops else null,
             canvas = if (metaDiffers) ours.canvas else null,
             layout = ours.layout
         )
@@ -117,6 +119,7 @@ object PeerSync {
             deleted = marks.deleted,
             bookmarks = marks.bookmarks.orEmpty(),
             bookmarksRemoved = marks.bookmarksRemoved.orEmpty(),
+            pageCrops = marks.pageCrops.orEmpty(),
             canvas = marks.canvas
         )
         return ours.mergeWith(incoming)
@@ -169,6 +172,9 @@ object PeerSync {
         if (!theirBookmarks.all { b -> ours.bookmarks.any { it.page == b.page } }) return false
         // A removal of a bookmark this copy still has is news; one of a bookmark it never had is not.
         if (other.bookmarksRemoved.keys.any { k -> ours.bookmarks.any { it.key == k } }) return false
+        if (other.pageCrops.any { (page, crop) ->
+            com.inkslate.core.PageCrop.newest(ours.pageCrops[page], crop) != ours.pageCrops[page]
+        }) return false
         val theirs = other.canvas ?: return true
         val mine = ours.canvas ?: return false
         return mine.mergeWith(theirs) == mine
@@ -185,7 +191,7 @@ object PeerSync {
             buried(at, mine[id] ?: Long.MIN_VALUE) || (ours.deleted[id] ?: -1L) < at
         }
         if (newMark || newDeletion) return true
-        if (marks.bookmarks == null && marks.bookmarksRemoved == null && marks.canvas == null) return false
+        if (marks.bookmarks == null && marks.bookmarksRemoved == null && marks.pageCrops == null && marks.canvas == null) return false
         return metaOf(applied(ours, marks)) != metaOf(ours)
     }
 }

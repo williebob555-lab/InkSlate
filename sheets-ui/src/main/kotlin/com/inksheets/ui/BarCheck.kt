@@ -75,7 +75,7 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
     ScoreTools.compact = short
     // Putting a bar right by hand (or its clef, key, time, count, number) wants the room: the panel
     // grows for it. A phone on its side gives it nearly all of the screen.
-    val handWork = ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering || m.bars > 1
+    val handWork = ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering || ScoreTools.splitting || m.bars > 1
     // As tall as what is in it needs - over the music if need be - so nothing in it has to be scrolled to.
     val panelHeight = if (room == Dp.Infinity) 900.dp else (room * 0.92f).coerceAtLeast(240.dp)
     Opened("Fix", if (short) 700.dp else 380.dp)
@@ -135,7 +135,8 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
                 val printed: @Composable () -> Unit = { picture(); Doubts(m, ScoreTools.carriedNote(state, m.number)) }
                 val work: @Composable () -> Unit = {
                     when {
-                        m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") } -> RestCount(state, m, short)
+                        ScoreTools.splitting -> SplitMeasures(state,m)
+                        ScoreTools.restCounting || m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") } -> RestCount(state, m, short)
                         ScoreTools.sigDraft != null -> SignatureRow(state, m)
                         ScoreTools.numbering -> BarNumber(state, m, short)
                         editing != null -> BarEditor(state, m, editing, paper, printInk, short, flat = flatEdit, tiny = tiny)
@@ -181,7 +182,7 @@ fun BoxScope.BarCheck(state: SheetsState, room: Dp = Dp.Infinity) {
 private fun FixFoot(state: SheetsState, m: Measure, short: Boolean) {
     // Putting a bar right by hand (or its clef, key, time, count, number): that editor's own
     // Cancel / Use buttons are the only ones - never a second row of look-alikes under them.
-    if (ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering || m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") }) return
+    if (ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering || ScoreTools.splitting || ScoreTools.restCounting || m.bars > 1 || m.doubts.any { it.startsWith("rest of how many") }) return
     val h = if (short) 40.dp else 46.dp
     val pad = PaddingValues(horizontal = 6.dp)
     val busy = ScoreTools.editing != null || ScoreTools.sigDraft != null || ScoreTools.numbering
@@ -203,6 +204,7 @@ private fun FixFoot(state: SheetsState, m: Measure, short: Boolean) {
         // on a phone one chip opening the list, so the readings above keep their room.
         val answers = listOf("Pitch", "Length", "Extra note", "Missing note", "Rests", "Grace note", "Clef, key, time", "Bar number", "Not one bar")
         fun choose(what: String) = when (what) {
+            "Rests" -> if(m.events.isNotEmpty() && m.events.all { it is Rest }) { ScoreTools.restCounting=true } else ScoreTools.narrow(state, if(ScoreTools.focus==what) null else what)
             "Clef, key, time" -> ScoreTools.sigDraft = if (ScoreTools.sigDraft != null) null else com.inksheets.core.omr.SigFix(m.clef, m.key.fifths, m.time.beats, m.time.beatType)
             "Bar number" -> ScoreTools.numbering = !ScoreTools.numbering
             "Not one bar" -> ScoreTools.notOneBar(state)
@@ -558,17 +560,17 @@ private fun SignatureRow(state: SheetsState, m: Measure) {
  */
 @Composable
 private fun RestCount(state: SheetsState, m: Measure, short: Boolean) {
-    var count by androidx.compose.runtime.remember(m.number) { androidx.compose.runtime.mutableIntStateOf(if (m.bars > 1) m.bars else 2) }
+    var count by androidx.compose.runtime.remember(m.number) { androidx.compose.runtime.mutableIntStateOf(m.bars.coerceAtLeast(1)) }
     val h = if (short) 40.dp else 48.dp
     Column(verticalArrangement = Arrangement.spacedBy(if (short) 6.dp else 10.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("A rest of how many bars? (the figure over it on the page)", style = if (short) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium)
+        Text("A whole-bar rest or a multi-bar rest? Set the number of silent bars printed here.", style = if (short) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            FilledTonalButton(onClick = { count = (count - 1).coerceAtLeast(2) }, modifier = Modifier.height(h)) { Text("−") }
+            FilledTonalButton(onClick = { count = (count - 1).coerceAtLeast(1) }, modifier = Modifier.height(h)) { Text("−") }
             Text("$count bars", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
             FilledTonalButton(onClick = { count = (count + 1).coerceAtMost(999) }, modifier = Modifier.height(h)) { Text("+") }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-            for (d in listOf(-10, 10)) OutlinedButton(onClick = { count = (count + d).coerceIn(2, 999) }, modifier = Modifier.weight(1f).height(h)) { Text(if (d < 0) "−10" else "+10", maxLines = 1) }
+            for (d in listOf(-10, 10)) OutlinedButton(onClick = { count = (count + d).coerceIn(1, 999) }, modifier = Modifier.weight(1f).height(h)) { Text(if (d < 0) "−10" else "+10", maxLines = 1) }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             val pad = PaddingValues(horizontal = if (short) 4.dp else 12.dp)
@@ -576,6 +578,54 @@ private fun RestCount(state: SheetsState, m: Measure, short: Boolean) {
             OutlinedButton(onClick = { ScoreTools.skip(state) }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Skip", style = words, maxLines = 1) }
             OutlinedButton(onClick = { ScoreTools.endCheck() }, contentPadding = pad, modifier = Modifier.weight(1f).height(h)) { Text("Done", style = words, maxLines = 1) }
             Button(onClick = { ScoreTools.setRestCount(state, m.number, count) }, contentPadding = pad, modifier = Modifier.weight(1.3f).height(h)) { Text("Use $count", style = words, maxLines = 1) }
+        }
+    }
+}
+
+/** Tap the actual source print to place a missed barline; slider handles refine each boundary. */
+@Composable
+private fun SplitMeasures(state: SheetsState,m: Measure) {
+    val preview=ScoreTools.previewSplit(state)
+    val picture=ScoreTools.barPicture
+    val color=MaterialTheme.colorScheme.primary
+    Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+        Text("Place each missing barline. Tap a boundary again to remove it; use its slider to move it.",style=MaterialTheme.typography.bodySmall)
+        if(picture!=null) Box(Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(8.dp)).background(Color.White)) {
+            Image(picture,"Place missing barlines on the printed music",contentScale=ContentScale.Fit,modifier=Modifier.fillMaxSize())
+            val sourceLeft=maxOf(0,(m.box.left-m.space*3).toInt())
+            Canvas(Modifier.fillMaxSize().pointerInput(picture,m.number) {
+                detectTapGestures { at ->
+                    val scale=minOf(size.width.toFloat()/picture.width,size.height.toFloat()/picture.height)
+                    val offset=(size.width-picture.width*scale)/2
+                    val x=sourceLeft+(at.x-offset)/scale
+                    if(x>m.box.left+1 && x<m.box.right-1) ScoreTools.toggleSplitBoundary(x)
+                }
+            }) {
+                val scale=minOf(size.width/picture.width,size.height/picture.height)
+                val offset=(size.width-picture.width*scale)/2
+                ScoreTools.splitCuts.forEach { x ->
+                    val dx=offset+(x-sourceLeft)*scale
+                    drawLine(color,Offset(dx,0f),Offset(dx,size.height),3.dp.toPx())
+                }
+            }
+        }
+        ScoreTools.splitCuts.forEachIndexed { index,x ->
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Text("Line ${index+1}",style=MaterialTheme.typography.labelSmall)
+                androidx.compose.material3.Slider(value=x,onValueChange={ value ->
+                    ScoreTools.splitCuts=ScoreTools.splitCuts.toMutableList().also { it[index]=value }.sorted()
+                },valueRange=(m.box.left+2f)..(m.box.right-2f),modifier=Modifier.weight(1f))
+                TextButton(onClick={ScoreTools.splitCuts=ScoreTools.splitCuts.filterIndexed { i,_ -> i!=index }}) {Text("Remove")}
+            }
+        }
+        TextButton(onClick={ScoreTools.toggleSplitBoundary(m.box.left+m.box.width*.5f)}) {Text("Add a barline")}
+        Text("Preview: ${preview.size} bars",style=MaterialTheme.typography.titleSmall)
+        preview.forEach { bar ->
+            Text("Bar ${bar.number}: ${bar.events.count { it is Note }} notes, ${bar.events.count { it is Rest }} rests · ${bar.quarters} / ${bar.time.quarters} beats",style=MaterialTheme.typography.bodySmall)
+        }
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick={ScoreTools.cancelSplit()},modifier=Modifier.weight(1f)) {Text("Cancel")}
+            Button(onClick={ScoreTools.applySplit(state)},enabled=preview.size>1,modifier=Modifier.weight(1f)) {Text("Use ${preview.size} bars")}
         }
     }
 }

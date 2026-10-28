@@ -104,7 +104,7 @@ class MusicStripClickTest {
             }
             tap("All score tools")
             shot("music-open")
-            assertTrue("All score tools opens the directory - ${story.joinToString("; ")}", sheets().scorePanelOpen && ScoreTools.open)
+            assertTrue("All score tools opens the directory - ${story.joinToString("; ")}", sheets().expandedMusicCategory == com.inksheets.ui.ShelfWidget.SCORE && ScoreTools.open)
             watch.dispose()
             val sawReading = java.util.concurrent.atomic.AtomicBoolean(false)
             val sawProgress = java.util.concurrent.atomic.AtomicBoolean(false)

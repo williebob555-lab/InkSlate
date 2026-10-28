@@ -19,6 +19,13 @@ import java.io.File
 class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     internal val shelf = MusicShelfPreferences(platform)
+    internal var expandedMusicCategory by mutableStateOf<ShelfWidget?>(null)
+    internal var musicCategoryPage by mutableStateOf<String?>(null)
+    internal fun expandMusicCategory(category:ShelfWidget,page:String?=null) {
+        expandedMusicCategory=category;musicCategoryPage=page;stripCollapsed=false
+        audioOpen=false;metronomeOpen=false;tunerOpen=false;companionOpen=false
+        scorePanelOpen=false;readMusicOpen=false;groupMessageOpen=false
+    }
     var shelfHeight by mutableStateOf(0f)
     var arrangingShelf by mutableStateOf(false)
     var scorePanelOpen by mutableStateOf(false)
@@ -49,6 +56,9 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             version   // read, so screens showing these redraw when they change
             return library?.profiles() ?: Instruments.defaultProfiles
         }
+
+    /** Declined set instrument prompts stay dismissed while this library session is open. */
+    internal val declinedSetlistInstruments = mutableSetOf<String>()
 
     var profileId by mutableStateOf(platform.pref(K_PROFILE))
         private set
@@ -537,7 +547,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             if (!on) { Listener.stop(this); TempoFollow.stop(this) }
         }
 
-    private var readMusicState by mutableStateOf(platform.pref(K_READ_MUSIC) == "true")
+    private var readMusicState by mutableStateOf(platform.pref(K_READ_MUSIC) != "false")
 
     /** Experimental: reading a part's notes off its pages - checked, redrawn, exported as MIDI, and turning pages by them. */
     var readMusic: Boolean

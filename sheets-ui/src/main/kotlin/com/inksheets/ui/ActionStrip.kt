@@ -49,6 +49,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Close
@@ -112,7 +113,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 }
 
 @Composable private fun BoxScope.ReaderActions(state: SheetsState) {
-    if(state.groupMessageOpen) SendNoteDialog(state){state.groupMessageOpen=false}
+    if(state.groupMessageOpen && (state.homeInFront || ScoreTools.checking)) SendNoteDialog(state){state.groupMessageOpen=false}
     // The app's, not this page's: a tap on the middle of the page opens and closes it too.
     val collapsed = state.stripCollapsed
     var menu by remember { mutableStateOf(false) }
@@ -381,12 +382,12 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.pickingOneOff) OneOffInstrumentDialog(state)
     ReminderDialogs(state)
     if (!state.homeInFront) state.notesFor?.let { song -> NotesDialog(state, song, onClose = { state.notesFor = null }) }
-    if (state.readMusicOpen) ReadMusicPanel(state, onClose = { state.readMusicOpen = false })
-    if (state.tunerOpen) TunerDialog(state, onClose = { state.tunerOpen = false })
-    if (state.metronomeOpen) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
-    if (state.companionOpen) CompanionDialog(state, onClose = { state.companionOpen = false })
+    if (state.readMusicOpen && (state.homeInFront || ScoreTools.checking)) ReadMusicPanel(state, onClose = { state.readMusicOpen = false })
+    if (state.tunerOpen && (state.homeInFront || ScoreTools.checking)) TunerDialog(state, onClose = { state.tunerOpen = false })
+    if (state.metronomeOpen && (state.homeInFront || ScoreTools.checking)) MetronomeDialog(state, onClose = { state.metronomeOpen = false })
+    if (state.companionOpen && (state.homeInFront || ScoreTools.checking)) CompanionDialog(state, onClose = { state.companionOpen = false })
     val song = state.current
-    if (state.audioOpen && song != null) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
+    if (state.audioOpen && song != null && (state.homeInFront || ScoreTools.checking)) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
     // The music tools' strip, down the other side, in its own lane.
     if (!state.homeInFront) {
         if(ScoreTools.checking) Box(Modifier.matchParentSize()) { MusicStrip(state) }
@@ -402,8 +403,8 @@ private fun ReaderFooter(state:SheetsState) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val narrow=maxWidth<600.dp
         val toolsOut=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
-        @Composable fun Mini(icon:ImageVector,label:String,description:String,active:Boolean=false,action:()->Unit) {
-            Column(Modifier.width(38.dp).height(40.dp).clip(RoundedCornerShape(7.dp))
+        @Composable fun Mini(icon:ImageVector,label:String,description:String,active:Boolean=false,width:androidx.compose.ui.unit.Dp=38.dp,action:()->Unit) {
+            Column(Modifier.width(width).height(40.dp).clip(RoundedCornerShape(7.dp))
                 .background(if(active)MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
                 .clickable(onClick=action),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
                 Icon(icon,description,Modifier.size(17.dp))
@@ -413,18 +414,18 @@ private fun ReaderFooter(state:SheetsState) {
         val annotations:@Composable RowScope.()->Unit={
             if(!toolsOut) {
                 Mini(Icons.Default.Edit,"Pen","Pen",Perform.on(PerformAction.PEN)){Perform.run(PerformAction.PEN)}
-                Mini(Icons.Default.Highlight,"Mark","Highlighter",Perform.on(PerformAction.HIGHLIGHTER)){Perform.run(PerformAction.HIGHLIGHTER)}
                 Mini(Icons.Default.CleaningServices,"Erase","Eraser",Perform.on(PerformAction.ERASER)){Perform.run(PerformAction.ERASER)}
                 Mini(Icons.AutoMirrored.Filled.Undo,"Undo","Undo"){Perform.run(PerformAction.UNDO)}
+                Mini(Icons.AutoMirrored.Filled.Redo,"Redo","Redo"){Perform.run(PerformAction.REDO)}
             }
             Mini(if(toolsOut)Icons.Default.Close else Icons.Default.Construction,if(toolsOut)"Hide"else"Tools",if(toolsOut)"Hide annotation tools"else"All tools",toolsOut){Perform.run(PerformAction.FULLSCREEN)}
-            Mini(Icons.Default.Description,"Pages","Manage file pages"){Perform.openPages?.invoke()}
             Mini(Icons.Default.Bookmark,"Excerpt","Bookmark excerpt"){excerpt=true}
+            Mini(Icons.Default.Timer,"Metronome","Metronome",SharedMetronome.running,width=62.dp){state.metronomeOpen=true}
         }
         val navigation:@Composable RowScope.()->Unit={
             IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")}
             val (page,count)=state.pageShown
-            Column(Modifier.widthIn(min=56.dp,max=150.dp),horizontalAlignment=Alignment.CenterHorizontally) {
+            Column(Modifier.widthIn(min=56.dp,max=150.dp).clickable {Perform.openPages?.invoke()},horizontalAlignment=Alignment.CenterHorizontally) {
                 Text(state.edgeNotice ?: "${page+1} / $count",style=MaterialTheme.typography.labelLarge,maxLines=1)
                 if(state.readMusic) {
                     val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
@@ -448,7 +449,7 @@ private fun ReaderFooter(state:SheetsState) {
         @Composable fun RowScope.OutsideControls() {
             Box {
                 Mini(Icons.Default.MoreVert,"More","More music actions",more){more=true}
-                StripMenu(state,more,listOf(PerformAction.HALF_PAGE_BACK,PerformAction.HALF_PAGE_FORWARD,PerformAction.FIRST_PAGE,PerformAction.LAST_PAGE,PerformAction.REDO),
+                StripMenu(state,more,listOf(PerformAction.HALF_PAGE_BACK,PerformAction.HALF_PAGE_FORWARD,PerformAction.FIRST_PAGE,PerformAction.LAST_PAGE),
                     {more=false},{state.arrangingShelf=true},{state.partPicker=true},fromDock=true)
             }
             Mini(Icons.Default.UnfoldLess,"Fold","Hide buttons"){state.stripCollapsed=true;Perform.recentre?.invoke()}
@@ -457,10 +458,12 @@ private fun ReaderFooter(state:SheetsState) {
         }
         if(narrow) Column(Modifier.fillMaxWidth()) {
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),content=annotations)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),content=annotations)
+            }
+            Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,content=navigation)
                 OutsideControls()
             }
-            Row(Modifier.fillMaxWidth().heightIn(min=36.dp).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.Center,content=navigation)
         } else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
             Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),content=annotations)
             Row(verticalAlignment=Alignment.CenterVertically,content=navigation)
@@ -546,7 +549,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformA
         if (overflow.isNotEmpty()) HorizontalDivider()
         // Only what is not on the strip already: one way to each thing.
         val onStrip = if(fromDock) emptyList() else state.strip - overflow.toSet()
-        if (PerformAction.SWITCH_PART !in onStrip) state.current?.let { _ ->
+        if (!fromDock && PerformAction.SWITCH_PART !in onStrip) state.current?.let { _ ->
             val part = state.partShown()?.let { partName(it) }
             DropdownMenuItem(
                 text = { Text("Switch part" + (part?.let { " (now $it)" } ?: "") + "...") },
@@ -559,7 +562,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformA
             leadingIcon = { Icon(Icons.Default.CenterFocusStrong, null) },
             onClick = { onDismiss(); Perform.recentre?.invoke() }
         )
-        DropdownMenuItem(
+        if(!fromDock) DropdownMenuItem(
             text = { Text("Arrange music shelf...") },
             leadingIcon = { Icon(Icons.Default.Tune, null) },
             onClick = { onDismiss(); state.arrangingShelf = true }
@@ -591,20 +594,20 @@ private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformA
                 onClick = { onDismiss(); Perform.run(PerformAction.PREVIOUS_SONG) }
             )
         }
-        if (PerformAction.TUNER !in onStrip) DropdownMenuItem(
+        if (!fromDock && PerformAction.TUNER !in onStrip) DropdownMenuItem(
             text = { Text("Tuner") },
             leadingIcon = { Icon(Icons.Default.GraphicEq, null) },
             onClick = { onDismiss(); Perform.run(PerformAction.TUNER) }
         )
         HorizontalDivider()
-        if (PerformAction.RECORDINGS !in onStrip) state.current?.let { song ->
+        if (!fromDock && PerformAction.RECORDINGS !in onStrip) state.current?.let { song ->
             DropdownMenuItem(
                 text = { Text("Recordings...") },
                 leadingIcon = { Icon(Icons.Default.PlayCircle, null) },
                 onClick = { onDismiss(); state.audioOpen = true }
             )
         }
-        if (PerformAction.PLAY_TOGETHER !in onStrip) DropdownMenuItem(
+        if (!fromDock && PerformAction.PLAY_TOGETHER !in onStrip) DropdownMenuItem(
             text = { Text("Play together (lead or follow)...") },
             leadingIcon = { Icon(Icons.Default.Devices, null) },
             onClick = { onDismiss(); state.companionOpen = true }
@@ -623,7 +626,7 @@ private fun StripMenu(state: SheetsState, open: Boolean, overflow: List<PerformA
             )
         }
         // Experimental (Settings): the notes read off the page - checked, redrawn, played as MIDI.
-        if (state.readMusic) state.currentPath?.let { path ->
+        if (!fromDock && state.readMusic) state.currentPath?.let { path ->
             DropdownMenuItem(
                 text = { Text("Read the music (experimental)...") },
                 leadingIcon = { Icon(Icons.Default.MusicNote, null) },

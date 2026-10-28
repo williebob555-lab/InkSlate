@@ -489,6 +489,8 @@ class Synth(val sampleRate: Int) {
     /** Where the music is: samples played since the start. */
     @Volatile var position: Long = 0L
         private set
+    /** Score clicks can be enabled/disabled while notes continue uninterrupted. */
+    @Volatile var clickEnabled: Boolean = true
 
     @Synchronized
     fun add(tones: List<Tone>) {
@@ -831,6 +833,7 @@ class Synth(val sampleRate: Int) {
     /** What a voice's output is multiplied by at sample [s]: the note's envelope, its loudness, its accent. */
     private fun gainAt(v: Voice, s: Long, stop: Long, relLen: Double, last: Boolean, sr: Double, feel: Feel.Setting, dipTime: Double): Double {
         val tone = v.tone
+        if(tone.patch===CLICK && !clickEnabled)return 0.0
         val p = tone.patch
         val accent = tone.accent.toDouble()
         val t = (s - v.segStart).toDouble()
@@ -1069,12 +1072,12 @@ class ScorePlayer(
 
     private val bars = order ?: score.measures.filter { it.number + it.bars - 1 >= from && it.number <= to }
 
-    init { schedule(0L) }
+    init { synth.clickEnabled=click;schedule(0L) }
 
     /** One pass through the bars, from sample [at]: played as a player would ([Performance]). */
     private fun schedule(at: Long) {
         passStart = at
-        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at, drums, click)
+        val played = Performance.play(bars, bpm, synth.sampleRate, transpose, patch, at, drums, true)
         starts = played.barStarts; numbers = played.barNumbers
         passLength = played.length
         synth.add(played.tones)
@@ -1191,7 +1194,8 @@ class EnsemblePlayer(
         }
         // Your own part as well, where wanted - at the loudness asked for.
         guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose, v.patch, 0L, base * g, v.drums) }
-        if (click) tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
+        synth.clickEnabled=click
+        tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
         starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }
         this.numbers = numbers.toIntArray()
         length = (map.seconds(lead.totalQ) * synth.sampleRate).toLong()

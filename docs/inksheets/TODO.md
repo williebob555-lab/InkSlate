@@ -2,7 +2,23 @@
 
 ## Current follow-up — 2026-10-28
 
-User requires continuous implementation and a tested GitHub build, not status-only turns. Trumpet timbre polishing is explicitly deprioritized. Retain the dark option; the real tenor sax prototype was accepted. Full suite and Android/watch packaging are in progress; latest published build remains test.300 until the next release is verified.
+### Latest user scope — full category bars, playback editing and automatic reading
+
+Implement all of these while preserving annotation/Fix features; test small-screen controls rather than accepting slivers of content:
+
+- [x] Music category submenus replace the compact shelf/Studio widgets with one expanded category bar in the same style. Use always-available category tabs in all orientations, with an explicit return to compact categories. Remove redundant three-dot category menus and the Score Tools duplicate. Avoid separate category popups.
+- [x] Expanded Recording category: higher-resolution real waveform, tap to seek/start, draggable loop range with independently draggable left/right ends (Ableton-style interaction); preserve existing playback controls.
+- [x] Read defaults to the whole piece. Background single-worker queue prioritizes other parts of the current piece, then unread library music while viewing. Pause/yield around writing/playback and preserve corrections. Idle deeper passes improve doubtful measures without undoing manual fixes.
+- [x] Fix can split incorrectly merged measures and correct multi-measure-rest counts, preserving full read/playback coverage.
+- [x] Metronome beats use decrement/increment rather than2/3/4/6chips; show a proper triplet subdivision glyph. Allow metronome off during score playback.
+- [x] Footer: labelled Metronome beside Excerpt; page X/X opens Pages; remove quick Highlight and add Redo. Audit More and other menus to eliminate duplicate actions while retaining specialist access.
+- [x] Pages supports page cropping, preserving annotations and reversibility/clear preview.
+- [x] Pair recordings to excerpt bookmarks/page ranges within methodbooks, rather than only the whole song/book; retain whole-piece pairing.
+- [x] Finish prior Mask notification and drawer owner/Back/minimum-form-height fixes, including small-screen/keyboard cases.
+
+Latest scope is implemented in the 2026-10-28 test candidate. Combined regression and publication verification are in progress; see review/TEST-CANDIDATE-20261028.md. Setlist default instruments and removal of redundant PDF tab icons are also included.
+
+User requires continuous implementation and tested GitHub builds, not status-only turns. Trumpet timbre polishing is explicitly deprioritized. Retain the dark option; the real tenor sax prototype was accepted. **Test.302 is published and verified** from `c73d559`, with matching APK/MSI/RPM/watch assets. Full local suite:1,105passed,78gated/skipped,zero failures; GitHub run40689166315alljobs passed.
 
 - [x] Viewer editors use reserved extended bars; recording drawer closes when capture starts, leaving live stop/status controls.
 - [x] Right/left Studio preference; single-row footer from 600dp; original Fix and full annotation palette retained.
@@ -11,7 +27,9 @@ User requires continuous implementation and a tested GitHub build, not status-on
 - [x] Direct lead/follow shortcuts outside Studio scrolling; keep preferred message presets directly accessible.
 - [x] Separate phrase slurs from ties; partial chord ties retain untied attacks. Accent emphasis settles into the phrase; staccato alone does not imply extra force.
 - [x] Resource-backed recorded defaults with bounded decoding cache, user sample overrides, long sustain loops and source-layer level balancing. Current pack covers trumpet/open+straight mute, trombone, clarinet and tenor sax. Other instruments retain synthesized fallback; euphonium/sax-family coverage remains incomplete.
-- [ ] Finish combined regression and inspect final layouts/crops; publish and verify matching APK/MSI/RPM/watch assets.
+- [x] Combined regression, final layouts/crops, matching APK/MSI/RPM/watch publication and verification: test.302.
+- [~] Continue next follow-up while test.302 is available: suppress redundant Mask notifications, scope drawer stacks to each window/state, preserve duplicate-title drawers, close the top drawer on Escape/Android Back and validate cramped text editing.
+- [~] Guard Chester's small cue notes/full-bar rests and preservation of cue ink after Clean; avoid changing recognition rules based on a classical-only diagnostic that the production reader already handles correctly.
 
 See `review/FOLLOWUP-20261028.md` for scope, evidence and known limits.
 

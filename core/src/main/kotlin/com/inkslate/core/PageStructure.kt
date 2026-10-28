@@ -173,6 +173,9 @@ object PageStructure {
             pages = pages,
             pageSizes = change.sizes.ifEmpty { doc.pageSizes },
             bookmarks = bookmarks,
+            pageCrops = change.pages.mapIndexedNotNull { index, page ->
+                doc.pageCrops[page.source.toString()]?.let { index.toString() to it.turned(page.turns) }
+            }.toMap(),
             deleted = deleted,
             layout = change.to,
             structureHistory = withChange(merged(doc.structureHistory, history), change),

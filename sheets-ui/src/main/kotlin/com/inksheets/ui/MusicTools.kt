@@ -39,6 +39,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import com.inksheets.core.Instruments
 import com.inksheets.core.Metronome
 import com.inksheets.core.Tuner
@@ -54,7 +56,7 @@ internal object SharedMetronome {
     var bpm by mutableStateOf(com.inksheets.core.Metronome.Settings().bpm)
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class,androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
     val out = state.platform.audioOut
@@ -79,7 +81,7 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
     FloatingPanel(title = "Metronome", onClose = onClose) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
             // The beat, big enough to catch from the corner of an eye over a loud band.
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 repeat(settings.beatsPerBar) { b ->
                     val lit = SharedMetronome.running && SharedMetronome.beat == b
                     val colour by animateColorAsState(
@@ -104,13 +106,18 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Beats", style = MaterialTheme.typography.labelMedium)
-                listOf(2, 3, 4, 6).forEach { n ->
-                    FilterChip(selected = settings.beatsPerBar == n, onClick = { use(settings.copy(beatsPerBar = n)) }, label = { Text("$n") })
-                }
+                TextButton(onClick={use(settings.copy(beatsPerBar=(settings.beatsPerBar-1).coerceAtLeast(1),accents=null))},enabled=settings.beatsPerBar>1,modifier=Modifier.semantics{contentDescription="Decrease beats per bar"}){Text("−")}
+                Text("${settings.beatsPerBar}",style=MaterialTheme.typography.titleMedium)
+                TextButton(onClick={use(settings.copy(beatsPerBar=(settings.beatsPerBar+1).coerceAtMost(32),accents=null))},enabled=settings.beatsPerBar<32,modifier=Modifier.semantics{contentDescription="Increase beats per bar"}){Text("+")}
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                 listOf(1 to "♩", 2 to "♫", 3 to "3", 4 to "♬").forEach { (n, label) ->
-                    FilterChip(selected = settings.subdivision == n, onClick = { use(settings.copy(subdivision = n)) }, label = { Text(label) })
+                    FilterChip(selected = settings.subdivision == n, onClick = { use(settings.copy(subdivision = n)) }, label = {
+                        if(n==3) Column(horizontalAlignment=Alignment.CenterHorizontally) {
+                            Text("3",fontSize=9.sp,lineHeight=10.sp)
+                            Text("♫♪",fontSize=15.sp,lineHeight=17.sp)
+                        }else Text(label)
+                    })
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -163,6 +170,8 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
             }
             SwitchRow("Click while recording yourself", Click.withRecording(state)) { Click.setWithRecording(state, it) }
             SwitchRow("Click with recordings, in time with them", Click.withPlayback(state)) { Click.setWithPlayback(state, it) }
+            var playbackClick by remember(state) { mutableStateOf(ScoreTools.playbackClick(state)) }
+            SwitchRow("Metronome during score playback", playbackClick) { playbackClick=it; ScoreTools.setPlaybackClick(state,it) }
             if (out == null) Text("No sound output on this device.", color = MaterialTheme.colorScheme.error)
         }
     }

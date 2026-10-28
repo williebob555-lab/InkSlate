@@ -44,6 +44,8 @@ data class InkDocument(
     @SerialName("deleted") val deleted: Map<String, Long> = emptyMap(),
     /** Highest counter seen per device, so id generation never regresses after a merge. */
     @SerialName("clocks") val clocks: Map<String, Long> = emptyMap(),
+    /** Per-page visible bounds; the PDF and annotation coordinates remain full size. */
+    @SerialName("pageCrops") val pageCrops: Map<String, PageCrop> = emptyMap(),
     /**
      * Reader bookmarks. Kept in the sidecar rather than locally so they travel with the document:
      * marking a chapter on the tablet should mean it is marked on the laptop too.
@@ -112,6 +114,14 @@ data class InkDocument(
          * its page. Adding one again after removing it makes a new one.
          */
         val key: String get() = "$createdUtc|$label"
+    }
+
+    fun withPageCrop(pages: List<Int>, crop: PageCrop?, at: Long = System.currentTimeMillis()): InkDocument {
+        require(crop == null || crop.valid)
+        val updates = pages.filter { it in 0 until source.pageCount }.associate { page ->
+            page.toString() to (crop ?: PageCrop()).copy(updatedUtc = maxOf(at, (pageCrops[page.toString()]?.updatedUtc ?: 0L) + 1L))
+        }
+        return copy(pageCrops = pageCrops + updates, modifiedUtc = maxOf(modifiedUtc, updates.values.maxOfOrNull { it.updatedUtc } ?: at))
     }
 
     fun strokesOn(page: Int): List<Stroke> = pages[page.toString()].orEmpty()
@@ -321,6 +331,9 @@ data class InkDocument(
 
         return copy(
             pages = mergedPages,
+            pageCrops = (pageCrops.keys + other.pageCrops.keys).associateWith { key ->
+                PageCrop.newest(pageCrops[key], other.pageCrops[key])!!
+            },
             canvas = mergedCanvas,
             bookmarks = mergedBookmarks,
             bookmarksRemoved = removedBookmarks,

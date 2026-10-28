@@ -54,7 +54,7 @@ object SetlistBundle {
     )
 
     @Serializable
-    data class Manifest(val name: String, val songs: List<BundleSong>, val format: Int = 1)
+    data class Manifest(val name: String, val songs: List<BundleSong>, val format: Int = 1, val defaultInstrument: String? = null)
 
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
 
@@ -110,7 +110,7 @@ object SetlistBundle {
             zip.write(list.toByteArray())
             zip.closeEntry()
             zip.putNextEntry(ZipEntry("setlist.json"))
-            zip.write(json.encodeToString(Manifest.serializer(), Manifest(setlist.name, songs)).toByteArray())
+            zip.write(json.encodeToString(Manifest.serializer(), Manifest(setlist.name, songs, defaultInstrument = setlist.defaultInstrument)).toByteArray())
             zip.closeEntry()
             for ((rel, inZip) in stored) {
                 zip.putNextEntry(ZipEntry(inZip))
@@ -249,7 +249,10 @@ object SetlistBundle {
             // The same setlist shared again: brought up to date, not made twice.
             val setlist = library.setlists.firstOrNull { it.folderId == folder.id && it.name == manifest.name }
                 ?: library.addSetlist(manifest.name, folder.id)
-            library.editSetlist(setlist.id) { entries = ids.map { SetlistEntry(songId = it) } }
+            library.editSetlist(setlist.id) {
+                entries = ids.map { SetlistEntry(songId = it) }
+                defaultInstrument = manifest.defaultInstrument
+            }
             return Imported(library.setlist(setlist.id)!!, added, matched)
         }
     }

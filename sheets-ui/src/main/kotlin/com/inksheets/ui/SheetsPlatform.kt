@@ -13,6 +13,10 @@ import java.io.File
  */
 interface SheetsPlatform {
 
+    /** The active reader drawer consumes system Back before the score editor can leave. */
+    @androidx.compose.runtime.Composable
+    fun readerPanelBackHandler(enabled: Boolean, onBack: () -> Unit) {}
+
     /** A stable name for this device, for the library's per-device log. */
     val deviceId: String
 

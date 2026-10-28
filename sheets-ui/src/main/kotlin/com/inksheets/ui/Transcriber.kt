@@ -19,6 +19,151 @@ import java.io.File
  * part is read once and not every time it is wanted.
  */
 internal object Transcriber {
+    @Volatile private var backgroundState: SheetsState? = null
+    @Volatile private var backgroundPaused = false
+    @Volatile private var activityUntil = 0L
+    @Volatile private var deeperAfter = 0L
+    @Volatile private var backgroundToken = ""
+    @Volatile private var automaticPass = false
+    private val stoppedBackground = java.util.Collections.synchronizedSet(HashSet<String>())
+    private val queue = ReadingQueue<Score?> { backgroundAllowed() }
+    /** Background activity is separate from an explicitly requested reading and never opens UI. */
+    var backgroundStatus by mutableStateOf<String?>(null)
+        private set
+
+    private fun backgroundAllowed(): Boolean {
+        val s = backgroundState ?: return false
+        val now = System.currentTimeMillis()
+        val occupied = s.homeInFront || !s.platform.inForeground || com.inkslate.core.RenderGate.displayBusy() ||
+            Recording.playing || Recording.loading || SelfRecorder.recording || SharedMetronome.running || Listener.active ||
+            ScoreTools.playing != null || Click.counting > 0
+        if (occupied) deeperAfter = maxOf(deeperAfter, now + 15_000L)
+        return !backgroundPaused && s.readMusic && !occupied && now >= activityUntil
+    }
+
+    /** Annotation input can keep the reader out of the way without putting up any panel. */
+    fun activity(ms: Long = 1800) {
+        activityUntil = maxOf(activityUntil, System.currentTimeMillis() + ms.coerceAtLeast(0))
+        queue.wake()
+    }
+
+    fun pauseBackground(state: SheetsState, pause: Boolean) {
+        if (backgroundState === state) { backgroundPaused = pause; queue.wake() }
+    }
+
+    fun stopBackground(state: SheetsState) {
+        if (backgroundState !== state) return
+        backgroundPaused = true
+        queue.cancelWhere { it.startsWith("background:") }
+        backgroundStatus = null
+    }
+
+    /** Refresh from the viewer lifecycle: current piece first, then unread files in the library.
+     * Planning/checksums run on the reader worker, never during composition or on the UI thread.
+     */
+    fun background(state: SheetsState) {
+        val token = "${state.root?.absolutePath}|${state.current?.id}|${state.currentPath}|${state.version}"
+        if (backgroundState === state && backgroundToken == token) { backgroundPaused = false; queue.wake(); return }
+        backgroundState = state
+        backgroundToken = token
+        backgroundPaused = false
+        queue.cancelWhere { it.startsWith("background:") }
+        val root = state.root ?: return
+        val current = state.current
+        val songs = state.library?.songs.orEmpty().toList()
+        queue.submit("background:plan:$token", ReadingQueue.LIBRARY) { control ->
+            val ordered = buildList {
+                current?.let { song ->
+                    song.parts.sortedBy { part -> state.partFile(song, part)?.absolutePath != state.currentPath }
+                        .forEach { p -> state.partFile(song, p)?.let { add(it to ReadingQueue.CURRENT_PIECE) } }
+                }
+                songs.forEach { song -> song.parts.forEach { p -> state.partFile(song, p)?.let { add(it to ReadingQueue.LIBRARY) } } }
+            }.distinctBy { it.first.absolutePath }
+            for ((file, priority) in ordered) {
+                if (control.shouldYield()) return@submit null
+                if (!file.isFile || file.absolutePath in stoppedBackground || state.root != root) continue
+                val saved = cached(state, file)
+                val unread = saved == null || (0 until saved.pages).any { !saved.hasRead(it) } || olderPages(state, file).isNotEmpty()
+                if (unread) queue.submit("background:read:${file.absolutePath}", priority) { work ->
+                    if (state.root != root || file.absolutePath in stoppedBackground) return@submit null
+                    state.platform.onMain { backgroundStatus = "Reading ${file.nameWithoutExtension}" }
+                    automaticPass = true
+                    try {
+                        readNow(state, file, quiet = true, mayContinue = { !work.shouldYield() }, pageSaved = {
+                            state.platform.onMain {
+                                if (state.currentPath == file.absolutePath) { cached(state, file)?.let { shown = file to it }; ScoreTools.marksMoved() }
+                            }
+                        })
+                    } finally { automaticPass = false; state.platform.onMain { backgroundStatus = null } }
+                }
+                // Further looks are alternatives for unsure bars, never silent changes to a
+                // musician's corrections or to the base reading.
+                val completed = HashSet<Pair<Int, Int>>()
+                queue.submit("background:deeper:${file.absolutePath}", ReadingQueue.DEEPER) { work ->
+                    if (state.root != root || file.absolutePath in stoppedBackground) return@submit null
+                    val idleAt = maxOf(activityUntil + 15_000L, deeperAfter)
+                    if (System.currentTimeMillis() < idleAt) { work.defer(idleAt - System.currentTimeMillis()); return@submit null }
+                    automaticPass = true
+                    try { deepenNow(state, file, work, completed) } finally { automaticPass = false }
+                }
+            }
+            null
+        }
+    }
+
+    private fun deepenNow(state: SheetsState, file: File, control: ReadingQueue.Control,
+                          completed: MutableSet<Pair<Int, Int>>): Score? {
+        val score = cached(state, file) ?: return null
+        if (score.measures.none { !it.sure && it.bars == 1 }) return score
+        if (!keptEdit(state, file, "sheets_structure").isNullOrBlank()) return score
+        val dir = folder(state, file)
+        val net = Net.shipped ?: return score
+        val peek = state.platform.peek(file) ?: return score
+        peek.use {
+            for ((page, bars) in score.measures.filter { !it.sure && it.bars == 1 }.groupBy { it.page }) {
+                if (control.shouldYield()) return score
+                val stamp = pageFile(dir, page).lastModified().toString()
+                val mark = File(dir, "deeper-p${page + 1}")
+                if (runCatching { mark.readText() }.getOrNull() == stamp) continue
+                if (runCatching { peek.printed(page) }.getOrNull() != null) {
+                    runCatching { mark.writeText(stamp) }; continue
+                }
+                val (grey, ink) = pageInk(peek, page) ?: continue
+                val existing = runCatching { Scores.decode(looksFile(dir, page).readText())?.measures.orEmpty() }.getOrDefault(emptyList()).toMutableList()
+                for (bar in bars) {
+                    if (control.shouldYield()) return score
+                    if ((page to bar.number) in completed) continue
+                    // Fixes are stored separately from generated readings. Recheck at each bar:
+                    // a correction made while this pass was queued must never be reconsidered.
+                    val fixed = Scores.decodeFixes(keptEdit(state, file, "sheets_fixed").orEmpty()).keys
+                    if (bar.number in fixed) { completed += page to bar.number; continue }
+                    val alternatives = Recognizer().lookAgain(ink, grey, net, bar, deeper = true)
+                    val oldKeys = existing.map { Scores.encode(Score(listOf(it), score.pages)) }.toHashSet()
+                    alternatives.forEach { option ->
+                        if (oldKeys.add(Scores.encode(Score(listOf(option), score.pages)))) existing += option
+                    }
+                    // Retain alternatives for Fix's established rescorer rather than silently
+                    // replacing playable notes on a duration guess or changing a fixed bar.
+                    val value = Scores.encode(Score(existing, score.pages, score.pageWidths, listOf(page)))
+                    atomicText(looksFile(dir, page), value)
+                    completed += page to bar.number
+                }
+                runCatching { mark.writeText(stamp) }
+            }
+        }
+        return score
+    }
+
+    /** Cache replacement is atomic where supported, with the same-directory rename fallback. */
+    private fun atomicText(file: File, value: String) {
+        file.parentFile?.mkdirs()
+        val temporary = File(file.parentFile, file.name + ".tmp")
+        temporary.writeText(value)
+        runCatching { java.nio.file.Files.move(temporary.toPath(), file.toPath(),
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
+            .getOrElse { java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
+        if (file.name.startsWith("looks-")) synchronized(looksKnown) { looksKnown.keys.removeAll { it.startsWith(file.path + ":") } }
+    }
     /** What it is doing: "Reading page 2 of 4..." - null when idle. */
     var busy by mutableStateOf<String?>(null)
 
@@ -242,31 +387,44 @@ internal object Transcriber {
      */
     fun read(state: SheetsState, file: File, again: Boolean = false, pages: Set<Int>? = null, onDone: (Score?) -> Unit) {
         if (busy != null) return
-        if (again) {
-            val dir = folder(state, file)
-            if (pages == null) dir.listFiles().orEmpty().forEach { it.delete() } else pages.forEach { pageFile(dir, it).delete() }
-            synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
-        }
         busy = "Getting ready..."
         stopAsked = false
-        Thread({
-            // A reading gives way to everything else: the sound of the music most of all.
-            Thread.currentThread().priority = Thread.MIN_PRIORITY
-            val score = runCatching { readNow(state, file, pages) }
-                .onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
+        stoppedBackground.remove(file.absolutePath)
+        queue.submit("foreground:${file.absolutePath}", ReadingQueue.FOREGROUND) {
+            if (again) {
+                val dir = folder(state, file)
+                if (pages == null) dir.listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty().forEach { it.delete() }
+                else pages.forEach { pageFile(dir, it).delete() }
+                synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
+            }
+            readNow(state, file, pages).also {
+                if (stopAsked) {
+                    stoppedBackground.add(file.absolutePath)
+                    queue.cancelWhere { key -> key.startsWith("background:") && key.endsWith(file.absolutePath) }
+                }
+            }
+        }.whenComplete { score, error ->
+            if (error != null) state.platform.log("Reading ${file.name} failed: ${error.message}")
             state.platform.onMain {
                 busy = null
                 progress = null
                 if (score != null) shown = file to score
                 onDone(score)
             }
-        }, "transcribe").apply { isDaemon = true; start() }
+        }
     }
 
     /** Left in a part's readings while every page of it is being read: a read cut off carries on ([resume]). */
     init {
         // The reader's worker threads give way to the screen between pieces of work.
-        Workers.courtesy = { com.inkslate.core.RenderGate.pause() }
+        Workers.courtesy = {
+            com.inkslate.core.RenderGate.pause()
+            // Pause between neural-reader chunks as well as pages while writing or playing.
+            // An explicit request/cancellation may finish the current page to release its slot.
+            while (automaticPass && !backgroundAllowed() && !queue.hasRequestedWork() && !queue.activeCancelled()) {
+                try { Thread.sleep(30) } catch (_: InterruptedException) { Thread.currentThread().interrupt(); break }
+            }
+        }
     }
 
     private fun wholeMark(dir: File) = File(dir, "whole")
@@ -294,16 +452,22 @@ internal object Transcriber {
      * Read [file] whole, off the screen's thread, saying nothing on the screen - several at once
      * (the band's parts before the band plays). Kept like any reading.
      */
-    fun readQuietly(state: SheetsState, file: File): Score? =
-        runCatching { readNow(state, file, null, quiet = true) }.onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
+    fun readQuietly(state: SheetsState, file: File): Score? = runCatching {
+        if (queue.isWorkerThread()) readNow(state, file, null, quiet = true)
+        else queue.submit("quiet:${file.absolutePath}", ReadingQueue.REQUESTED_QUIET) { work ->
+            readNow(state, file, null, quiet = true, mayContinue = { !work.shouldYield() })
+        }.get()
+    }.onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
 
     private fun readNow(state: SheetsState, file: File, only: Set<Int>? = null,
                         /** Read beside others (the band's parts): no word of it on the screen - the caller says how far they all are. */
-                        quiet: Boolean = false): Score? {
+                        quiet: Boolean = false, mayContinue: () -> Boolean = { true }, pageSaved: () -> Unit = {}): Score? {
         val peek = state.platform.peek(file) ?: return null
         peek.use {
             val dir = folder(state, file)
-            if (only == null) runCatching { dir.mkdirs(); wholeMark(dir).writeText("") }
+            // Only explicit whole-part reads leave a foreground-resume marker. Automatic work
+            // resumes from its page cache without reopening a foreground progress flow later.
+            if (only == null && !quiet) runCatching { dir.mkdirs(); wholeMark(dir).writeText("") }
             // What was read before (here or elsewhere): a whole read carries on where it left off.
             val before = cached(state, file)
             // A whole read starts at the page in front (a long book is opened at the study being
@@ -329,6 +493,7 @@ internal object Transcriber {
             }
             try { for ((i, p) in todo.withIndex()) {
                 if (!quiet && stopAsked) { runCatching { wholeMark(dir).delete() }; break }
+                if (!mayContinue()) break
                 // Between pages the screen goes first: a page just turned to or opened is drawn before the next is read.
                 com.inkslate.core.RenderGate.pause()
                 if (!quiet) {
@@ -351,7 +516,7 @@ internal object Transcriber {
                 last = p
                 val pageStarted = System.currentTimeMillis()
                 val (grey, ink) = drawn(p) ?: continue
-                todo.getOrNull(i + 1)?.let { next ->
+                todo.getOrNull(i + 1)?.takeIf { !quiet }?.let { next ->
                     val rt = Runtime.getRuntime()
                     if (Workers.roomy && rt.maxMemory() - (rt.totalMemory() - rt.freeMemory()) > (256L shl 20)) {
                         val task = java.util.concurrent.FutureTask { pageInk(peek, next) }
@@ -379,7 +544,7 @@ internal object Transcriber {
                         Recognizer().lookAgainStaff(ink, grey, net, bars, first)
                     }.flatMap { it.values.flatten() }
                     dir.mkdirs()
-                    looksFile(dir, p).writeText(Scores.encode(Score(looked, peek.pageCount, List(peek.pageCount) { if (it == p) ink.width else 0 }, listOf(p))))
+                    atomicText(looksFile(dir, p), Scores.encode(Score(looked, peek.pageCount, List(peek.pageCount) { if (it == p) ink.width else 0 }, listOf(p))))
                 }.onFailure { state.platform.log("Looking again at page ${p + 1} of ${file.name} failed: ${it.message}") }
                 pageTimes += System.currentTimeMillis() - pageStarted
                 // Kept as soon as read: a reading stopped part way carries on from here, and the
@@ -387,16 +552,16 @@ internal object Transcriber {
                 runCatching {
                     dir.mkdirs()
                     val one = Score(reading.measures, peek.pageCount, List(peek.pageCount) { if (it == p) ink.width else 0 }, listOf(p))
-                    val tmp = File(dir, "p${p + 1}.json.tmp"); tmp.writeText(Scores.encode(one))
-                    val dest = pageFile(dir, p); dest.delete(); tmp.renameTo(dest)
+                    atomicText(pageFile(dir, p), Scores.encode(one))
                 }
                 synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
+                pageSaved()
             } } finally {
                 // The page ahead finished drawing before the file is closed under it.
                 ahead?.second?.let { runCatching { it.get() } }
             }
             val score = cached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
-            if (only == null) wholeMark(dir).delete()
+            if (only == null && (0 until peek.pageCount).all { score.hasRead(it) }) wholeMark(dir).delete()
             state.platform.log("Read ${file.name}${if (only != null) " pages ${todo.map { it + 1 }}" else ""}: ${measures.size} bars, ${measures.count { it.sure }} sure, in ${(System.currentTimeMillis() - t0) / 1000}s")
             return score
         }

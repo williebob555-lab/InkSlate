@@ -23,7 +23,8 @@ class RecordingAndStatusTest {
                 setContent {MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
                 waitForIdle()
                 runOnIdle {
-                    assertTrue(ReaderPanels.open)
+                    assertEquals(ShelfWidget.RECORDING,state.expandedMusicCategory)
+                    assertFalse(ReaderPanels.open)
                     assertTrue("Score must retain visible space",state.shelfHeight<240f)
                 }
                 onNodeWithText("Record yourself").performClick()
@@ -31,6 +32,7 @@ class RecordingAndStatusTest {
                 runOnIdle {
                     assertTrue(SelfRecorder.recording)
                     assertFalse(state.audioOpen)
+                    assertNull(state.expandedMusicCategory)
                     assertFalse(ReaderPanels.open)
                     assertTrue("Taking a recording leaves most of the score visible",state.shelfHeight<120f)
                 }

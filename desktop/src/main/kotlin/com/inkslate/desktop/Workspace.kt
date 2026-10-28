@@ -434,7 +434,7 @@ private fun DocumentTabChip(
             focused = focused,
             onClick = onSelect,
             label = tab.title ?: tab.file.name,
-            leading = { Icon(icon, null, modifier = Modifier.size(16.dp)) },
+            leading = { if(!AppFlavor.musicView) Icon(icon, null, modifier = Modifier.size(16.dp)) },
             trailing = {
                 if (twice) {
                     Icon(

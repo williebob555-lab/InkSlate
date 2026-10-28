@@ -30,6 +30,11 @@ class AndroidSheetsPlatform(
     private val openFile: (File) -> Unit
 ) : SheetsPlatform {
 
+    @androidx.compose.runtime.Composable
+    override fun readerPanelBackHandler(enabled: Boolean, onBack: () -> Unit) {
+        androidx.activity.compose.BackHandler(enabled = enabled, onBack = onBack)
+    }
+
     private val prefs = context.getSharedPreferences("inksheets", Context.MODE_PRIVATE)
 
     override val deviceId: String =

@@ -67,27 +67,29 @@ object CleanMasks {
     /** [pts] are cumulative x/y pairs in PDF page points; [pageScale] is page points / reading unit.
      * Use the ToolConfig captured at pointer-down so changing a preset cannot alter a live stroke.
      * An eraser restores original print under its round outline, even on a fully cleaned bar.
+     * Returns false for a throttled preview; callers owning their overlay version can notify once
+     * after advancing it by passing notify=false. Completed strokes always bypass throttling.
      */
     fun gesture(state: SheetsState, path: String, page: Int, pts: FloatArray, done: Boolean,
-                config: ToolConfig, pageScale: Float) {
+                config: ToolConfig, pageScale: Float, notify: Boolean = true): Boolean {
         val data = masks(state, path)
         if (page < 0 || !pageScale.isFinite() || pageScale <= 0f || pts.size < 2 ||
             pts.size % 2 != 0 || pts.any { !it.isFinite() }) {
             data.preview = null
-            Perform.marksChanged()
-            return
+            if (notify) Perform.marksChanged()
+            return true
         }
         val erase = config.tool == Tool.ERASER
         if(!done) {
             val now=System.nanoTime()
-            if(data.preview!=null && now-data.previewAt<16_000_000L)return
+            if(data.preview!=null && now-data.previewAt<16_000_000L)return false
             data.previewAt=now
         }
         val width = (if (erase) config.eraserRadius * 2f else config.strokeWidth) / pageScale
         if (!width.isFinite() || width <= 0f) {
             data.preview = null
-            Perform.marksChanged()
-            return
+            if (notify) Perform.marksChanged()
+            return true
         }
         val stroke = Stroke("clean", Kind.FREEHAND, 0, width,
             (pts.indices step 2).map { InkPoint(pts[it] / pageScale, pts[it + 1] / pageScale, width) },
@@ -100,7 +102,8 @@ object CleanMasks {
             data.preview = null
             save(state, path, data)
         } else data.preview = page to mask
-        Perform.marksChanged()
+        if (notify) Perform.marksChanged()
+        return true
     }
 
     /** Cancel a pointer stream without committing its last preview (e.g. document switched). */

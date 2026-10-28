@@ -49,11 +49,11 @@ internal fun DockAction(icon: ImageVector, label: String, description: String = 
 
 @Composable
 private fun WidgetHeading(widget: ShelfWidget, title: String, actionDescription: String, action: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(if(LocalDockDense.current)20.dp else 22.dp),verticalAlignment=Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().height(if(LocalDockDense.current)20.dp else 22.dp).semantics{contentDescription=actionDescription}.clickable(onClick=action),verticalAlignment=Alignment.CenterVertically) {
         Box(Modifier.width(3.dp).height(12.dp).background(widgetColor(widget),CircleShape))
         Text(title,Modifier.weight(1f).padding(start=6.dp),style=MaterialTheme.typography.labelMedium,
             fontWeight=FontWeight.SemiBold,color=widgetColor(widget),maxLines=1)
-        IconButton(onClick=action,modifier=Modifier.size(24.dp)) { Icon(Icons.Default.MoreHoriz,actionDescription,Modifier.size(17.dp)) }
+        Icon(Icons.Default.ChevronRight,null,Modifier.size(17.dp))
     }
 }
 
@@ -120,7 +120,7 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                 WidgetHeading(widget,"Page ${page+1} · ${if(read) "READ" else "NOT READ"}","All score tools") { ScoreTools.open=true;state.scorePanelOpen=true }
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(maxItemsInEachRow=3) {
-                    DockAction(Icons.Default.MusicNote,"Read","Read notes",enabled=Transcriber.busy==null &&state.currentPath!=null) { state.currentPath?.let { Transcriber.read(state,File(it),pages=setOf(page)){Perform.marksChanged()} } }
+                    DockAction(Icons.Default.MusicNote,"Read","Read whole piece",enabled=Transcriber.busy==null &&state.currentPath!=null) { state.currentPath?.let { Transcriber.read(state,File(it)){Perform.marksChanged()} } }
                     DockAction(Icons.Default.Spellcheck,"Review","Review recognized notes",enabled=read,active=ScoreTools.colours) { ScoreTools.open=true;ScoreTools.toggleCheck(state) }
                     DockAction(Icons.Default.AutoFixHigh,"Clean","Clean view",enabled=read,active=ScoreTools.cleanEnabled(state)) { ScoreTools.toggleClean(state) }
                     DockAction(Icons.Default.PlayArrow,"Play","Play notes",enabled=read,active=ScoreTools.playing!=null) { if(ScoreTools.playing!=null)ScoreTools.stop(state)else ScoreTools.play(state) }
@@ -128,7 +128,6 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                     DockAction(Icons.Default.Tag,"Bar","Go to bar",enabled=read,onClick=goToBar)
                     DockAction(Icons.Default.Brush,"Mask","Clean mask brush",enabled=read,active=ScoreTools.maskBrushEnabled) { ScoreTools.toggleMaskBrush(state) }
                     DockAction(Icons.Default.Repeat,"Loop","Loop selected bars",enabled=read,active=ScoreTools.loop) { ScoreTools.loop=!ScoreTools.loop }
-                    DockAction(Icons.Default.Tune,"Tools","All score tools",active=state.scorePanelOpen) {ScoreTools.open=true;state.scorePanelOpen=true}
                 }
             }
             ShelfWidget.DEVICES -> {

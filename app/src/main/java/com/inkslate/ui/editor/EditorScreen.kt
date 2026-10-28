@@ -932,6 +932,7 @@ fun EditorScreen(
         if (next === d.ink) return
         val canvasBefore = d.ink.canvas
         d.ink = next
+        host.views.forEach { it.view?.pageCrops = next.pageCrops }
         model.setStrokes(d.allStrokes())
         if (next.canvas != canvasBefore) host.views.forEach { it.view?.canvas = next.canvas }
         bookmarks = next.bookmarks
@@ -2279,6 +2280,7 @@ fun EditorScreen(
                         tools.applyTo(view)
                         view.rulerVisible = tools.rulerVisible && tools.rulerOwner === host
                         view.pageFilter = pageFilter
+                        view.pageCrops = doc?.ink?.pageCrops.orEmpty()
                     },
                     modifier = Modifier.fillMaxSize()
                 )
@@ -2582,6 +2584,12 @@ fun EditorScreen(
                     exportOpen = true
                 },
                 onDismiss = { pagesOpen = false },
+                pageCrops = d.ink.pageCrops,
+                onCrop = if (d.ink.canvas == null) { pages, crop ->
+                    syncPage()
+                    takeIn(d.ink.withPageCrop(pages, crop))
+                    host.views.forEach { it.view?.pageCrops = d.ink.pageCrops }
+                } else null,
                 extraActions = com.inkslate.AppFlavor.pagesActions?.let { actions ->
                     { pages, close -> actions(d.file.absolutePath, pages, close) }
                 },

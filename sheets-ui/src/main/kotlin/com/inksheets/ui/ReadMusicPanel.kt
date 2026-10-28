@@ -55,7 +55,7 @@ import kotlin.math.min
 @Composable
 internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
     val shown = Transcriber.shown
-    var all by remember { mutableStateOf(false) }
+    var all by remember { mutableStateOf(true) }
     var said by remember { mutableStateOf<String?>(null) }
     SheetDialog(title = "The music, read", onDismiss = onClose, wide = true, movable = true) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {

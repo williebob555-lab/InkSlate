@@ -1,5 +1,7 @@
 package com.inkslate.ui
 
+import com.inkslate.AppFlavor
+
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -469,7 +471,7 @@ private fun DocumentTabChip(
             onClick = onSelect,
             gestures = gestures,
             label = tab.title ?: tab.file.name,
-            leading = { Icon(icon, null, modifier = Modifier.size(16.dp)) },
+            leading = { if(!AppFlavor.musicView) Icon(icon, null, modifier = Modifier.size(16.dp)) },
             trailing = {
                 if (twice) {
                     Icon(

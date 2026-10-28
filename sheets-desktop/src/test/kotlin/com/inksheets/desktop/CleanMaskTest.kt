@@ -25,6 +25,56 @@ import com.inksheets.core.omr.Box
 class CleanMaskTest {
     @get:Rule val tmp = TemporaryFolder()
 
+    @Test fun `profile long live gestures commits and actual score overlay invalidations`() {
+        val folder = tmp.newFolder("long-gesture")
+        val state = SheetsState(Platform(folder))
+        val path = file(folder, "long.pdf")
+        state.currentPath = path; state.pageShown = 0 to 1
+        val score = Score(listOf(Measure(1,0,0,Box(20,40,780,700),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList())),1,listOf(800))
+        ScoreTools.install(state); ScoreTools.scoreSource = { if(it == path) score else null }
+        val rows = ArrayList<String>()
+        fun points(n:Int) = FloatArray(n*2) { j -> val i=j/2
+            if(j%2==0) 40f+(i%1000)*.65f else 80f+kotlin.math.sin(i*.025f)*60f+(i/1000)*100f }
+        try {
+            ScoreTools.open = true; ScoreTools.marks(path,0,800f,800f); ScoreTools.toggleMaskBrush(state)
+            for (brush in listOf(BrushType.BALLPOINT, BrushType.CALLIGRAPHY)) for(n in listOf(1000,4000)) {
+                Perform.musicBrush = ToolConfig(brush=brush,strokeWidth=12f)
+                val pts = points(n); val times=ArrayList<Double>()
+                repeat(3) {
+                    CleanMasks.cancel(state,path)
+                    val started=System.nanoTime();Perform.musicGesture!!.invoke(path,0,pts,false)
+                    times += (System.nanoTime()-started)/1_000_000.0
+                }
+                val commit=System.nanoTime();Perform.musicGesture!!.invoke(path,0,pts,true)
+                rows += "$brush $n points: preview median ${times.sorted()[1]} ms; durable commit ${(System.nanoTime()-commit)/1_000_000.0} ms; contours ${CleanMasks.getMask(state,path,0)!!.strokes.last().contours.size}"
+            }
+            Perform.musicBrush=ToolConfig(strokeWidth=12f)
+            var updates=0;var changedPreviews=0
+            val remove=Perform.onMarksChanged{updates++}
+            try {
+                var previous=CleanMasks.getMask(state,path,0)!!.strokes.last()
+                val began=System.nanoTime()
+                repeat(120) { i ->
+                    Perform.musicGesture!!.invoke(path,0,floatArrayOf(40f,40f,41f+i*.01f,41f),false)
+                    val current=CleanMasks.getMask(state,path,0)!!.strokes.last()
+                    if(current!==previous){changedPreviews++;previous=current}
+                }
+                rows += "120-event burst: ${updates} overlay invalidations for $changedPreviews changed previews; ${(System.nanoTime()-began)/1_000_000.0} ms"
+                assertEquals("Only previews with new geometry should invalidate the score overlay", changedPreviews, updates)
+                val beforeCommit=updates
+                Perform.musicGesture!!.invoke(path,0,floatArrayOf(40f,40f,75f,75f),true)
+                rows += "Final commit overlay invalidations: ${updates-beforeCommit}"
+                assertEquals("The final unthrottled sample must redraw exactly once", 1, updates-beforeCommit)
+            } finally {remove()}
+            val payload=Transcriber.keptEdit(state,File(path),"sheets_clean_masks").orEmpty()
+            rows += "Committed payload after four long strokes and one short stroke: ${payload.length} bytes"
+            File("build/mask-live-performance-${System.getProperty("inksheets.mask.profile", "current")}.txt").writeText(rows.joinToString("\n")+"\n")
+        } finally {
+            if(ScoreTools.maskBrushEnabled)ScoreTools.toggleMaskBrush(state)
+            ScoreTools.close(state);ScoreTools.scoreSource=null;Perform.musicBrush=ToolConfig()
+        }
+    }
+
     @Test fun `native mask path prefix cache matches cold rebuild while avoiding historical boolean work`() {
         val method = Class.forName("com.inkslate.desktop.DocumentCanvasKt").declaredMethods.single {
             it.name == "musicMaskPath" && it.parameterCount == 1
@@ -81,6 +131,29 @@ class CleanMaskTest {
     private fun file(folder: File, name: String) = File(folder, name).apply {
         writeText("%PDF-1.4\n$name\nstartxref\n0\n%%EOF")
     }.absolutePath
+
+    @Test fun `direct gesture notifications stay compatible and final tap commits without waiting for preview gate`() {
+        val folder=tmp.newFolder("tap-notifications")
+        val state=SheetsState(Platform(folder));val path=file(folder,"tap.pdf")
+        val config=ToolConfig(strokeWidth=12f)
+        var notifications=0
+        val remove=Perform.onMarksChanged{notifications++}
+        try {
+            assertTrue(CleanMasks.gesture(state,path,0,floatArrayOf(30f,40f),false,config,1f))
+            assertEquals(1,notifications)
+            assertTrue(CleanMasks.gesture(state,path,0,floatArrayOf(30f,40f),true,config,1f))
+            assertEquals(2,notifications)
+            val reloaded=SheetsState(Platform(folder))
+            assertEquals("Final one-point tap must be durable immediately",1,CleanMasks.getMask(reloaded,path,0)!!.strokes.size)
+            assertTrue(CleanMasks.getMask(state,path,0)!!.strokes.single().contours.isNotEmpty())
+            assertTrue(CleanMasks.gesture(state,path,0,floatArrayOf(60f,70f),false,config,1f,notify=false))
+            assertTrue(CleanMasks.gesture(state,path,0,floatArrayOf(60f,70f),true,config,1f,notify=false))
+            assertEquals("A version-owning caller requests its own one notification",2,notifications)
+            assertTrue(CleanMasks.undo(state,path));assertTrue(CleanMasks.undo(state,path))
+            assertFalse(CleanMasks.hasMask(state,path,0))
+            assertFalse(CleanMasks.canUndo(state,path))
+        } finally {remove()}
+    }
 
     @Test fun `preview replaces itself and one completed stroke is one undo step`() {
         val folder = tmp.newFolder()

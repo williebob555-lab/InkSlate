@@ -113,6 +113,7 @@ object PenInput {
 
     /** A pen reading: whether its tip is down, how hard, and which button is held. */
     internal fun pen(down: Boolean, pressure: Float?, button: Int) {
+        if(down)com.inkslate.core.RenderGate.touch(1800)
         device = Device.PEN
         penDown = down
         if (down) forgetContacts()
@@ -143,6 +144,7 @@ object PenInput {
      * two fingers are down, which is a program that has quietly stopped drawing.
      */
     internal fun mouse() {
+        com.inkslate.core.RenderGate.touch(1800)
         device = Device.MOUSE
         pressure = null
         penButton = 0
@@ -152,6 +154,7 @@ object PenInput {
 
     /** A finger down or moving at a point on the screen, in screen pixels. */
     internal fun finger(id: Int, x: Float, y: Float) {
+        com.inkslate.core.RenderGate.touch(1800)
         if (penDown) return
         device = Device.FINGER
         fingers[id] = floatArrayOf(x, y)
@@ -164,6 +167,7 @@ object PenInput {
 
     /** A promoted mouse message stamped as coming from touch: a finger, whatever else is known. */
     internal fun touchedSomewhere() {
+        com.inkslate.core.RenderGate.touch(1800)
         device = Device.FINGER
         pressure = null
         penButton = 0

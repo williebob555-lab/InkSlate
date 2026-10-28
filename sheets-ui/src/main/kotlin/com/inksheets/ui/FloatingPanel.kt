@@ -85,6 +85,10 @@ internal fun FloatingPanel(
     scroll: Boolean = true,
     content: @Composable () -> Unit
 ) {
+    if(LocalMusicCategoryContent.current!=null) {
+        InlineMusicPage(title,onClose,footer,scroll,content)
+        return
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val density = LocalDensity.current
         val availableHeight = (maxHeight - Overlays.bottomOut).coerceAtLeast(120.dp)

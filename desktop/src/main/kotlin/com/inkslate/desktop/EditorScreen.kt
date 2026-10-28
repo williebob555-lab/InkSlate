@@ -1110,12 +1110,13 @@ fun EditorScreen(
         }
         val extents = (0 until src.pageCount).map {
             val d = src.pageDim(it)
-            com.inkslate.core.PageExtent(d.width, d.height)
+            val crop = ink.pageCrops[it.toString()]?.box(d.width, d.height)
+            com.inkslate.core.PageExtent(crop?.width ?: d.width, crop?.height ?: d.height)
         }
         val clamped = target.coerceIn(0, src.pageCount - 1)
         val origins = com.inkslate.core.PageArranger.arrange(extents, layout, clamped)
         val (ox, oy) = origins.getOrNull(clamped) ?: return null
-        val d = src.pageDim(clamped)
+        val d = extents[clamped]
         return com.inkslate.core.Box(ox, oy, ox + d.width, oy + d.height)
     }
 
@@ -1124,7 +1125,8 @@ fun EditorScreen(
         val clamped = target.coerceIn(0, src.pageCount - 1)
         val extents = (0 until src.pageCount).map {
             val d = src.pageDim(it)
-            com.inkslate.core.PageExtent(d.width, d.height)
+            val crop = ink.pageCrops[it.toString()]?.box(d.width, d.height)
+            com.inkslate.core.PageExtent(crop?.width ?: d.width, crop?.height ?: d.height)
         }
         val from = page
         page = clamped
@@ -2015,6 +2017,7 @@ fun EditorScreen(
                     textMeasurer = textMeasurer,
                     pageFilter = pageFilter,
                     cropMargins = tools.cropMargins,
+                    pageCrops = ink.pageCrops,
                     wordsUnder = if (DesktopSources.isPdf(file)) { pageIndex, path ->
                         DocumentText.wordsUnderPath(file, pageIndex, path, tolerance = 6f)
                     } else {
@@ -2435,6 +2438,12 @@ fun EditorScreen(
                     exportOpen = true
                 },
                 onDismiss = { pagesOpen = false },
+                pageCrops = ink.pageCrops,
+                onCrop = if (ink.canvas == null) { pages, crop ->
+                    ink = currentInk().withPageCrop(pages, crop)
+                    dirty = true
+                    goToPage(page)
+                } else null,
                 extraActions = AppFlavor.pagesActions?.let { actions ->
                     { pages, close -> actions(file.absolutePath, pages, close) }
                 }

@@ -60,19 +60,16 @@ class ReaderDrawerTest {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
                 waitForIdle()
                 runOnIdle {
-                    assertTrue("$name: recording drawer is open", ReaderPanels.open)
-                    assertTrue("$name: drawer included in score reservation", state.shelfHeight >= ReaderPanels.height + ReaderPanels.base - 1f)
+                    assertEquals("$name: recordings replace the category bar", ShelfWidget.RECORDING, state.expandedMusicCategory)
+                    assertFalse("$name: no separate popup drawer", ReaderPanels.open)
+                    assertTrue("$name: category bar reserves score space", state.shelfHeight > 0f)
                     assertTrue("$name: score retains usable height", state.shelfHeight < height * .75f)
                 }
-                onNodeWithContentDescription("Close").assertIsDisplayed()
+                onNodeWithContentDescription("Compact categories").assertIsDisplayed()
                 val issues = UiAudit.check(this, name, "reader-recording-drawer", width, height)
                 assertTrue("$name: $issues", issues.isEmpty())
+                onNodeWithContentDescription("Compact categories").performClick()
                 runOnIdle { state.stripCollapsed = true }
-                waitForIdle()
-                runOnIdle {
-                    assertTrue("$name: folding does not put drawer over score", state.shelfHeight >= ReaderPanels.height && state.shelfHeight > 0)
-                }
-                onNodeWithContentDescription("Close").performClick()
                 waitForIdle()
                 runOnIdle {
                     assertFalse(ReaderPanels.open)

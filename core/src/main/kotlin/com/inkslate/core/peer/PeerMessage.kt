@@ -154,6 +154,7 @@ sealed interface PeerMessage {
         @SerialName("bookmarks") val bookmarks: List<InkDocument.Bookmark>? = null,
         /** Bookmarks removed, sent with [bookmarks]. */
         @SerialName("bookmarksRemoved") val bookmarksRemoved: Map<String, Long>? = null,
+        @SerialName("pageCrops") val pageCrops: Map<String, com.inkslate.core.PageCrop>? = null,
         /** The canvas, when the other side's differs. Null means "no news". */
         @SerialName("canvas") val canvas: InkCanvas? = null,
         /**
@@ -165,7 +166,7 @@ sealed interface PeerMessage {
     ) : PeerMessage {
         val isEmpty: Boolean
             get() = strokes.isEmpty() && deleted.isEmpty() && bookmarks == null &&
-                bookmarksRemoved == null && canvas == null
+                bookmarksRemoved == null && pageCrops == null && canvas == null
     }
 
     /**
