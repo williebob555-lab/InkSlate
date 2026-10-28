@@ -44,6 +44,20 @@ internal object PlayAlong {
     private var lastPage = -1
     private var lastPath: String? = null
 
+    /** A new take starts at its excerpt only when that song and its associated part are already in view. */
+    fun recordingStarted(state: SheetsState,track: com.inksheets.core.AudioTrack,song: com.inksheets.core.Song?) {
+        lastPos=-1;lastAt=0
+        if(track.excerptStartPage==null) return
+        if(Listener.active) Listener.stop(state,"Recording excerpt: Play Along handles its pages")
+        if(song?.id!=state.current?.id) return
+        val path=state.currentPath ?: return
+        val part=state.partShown() ?: return
+        val pages=recordingPages(track,part.id,state.pageShown.second) ?: return
+        autoTurnedAt=System.currentTimeMillis()
+        lastPath=path;lastPage=pages.first
+        if(state.pageShown.first!=pages.first) Perform.jumpTo?.invoke(path,pages.first)
+    }
+
     /** Once every tenth of a second or so while a recording is loaded. */
     fun tick(state: SheetsState) {
         val player = Recording.player
@@ -53,29 +67,34 @@ internal object PlayAlong {
         val part = state.partShown()
         val (page, pages) = state.pageShown
         val track = currentTrack(state) ?: run { hint = null; return }
-        val turns = track.turnsFor(part?.id, pages)
+        val range=recordingPages(track,part?.id,pages) ?: run {
+            hint=if(track.excerptPart!=null && track.excerptPart!=part?.id) "Recording belongs to another part" else "Recording pages unavailable"
+            learned=false;return
+        }
+        val turns = recordingTurns(track,part?.id,pages,range)
         learned = turns != null
         val pos = player.positionMs
         val now = System.currentTimeMillis()
         val jumped = lastPos >= 0 && kotlin.math.abs(pos - (lastPos + (now - lastAt) * track.speed)) > 2_000
         lastPos = pos; lastAt = now
-        if (pages < 2) { hint = null; return }
+        if (range.first==range.last) { hint=if(track.excerptStartPage!=null) "Excerpt: one page" else null;return }
         if (!on) { hint = "Turns: off"; return }
         if (Listener.active) { hint = null; return }
+        if(page !in range) { hint="Outside recording's pages";return }
         if (turns == null) {
             hint = if (Recording.playing) "Turn as it plays: learning" else "Turns not learned"
             return
         }
         // Skipped back or on: the page that goes with that moment.
         if (jumped) {
-            val want = turns.count { it - LEAD_MS <= pos }.coerceIn(0, pages - 1)
+            val want = (range.first+turns.count { it - LEAD_MS <= pos }).coerceIn(range.first,range.last)
             if (want != page) {
                 autoTurnedAt = now
                 repeat(kotlin.math.abs(want - page)) { Perform.run(if (want > page) PerformAction.NEXT_PAGE else PerformAction.PREVIOUS_PAGE) }
             }
             return
         }
-        val next = turns.getOrNull(page)
+        val next = turns.getOrNull(page-range.first)
         if (next == null) { hint = "Last page"; return }
         val inMs = next - LEAD_MS - pos
         if (Recording.playing && inMs <= 0 && now - autoTurnedAt > 800) {
@@ -100,6 +119,8 @@ internal object PlayAlong {
         if (song.id != Recording.songId) return
         val part = state.partShown() ?: return
         val track = currentTrack(state) ?: return
+        val range=recordingPages(track,part.id,state.pageShown.second) ?: return
+        if(was !in range || page !in range) return
         val at = Recording.player?.positionMs ?: return
         state.change {
             editSong(song.id) {

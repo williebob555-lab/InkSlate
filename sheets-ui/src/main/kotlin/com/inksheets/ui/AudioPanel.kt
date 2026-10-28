@@ -171,12 +171,14 @@ internal object Recording {
      */
     fun play(state: SheetsState, track: AudioTrack, song: Song?) {
         val p = playerFor(state) ?: return
+        val newSession=!session || this.track?.file!=track.file || songId!=song?.id
         watch(state)
         this.track = track
         this.song = song
         session = true
         songId = song?.id
         hadTab = song != null && state.hasTab(song.id)
+        if(newSession) PlayAlong.recordingStarted(state,track,song)
         val click = Click.withPlayback(state)
         val e = Click.engine(state)
         if (e == null || (!click && Click.countInBars(state) == 0)) { p.play(); playing = true; return }

@@ -110,7 +110,14 @@ internal object Listener {
         val partFile = state.currentPath?.let { java.io.File(it) }
         val score = if (state.readMusic && partFile != null) Transcriber.cached(state, partFile) else null
         // Practising: the music as read is followed, even where there is a recording - the microphone hears the player alone.
-        val track = if (practice) null else song.audio.firstOrNull()
+        val track = if (practice) null else (PlayAlong.currentTrack(state)
+            ?.takeIf { Recording.session && Recording.songId==song.id } ?: song.audio.firstOrNull())
+        // Excerpt audio cannot be spread over a whole methodbook's timeline. Play Along learns
+        // and follows its bounded page range; microphone alignment needs a scoped score first.
+        if(track?.excerptStartPage!=null) {
+            say(state,"Excerpt recording: use Play Along for its page turns")
+            return
+        }
         if (track == null && score == null) { say(state, "Listen needs a recording of this song, or its music read"); return }
         val file = track?.let { state.fileOf(it.file) }
         if (track != null && (file == null || !file.isFile) && score == null) { say(state, "Its recording is not on this device"); return }

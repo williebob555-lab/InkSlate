@@ -424,9 +424,9 @@ private fun SetlistView(state: SheetsState, setlist: Setlist, onBack: () -> Unit
     val preferred = setlist.defaultInstrument
     val instrumentName = preferred?.let { com.inksheets.core.Instruments.byId[it]?.name ?: it }
     val decisionKey = setlist.id + ":" + preferred.orEmpty()
-    val alreadyPlaying = preferred == null || state.profile?.instruments.orEmpty().any {
+    val alreadyPlaying = preferred == null || state.profile?.instruments?.firstOrNull()?.let {
         com.inksheets.core.PartChoice.seat(it).first == preferred
-    }
+    } == true
     var promptDismissed by remember(setlist.id, preferred) {
         mutableStateOf(decisionKey in state.declinedSetlistInstruments)
     }
