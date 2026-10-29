@@ -354,9 +354,11 @@ object Interpretation {
             n.sounding = when {
                 "staccatissimo" in a -> 0.28
                 "staccato" in a -> 0.45
+                // A written slur controls connection. Weight/length marks must not introduce
+                // a new attack, nor may an inferred phrase boundary cut the slurred line.
+                n.slurred && touching && !n.breathAfter -> JOINED
                 "marcato" in a -> 0.75
                 "tenuto" in a -> TENUTO
-                n.slurred && touching && !n.phraseEnd -> JOINED      // joined to the next, no gap
                 "accent" in a -> DETACHED_ACCENT
                 else -> DETACHED
             }
@@ -501,7 +503,7 @@ object Interpretation {
             val prev = notes.getOrNull(i - 1)
             val nextTouches = next != null && abs(n.q + n.len - next.q) < 1e-6
             val joined = prev != null && (prev.sounding == JOINED || prev.tie) && abs(prev.q + prev.len - n.q) < 1e-6
-            val separated = n.articulations.any { it == "staccato" || it == "staccatissimo" || it == "marcato" }
+            val separated = n.articulations.any { it == "staccato" || it == "staccatissimo" }
             val joinsNext = drums == null && (n.tie || n.sounding == JOINED) && nextTouches
             val feel = Feel.now
             // The note's own release - a natural decay (brass 80-150 ms): what is heard goes on after the hold.

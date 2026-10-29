@@ -170,8 +170,13 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     }
 
     if (!state.homeInFront) {
+        androidx.compose.runtime.LaunchedEffect(state.root,state.readMusic) {
+            if(state.readMusic) SampledInstruments.ensure(state)
+        }
         androidx.compose.runtime.SideEffect { Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
         MusicDock(state) { ReaderFooter(state) }
+        // Fix is a viewer editor, independent of the retired music sidebar.
+        BoxWithConstraints(Modifier.matchParentSize()) { BarCheck(state,maxHeight) }
         BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
         BoxWithConstraints(Modifier.matchParentSize()) { NotePopup(state) }
     }

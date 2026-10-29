@@ -15,6 +15,24 @@ import java.io.File
 
 @OptIn(ExperimentalTestApi::class)
 class RecordingAndStatusTest {
+    @Test fun `viewer mounts original Fix editor without the retired music sidebar`() {
+        val (state,_)=setup("viewer-fix")
+        val m=com.inksheets.core.omr.Measure(1,0,0,com.inksheets.core.omr.Box(0,0,400,40),10f,
+            com.inksheets.core.omr.Clef.TREBLE,com.inksheets.core.omr.Key(0),com.inksheets.core.omr.TimeSig(4,4),
+            listOf(com.inksheets.core.omr.Rest(com.inksheets.core.omr.Duration(1),20f)),doubts=listOf("unclear"))
+        val score=com.inksheets.core.omr.Score(listOf(m),1,listOf(800))
+        state.readMusic=true
+        ScoreTools.install(state);ScoreTools.scoreSource={score}
+        try {
+            runDesktopComposeUiTest(width=640,height=480) {
+                setContent { MaterialTheme { Box(Modifier.fillMaxSize()){ActionStrip(state)} } }
+                runOnIdle {ScoreTools.fixBar(state,1)}
+                onNodeWithText("Close Fix").assertIsDisplayed().performClick()
+                runOnIdle {assertFalse(ScoreTools.checking)}
+                onNodeWithText("Close Fix").assertDoesNotExist()
+            }
+        } finally {ScoreTools.endCheck();ScoreTools.scoreSource=null;cleanup(state)}
+    }
     @Test fun `recording controls dock outside score and collapse to status when a take starts`() {
         val (state,_)=setup("record-drawer")
         try {

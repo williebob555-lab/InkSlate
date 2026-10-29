@@ -995,8 +995,15 @@ internal object ScoreTools {
             showClean(s,path,view.copy(visible=false))
             if (maskBrushEnabled) { putMaskBrushDown();tool = Tool.NONE;syncTool() }
         } else {
-            showClean(s,path,view.copy(visible=true))
-            if(!view.masksOnly && cleanedIn(path).isEmpty() && !CleanMasks.hasMask(s,path,s.pageShown.first)) cleanWhole(s,true)
+            // An empty mask is a brush-ready view, not content that Clean can reveal.
+            // The explicit Clean command must still turn on the whole-page reading.
+            if(view.masksOnly && !CleanMasks.hasPaint(s,path,s.pageShown.first)) {
+                if(maskBrushEnabled) {putMaskBrushDown();tool=Tool.NONE;syncTool()}
+                cleanWhole(s,true)
+            } else {
+                showClean(s,path,view.copy(visible=true))
+                if(!view.masksOnly && cleanedIn(path).isEmpty() && !CleanMasks.hasMask(s,path,s.pageShown.first)) cleanWhole(s,true)
+            }
         }
         changed()
     }
@@ -1503,6 +1510,21 @@ internal object ScoreTools {
             .filter { (p, f) -> f.absolutePath != s.currentPath || (p.firstPage != null && p.firstPage != mine?.firstPage) }
     }
 
+    /** A file cache may contain only the currently viewed part of a shared band pack. */
+    internal fun bandPartReady(whole: Score?, part: com.inksheets.core.Part): Boolean {
+        whole ?: return false
+        val first=(part.firstPage ?: 1)-1
+        val last=(part.lastPage ?: whole.pages)-1
+        if(first<0 || last<first || last>=whole.pages) return false
+        return (first..last).all { whole.hasRead(it) }
+    }
+
+    private fun bandScore(s: SheetsState, part: com.inksheets.core.Part, file: File): Score? {
+        val whole=Transcriber.cached(s,file) ?: return null
+        if(!bandPartReady(whole,part)) return null
+        return Transcriber.partOf(whole,part).first.takeIf { it.measures.isNotEmpty() }
+    }
+
     /**
      * The band round this part, for following by ear: every other part of the song already read,
      * with how far each is written above where it sounds - drums and the full score left out (no
@@ -1511,13 +1533,13 @@ internal object ScoreTools {
     internal fun bandVoices(s: SheetsState): List<com.inksheets.core.omr.BandAudio.Voice> = otherParts(s).mapNotNull { (p, f) ->
         val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
         if (id == "drums" || id == "drumline" || (p.label ?: "").contains("drum", true) || f.name.contains("drum", true)) return@mapNotNull null
-        val sc = Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } ?: return@mapNotNull null
+        val sc = bandScore(s,p,f) ?: return@mapNotNull null
         com.inksheets.core.omr.BandAudio.Voice(sc, id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0)
     }
 
     /** Whether some of the band's parts are not read yet; reads them, one after another, quietly. */
     internal fun readBandLater(s: SheetsState): Boolean {
-        val todo = otherParts(s).any { Transcriber.cached(s, it.second) == null }
+        val todo = otherParts(s).any { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) }
         if (todo && bandReading == null) readBand(s) {}
         return todo
     }
@@ -1527,7 +1549,7 @@ internal object ScoreTools {
      * the cores for it - then [then]. How many are done is said as they finish.
      */
     private fun readBand(s: SheetsState, then: () -> Unit) {
-        val todo = otherParts(s).filter { Transcriber.cached(s, it.second) == null }.distinctBy { it.second.absolutePath }
+        val todo = otherParts(s).filter { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) }.distinctBy { it.second.absolutePath }
         if (todo.isEmpty()) { bandReading = null; then(); return }
         val total = otherParts(s).distinctBy { it.second.absolutePath }.size
         val done = java.util.concurrent.atomic.AtomicInteger(total - todo.size)
@@ -1559,14 +1581,19 @@ internal object ScoreTools {
         readBand(s) {
             val voices = otherParts(s).mapNotNull { (p, f) ->
                 // A part in a band pack: its own pages of the pack's reading.
-                val sc = Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } ?: return@mapNotNull null
+                val sc = bandScore(s,p,f) ?: return@mapNotNull null
                 val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
                 val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
                 // A drum part on the drums: which drum each note is, from the part and where the note sits.
                 val drums = com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" "))
                 com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, SampledInstruments.patchFor(s, id), drums)
             }
-            if (voices.isEmpty()) { said = "No other parts of this song here to play"; return@readBand }
+            if (voices.isEmpty()) {
+                said = if(otherParts(s).any { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) })
+                    "Other parts are not fully read yet; read them and try again"
+                else "No other read music in this song to play"
+                return@readBand
+            }
             val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
             // As for this part alone (see play): a passage chosen straight through, else from a bar on, repeats and all.
             val sel = selection?.takeIf { from == null || from in it }?.takeIf { r -> onPageShown(s, whole, r) }?.let { (it.first - offset)..(it.last - offset) }

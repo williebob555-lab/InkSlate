@@ -68,4 +68,35 @@ class SlurContinuityTest {
             for(t in p.tones.drop(1)) assertTrue("$name continuous at ${t.start}",weakestJoin(audio,t.start.toInt())>.6)
         }
     }
+    @Test fun `tenuto and marcato keep slurred sampled lines connected without fresh attacks`() {
+        val patches=listOf("clarinet","tenor-sax","trumpet").map { id ->
+            id to requireNotNull(com.inksheets.core.sampler.BundledInstruments.defaults.patchFor(id)) {
+                "The production recorded default must be present: $id"
+            }
+        }
+        for(mark in listOf("tenuto","marcato")) for((name,patch) in patches) {
+            assertNotNull("Exercise recorded audio rather than fallback synthesis",patch.sampled)
+            val m=score(changing=true).let { measure -> measure.copy(events=measure.events.map {
+                (it as Note).copy(articulations=listOf(mark))
+            }) }
+            val p=play(m,patch)
+            assertEquals(4,p.tones.size)
+            for(i in 1 until p.tones.size) {
+                val previous=p.tones[i-1];val current=p.tones[i]
+                assertTrue("$name $mark must skip a new attack inside the slur",current.legato)
+                assertEquals("$name $mark must hold to the following pitch",current.start,previous.start+previous.length)
+            }
+            val audio=render(p,"slurred-$mark-$name")
+            for(t in p.tones.drop(1)) assertTrue("$name $mark must retain audio through the join at ${t.start}",
+                weakestJoin(audio,t.start.toInt())>.25)
+        }
+    }
+    @Test fun `inferred phrase boundaries cannot detach a long written slur`() {
+        val bars=(1..12).map { n -> score(changing=true).copy(number=n) }
+        val p=Performance.play(bars,100.0,rate,0,Synth.LOW_BRASS)
+        assertEquals(48,p.tones.size)
+        assertTrue("A long slur remains connected through inferred breathing points",p.tones.drop(1).all { it.legato })
+        for(i in 1 until p.tones.size) assertEquals(p.tones[i].start,p.tones[i-1].start+p.tones[i-1].length)
+    }
+
 }
