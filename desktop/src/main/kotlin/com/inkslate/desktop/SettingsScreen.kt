@@ -1098,6 +1098,11 @@ private fun UpdateSection() {
         modifier = Modifier.padding(start = 16.dp, top = 10.dp)
     )
 
+    if (AppFlavor.name == "InkSheets") TextButton(
+        onClick = { DesktopUpdates.openInBrowser("https://github.com/williebob555-lab/InkSlate/blob/main/docs/inksheets/TEST-BUILDS.md") },
+        modifier = Modifier.padding(horizontal = 12.dp)
+    ) { Text("Recent test-build changes") }
+
     var testBuilds by remember { mutableStateOf(DesktopUpdates.testChannelEnabled()) }
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 6.dp),

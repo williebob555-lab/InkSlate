@@ -385,7 +385,13 @@ jobs:
               printf '%s\n' "$@" | grep -q '\.apk$' || echo '**No Android APK in this build** - the APK here is from an earlier one.'
               printf '%s\n' "$@" | grep -q '\.msi$' || echo '**No Windows installer in this build** - the installer here is from an earlier one.'
               printf '%s\n' "$@" | grep -q '\.rpm$' || echo '**No Fedora package in this build** - the package here is from an earlier one.'
-              git log -1 --pretty=%B | sed 's/\[build[^]]*\]//'
+              if [ "$tag" = inksheets-test ] && [ -f docs/inksheets/TEST-BUILDS.md ]; then
+                # Keep the concrete current changes and recent history visible in the app's
+                # release-notes view. Advance this source log when preparing each test build.
+                sed "s/^## Next test build$/## $VERSION/" docs/inksheets/TEST-BUILDS.md
+              else
+                git log -1 --pretty=%B | sed 's/\[build[^]]*\]//'
+              fi
               echo
               echo '---'
               echo

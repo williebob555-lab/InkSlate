@@ -69,6 +69,9 @@ interface SheetsPlatform {
     /** The app is on screen: not in the background, the screen not turned off. */
     val inForeground: Boolean get() = true
 
+    /** Automatic reading yields to other work; explicit Read commands bypass this gate. */
+    val backgroundReadingAllowed: Boolean get() = true
+
     /** How every music page is coloured: Normal, Night, Sepia... (the editors draw it). */
     var readingMode: com.inkslate.core.ReadingMode
         get() = com.inkslate.core.ReadingMode.NONE

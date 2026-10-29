@@ -34,7 +34,7 @@ internal object Transcriber {
     private fun backgroundAllowed(): Boolean {
         val s = backgroundState ?: return false
         val now = System.currentTimeMillis()
-        val occupied = s.homeInFront || !s.platform.inForeground || com.inkslate.core.RenderGate.displayBusy() ||
+        val occupied = s.homeInFront || !s.platform.inForeground || !s.platform.backgroundReadingAllowed || com.inkslate.core.RenderGate.displayBusy() ||
             Recording.playing || Recording.loading || SelfRecorder.recording || SharedMetronome.running || Listener.active ||
             ScoreTools.playing != null || Click.counting > 0
         if (occupied) deeperAfter = maxOf(deeperAfter, now + 15_000L)

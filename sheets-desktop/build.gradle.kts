@@ -78,7 +78,7 @@ compose.desktop {
             //   java.logging  - PDFBox's and the audio decoders' logging
             //   jdk.unsupported - sqlite-jdbc and JNA reach for sun.misc
             // CI lists the packaged runtime's modules and fails if any of these is missing.
-            modules("java.desktop", "java.sql", "java.logging", "jdk.unsupported")
+            modules("java.desktop", "java.sql", "java.logging", "jdk.unsupported", "jdk.management")
 
             linux {
                 packageName = "inksheets"

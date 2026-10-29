@@ -1,5 +1,7 @@
 # InkSheets — TODO (the workstation)
 
+Release requirement: maintain TEST-BUILDS.md with concrete user-visible changes and verification limits for every test build. Advance the previous Next entry to its published version before preparing the next one. Preserve recent history; the publisher embeds this log and Updates links to it even when already up to date.
+
 ## Corrective follow-up — 2026-10-29
 
 The latest user corrections supersede the corresponding earlier checkboxes below. Current work is unshipped until validation and release verification complete.

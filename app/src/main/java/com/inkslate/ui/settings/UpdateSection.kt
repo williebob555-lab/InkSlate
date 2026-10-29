@@ -57,6 +57,7 @@ private sealed interface Phase {
 @Composable
 fun UpdateSection() {
     val context = LocalContext.current
+    val appName = context.getString(com.inkslate.R.string.app_name)
     val scope = rememberCoroutineScope()
     val installed = remember { AppUpdates.installedVersion(context) }
     var phase by remember { mutableStateOf<Phase>(Phase.Idle) }
@@ -69,7 +70,7 @@ fun UpdateSection() {
     SectionHeader("Updates")
 
     Text(
-        "InkSlate is installed by hand, so it cannot update itself in the background. This asks " +
+        "$appName is installed by hand, so it cannot update itself in the background. This asks " +
             "GitHub whether a newer build has been published.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -81,6 +82,11 @@ fun UpdateSection() {
         style = MaterialTheme.typography.bodyMedium,
         modifier = Modifier.padding(start = 16.dp, top = 10.dp)
     )
+
+    if (appName == "InkSheets") TextButton(
+        onClick = { AppUpdates.openInBrowser(context, "https://github.com/williebob555-lab/InkSlate/blob/main/docs/inksheets/TEST-BUILDS.md") },
+        modifier = Modifier.padding(horizontal = 12.dp)
+    ) { Text("Recent test-build changes") }
 
     // Off by default, and the only way a pre-release can be seen at all: the endpoint the stable
     // channel asks does not return them, so this is a genuine opt-in rather than a filter.
@@ -196,7 +202,7 @@ fun UpdateSection() {
             )
             if (!AppUpdates.canInstall(context)) {
                 Text(
-                    "Android needs permission to let InkSlate install this. Turn on \"Allow from " +
+                    "Android needs permission to let $appName install this. Turn on \"Allow from " +
                         "this source\", then come back and press Install.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -234,7 +240,7 @@ fun UpdateSection() {
     TextButton(
         onClick = { AppUpdates.openInBrowser(context, UpdateCheck.PROJECT_URL) },
         modifier = Modifier.padding(horizontal = 12.dp)
-    ) { Text("InkSlate on GitHub") }
+    ) { Text("$appName on GitHub") }
 
     Text(
         UpdateCheck.PROJECT_URL,

@@ -29,6 +29,8 @@ class BackgroundReadingTest {
         val started = CountDownLatch(1)
         val release = CountDownLatch(1)
         private val blocked = AtomicBoolean()
+        @Volatile var resourcesAvailable=true
+        override val backgroundReadingAllowed: Boolean get() = resourcesAvailable
         override val deviceId = "background-reading-test"
         override val deviceName = "Background test"
         override val localFolder = File(startFolder, "local")
@@ -65,6 +67,28 @@ class BackgroundReadingTest {
             Thread.sleep(20)
         }
         fail("${file.name} did not finish its cached pages")
+    }
+
+    @Test fun `resource pressure blocks automatic scans but explicit reading still completes and background resumes`() {
+        val root=tmp.newFolder()
+        val automatic=document(root,"automatic.pdf")
+        val manual=document(root,"manual.pdf")
+        val platform=Stand(root,mapOf(automatic.name to 1,manual.name to 1)).apply {resourcesAvailable=false}
+        val state=SheetsState(platform)
+        state.change {addSong("Automatic",listOf(Part(file=automatic.name,instrument="clarinet")))}
+        state.current=state.library!!.songs.first();state.currentPath=automatic.absolutePath
+        state.homeInFront=false;state.readMusic=true
+        try {
+            Transcriber.background(state)
+            val done=CountDownLatch(1)
+            Transcriber.read(state,manual) {done.countDown()}
+            assertTrue(done.await(10,TimeUnit.SECONDS))
+            assertNull("Automatic work must not read while resources are tight",Transcriber.cached(state,automatic))
+            assertTrue(Transcriber.cached(state,manual)?.hasRead(0)==true)
+            platform.resourcesAvailable=true
+            Transcriber.background(state)
+            awaitReading(state,automatic,1)
+        } finally {Transcriber.stopBackground(state)}
     }
 
     @Test fun `automatic reading prioritizes current piece and preserves stable corrections without opening a panel`() {
