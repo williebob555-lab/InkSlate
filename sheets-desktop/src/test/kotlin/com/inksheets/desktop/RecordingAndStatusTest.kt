@@ -110,6 +110,20 @@ class RecordingAndStatusTest {
         Listener.active = false; Listener.follow = null
         Click.stop(state); Ears.stop("record")
     }
+    @Test fun `metronome sound survives platform reload and updates the active engine`() {
+        val (state,p)=setup("click-sound")
+        val (other,_)=setup("click-sound-other")
+        try {
+            Click.engine(state)
+            Click.setSound(state,ClickSound.WOODBLOCK)
+            assertEquals(ClickSound.WOODBLOCK,SharedMetronome.engine!!.settings.sound)
+            assertEquals("WOODBLOCK",p.pref("sheets_click_sound"))
+            assertEquals(ClickSound.TONE,Click.sound(other))
+            assertEquals(ClickSound.WOODBLOCK,Click.sound(state))
+            Click.setSound(state,ClickSound.SOFT)
+            assertEquals(ClickSound.SOFT,Click.engine(state)!!.settings.sound)
+        } finally {cleanup(state);cleanup(other)}
+    }
     @Test fun `cancelled slow load cannot restart playback or display a late error`() {
         val (state,p)=setup("cancel-load")
         try {

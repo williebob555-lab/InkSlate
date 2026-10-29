@@ -193,19 +193,10 @@ object Engraver {
     }
 
     /**
-     * [m] drawn where it is printed, for showing in place of its print. Ties and slurs are left to
-     * the print itself (a cleaned bar keeps them exactly as printed - see [Measure.kept]): free
-     * curves, which the print's own shape follows truly and a drawn arc only roughly.
+     * Music redrawn at its observed positions. Expressive marks are engraved from their current
+     * semantics, including on scans; source contours are reserved for unrecognized print and text.
      */
-    fun aligned(m0: Measure): Drawing {
-        val source = m0.sourceDecorations.filter { d ->
-            if(d.noteX!=null)m0.events.filterIsInstance<Note>().any { it.x==d.noteX && it.steps==d.steps && it.articulations.sorted()==d.articulations.sorted() }
-            else d.direction!=null && d.direction in m0.directions
-        }
-        val m = m0.copy(events = m0.events.map { event ->
-            if(event is Note) event.copy(tie=false,articulations=if(event.marksSeen || source.any { it.noteX==event.x })emptyList()else event.articulations)
-            else event
-        }, directions = m0.directions.filter { d -> d.kind != "slur" && !d.seen && source.none { it.direction==d } })
+    fun aligned(m: Measure): Drawing {
         val marks = ArrayList<Mark>()
         val alignment = AlignedGeometry(m)
         val width = m.box.width / m.space
@@ -221,7 +212,6 @@ object Engraver {
         val placed = m.events.map { it to (it.x - m.box.left) / m.space }
         drawEvents(marks, placed, m, width, alignment)
         drawDirections(marks, m, width) { x -> (x - m.box.left) / m.space }
-        source.forEach { marks += alignment.decoration(it) }
         marks += Stroke(width, 0f, width, 4f, 0.16f)
         return Drawing(marks, width, listOf(0f to width))
     }
@@ -337,7 +327,8 @@ object Engraver {
             }
             if (n.tie) {
                 val next = notes.getOrNull(i + 1)
-                for (s in n.steps) {
+                for ((headIndex,s) in n.steps.withIndex()) {
+                    if (n.tiedPitches.isNotEmpty() && n.pitches.getOrNull(headIndex)?.midi !in n.tiedPitches) continue
                     if (next != null && s !in next.first.steps) continue
                     val x1 = x + headW + 0.1f
                     val x2 = next?.second?.minus(0.1f) ?: (width ?: (x + headW + 2.5f))

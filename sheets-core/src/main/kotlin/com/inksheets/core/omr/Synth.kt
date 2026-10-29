@@ -491,6 +491,7 @@ class Synth(val sampleRate: Int) {
         private set
     /** Score clicks can be enabled/disabled while notes continue uninterrupted. */
     @Volatile var clickEnabled: Boolean = true
+    @Volatile var clickSound: com.inksheets.core.ClickSound = com.inksheets.core.ClickSound.TONE
 
     @Synchronized
     fun add(tones: List<Tone>) {
@@ -633,8 +634,8 @@ class Synth(val sampleRate: Int) {
                     }
                     nv.xfade = ov; nv.born = carrier.born; nv.vibOk = carrier.vibOk || t.length > sampleRate * 0.45
                     nv.flat = sl.flatCents; nv.settle = sl.settleMs
-                    val dip = sl.dipDb + (if (rough) sl.roughDb else 0.0)
-                    for (x in listOf(carrier, nv)) { x.dipCenter = t.start; x.dipHalf = ov; x.dipDb = dip }
+                    // A slur carries the breath/bow straight through. The equal-power overlap
+                    // supplies the pitch transition without an artificial loudness notch.
                     voices += nv
                     continue
                 }
@@ -666,6 +667,17 @@ class Synth(val sampleRate: Int) {
      * gliding, its loudness moving, its phase carrying straight on, no new attack.
      */
     private fun render(v: Voice, buf: FloatArray, from: Long): Boolean {
+        if(v.tone.patch===CLICK) {
+            val tone=v.tone
+            val accent=if(tone.midi>=88) com.inksheets.core.Metronome.Accent.STRONG else com.inksheets.core.Metronome.Accent.NORMAL
+            val wave=com.inksheets.core.ClickSounds.samples(clickSound,accent,sampleRate)
+            for(i in buf.indices) {
+                val at=from+i-tone.start
+                if(at>=wave.size) return true
+                if(at>=0 && clickEnabled) buf[i]+=wave[at.toInt()]*tone.velocity*.4f
+            }
+            return from+buf.size>=tone.start+wave.size
+        }
         v.drum?.let { return it.render(buf, from, sampleRate) }
         val sr = sampleRate.toDouble()
         val feel = Feel.now
@@ -868,7 +880,6 @@ class Synth(val sampleRate: Int) {
             // the slur's brief softening, and the new note full.
             val w = smooth(t / (0.008 * sr))
             g = v.gainFrom * (1 - w) + g * w
-            if (t < dipTime) g *= 1 - (1 - Math.pow(10.0, -feel.dipDb / 20)) * hump(t / dipTime)
         }
         // The slur's overlap: the old note fades out as the new fades in (equal power), both a little softer.
         if (v.fadeLen > 0 && s >= v.fadeAt) {

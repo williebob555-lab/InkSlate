@@ -123,8 +123,8 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     var partMenu by remember { mutableStateOf(false) }
     // Folded away, the strip is one button in the corner and the page has the whole width.
     androidx.compose.runtime.LaunchedEffect(collapsed,ScoreTools.checking) {
-        state.platform.setStripLane(!collapsed && ScoreTools.checking)
-        if(!ScoreTools.checking) { state.platform.setMusicLane(false);Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
+        state.platform.setStripLane(false)
+        state.platform.setMusicLane(false);Overlays.actionOut=0.dp;Overlays.musicOut=0.dp
     }
     val readingMode = state.platform.readingMode
     androidx.compose.runtime.LaunchedEffect(readingMode) { state.keepReadingMode(readingMode) }
@@ -169,195 +169,11 @@ fun BoxScope.ActionStrip(state: SheetsState) {
         }
     }
 
-    // Docked in the lane the page is fitted beside - down the right of a landscape screen, along
-    // the bottom of a portrait one - so it sits in blank space and never over the music.
-    if(ScoreTools.checking) BoxWithConstraints(Modifier.matchParentSize()) {
-        // Always down a side: along the bottom, the buttons wrap into two rows and take more room.
-        val side = true
-        // Every button on screen at once, in one column - never a second column, never a strip to
-        // scroll. On a short screen the buttons shrink and their names go small; only where even
-        // that is not enough do the last of them move into More (named there).
-        val shelfActions = setOf(PerformAction.METRONOME, PerformAction.TUNER, PerformAction.RECORDINGS, PerformAction.PLAY_AUDIO, PerformAction.PLAY_TOGETHER)
-        val wanted = shown.filter { a ->
-            a !in shelfActions &&
-            !((a == PerformAction.NEXT_SONG || a == PerformAction.PREVIOUS_SONG) && state.playing == null) &&
-                !(a == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty())
-        }
-        val room = if (side) (maxHeight - state.shelfHeight.dp).coerceAtLeast(80.dp) else maxWidth
-        val onStripPresets = if (state.companion.leading) state.presets.filter { it.onStrip } else emptyList()
-        // The fold button, the padding and the dividers; the page count and the tempo under their buttons.
-        val extras = 72.dp + (if (state.pageShown.second > 0) 26.dp else 0.dp) + (if (state.playing != null) 24.dp else 0.dp) + (if (PerformAction.METRONOME in wanted) 28.dp else 0.dp) +
-            34.dp * onStripPresets.size
-        // File, Music and More are there besides the chosen buttons.
-        val fixed = 1 + (if (state.pageShown.second > 0) 1 else 0) + (if (state.readMusic && state.current != null && state.shelfHeight <= 0f) 1 else 0)
-        val named = state.stripLabels
-        fun fitting(least: androidx.compose.ui.unit.Dp, label: androidx.compose.ui.unit.Dp) = ((room - extras) / (least + label + 2.dp)).toInt() - fixed
-        val small = named && fitting(32.dp, 12.dp) < wanted.size
-        val labelRoom = if (!named) 0.dp else if (small) 9.dp else 12.dp
-        val least = if (small) 28.dp else 32.dp
-        val fits = fitting(least, labelRoom).coerceAtLeast(2)
-        // The last of them go first - but never the page turns, Undo or the tools' switch.
-        val keep = setOf(PerformAction.NEXT_PAGE, PerformAction.PREVIOUS_PAGE, PerformAction.UNDO, PerformAction.FULLSCREEN, PerformAction.SWITCH_PART)
-        val overflow = if (wanted.size > fits) wanted.reversed().filter { it !in keep }.take(wanted.size - fits) else emptyList()
-        val visible = wanted.size - overflow.size
-        val btn = ((room - extras) / (visible + fixed).coerceAtLeast(1) - labelRoom - 2.dp).coerceIn(least, 44.dp)
-        val items: @Composable () -> Unit = { androidx.compose.runtime.CompositionLocalProvider(LocalSmallNames provides small) {
-            if (!collapsed) {
-                if (SelfRecorder.recording) {
-                    Text("● Rec", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
-                }
-                state.companion.status?.let { status ->
-                    Text(status, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(6.dp))
-                }
-                // Which page: words only. The file's pages (arranging, adding, taking out) are the
-                // File button under it.
-                val (page, count) = state.pageShown
-                if (count > 0) {
-                    Text("${page + 1}/$count", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
-                    StripButton(Icons.Default.Description, "File", "The file's pages: arrange, add, take out", btn, named) { Perform.openPages?.invoke() }
-                }
-                // Leading: a message to the band, one tap away.
-                if (state.companion.leading) {
-                    StripButton(Icons.Default.Campaign, "Message", "Message the band", btn, named) { sendingNote = true }
-                    // And the messages kept for one tap: Stop, Look up, and whatever was added.
-                    for (preset in onStripPresets) PresetButton(preset) { state.sendPreset(preset) }
-                }
-                // Where in a setlist this song is, when one is being played.
-                state.playing?.let { (setlistId, index) ->
-                    val total = state.library?.setlist(setlistId)?.entries?.size ?: 0
-                    Text(
-                        "Song ${index + 1}/$total",
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(4.dp)
-                    )
-                }
-                var lastGroup = -1
-                for (action in wanted) {
-                    if (action in overflow) continue
-                    val songAction = action == PerformAction.NEXT_SONG || action == PerformAction.PREVIOUS_SONG
-                    if (songAction && state.playing == null) continue
-                    // Kept while a recording plays, whatever is in front now: there is always a way to stop it.
-                    if (action == PerformAction.PLAY_AUDIO && state.current?.audio.isNullOrEmpty() && !Recording.playing) continue
-                    val group = groupOf(action)
-                    if (lastGroup >= 0 && group != lastGroup) {
-                        if (side) HorizontalDivider(Modifier.width(24.dp).padding(vertical = 2.dp))
-                        else VerticalDivider(Modifier.height(24.dp).padding(horizontal = 2.dp))
-                    }
-                    lastGroup = group
-                    val lit = (action == PerformAction.BOOKMARK && state.bookmarkHere() != null) ||
-                        (action == PerformAction.METRONOME && SharedMetronome.running) ||
-                        state.windowOpen(action) ||
-                        (action != PerformAction.FULLSCREEN && Perform.on(action))
-                    val fullscreen = Perform.on(PerformAction.FULLSCREEN)
-                    if (action == PerformAction.SWITCH_PART) {
-                        // Named for the part showing, so which part this is never needs looking up.
-                        val song = state.current ?: continue
-                        val showing = state.partShown()?.let { partName(it) } ?: "Part"
-                        Box {
-                            StripButton(iconOf(action, fullscreen), showing, "Switch part (now $showing)", btn, named, state.hasOwnPick(song) || state.partPicker) { state.partPicker = !state.partPicker }
-                            PartMenu(state, song, state.partShown(), state.partPicker, onDismiss = { state.partPicker = false })
-                        }
-                        continue
-                    }
-                    if ((action == PerformAction.RECORDINGS) && state.current == null) continue
-                    // With All tools out the toolbar has its own Undo and Redo: not a second pair here.
-                    if ((action == PerformAction.UNDO || action == PerformAction.REDO) && !fullscreen && Perform.isOn != null) continue
-                    StripButton(iconOf(action, fullscreen), shortName(action, fullscreen), action.label, btn, named, lit) { Perform.run(action) }
-                    // The tempo right under the button: one tap to change it, never a menu away.
-                    if (action == PerformAction.METRONOME) {
-                        Text(
-                            "♩ ${SharedMetronome.bpm.roundToInt()}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .then(if (state.metronomeOpen) Modifier.background(MaterialTheme.colorScheme.secondaryContainer) else Modifier)
-                                .clickable { state.metronomeOpen = !state.metronomeOpen }
-                                .padding(horizontal = 6.dp, vertical = 6.dp)
-                        )
-                    }
-                }
-                // Experimental, only when turned on in Settings: turn the pages by ear for one run.
-                // A song with a recording, or whose music has been read (a part with no recording).
-                val readHere = remember(state.readMusic, state.currentPath, Transcriber.shown) {
-                    state.readMusic && state.currentPath?.let { Transcriber.cached(state, java.io.File(it)) } != null
-                }
-                // The music tools, with reading the music on: their own strip, down the other side.
-                if (state.readMusic && state.current != null && state.shelfHeight <= 0f) {
-                    StripButton(Icons.Default.MusicNote, "Music", "The music tools: clean view, play bars, go to a bar", btn, named, lit = ScoreTools.open) {
-                        if (ScoreTools.open) ScoreTools.close(state) else ScoreTools.open = true
-                    }
-                }
-                if (state.listenTurns && (Listener.active || state.current?.audio?.isNotEmpty() == true || readHere)) {
-                    StripButton(Icons.Default.Hearing, "Listen", "Listen and turn the pages", btn, named, lit = Listener.active) { Listener.toggle(state) }
-
-                }
-                Box {
-                    StripButton(Icons.Default.MoreVert, "More", "More, and changing these buttons", btn, named) { menu = true }
-                    StripMenu(state, menu, overflow, onDismiss = { menu = false }, onCustomise = { customising = true }, onPart = { partMenu = true })
-                    // Another instrument's part, from More (when Part is not on the strip): opens where More was.
-                    state.current?.let { song -> PartMenu(state, song, state.partShown(), partMenu, onDismiss = { partMenu = false }) }
-                }
-            }
-            IconButton(onClick = {
-                state.stripCollapsed = !collapsed
-                Perform.recentre?.invoke()
-            }, modifier = Modifier.size(36.dp)) {
-                Icon(if (collapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess, if (collapsed) "Show buttons" else "Hide buttons")
-            }
-        } }
-        // In the bottom corner, the fold button last - folded away, it is all there is, out of
-        // the music's way. In playback mode, the recording's own column stands beside it, on the
-        // music's side. A window over the music that does not fit beside it: the strip steps
-        // aside, a tab at its edge (see Overlays).
-        val density = androidx.compose.ui.platform.LocalDensity.current
-        val screenWide = maxWidth
-        androidx.compose.runtime.SideEffect { Overlays.screen = screenWide; Overlays.actionOnLeft = state.stripOnLeft }
-        if (Overlays.stripsAside) StripTab(onLeft = state.stripOnLeft, what = "the buttons") else Row(
-            verticalAlignment = Alignment.Bottom,
-            modifier = Modifier.align(if (state.stripOnLeft) Alignment.BottomStart else Alignment.BottomEnd).padding(bottom = state.shelfHeight.dp).padding(6.dp)
-                .reportWidth { w -> Overlays.actionOut = with(density) { w.toDp() } + 12.dp }
-        ) {
-            val playback = false // Active recording transport lives in the measured shelf status strip.
-            if (playback && !state.stripOnLeft) PlaybackColumn(state, btn, named, Modifier.padding(end = 6.dp))
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                tonalElevation = 3.dp,
-                shadowElevation = 2.dp,
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
-            ) {
-                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-                if (side) {
-                    // One column, always: never a second one beside it. Where the buttons do not all
-                    // fit (a short screen, many buttons), the column scrolls instead.
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.heightIn(max = (room - 12.dp).coerceAtLeast(44.dp))
-                            .verticalScroll(rememberScrollState()).padding(vertical = 4.dp)
-                    ) { items() }
-                } else {
-                    androidx.compose.foundation.layout.FlowRow(
-                        itemVerticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 4.dp)
-                    ) { items() }
-                }
-            }
-            if (playback && state.stripOnLeft) PlaybackColumn(state, btn, named, Modifier.padding(start = 6.dp))
-        }
-        // Following, and wandered off: the way back to the leader, top centre.
-        BackToLeader(state, Modifier.align(Alignment.TopCenter).padding(top = 8.dp))
-        // The leader's messages, where the music is not.
-        NotePopup(state)
-        // Count-in and listening confidence live in the reserved music shelf, clear of notation.
-    }
-
     if (!state.homeInFront) {
+        androidx.compose.runtime.SideEffect { Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
         MusicDock(state) { ReaderFooter(state) }
-        if(!ScoreTools.checking) {
-            BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
-            BoxWithConstraints(Modifier.matchParentSize()) { NotePopup(state) }
-        }
+        BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
+        BoxWithConstraints(Modifier.matchParentSize()) { NotePopup(state) }
     }
     if (customising) StripEditor(state, onClose = { customising = false })
     if (sendingNote) SendNoteDialog(state, onClose = { sendingNote = false })
@@ -390,7 +206,6 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     if (state.audioOpen && song != null && (state.homeInFront || ScoreTools.checking)) AudioDialog(state, song, movable = true, onClose = { state.audioOpen = false })
     // The music tools' strip, down the other side, in its own lane.
     if (!state.homeInFront) {
-        if(ScoreTools.checking) Box(Modifier.matchParentSize()) { MusicStrip(state) }
         if (state.remote.remoteOpen) RemoteScreen(state, onClose = { state.remote.remoteOpen = false })
     }
 }
@@ -420,7 +235,7 @@ private fun ReaderFooter(state:SheetsState) {
             }
             Mini(if(toolsOut)Icons.Default.Close else Icons.Default.Construction,if(toolsOut)"Hide"else"Tools",if(toolsOut)"Hide annotation tools"else"All tools",toolsOut){Perform.run(PerformAction.FULLSCREEN)}
             Mini(Icons.Default.Bookmark,"Excerpt","Bookmark excerpt"){excerpt=true}
-            Mini(Icons.Default.Timer,"Metronome","Metronome",SharedMetronome.running,width=62.dp){state.metronomeOpen=true}
+            Mini(Icons.Default.GraphicEq,"Tuner","Tuner",width=48.dp){state.tunerOpen=true}
         }
         val navigation:@Composable RowScope.()->Unit={
             IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")}

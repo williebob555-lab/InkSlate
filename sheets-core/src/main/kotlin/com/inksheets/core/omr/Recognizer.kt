@@ -1113,6 +1113,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
 
     /** The page being read as printed (staff lines and all). */
     private var pageInk: Ink? = null
+    // Pixel paths from ties already accepted by the existing detector; never a recognition hint.
+    private val redrawnTiePixels = HashSet<Long>()
+    private fun pixelKey(x: Int, y: Int) = (x.toLong() shl 32) xor (y.toLong() and 0xffffffffL)
 
     /** The page in grey being read, where given: how dark what a cleaned bar keeps is printed. */
     private var pageGrey: IntArray? = null
@@ -1370,6 +1373,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // stems and beams taken as stated rather than found. Staves, barlines, clefs and keys are
         // still read from the picture.
         pageGrey = grey?.takeIf { it.size == ink.width * ink.height }
+        redrawnTiePixels.clear()
         pageInk = ink
         this.printed = printed?.scaled(ink.width)?.let { aligned(it, staves) }
             ?: if (net != null && grey != null && staves.isNotEmpty()) Learned.symbols(grey, ink.width, ink.height, staves.filterIndexed { i, _ -> onlyStaff == null || i == onlyStaff }.map { if (look == null) it else it.looked(look.first, look.second) }, net) else null
@@ -3428,6 +3432,14 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 val y0 = s.y(step, from) + side * path[left]!!
                 val before = (x1 - sp * 1.18f - sp * 0.4f).roundToInt()
                 if ((-1..1).any { d -> ink[before, (y0 + d).roundToInt()] } && (-1..1).any { d -> ink[before - 2, (y0 + d).roundToInt()] }) continue
+                // Remember the very path whose continuity and bow were accepted, so Clean can
+                // replace it without erasing text or other strokes in the surrounding rectangle.
+                for ((xx, distance) in path) {
+                    val cy = s.y(step, xx) + side * distance
+                    val half = max(1, (thin * .5f).roundToInt())
+                    for (yy in cy.roundToInt()-half..cy.roundToInt()+half)
+                        if (ink[xx,yy]) redrawnTiePixels += pixelKey(xx,yy)
+                }
                 return true
             }
         }
@@ -3438,7 +3450,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * The marks each bar keeps as printed, read ([MarkReader]): dynamics (their letters set together
      * into one - "m" "f" is mf), accents, staccatos, tenutos, marcatos and fermatas (to the note they
      * stand by), slurs (curves over more than one note, not ties) and hairpins (louder towards the
-     * open end) - each marked seen, so the clean view leaves the print's own in place.
+     * open end). Accepted components are removed from kept print and redrawn from their semantics.
      */
     private fun readMarks(measures: MutableList<Measure>) {
         val g = pageGrey ?: return
@@ -3449,6 +3461,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         // Every shape kept, with what it is taken for (however unsure), in the bar its middle is in.
         val all = ArrayList<Found>()
         val done = HashSet<String>()
+        val redrawn = ArrayList<Found>()
         val shapes = ArrayList<Triple<Int, Staff, IntArray>>()
         for ((mi, m) in measures.withIndex()) {
             if (m.bars > 1) continue
@@ -3573,6 +3586,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     !(o.box[0] >= x0 - 2 && o.box[2] <= x1 + 2 && o.box[1] >= (i..j).minOf { letters[it].box[1] } - 2 && o.box[3] <= (i..j).maxOf { letters[it].box[3] } + 2) }
             if (!touchesOther && (word in Performance.LEVELS || word in setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp"))) {
                 val m = measures[letters[i].mi]
+                redrawn += letters.subList(i, j + 1)
                 add.getOrPut(letters[i].mi) { ArrayList() } += Direction("dynamic", x0.toFloat(), x1.toFloat(), word, above = letters[i].box[3] < m.box.top, seen = true)
             }
             i = j + 1
@@ -3590,7 +3604,21 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                     for (k in 0 until o.size - 1 step 2) if (o[k] in lo..hi) { a = min(a, o[k + 1]); b = max(b, o[k + 1]) }; return if (b >= a) b - a else 0 }
                 if (spread(f.box[2] - wd / 5, f.box[2]) > spread(f.box[0], f.box[0] + wd / 5)) "cresc" else "dim"
             }
-            val d = Direction(kind, f.box[0].toFloat(), f.box[2].toFloat(), above = f.box[3] < m0.box.top, seen = true)
+            redrawn += f
+            val staff = staves[m0.staff]
+            val outline = m0.kept.firstOrNull { MarkReader.box(it).contentEquals(f.box) }
+            fun endStep(x: Int): Int? {
+                if (kind != "slur" || outline == null) return null
+                val ys = (outline.indices step 2).filter { abs(outline[it]-x) <= m0.space*.25f }.map { outline[it+1] }
+                if (ys.isEmpty()) return null
+                // drawDirections offsets a slur away from its owning pitch; compensate here so
+                // freshly engraved endpoints remain where this accepted source curve was observed.
+                val above = f.box[3] < m0.box.top
+                val y = ys.average().toFloat() + if (above) m0.space*.8f else -m0.space*.8f
+                return ((y-staff.lineY(0,x))/(m0.space*.5f)).roundToInt()
+            }
+            val d = Direction(kind, f.box[0].toFloat(), f.box[2].toFloat(), above = f.box[3] < m0.box.top,
+                step=endStep(f.box[0]),step2=endStep(f.box[2]),seen = true)
             for (k in measures.indices) {
                 val m = measures[k]
                 if (m.staff == m0.staff && m.page == m0.page && m.box.right > f.box[0] && m.box.left < f.box[2]) add.getOrPut(k) { ArrayList() } += d
@@ -3631,6 +3659,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             // Not beside a note high over the staff (its head's side, its ledger's end).
             if (m.events.any { e -> e is Note && e.steps.min() < 0 && abs(e.x + sp * 0.6f - cx) < sp * 1.8f }) continue
             breathsSeen += f
+            redrawn += f
             add.getOrPut(f.mi) { ArrayList() } += Direction("breath", cx.toFloat(), above = true, seen = true)
         }
         for ((k, ds) in add) measures[k] = measures[k].copy(directions = measures[k].directions + ds)
@@ -3644,8 +3673,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             val reach = if (name == "fermata") sp * 1.6f else sp * 1.0f
             val target = m.events.withIndex().filter { (_, e) -> e is Note && abs(e.x + sp * 0.6f - cx) < reach }.minByOrNull { (_, e) -> abs(e.x + sp * 0.6f - cx) } ?: continue
             val n = target.value as Note
+            redrawn += f
             if (name in n.articulations) continue
             measures[f.mi] = m.copy(events = m.events.mapIndexed { idx, e -> if (idx == target.index) n.copy(articulations = n.articulations + name, marksSeen = true) else e })
+        }
+        // Remove the classified components only after their semantic owner was accepted. Never
+        // erase an enclosing rectangle: neighboring cue words and rehearsal letters stay intact.
+        for (k in measures.indices) {
+            val m = measures[k]
+            val boxes = redrawn.filter { measures[it.mi].staff == m.staff }.map { it.box }
+            val indices = m.kept.indices.filter { idx ->
+                val b = MarkReader.box(m.kept[idx])
+                boxes.none { r -> b[0] >= r[0]-1 && b[1] >= r[1]-1 && b[2] <= r[2]+1 && b[3] <= r[3]+1 }
+            }
+            measures[k] = m.copy(kept = indices.map { m.kept[it] }, keptShade = indices.map { m.keptShade.getOrElse(it) { 0 } })
         }
     }
 
@@ -3948,6 +3989,20 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
         val y0 = (s.lineY(0, mid) - sp * 4.5f).roundToInt(); val y1 = (s.lineY(4, mid) + sp * 4.5f).roundToInt()
         val headW = sp * 1.18f
         val stated = this.printed?.learned == false
+        val musicalArcs = if (!stated) emptyList() else printed!!.arcs.filter { a ->
+            abs((a.y0+a.y1)*.5f-s.lineY(2,((a.x0+a.x1)*.5f).roundToInt())) < sp*7 && staffBars.any { bar ->
+                bar.directions.any { d -> d.kind == "slur" && abs(d.x-a.x0)<sp*.3f && abs(d.x2-a.x1)<sp*.3f } ||
+                    (printed!!.tieEndpoints(a)?.let { ends ->
+                        bar.events.filterIsInstance<Note>().any { n -> n.tie && abs(n.x-ends.first.x)<sp }
+                    } ?: false)
+            }
+        }
+        fun sourceCurve(x: Int, y: Int): Boolean = musicalArcs.any { a ->
+            if (x < a.x0-sp*.15f || x > a.x1+sp*.15f || a.x1<=a.x0) false else {
+                val t=((x-a.x0)/(a.x1-a.x0)).coerceIn(0f,1f)
+                abs(y-(a.y0+(a.y1-a.y0)*t+4*t*(1-t)*a.bulge)) <= sp*.25f
+            }
+        }
         // Shapes followed within the bar and a good way either side (a word, a hairpin running on).
         val rx0 = max(0, (x0 - sp * 8f).toInt()); val rx1 = min(clean.width - 1, (x1 + sp * 8f).toInt())
         val ry0 = max(0, (y0 - sp * 2f).toInt()); val ry1 = min(clean.height - 1, (y1 + sp * 2f).toInt())
@@ -4014,7 +4069,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             // Redrawn by any bar it reaches into, this one or a neighbour: then only the parts the
             // redraw covers go - heads, stems, flags and beams where printed - and what is joined to
-            // them (a tie leaving a head, an accent touching a stem) is kept as printed.
+            // them is kept only where it is not an accepted musical curve redrawn below.
             val near = staffBars.filter { o -> o.box.right >= l && o.box.left <= r }
             if (near.any { o -> redrawnBy(o, heads = false) }) {
                 if (stated && owns(px)) {
@@ -4052,7 +4107,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
                 var ta = qy; while (clean[qx, ta - 1] && qy - ta < sp) ta--
                 var tb = qy; while (clean[qx, tb + 1] && tb - qy < sp) tb++
                 val thin = tb - ta + 1 < sp * 0.45f && run(clean, qx, qy, sp * 1.6f) > sp * 1.6f
-                if (covering.none { c -> c.covers(px[i].toFloat(), px[i + 1].toFloat(), upright, stroke = thin) }) { rest += px[i]; rest += px[i + 1] }
+                if (pixelKey(qx,qy) !in redrawnTiePixels && !sourceCurve(qx,qy) && covering.none { c -> c.covers(px[i].toFloat(), px[i + 1].toFloat(), upright, stroke = thin) }) { rest += px[i]; rest += px[i + 1] }
             }
             if (rest.size < px.size) {
                 if (rest.size < 8) continue

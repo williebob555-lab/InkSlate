@@ -70,7 +70,33 @@ internal object ScoreTools {
         private set
     var maskBrushEnabled by mutableStateOf(false)
         private set
-    private var hiddenClean by mutableStateOf<Set<String>>(emptySet())
+    private var maskBrushPath: String? = null
+    private data class CleanView(val visible: Boolean=true,val masksOnly: Boolean=false)
+    private val cleanViews=java.util.WeakHashMap<SheetsState,MutableMap<String,CleanView>>()
+    private fun cleanView(s: SheetsState,path: String): CleanView = cleanViews.getOrPut(s) { hashMapOf() }.getOrPut(path) {
+        when(Transcriber.keptEdit(s,File(path),"sheets_clean_view")) {
+            "hidden_all" -> CleanView(false,false)
+            "hidden_masks" -> CleanView(false,true)
+            "masks" -> CleanView(true,true)
+            else -> CleanView()
+        }
+    }
+    private fun showClean(s: SheetsState,path: String,view: CleanView) {
+        val previous=cleanView(s,path)
+        cleanViews.getOrPut(s) { hashMapOf() }[path]=view
+        Transcriber.keepEdit(s,File(path),"sheets_clean_view",when {
+            !view.visible && view.masksOnly -> "hidden_masks"
+            !view.visible -> "hidden_all"
+            view.masksOnly -> "masks"
+            else -> "all"
+        })
+        if(previous!=view) changed()
+    }
+    private fun putMaskBrushDown() {
+        val previous=maskBrushPath.takeIf { maskBrushEnabled }
+        maskBrushEnabled=false;maskBrushPath=null
+        state?.let { s -> previous?.let { CleanMasks.cancel(s,it) } }
+    }
 
     /** A bar just gone to, lit for a moment. */
     private var found: Pair<Int, Long>? = null
@@ -98,6 +124,7 @@ internal object ScoreTools {
     private var state: SheetsState? = null
 
     fun install(s: SheetsState) {
+        if(state!==s) { putMaskBrushDown();if(tool==Tool.CLEAN) tool=Tool.NONE;version++ }
         state = s
         Perform.pageMarks = { path, page, w, h ->
             if (h > 0 && w > 0 && path == s.currentPath && kotlin.math.abs(s.pageAspect-w/h) > .01f) {
@@ -108,7 +135,7 @@ internal object ScoreTools {
         Perform.musicGesture = { path, page, pts, done -> gesture(path, page, pts, done) }
         Perform.musicUndo = {
             val path = s.currentPath
-            if (maskBrushEnabled && path != null) {
+            if (maskBrushEnabled && path != null && path==maskBrushPath) {
                 if (CleanMasks.undo(s, path)) changed()
                 true // Exhausting mask history must not undo unrelated ink beneath the overlay.
             } else false
@@ -357,12 +384,13 @@ internal object ScoreTools {
     // ---- the tools -----------------------------------------------------------------------------
 
     fun choose(t: Tool) {
+        val wasMask=maskBrushEnabled
         if (maskBrushEnabled) {
-            maskBrushEnabled = false
-            state?.let { s -> s.currentPath?.let { CleanMasks.cancel(s,it) } }
+            putMaskBrushDown()
         }
         val was = tool
-        tool = if (tool == t) Tool.NONE else t
+        tool = if (tool == t && !wasMask) Tool.NONE else t
+        if(tool==Tool.CLEAN) state?.let { s -> s.currentPath?.let { showClean(s,it,CleanView()) } }
         // The select tool put away: what it chose let go with it (a choice left over, out of sight,
         // would steer Play to bars far from the page in front).
         if (was == Tool.SELECT && tool != Tool.SELECT) { selection = null; pressStart = null; pressed = null; changed() }
@@ -374,6 +402,7 @@ internal object ScoreTools {
      * waits, paused) with the tools out: a tap on a bar plays from it.
      */
     internal fun syncTool() {
+        if(maskBrushEnabled && maskBrushPath!=state?.currentPath) { putMaskBrushDown();tool=Tool.NONE }
         // Only while the tools are out, and only on a part that has been read: a tool left in hand
         // must never stop the pages of another song from turning.
         val read = state?.let { s -> s.currentPath?.let { scoreOf(it)?.hasRead(s.pageShown.first) } } == true
@@ -440,6 +469,7 @@ internal object ScoreTools {
     }
 
     fun close(s: SheetsState) {
+        putMaskBrushDown()
         stop(s)
         if (checking) endCheck()
         open = false
@@ -954,17 +984,19 @@ internal object ScoreTools {
     fun cleanEnabled(s: SheetsState): Boolean {
         version
         val path = s.currentPath ?: return false
-        return path !in hiddenClean && (cleanedIn(path).isNotEmpty() || CleanMasks.hasMask(s,path,s.pageShown.first))
+        val view=cleanView(s,path)
+        return view.visible && ((!view.masksOnly && cleanedIn(path).isNotEmpty()) || CleanMasks.hasPaint(s,path,s.pageShown.first))
     }
 
     fun toggleClean(s: SheetsState) {
         val path = s.currentPath ?: return
+        val view=cleanView(s,path)
         if (cleanEnabled(s)) {
-            hiddenClean = hiddenClean + path
-            if (maskBrushEnabled) { maskBrushEnabled = false; tool = Tool.NONE; syncTool() }
+            showClean(s,path,view.copy(visible=false))
+            if (maskBrushEnabled) { putMaskBrushDown();tool = Tool.NONE;syncTool() }
         } else {
-            hiddenClean = hiddenClean - path
-            if (cleanedIn(path).isEmpty() && !CleanMasks.hasMask(s,path,s.pageShown.first)) cleanWhole(s,true)
+            showClean(s,path,view.copy(visible=true))
+            if(!view.masksOnly && cleanedIn(path).isEmpty() && !CleanMasks.hasMask(s,path,s.pageShown.first)) cleanWhole(s,true)
         }
         changed()
     }
@@ -972,13 +1004,13 @@ internal object ScoreTools {
     fun toggleMaskBrush(s: SheetsState) {
         val path = s.currentPath ?: return
         if (scoreHere(s)?.hasRead(s.pageShown.first) != true) return
-        maskBrushEnabled = !maskBrushEnabled
-        if (maskBrushEnabled) {
-            hiddenClean = hiddenClean - path; tool = Tool.CLEAN
+        if(maskBrushEnabled && maskBrushPath==path) { putMaskBrushDown();tool=Tool.NONE }
+        else {
+            putMaskBrushDown();maskBrushEnabled=true;maskBrushPath=path
+            showClean(s,path,CleanView(visible=true,masksOnly=true));tool = Tool.CLEAN
             s.stripCollapsed=false
             if(Perform.on(com.inkslate.core.PerformAction.FULLSCREEN)) Perform.run(com.inkslate.core.PerformAction.FULLSCREEN)
         }
-        else { CleanMasks.cancel(s,path); tool = Tool.NONE }
         syncTool(); changed()
     }
 
@@ -986,7 +1018,7 @@ internal object ScoreTools {
     fun cleanWhole(s: SheetsState, on: Boolean) {
         val path = s.currentPath ?: return
         val score = scoreHere(s) ?: return
-        hiddenClean = if (on) hiddenClean - path else hiddenClean + path
+        showClean(s,path,CleanView(visible=on,masksOnly=false))
         val set = cleanedIn(path)
         undo += path to set.toSet()
         if (on) set += score.measures.flatMap { m -> m.number until m.number + m.bars } else set.clear()
@@ -998,7 +1030,8 @@ internal object ScoreTools {
     fun cleanedWhole(s: SheetsState): Boolean {
         version   // (read, so the Clean button is redrawn when it changes)
         val path = s.currentPath ?: return false
-        if (path in hiddenClean) return false
+        val view=cleanView(s,path)
+        if (!view.visible || view.masksOnly) return false
         val n = scoreHere(s)?.measures?.size ?: return false
         return n > 0 && cleanedIn(path).size * 2 >= n
     }
@@ -1043,6 +1076,7 @@ internal object ScoreTools {
         val k = scaleOf(score, page, pageWidth[path to page] ?: return) ?: return
         if (maskBrushEnabled) {
             val s = state ?: return
+            if(path!=maskBrushPath || path!=s.currentPath) return
             if (!score.hasRead(page)) return
             // One accepted preview/commit invalidates the overlay once. Throttled pointer
             // samples must leave its geometry/version cache intact until there is new ink.
@@ -1144,8 +1178,9 @@ internal object ScoreTools {
     internal fun marks(path: String, page: Int, width: Float, height: Float): List<PageMark>? {
         pageWidth[path to page] = width
         val score = scoreOf(path) ?: return null
-        val clean = if (path in hiddenClean) emptySet() else cleanedIn(path)
-        val brush = if (path in hiddenClean) null else state?.let { CleanMasks.getMask(it,path,page) }
+        val view=state?.let { cleanView(it,path) } ?: CleanView()
+        val clean = if (!view.visible || view.masksOnly) emptySet() else cleanedIn(path)
+        val brush = if (!view.visible) null else state?.let { CleanMasks.getMask(it,path,page) }
         val live = playing?.first ?: paused
         val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
         val off = Listener.offBars.toSet()
@@ -1409,7 +1444,7 @@ internal object ScoreTools {
         // The metronome going: its click moves into the music - on the music's own beats, its
         // ritardandos and fermatas too - instead of ticking on beside it on a clock of its own.
         val click = takeClick(s)
-        val p = ScorePlayer(Synth(rate), source, range.first, range.last, start, transpose, SampledInstruments.patchFor(s, sounding),
+        val p = ScorePlayer(Synth(rate).apply { clickSound=Click.sound(s) }, source, range.first, range.last, start, transpose, SampledInstruments.patchFor(s, sounding),
             loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, click = click, order = order)
         player = p
         playbackProgress = 0f
@@ -1542,7 +1577,7 @@ internal object ScoreTools {
             // This part too, where asked: to hear the whole, or to hear how it fits.
             val (myId, myTranspose) = instrumentOf(s)
             val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, SampledInstruments.patchFor(s, soundAs ?: myId)) to 1f else null
-            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate), mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate).apply { clickSound=Click.sound(s) }, mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
             playbackProgress = 0f
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
@@ -1778,6 +1813,20 @@ internal object ScoreTools {
     }
     fun playbackClick(s:SheetsState):Boolean = s.platform.pref("sheets_click_notes")?.toBooleanStrictOrNull()
         ?: (SharedMetronome.running || Click.withPlayback(s))
+    fun updateClickSound(sound: com.inksheets.core.ClickSound) {
+        player?.synth?.clickSound=sound
+        ensemble?.synth?.clickSound=sound
+    }
+    /** Every Play control uses the selected playback mode. */
+    fun playSelected(s: SheetsState, from: Int? = null) {
+        if (band) playBand(s,from) else play(s,from)
+    }
+    fun toggleBand(s: SheetsState) {
+        loadBandWithMe(s)
+        val current=playing?.first
+        band=!band
+        if(current!=null) playSelected(s,current)
+    }
     fun setPlaybackClick(s:SheetsState,on:Boolean) {
         s.platform.setPref("sheets_click_notes",on.toString())
         player?.synth?.clickEnabled=on

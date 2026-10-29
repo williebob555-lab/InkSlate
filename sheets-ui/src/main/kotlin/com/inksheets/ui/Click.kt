@@ -4,6 +4,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inksheets.core.Metronome
+import com.inksheets.core.ClickSound
+import com.inksheets.core.ClickSounds
 
 /**
  * The metronome's one voice, and what it is doing: ticking on its own, counting in (a count-off
@@ -31,16 +33,44 @@ internal object Click {
 
     private var prefs: SheetsPlatform? = null
     private fun load(p: SheetsPlatform) {
-        if (prefs != null) return
+        if (prefs === p) return
         prefs = p
         countInBarsState = p.pref(K_COUNT_IN)?.toIntOrNull() ?: 1
         withRecordingState = p.pref(K_WITH_RECORDING) == "true"
         withPlaybackState = p.pref(K_WITH_PLAYBACK) == "true"
+        soundState=runCatching { ClickSound.valueOf(p.pref(K_SOUND).orEmpty()) }.getOrDefault(ClickSound.TONE)
     }
 
     private var countInBarsState by mutableStateOf(1)
     private var withRecordingState by mutableStateOf(false)
     private var withPlaybackState by mutableStateOf(false)
+    private var soundState by mutableStateOf(ClickSound.TONE)
+    fun sound(state: SheetsState): ClickSound { load(state.platform);return soundState }
+    fun setSound(state: SheetsState,sound: ClickSound) {
+        load(state.platform);soundState=sound
+        state.platform.setPref(K_SOUND,sound.name)
+        SharedMetronome.engine?.let { it.settings=it.settings.copy(sound=sound) }
+        ScoreTools.updateClickSound(sound)
+    }
+
+    private val previews=java.util.concurrent.atomic.AtomicLong()
+    /** Explicit one-shot audition. Selecting a sound or opening Timing never calls this. */
+    fun preview(state: SheetsState): Boolean {
+        val rate=Sound.rate(state).takeIf { it>0 } ?: return false
+        val token=previews.incrementAndGet()
+        val wave=ClickSounds.samples(sound(state),Metronome.Accent.STRONG,rate)
+        val volume=(SharedMetronome.engine?.settings?.volume ?: .8f).coerceIn(0f,1f)*.65f
+        var at=0;var done=false
+        val started=Sound.play(state,PREVIEW) { out ->
+            for(i in out.indices) out[i]=if(at<wave.size) wave[at++]*volume else 0f
+            if(at>=wave.size && !done) { done=true;state.platform.onMain { if(previews.get()==token) Sound.stop(PREVIEW) } }
+        }
+        // Also release an output that stopped requesting buffers before the one-shot finished.
+        if(started) java.util.Timer("click-preview",true).schedule(object: java.util.TimerTask() {
+            override fun run()=state.platform.onMain { if(previews.get()==token) Sound.stop(PREVIEW) }
+        },1000L)
+        return started
+    }
 
     /** Bars counted in before recording yourself and before a recording plays: 0, 1 or 2. */
     fun countInBars(state: SheetsState): Int { load(state.platform); return countInBarsState }
@@ -58,7 +88,10 @@ internal object Click {
 
     fun engine(state: SheetsState): Metronome? {
         val out = state.platform.audioOut ?: return null
-        return SharedMetronome.engine ?: Metronome(out.sampleRate).also { SharedMetronome.engine = it }
+        load(state.platform)
+        return (SharedMetronome.engine ?: Metronome(out.sampleRate).also { SharedMetronome.engine = it }).also {
+            it.settings=it.settings.copy(sound=soundState)
+        }
     }
 
     /** Set the tempo, wherever it is used next - and at once, if it is ticking. */
@@ -139,6 +172,8 @@ internal object Click {
     }
 
     private const val WHO = "click"
+    private const val PREVIEW = "click-preview"
+    private const val K_SOUND = "sheets_click_sound"
     private const val K_COUNT_IN = "sheets_count_in_bars"
     private const val K_WITH_RECORDING = "sheets_click_recording"
     private const val K_WITH_PLAYBACK = "sheets_click_playback"

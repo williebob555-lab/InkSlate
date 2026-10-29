@@ -60,10 +60,12 @@ internal object SharedMetronome {
 @Composable
 internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
     val out = state.platform.audioOut
-    val engine = remember {
-        SharedMetronome.engine ?: Metronome(out?.sampleRate ?: 48_000).also { SharedMetronome.engine = it }
+    val engine = remember(state) {
+        (Click.engine(state) ?: SharedMetronome.engine ?: Metronome(out?.sampleRate ?: 48_000).also { SharedMetronome.engine = it }).also {
+            it.settings=it.settings.copy(sound=Click.sound(state))
+        }
     }
-    var settings by remember { mutableStateOf(engine.settings) }
+    var settings by remember(engine,state) { mutableStateOf(engine.settings) }
     val taps = remember { mutableStateListOf<Long>() }
 
     fun use(s: Metronome.Settings) {
@@ -120,6 +122,16 @@ internal fun MetronomeDialog(state: SheetsState, onClose: () -> Unit) {
                     })
                 }
             }
+            Text("Sound",style=MaterialTheme.typography.labelMedium)
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                com.inksheets.core.ClickSound.entries.forEach { sound ->
+                    FilterChip(selected=settings.sound==sound,onClick={
+                        Click.setSound(state,sound);use(settings.copy(sound=sound))
+                    },label={Text(sound.label)})
+                }
+            }
+            TextButton(onClick={Click.preview(state)},enabled=out!=null,
+                modifier=Modifier.semantics { contentDescription="Preview metronome sound" }) { Text("Preview sound") }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     val now = System.currentTimeMillis()

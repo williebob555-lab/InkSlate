@@ -1,9 +1,5 @@
 package com.inksheets.core
 
-import kotlin.math.PI
-import kotlin.math.exp
-import kotlin.math.sin
-
 /**
  * A metronome that is written, not timed.
  *
@@ -24,7 +20,8 @@ class Metronome(private val sampleRate: Int = 48_000) {
         val subdivision: Int = 1,
         /** Per-beat accents overriding the default (first strong, rest normal). */
         val accents: List<Accent>? = null,
-        val volume: Float = 0.8f
+        val volume: Float = 0.8f,
+        val sound: ClickSound = ClickSound.TONE
     ) {
         fun accentOf(beat: Int): Accent =
             accents?.getOrNull(beat) ?: if (beat == 0) Accent.STRONG else Accent.NORMAL
@@ -74,9 +71,6 @@ class Metronome(private val sampleRate: Int = 48_000) {
     /** How long [bars] bars last at the tempo set now, in ms. */
     fun msFor(bars: Int): Double = bars * settings.beatsPerBar.coerceAtLeast(1) * 60_000.0 / settings.bpm
 
-    private val strong = click(1760.0, 0.035)
-    private val normal = click(1320.0, 0.03)
-    private val sub = click(990.0, 0.02, gain = 0.45f)
 
     /** Start again from the first beat of a bar. */
     fun reset() {
@@ -134,23 +128,9 @@ class Metronome(private val sampleRate: Int = 48_000) {
         val inBeat = (tick % sub).toInt()
         val beat = ((tick / sub) % s.beatsPerBar.coerceAtLeast(1)).toInt()
         val accent = if (inBeat == 0) s.accentOf(beat) else Accent.SUB
-        voice = when (accent) {
-            Accent.STRONG -> strong
-            Accent.NORMAL -> normal
-            Accent.SUB -> this.sub
-            Accent.SILENT -> null
-        }
+        voice = if(accent==Accent.SILENT) null else ClickSounds.samples(s.sound,accent,sampleRate)
         voiceAt = 0
         if (inBeat == 0) onBeat?.invoke(beat)
-    }
-
-    /** A short pitched click with a fast decay: clearer than noise over a band. */
-    private fun click(hz: Double, seconds: Double, gain: Float = 1f): FloatArray {
-        val n = (sampleRate * seconds).toInt()
-        return FloatArray(n) { i ->
-            val t = i.toDouble() / sampleRate
-            (sin(2 * PI * hz * t) * exp(-t * 90) * gain).toFloat()
-        }
     }
 
     companion object {

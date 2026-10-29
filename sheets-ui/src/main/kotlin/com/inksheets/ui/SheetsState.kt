@@ -187,7 +187,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             stripCollapsedState = v
             if(v) { expandedMusicCategory=null; musicCategoryPage=null }
             platform.setPref(K_COLLAPSED, v.toString())
-            platform.setStripLane(!v)
+            platform.setStripLane(false)
         }
     // Folded until first asked for: the music is the whole screen, its corner button the way in.
     private var stripCollapsedState by mutableStateOf(platform.pref(K_COLLAPSED)?.let { it == "true" } ?: true)

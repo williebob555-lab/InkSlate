@@ -74,7 +74,7 @@ object FlavorSetup {
         AppFlavor.musicView = true
         AppFlavor.alwaysFullscreen = true
         com.inkslate.ink.DrawingView.fitWholePage = true
-        com.inkslate.ink.DrawingView.stripLaneDp = 64f
+        com.inkslate.ink.DrawingView.stripLaneDp = 0f
         // With the tools away a finger always turns pages; the setting is only about taps.
         com.inkslate.ink.DrawingView.swipeTurns = true
         AppFlavor.home = { open, openSettings ->

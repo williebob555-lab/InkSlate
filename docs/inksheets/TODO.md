@@ -1,5 +1,19 @@
 # InkSheets — TODO (the workstation)
 
+## Corrective follow-up — 2026-10-29
+
+The latest user corrections supersede the corresponding earlier checkboxes below. Current work is unshipped until validation and release verification complete.
+
+- Dock expansion must replace content on the existing edge, preserve the score viewport, and work on phones. Interactive in-place dock/Lead-Follow demo prepared; structural app layout awaits feedback.
+- Footer shortcut is Tuner, not Metronome. Remove all legacy music sidebars, including mounts in Fix; preserve the annotation palette and correction editor.
+- Clean and mask visibility are independent persisted modes. Selecting Mask must show only brushed areas and must not restore whole-page Clean. Clear document-specific brush previews on owner changes.
+- Clean must regenerate recognized articulations, dynamics, ties and slurs, removing accepted source marks while preserving unrelated cue text. Reader cache version 17.
+- Loop handles use cached waveform geometry, immediate handle grabs, stable drag windows, throttled previews and an exact final commit.
+- Metronome offers Tone, Woodblock, Rim click and Soft tick with explicit preview, persisted selection and the same voices during score playback/count-in.
+- No rearticulation under slurs, including repeated pitches. Verify rendered continuity and retain unslurred/staccato separation.
+- Fix Band selection being ignored by shelf Play. Broader ensemble redevelopment explicitly deferred by user.
+- Play Together needs role-focused Lead/Follow hierarchy; demo first, no unreviewed structural rewrite.
+
 ## Current follow-up — 2026-10-28
 
 Latest delivered: **1.2.2-test.309**, source e93c0eb. All CI jobs and matching phone/watch/Windows/Fedora publication verified. Includes the current category/reading/Fix/crop/setlist scope, precise pause/resume, smooth audio mixing, excerpt-scoped playback and consumed-audio cursor timing. See review/TEST-CANDIDATE-20261028.md for evidence and remaining device/manual-version-refresh checks.

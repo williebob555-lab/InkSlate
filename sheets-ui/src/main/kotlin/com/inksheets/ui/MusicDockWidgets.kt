@@ -123,8 +123,8 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                     DockAction(Icons.Default.MusicNote,"Read","Read whole piece",enabled=Transcriber.busy==null &&state.currentPath!=null) { state.currentPath?.let { Transcriber.read(state,File(it)){Perform.marksChanged()} } }
                     DockAction(Icons.Default.Spellcheck,"Review","Review recognized notes",enabled=read,active=ScoreTools.colours) { ScoreTools.open=true;ScoreTools.toggleCheck(state) }
                     DockAction(Icons.Default.AutoFixHigh,"Clean","Clean view",enabled=read,active=ScoreTools.cleanEnabled(state)) { ScoreTools.toggleClean(state) }
-                    DockAction(Icons.Default.PlayArrow,"Play","Play notes",enabled=read,active=ScoreTools.playing!=null) { if(ScoreTools.playing!=null)ScoreTools.stop(state)else ScoreTools.play(state) }
-                    DockAction(Icons.Default.Groups,"Band","Play other parts",enabled=read,active=ScoreTools.band) { ScoreTools.loadBandWithMe(state);ScoreTools.band=!ScoreTools.band }
+                    DockAction(Icons.Default.PlayArrow,"Play","Play notes",enabled=read,active=ScoreTools.playing!=null) { if(ScoreTools.playing!=null)ScoreTools.stop(state)else ScoreTools.playSelected(state) }
+                    DockAction(Icons.Default.Groups,"Band","Play other parts",enabled=read,active=ScoreTools.band) { ScoreTools.toggleBand(state) }
                     DockAction(Icons.Default.Tag,"Bar","Go to bar",enabled=read,onClick=goToBar)
                     DockAction(Icons.Default.Brush,"Mask","Clean mask brush",enabled=read,active=ScoreTools.maskBrushEnabled) { ScoreTools.toggleMaskBrush(state) }
                     DockAction(Icons.Default.Repeat,"Loop","Loop selected bars",enabled=read,active=ScoreTools.loop) { ScoreTools.loop=!ScoreTools.loop }

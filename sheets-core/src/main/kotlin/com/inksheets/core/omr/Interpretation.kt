@@ -501,10 +501,8 @@ object Interpretation {
             val prev = notes.getOrNull(i - 1)
             val nextTouches = next != null && abs(n.q + n.len - next.q) < 1e-6
             val joined = prev != null && (prev.sounding == JOINED || prev.tie) && abs(prev.q + prev.len - n.q) < 1e-6
-            val repeatsNext = sounds.tonguedSlurredRepeats && nextTouches && !n.tie && n.keys.contentEquals(next!!.keys)
             val separated = n.articulations.any { it == "staccato" || it == "staccatissimo" || it == "marcato" }
-            val softRepeat = sounds.tonguedSlurredRepeats && joined && prev!!.sounding == JOINED && prev.keys.contentEquals(n.keys) && !separated
-            val joinsNext = drums == null && (n.tie || (n.sounding == JOINED && !repeatsNext)) && nextTouches
+            val joinsNext = drums == null && (n.tie || n.sounding == JOINED) && nextTouches
             val feel = Feel.now
             // The note's own release - a natural decay (brass 80-150 ms): what is heard goes on after the hold.
             val rel = (sounds.release * rate).toLong()
@@ -518,7 +516,7 @@ object Interpretation {
                 val gap = max(nominal * feel.gap, rate * feel.gapMinMs / 1000).coerceAtMost(nominal * 0.35)
                 var hold = when (n.sounding) {
                     TENUTO -> nominal - (rate * 0.02).toLong()
-                    JOINED -> nominal - (if (repeatsNext) min(nominal * 0.04, rate * 0.012) else gap).toLong() - (rel * 0.3).toLong()
+                    JOINED -> nominal
                     DETACHED, DETACHED_ACCENT -> nominal - gap.toLong() - (rel * 0.3).toLong()
                     // Staccato and marcato: a share of the note, the release (shorter for staccato) making up the rest.
                     else -> (nominal * n.sounding).toLong() - (if (n.sounding < 0.5) rate * 0.025 else rel * 0.3).toLong()
@@ -557,8 +555,11 @@ object Interpretation {
                 (if ("tenuto" in a) Synth.ART_TENUTO else 0) or (if ("marcato" in a) Synth.ART_MARCATO else 0)
             val layer = (n.level * 1.1f).coerceIn(0.05f, 1.5f)
             for ((ki, k) in keys.withIndex()) {
-                // Tied into: the sound carries on - its tone stretched to this note's end, not struck again.
-                if (drums == null && prev != null && prev.tie && joined && n.keys[ki] in prev.keys && (prev.tieKeys.isEmpty() || n.keys[ki] in prev.tieKeys)) {
+                // A tie, or the same pitch under a slur: extend the sounding voice without a new attack.
+                // The score still distinguishes the separate slurred notes from a semantic tie.
+                val tiedInto = prev != null && prev.tie && n.keys[ki] in prev.keys && (prev.tieKeys.isEmpty() || n.keys[ki] in prev.tieKeys)
+                val slurredSamePitch = prev != null && prev.sounding == JOINED && !separated && n.keys[ki] in prev.keys
+                if (drums == null && joined && (tiedInto || slurredSamePitch)) {
                     val last = out.indexOfLast { it.midi == k }
                     if (last >= 0) {
                         val t = out[last]
@@ -567,12 +568,11 @@ object Interpretation {
                     }
                 }
                 // A slurred line, one note at a time: each moves over from the last, not struck anew.
-                val flowing = joined && prev!!.sounding == JOINED && !softRepeat && !separated && drums == null
+                val flowing = joined && prev!!.sounding == JOINED && !separated && drums == null
                 val from = if (flowing && prev != null && prev.keys.size == 1 && n.keys.size == 1) sound(prev.keys[0], transpose, null) else null
                 val attack = when {
                     flowing -> Synth.Attack.AUTO
                     "accent" in a || "marcato" in a || n.accent >= 0.8f -> Synth.Attack.FIRM
-                    softRepeat -> Synth.Attack.SOFT
                     else -> Synth.Attack.NORMAL
                 }
                 out += Synth.Tone(k, start, length, v, sounds, n.accent, vEnd, legato = flowing, from = from, fromVelocity = fromV, ramp = ramp, art = art, layer = layer, vib = vibrato[i], attack = attack)

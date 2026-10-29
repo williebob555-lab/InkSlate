@@ -3,28 +3,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SourceAlignmentTest {
-    @Test fun `preserved original decoration retains hollow counters`() {
-        val direction=Direction("dynamic",10f,text="p",above=true)
-        val decoration=SourceDecoration(listOf(
-            intArrayOf(10,-40,30,-40,30,-20,10,-20),
-            intArrayOf(15,-35,15,-25,25,-25,25,-35)),direction=direction)
+    @Test fun `clean overlays engrave semantic dynamics instead of copying traced source ink`() {
+        val direction=Direction("dynamic",10f,text="p",above=true,seen=true)
+        val decoration=SourceDecoration(listOf(intArrayOf(10,-40,30,-40,30,-20,10,-20)),direction=direction)
         val m=Measure(1,0,0,Box(0,0,120,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList(),directions=listOf(direction),sourceDecorations=listOf(decoration))
-        val ink=Ink(160,130)
-        Engraver.paint(ink,Engraver.aligned(m),10f,20f,60f)
-        assertTrue(ink[32,22])
-        assertFalse("Original dynamic's hollow counter remains paper",ink[40,30])
+        val drawing=Engraver.aligned(m)
+        assertTrue(drawing.marks.filterIsInstance<Engraver.Symbol>().any { it.name=="dynamicPiano" })
+        assertFalse(drawing.marks.any { it is Engraver.Slab })
+        val corrected=Engraver.aligned(m.copy(directions=listOf(direction.copy(text="f"))))
+        assertTrue(corrected.marks.filterIsInstance<Engraver.Symbol>().any { it.name=="dynamicForte" })
+        assertFalse(corrected.marks.filterIsInstance<Engraver.Symbol>().any { it.name=="dynamicPiano" })
     }
-    @Test fun `source decorations follow their semantic owner and corrections replace original marks`() {
-        val note=Note(listOf(4),listOf(Pitch(0,4)),Duration(4),30f,articulations=listOf("accent"))
-        val direction=Direction("cresc",10f,100f)
+    @Test fun `recognized scanned articulations and curves redraw and corrections remove them`() {
+        val note=Note(listOf(4),listOf(Pitch(0,4)),Duration(4),30f,articulations=listOf("accent"),marksSeen=true,tie=true)
+        val next=note.copy(x=80f,tie=false,articulations=emptyList())
+        val direction=Direction("cresc",10f,100f,seen=true)
+        val slur=Direction("slur",20f,105f,above=true,step=4,step2=4,seen=true)
         val accent=SourceDecoration(listOf(intArrayOf(30,-10,40,-10,40,-8,30,-8)),note.x,note.steps,note.articulations)
-        val wedge=SourceDecoration(listOf(intArrayOf(10,60,100,55,100,56,10,60)),direction=direction)
-        val m=Measure(1,0,0,Box(0,0,120,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),listOf(note),directions=listOf(direction),sourceDecorations=listOf(accent,wedge))
-        val expected=AlignedGeometry(m).decoration(accent).single() as Engraver.Slab
-        assertTrue(Engraver.aligned(m).marks.filterIsInstance<Engraver.Slab>().any{it.points.contentEquals(expected.points)})
-        val corrected=m.copy(events=listOf(note.copy(articulations=emptyList())),directions=emptyList())
-        assertFalse(Engraver.aligned(corrected).marks.filterIsInstance<Engraver.Slab>().any{it.points.contentEquals(expected.points)})
-        assertTrue(Engraver.line(listOf(m)).marks.filterIsInstance<Engraver.Symbol>().any{it.name.startsWith("articAccent")})
+        val m=Measure(1,0,0,Box(0,0,120,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),listOf(note,next),directions=listOf(direction,slur),sourceDecorations=listOf(accent))
+        val drawing=Engraver.aligned(m)
+        assertTrue(drawing.marks.filterIsInstance<Engraver.Symbol>().any{it.name.startsWith("articAccent")})
+        assertEquals("One newly engraved tie and one slur",2,drawing.marks.filterIsInstance<Engraver.Slab>().size)
+        val noWedge=Engraver.aligned(m.copy(directions=listOf(slur)))
+        assertEquals("Hairpin has two engraved strokes",2,drawing.marks.filterIsInstance<Engraver.Stroke>().size-noWedge.marks.filterIsInstance<Engraver.Stroke>().size)
+        val corrected=m.copy(events=listOf(note.copy(articulations=emptyList(),tie=false),next),directions=emptyList())
+        assertFalse(Engraver.aligned(corrected).marks.filterIsInstance<Engraver.Symbol>().any{it.name.startsWith("articAccent")})
+        assertTrue(Engraver.aligned(corrected).marks.filterIsInstance<Engraver.Slab>().isEmpty())
+    }
+    @Test fun `partial chord ties redraw only the recognized tied pitch`() {
+        val n=Note(listOf(2,4),listOf(Pitch(2,4),Pitch(0,4)),Duration(4),20f,tie=true,tiedPitches=listOf(Pitch(0,4).midi))
+        val m=Measure(1,0,0,Box(0,0,120,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),listOf(n,n.copy(x=80f,tie=false)))
+        assertEquals(1,Engraver.aligned(m).marks.filterIsInstance<Engraver.Slab>().size)
     }
     @Test fun `displaced chord heads retain individual observed centers and sizes only in overlay`() {
         val n=Note(listOf(3,4),listOf(Pitch(1,4,0),Pitch(0,4,0)),Duration(4),30f,

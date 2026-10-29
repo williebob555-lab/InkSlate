@@ -123,9 +123,9 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                 ScoreActionGrid(listOf(
                     ScoreAction(if (playing) "Stop playback" else "Play", "Selected bars, or from this page", if (playing) Icons.Default.Stop else Icons.Default.PlayArrow,
                         enabled = ready || playing, selected = playing,
-                        action = { if (playing) ScoreTools.stop(state) else usePage { if (ScoreTools.band) ScoreTools.playBand(state) else ScoreTools.play(state) } }),
+                        action = { if (playing) ScoreTools.stop(state) else usePage { ScoreTools.playSelected(state) } }),
                     ScoreAction("Band accompaniment", "Other parts play alongside you", Icons.Default.Groups,
-                        enabled = ready, selected = ScoreTools.band, action = { ScoreTools.loadBandWithMe(state); ScoreTools.band = !ScoreTools.band }),
+                        enabled = ready, selected = ScoreTools.band, action = { ScoreTools.toggleBand(state) }),
                     ScoreAction("Include my part", if (ScoreTools.bandWithMe) "Your part plays with the band" else "Leave your part for you to play", Icons.Default.Person,
                         enabled = ready && ScoreTools.band, selected = ScoreTools.bandWithMe,
                         action = { ScoreTools.chooseBandWithMe(state, !ScoreTools.bandWithMe) }),

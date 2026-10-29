@@ -25,6 +25,107 @@ import com.inksheets.core.omr.Box
 class CleanMaskTest {
     @get:Rule val tmp = TemporaryFolder()
 
+    @Test fun `selecting mask never reveals previously saved whole clean outside painted regions`() {
+        val folder=tmp.newFolder("mask-only-after-whole")
+        val state=SheetsState(Platform(folder));val path=file(folder,"score.pdf")
+        state.currentPath=path;state.pageShown=0 to 1
+        val score=Score(listOf(Measure(1,0,0,Box(20,40,240,80),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList())),1,listOf(800))
+        val print=Color(0xFFBA3348)
+        ScoreTools.install(state);ScoreTools.scoreSource={ if(it==path) score else null }
+        try {
+            ScoreTools.open=true;ScoreTools.marks(path,0,800f,800f)
+            ScoreTools.cleanWhole(state,true)
+            assertEquals(Color.White,raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)[150,55])
+            ScoreTools.toggleClean(state)
+            assertFalse(ScoreTools.cleanEnabled(state))
+            ScoreTools.toggleMaskBrush(state)
+            assertTrue(ScoreTools.maskBrushEnabled)
+            assertEquals("Stored whole-clean choices are retained",1,ScoreTools.cleanCount(state))
+            assertFalse("Selecting a brush alone paints nothing",ScoreTools.cleanEnabled(state))
+            assertFalse(ScoreTools.cleanedWhole(state))
+            assertEquals(print,raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)[150,55])
+            Perform.musicBrush=ToolConfig(strokeWidth=20f)
+            Perform.musicGesture!!.invoke(path,0,floatArrayOf(50f,55f,120f,55f),true)
+            val painted=raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)
+            assertEquals(Color.White,painted[70,55])
+            assertEquals("Old whole-clean state must not escape the brush mask",print,painted[150,55])
+            assertTrue(ScoreTools.marks(path,0,800f,800f).orEmpty().filter { it.mask!=null }.all { !it.mask!!.baseFull })
+            ScoreTools.toggleMaskBrush(state)
+            assertEquals(print,raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)[150,55])
+            ScoreTools.cleanWhole(state,true)
+            assertEquals("Explicit whole-clean remains available",Color.White,raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)[150,55])
+        } finally { ScoreTools.close(state);ScoreTools.scoreSource=null;Perform.musicBrush=ToolConfig() }
+    }
+
+    @Test fun `clean off and masks-only presentation survive reopening without enabling whole clean`() {
+        val folder=tmp.newFolder("clean-off-reopen");val path=file(folder,"score.pdf")
+        val score=Score(listOf(Measure(1,0,0,Box(20,40,240,80),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList())),1,listOf(800))
+        fun reopened()=SheetsState(Platform(folder)).apply { currentPath=path;pageShown=0 to 1;ScoreTools.install(this) }
+        ScoreTools.scoreSource={if(it==path) score else null}
+        var state=reopened()
+        try {
+            ScoreTools.cleanWhole(state,true);ScoreTools.toggleClean(state);ScoreTools.close(state)
+            state=reopened()
+            assertEquals(1,ScoreTools.cleanCount(state))
+            assertFalse("A persisted off switch must not turn itself on after reopen",ScoreTools.cleanEnabled(state))
+            assertFalse(ScoreTools.cleanedWhole(state))
+            assertEquals(Color(0xFFBA3348),raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),Color(0xFFBA3348))[150,55])
+            ScoreTools.toggleMaskBrush(state);ScoreTools.close(state)
+            state=reopened()
+            assertFalse(ScoreTools.maskBrushEnabled)
+            assertFalse(ScoreTools.cleanEnabled(state))
+            assertFalse(ScoreTools.cleanedWhole(state))
+            assertEquals("Masks-only mode cannot reveal saved whole-clean bars on reopen",Color(0xFFBA3348),raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),Color(0xFFBA3348))[150,55])
+        } finally { ScoreTools.close(state);ScoreTools.scoreSource=null }
+    }
+
+    @Test fun `closing mask or switching documents cancels preview and never cleans another file`() {
+        val folder=tmp.newFolder("brush-document-isolation")
+        val state=SheetsState(Platform(folder));val path=file(folder,"first.pdf");val other=file(folder,"second.pdf")
+        val score=Score(listOf(Measure(1,0,0,Box(20,40,240,80),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList())),1,listOf(800))
+        state.currentPath=path;state.pageShown=0 to 1
+        ScoreTools.install(state);ScoreTools.scoreSource={score}
+        try {
+            ScoreTools.open=true;ScoreTools.marks(path,0,800f,800f);ScoreTools.marks(other,0,800f,800f)
+            ScoreTools.toggleMaskBrush(state)
+            Perform.musicGesture!!.invoke(path,0,floatArrayOf(70f,55f),false)
+            assertTrue(CleanMasks.hasMask(state,path,0))
+            ScoreTools.close(state)
+            assertFalse(ScoreTools.maskBrushEnabled)
+            assertFalse("Closing must discard an unfinished stroke",CleanMasks.hasMask(state,path,0))
+            state.currentPath=other;ScoreTools.open=true
+            Perform.musicGesture!!.invoke(other,0,floatArrayOf(70f,55f),true)
+            assertFalse(CleanMasks.hasMask(state,other,0))
+            assertEquals(0,ScoreTools.cleanCount(state))
+            ScoreTools.toggleMaskBrush(state)
+            state.currentPath=path;ScoreTools.syncTool()
+            assertFalse(ScoreTools.maskBrushEnabled)
+            Perform.musicGesture!!.invoke(other,0,floatArrayOf(70f,55f),true)
+            assertFalse(CleanMasks.hasMask(state,other,0))
+        } finally { ScoreTools.close(state);ScoreTools.scoreSource=null }
+    }
+
+    @Test fun `eraser on untouched print does not enable clean or reveal an old whole-page choice`() {
+        val folder=tmp.newFolder("erase-without-paint")
+        val state=SheetsState(Platform(folder));val path=file(folder,"score.pdf")
+        val score=Score(listOf(Measure(1,0,0,Box(20,40,240,80),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList())),1,listOf(800))
+        state.currentPath=path;state.pageShown=0 to 1
+        ScoreTools.install(state);ScoreTools.scoreSource={score}
+        try {
+            ScoreTools.open=true;ScoreTools.marks(path,0,800f,800f)
+            ScoreTools.cleanWhole(state,true);ScoreTools.toggleClean(state);ScoreTools.toggleMaskBrush(state)
+            Perform.musicBrush=ToolConfig(tool=Tool.ERASER,eraserRadius=12f)
+            Perform.musicGesture!!.invoke(path,0,floatArrayOf(70f,55f),true)
+            assertTrue("Eraser edits remain available for Undo",CleanMasks.hasMask(state,path,0))
+            assertFalse(CleanMasks.hasPaint(state,path,0))
+            assertFalse(ScoreTools.cleanEnabled(state))
+            assertFalse(ScoreTools.cleanedWhole(state))
+            val print=Color(0xFFBA3348)
+            val rendered=raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)
+            assertEquals(print,rendered[70,55]);assertEquals(print,rendered[150,55])
+        } finally { ScoreTools.close(state);ScoreTools.scoreSource=null;Perform.musicBrush=ToolConfig() }
+    }
+
     @Test fun `profile long live gestures commits and actual score overlay invalidations`() {
         val folder = tmp.newFolder("long-gesture")
         val state = SheetsState(Platform(folder))

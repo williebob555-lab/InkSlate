@@ -41,9 +41,8 @@ class PerformanceTest {
         assertTrue(byStart[2].length > 1500L)
         assertTrue("the note after a fermata comes late: ${byStart[3].start}", byStart[3].start > 3500L)
         val slurred = play(bar(1, listOf(note(10f), note(20f), note(30f), note(40f)), directions = listOf(Direction("slur", 5f, 45f))))
-        assertEquals("Repeated wind pitches under a phrase slur retain four attacks",4,slurred.tones.size)
-        assertTrue(slurred.tones.minBy { it.start }.length in 940L..999L)
-        assertTrue(slurred.tones.drop(1).all{it.attack==Synth.Attack.SOFT})
+        assertEquals("Repeated pitches under a slur sustain without rearticulation",1,slurred.tones.size)
+        assertTrue(slurred.tones.single().length >= 3900L)
     }
 
     @Test

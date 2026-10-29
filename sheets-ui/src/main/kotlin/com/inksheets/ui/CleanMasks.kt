@@ -62,6 +62,10 @@ object CleanMasks {
     fun hasMask(state: SheetsState, path: String, page: Int): Boolean =
         getMask(state, path, page) != null
 
+    /** Erasing original print alone must not make the Clean status light up. */
+    fun hasPaint(state: SheetsState,path: String,page: Int): Boolean =
+        getMask(state,path,page)?.strokes?.any { !it.erase }==true
+
     fun canUndo(state: SheetsState, path: String): Boolean = masks(state, path).undo.isNotEmpty()
 
     /** [pts] are cumulative x/y pairs in PDF page points; [pageScale] is page points / reading unit.

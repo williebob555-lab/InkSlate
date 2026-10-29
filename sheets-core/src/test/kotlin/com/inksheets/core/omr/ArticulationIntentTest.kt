@@ -13,10 +13,10 @@ class ArticulationIntentTest {
             directions=if(slur)listOf(Direction("slur",20f,260f,step=4,step2=4))else emptyList())
         return Performance.play(listOf(bar),100.0,48000,0,patch).tones
     }
-    @Test fun `repeated slurred wind notes remain distinct soft attacks while a real tie sustains`() {
+    @Test fun `repeated slurred notes sustain continuously while detached articulations remain distinct`() {
         val connected=tones(slur=true)
-        assertEquals(4,connected.size)
-        assertTrue(connected.drop(1).all{it.attack==Synth.Attack.SOFT && !it.legato})
+        assertEquals(1,connected.size)
+        assertTrue(connected.single().length>48000*2)
         assertEquals(3,tones(tie=true).size)
         assertTrue(tones(arts=listOf("accent")).all{it.attack==Synth.Attack.FIRM})
         assertTrue(tones(slur=true,arts=listOf("staccato")).drop(1).none{it.attack==Synth.Attack.SOFT || it.legato})
@@ -24,7 +24,7 @@ class ArticulationIntentTest {
     }
     @Test fun `string slurs retain their existing connection policy`() {
         val strings=Synth.Patch(floatArrayOf(1f),.02,.05,1f,.1,tonguedSlurredRepeats=false)
-        assertTrue(tones(slur=true,patch=strings).drop(1).all{it.legato})
+        assertEquals(1,tones(slur=true,patch=strings).size)
     }
     @Test fun `a tie on one chord pitch does not swallow the other pitches next attack`() {
         val first=Note(listOf(0,2),listOf(Pitch(0,4),Pitch(2,4)),Duration(4),20f,tie=true,tiedPitches=listOf(60))
