@@ -81,6 +81,16 @@ class AndroidSheetsPlatform(
         }
     }.getOrNull()
 
+    override fun pageTexts(file: File, pageCount: Int): List<String?> = runCatching {
+        PDDocument.load(file).use { pdf ->
+            val stripper=PDFTextStripper().apply {sortByPosition=true}
+            (1..minOf(pageCount,pdf.numberOfPages)).map { page ->
+                stripper.startPage=page;stripper.endPage=page
+                stripper.getText(pdf).lines().filter {it.isNotBlank()}.take(15).joinToString("\n").ifBlank {null}
+            }
+        }
+    }.getOrElse { List(pageCount) {null} }
+
     override fun setEdgeTaps(on: Boolean) {
         com.inkslate.ink.DrawingView.edgeTapTurns = on
     }

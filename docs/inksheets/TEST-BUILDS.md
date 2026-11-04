@@ -4,9 +4,29 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Android memory use is bounded during performance tools.** Crash reports from build 313 showed `OutOfMemoryError`: page rasters and several independent image/tool caches could together consume more than a tablet heap. InkSheets now gives resident pages a smaller heap-relative budget, caps Mask's notation raster at about 8 MB, recycles evicted Android bitmaps and falls back to vector drawing if that optional raster cannot be allocated.
+
+- **One PDF can now supply every part.** Automatic instrument reading detects titled instrument pages inside a combined parts PDF and turns them into inclusive multi-page ranges that still share the original file. Existing bookmarks, recording excerpt pairings and page turns are remapped to the new ranges. The 142-page “Give Us This Day” pack is covered as 34 parts, including Piccolo pages 1–4, Euphonium 102–105 and Piano 116–124.
+
+- **Bookmarking from the reader is direct again.** The footer button marks or unmarks the page immediately instead of opening the heavier excerpt editor.
+- **Bookmark removal no longer traps navigation.** A removed bookmark still fades while the Bookmarks tab remains open, but leaving the tab commits the removal immediately instead of waiting for the animation.
+
+- **Opening tools preserves the view.** Opening the annotation bar, full tools, shelf or side rail no longer recentres the page. Closing either tool surface still fits the page as before.
+
+- **Clean stays off until explicitly requested.** Old Clean data without a saved visibility choice is hidden on open, so it cannot appear unexpectedly during a performance.
+
+- **Expanded tools stay on the dock's edge.** Opening a category replaces the shelf or the selected left/right rail, with the music fitted beside it. Switching categories keeps the same layout; Score gets a small extra allowance when needed.
+- **Denser Score tools.** Less padding, a compact read-status line and more columns on wide shelves leave more actual tools visible. Playback sound and tempo-ramp settings open within the dock, with Back returning to the category.
+- **Recording excerpt menus stay in the dock.** Choosing a pairing or entering a page range no longer requires a separate popup over the score.
+- **Recording opens on playback, not setup.** The selected recording's transport, waveform and loop handles lead the expanded view. Record remains a direct microphone action; the recording list and detailed settings replace that same dock page when opened.
+- **Play Together starts with your role.** Lead/Follow choices, relevant rehearsal shortcuts and connected-device heartbeat feedback replace the crowded landing page. Connection administration and remote settings remain available as inline detail pages.
+- **Mask drawing reuses unchanged music.** Static notation/retained print and mask history are cached separately from the moving brush. Native masked drawing can reuse a bounded raster of the unchanged notation at the current display scale; device responsiveness still needs verification.
+
+## 1.2.2-test.313 — desktop load and update history
+
 - **Background reading respects desktop load.** On Windows and Linux, automatic reading and deeper rechecks pause when CPU use, available system memory, or the app's own memory headroom is tight. Already-started reading yields at its safe checkpoints and keeps completed pages. It resumes after sustained spare capacity, rather than repeatedly stopping and starting. Explicit Read commands still work.
 - **Recent build history stays accessible.** Settings → Updates gains a Recent test-build changes link, including when no update is available. Test release notes now include this history instead of only the last commit's title.
-- **Still under investigation:** Clean/Mask performance on devices, waveform dragging performance, and reports of old toolbar appearances. The approved dock and Play Together redesign remains upcoming.
+- **Still under investigation in this build:** Clean/Mask performance on devices, waveform dragging performance, and reports of old toolbar appearances. The approved dock and Play Together redesign was not yet included.
 
 ## 1.2.2-test.312 — corrective follow-up
 

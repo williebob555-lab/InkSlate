@@ -24,9 +24,13 @@ object ImportPlan {
         /** Other instruments the same part is printed for (a flexible-band part). */
         val also: List<String> = emptyList(),
         /** Which of several parts for the instrument: 2 for "Trumpet 2". */
-        val chair: Int? = null
+        val chair: Int? = null,
+        /** Inclusive 1-based pages when several parts share one PDF. */
+        val firstPage: Int? = null,
+        val lastPage: Int? = null
     ) {
-        fun toPart() = Part(file = file, instrument = instrument, source = source, label = label, also = also, chair = chair)
+        fun toPart() = Part(file = file, instrument = instrument, source = source, label = label,
+            also = also, chair = chair, firstPage = firstPage, lastPage = lastPage)
     }
 
     data class PlannedSong(val title: String, val parts: List<PlannedPart>)
@@ -99,6 +103,48 @@ object ImportPlan {
         val chair = chairOf(chosen.first.label)
             ?: fromName?.takeIf { it.instrument.id == main }?.let { chairOf(it.label) }
         return PlannedPart(file, main, chosen.second, chosen.first.label, all.filter { it != main }, chair)
+    }
+
+    /**
+     * Parts laid one after another in a single PDF. A part's first page normally repeats both the
+     * piece title and its instrument; continuation pages repeat the instrument header but not the
+     * title. That is the useful distinction in real band packs such as Give Us This Day (Piccolo
+     * pp. 1-4, Euphonium pp. 102-105, Piano pp. 116-124).
+     *
+     * Empty means the evidence is not strong enough to replace the ordinary whole-file part.
+     * In particular, there must be at least two different instrument/chair identities, so a solo
+     * whose title happens to be printed on several pages is never chopped up.
+     */
+    fun splitCombinedParts(
+        file: String,
+        songTitle: String,
+        pageCount: Int,
+        textOf: (Int) -> String?,
+        recognise: (Int) -> String? = { null }
+    ): List<PlannedPart> {
+        if (pageCount < 2 || namesPartPlainly(readableName(file.substringAfterLast('/')))) return emptyList()
+        val titleKey = Library.matchKey(songTitle)
+        if (titleKey.length < 3) return emptyList()
+        data class Start(val page: Int, val part: PlannedPart)
+        val starts = ArrayList<Start>()
+        for (page in 1..pageCount) {
+            val own = textOf(page)
+            val recognised = if (own?.let(InstrumentReader::read) == null) recognise(page) else null
+            val evidence = listOfNotNull(own, recognised).joinToString("\n")
+            val mentionsTitle = evidence.lineSequence().take(15).any { line ->
+                val key = Library.matchKey(line)
+                key.contains(titleKey) || (key.length >= titleKey.length / 2 && likeness(key, titleKey) >= .86)
+            }
+            if (page != 1 && !mentionsTitle) continue
+            val planned = readPart(file, textOf = { own }, recognise = { recognised })
+            if (planned.instrument != null) starts += Start(page, planned)
+        }
+        if (starts.size < 2) return emptyList()
+        fun identity(p: PlannedPart) = Triple(p.instrument, p.chair, p.also.sorted())
+        if (starts.map { identity(it.part) }.distinct().size < 2) return emptyList()
+        return starts.mapIndexed { index, start ->
+            start.part.copy(firstPage = start.page, lastPage = (starts.getOrNull(index + 1)?.page ?: (pageCount + 1)) - 1)
+        }
     }
 
     /** Whether some piece of a file's name ("Title - Trumpet 2", "(Score)") is nothing but a part name. */

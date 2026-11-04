@@ -471,6 +471,26 @@ class DocumentSync(
     }
 
     /**
+     * Whether this device owns the page tree long enough to restructure it.
+     *
+     * While the same document is open on another device, a restructure does not need to wait for
+     * that device's last PDF bytes: live sync has brought its editable ink into [seen], and this
+     * operation writes that ink together with the new page tree in one replacement. Waiting for a
+     * file-sync service that may not even be configured made adding a page fail whenever two
+     * devices had the document open. With nobody else open, the ordinary disk-current check still
+     * applies. The lease and layout checks ensure only one side changes pages.
+     */
+    fun mayRestructureNow(now: Long): Boolean {
+        if (writing) return false
+        if (undecided(now)) return false
+        if (behind()) return false
+        val open = openPeers()
+        if (open.isNotEmpty()) return holding(open)
+        val l = latest
+        return l == null || disk == l.file || gaveUpWaitingFor == l.file
+    }
+
+    /**
      * The file on disk is already known to hold [ink] - the app found nothing to write. Saves asking
      * again every tick about a document that is, in fact, written.
      */

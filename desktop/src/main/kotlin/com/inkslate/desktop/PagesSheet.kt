@@ -119,11 +119,11 @@ fun PagesSheet(
     // Where a Shift-click runs from.
     var anchor by remember { mutableStateOf(firstPick) }
 
-    val thumbs = remember { mutableStateMapOf<Int, ImageBitmap>() }
+    val thumbs = remember { mutableStateMapOf<String, ImageBitmap>() }
     LaunchedEffect(source) {
         for (i in 0 until source.pageCount) {
             withContext(Dispatchers.IO) { runCatching { thumbnailFor(i) }.getOrNull() }
-                ?.let { thumbs[i] = it }
+                ?.let { thumbs["doc:$i"] = it }
         }
     }
 
@@ -134,7 +134,7 @@ fun PagesSheet(
     val pickedAt = PagePlan.indicesOf(plan, picked)
     cropPages?.let { pages ->
         PageCropDialog(
-            thumbnail = thumbs[pages.first()],
+            thumbnail = thumbs["doc:${pages.first()}"],
             initial = pageCrops[pages.first().toString()] ?: com.inkslate.core.PageCrop(),
             count = pages.size,
             onApply = { crop -> onCrop?.invoke(pages, crop); cropPages = null },
@@ -167,8 +167,8 @@ fun PagesSheet(
             null as java.awt.Frame?, "Add pages from", java.awt.FileDialog.LOAD
         )
         dialog.isMultipleMode = true
-        dialog.setFilenameFilter { _, name ->
-            val f = java.io.File(name)
+        dialog.setFilenameFilter { dir, name ->
+            val f = java.io.File(dir, name)
             DesktopSources.isPdf(f) || DesktopSources.isImage(f)
         }
         dialog.isVisible = true
@@ -303,7 +303,7 @@ fun PagesSheet(
                     },
                     enabled = pickedAt.isNotEmpty()
                 ) { Icon(Icons.Default.Layers, "Copy") }
-                IconButton(
+                TextButton(
                     onClick = {
                         val near = plan.getOrNull(insertAfter)
                         val dim = if (near != null && near.isNew) {
@@ -321,9 +321,13 @@ fun PagesSheet(
                         plan = PagePlan.inserted(plan, insertAfter + 1, listOf(blank))
                         pickOnly(setOf(blank.uid))
                     }
-                ) { Icon(Icons.Default.Add, "Add a blank page after this one") }
-                IconButton(onClick = { pickFilesToImport() }) {
-                    Icon(Icons.Default.LibraryAdd, "Add pages from another file")
+                ) {
+                    Icon(Icons.Default.Add, null, Modifier.size(18.dp))
+                    Text("New page", Modifier.padding(start = 4.dp))
+                }
+                TextButton(onClick = { pickFilesToImport() }) {
+                    Icon(Icons.Default.LibraryAdd, null, Modifier.size(18.dp))
+                    Text("From file", Modifier.padding(start = 4.dp))
                 }
                 IconButton(
                     // Exports the document as it is on disk, so an unapplied plan would export
@@ -388,10 +392,22 @@ fun PagesSheet(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 itemsIndexed(plan, key = { _, p -> p.uid }) { index, p ->
+                    val key = pageThumbKey(p)
+                    val imported = p.import
+                    LaunchedEffect(key) {
+                        if (imported == null || key == null || thumbs.containsKey(key)) {
+                            return@LaunchedEffect
+                        }
+                        withContext(Dispatchers.IO) {
+                            DesktopSources.open(java.io.File(imported.path))?.use { opened ->
+                                opened.render(imported.pageIndex, 180)
+                            }
+                        }?.let { thumbs[key] = it }
+                    }
                     PageTile(
                         planned = p,
                         position = index,
-                        thumb = if (p.isNew) null else thumbs[p.source],
+                        thumb = key?.let { thumbs[it] },
                         selected = p.uid in picked,
                         onClick = { ctrl, shift ->
                             when {
@@ -412,6 +428,10 @@ fun PagesSheet(
         }
     }
 }
+
+private fun pageThumbKey(page: PlannedPage): String? = page.import?.let {
+    "import:${it.path}:${it.pageIndex}"
+} ?: if (page.isNew) null else "doc:${page.source}"
 
 @Composable
 private fun PageTile(

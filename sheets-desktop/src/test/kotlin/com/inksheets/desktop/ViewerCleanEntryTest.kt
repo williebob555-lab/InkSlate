@@ -91,6 +91,43 @@ class ViewerCleanEntryTest {
             } finally {ScoreTools.close(state);ScoreTools.scoreSource=null;Perform.musicBrush=ToolConfig();Perform.isOn=null}
         }
     }
+    @Test fun `live masks reuse static score contours with cold pixel parity and invalidate after fixes`() {
+        val root=tmp.newFolder("geometry-cache")
+        val file=File(root,"score.pdf").apply {writeText("%PDF-1.4\nfixture\n%%EOF")}
+        val state=SheetsState(Platform(root)).apply {currentPath=file.absolutePath;pageShown=0 to 1}
+        val m=Measure(1,0,0,com.inksheets.core.omr.Box(20,40,240,80),10f,Clef.TREBLE,Key(0),TimeSig(4,4),
+            listOf(Note(listOf(0),listOf(Pitch(0,5)),Duration(1),60f)),
+            kept=listOf(intArrayOf(90,25,110,25,110,28,90,28)))
+        val score=Score(listOf(m),1,listOf(800))
+        ScoreTools.install(state);ScoreTools.scoreSource={if(it==file.absolutePath)score else null}
+        fun clear(name:String) {
+            val field=ScoreTools::class.java.getDeclaredField(name).apply {isAccessible=true}
+            (field.get(ScoreTools) as MutableMap<*,*>).clear()
+        }
+        try {
+            ScoreTools.marks(file.absolutePath,0,800f,800f)
+            ScoreTools.toggleMaskBrush(state);Perform.musicBrush=ToolConfig(strokeWidth=20f)
+            Perform.musicGesture!!.invoke(file.absolutePath,0,floatArrayOf(50f,55f,120f,55f),true)
+            val first=ScoreTools.marks(file.absolutePath,0,800f,800f).orEmpty()
+            assertSame("Stable mask reads do not copy the whole committed stroke history",
+                CleanMasks.getMask(state,file.absolutePath,0),CleanMasks.getMask(state,file.absolutePath,0))
+            Perform.musicGesture!!.invoke(file.absolutePath,0,floatArrayOf(80f,40f,150f,50f),false)
+            val warm=ScoreTools.marks(file.absolutePath,0,800f,800f).orEmpty()
+            assertEquals(first.size,warm.size)
+            first.indices.forEach {assertSame("Paper, engraving and retained print stay cached at mark $it",first[it].contours,warm[it].contours)}
+            val warmPixels=raster(warm)
+            clear("cleanPageCache");clear("marksCache")
+            val cold=ScoreTools.marks(file.absolutePath,0,800f,800f).orEmpty()
+            val coldPixels=raster(cold)
+            for(y in 0 until 140 step 2)for(x in 0 until 280 step 2)
+                assertEquals("Warm/cold mask differs at $x,$y",coldPixels[x,y],warmPixels[x,y])
+            ScoreTools.fix(file.absolutePath,1,listOf(Note(listOf(4),listOf(Pitch(3,4)),Duration(4),60f)))
+            val fixed=ScoreTools.marks(file.absolutePath,0,800f,800f).orEmpty()
+            assertNotSame("A corrected score must invalidate its cached clean page",cold.first().contours,fixed.first().contours)
+            val scaled=ScoreTools.marks(file.absolutePath,0,400f,400f).orEmpty()
+            assertNotSame("A changed page scale must rebuild drawing geometry",fixed.first().contours,scaled.first().contours)
+        } finally {ScoreTools.close(state);ScoreTools.scoreSource=null;Perform.musicBrush=ToolConfig()}
+    }
     @Test fun `profile dense page preview through gesture marks and native mask rendering`() {
         val root=tmp.newFolder("dense-page")
         val file=File(root,"dense.pdf").apply {writeText("%PDF-1.4\nfixture\n%%EOF")}

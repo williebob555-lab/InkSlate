@@ -331,10 +331,15 @@ fun EditorScreen(
         base.coerceIn(800, cap)
     }
 
-    // Roughly a quarter of the heap for page rasters, leaving room for ink, UI and the PDF
-    // renderer's own working memory.
+    // Music also keeps recognition and mask data beside the page. A quarter-heap page cache plus
+    // the independent image/thumbnail caches could exceed a tablet heap before a tool allocated
+    // its working bitmap. Keep music's resident pages to an eighth and never impose a large fixed
+    // floor on a small heap.
     val bitmapBudgetBytes = remember {
-        (Runtime.getRuntime().maxMemory() / 4).coerceIn(48L * 1024 * 1024, 220L * 1024 * 1024)
+        val heap=Runtime.getRuntime().maxMemory()
+        if(com.inkslate.AppFlavor.musicView)
+            (heap/8).coerceIn(16L*1024*1024,64L*1024*1024)
+        else (heap/4).coerceIn(32L*1024*1024,160L*1024*1024)
     }
 
     // ---- load ----------------------------------------------------------------
@@ -2600,20 +2605,22 @@ fun EditorScreen(
                         // only one of the two writes. This one takes that over first; the other
                         // carries on drawing, and its marks follow the pages to where they went.
                         val session = link
-                        if (session != null && !session.mayWriteNow(System.currentTimeMillis())) {
+                        if (session != null && !session.mayRestructureNow(System.currentTimeMillis())) {
                             session.requestSave()
-                            val waiting = launch {
+                            // Merely being paired is not a page conflict. Only explain a wait when
+                            // the other device actually has this document open.
+                            val waiting = if (session.openPeers().isNotEmpty()) launch {
                                 snackbar.showSnackbar(
-                                    "Waiting for your other device...",
+                                    "Finishing the page change with your other device...",
                                     duration = SnackbarDuration.Indefinite
                                 )
-                            }
+                            } else null
                             val giveUpAt = System.currentTimeMillis() + REARRANGE_WAIT_MS
                             while (link === session && System.currentTimeMillis() < giveUpAt &&
-                                !session.mayWriteNow(System.currentTimeMillis())
+                                !session.mayRestructureNow(System.currentTimeMillis())
                             ) delay(250)
-                            waiting.cancel()
-                            if (link !== session || !session.mayWriteNow(System.currentTimeMillis())) {
+                            waiting?.cancel()
+                            if (link !== session || !session.mayRestructureNow(System.currentTimeMillis())) {
                                 snackbar.showSnackbar(
                                     "Your other device did not answer, so the pages were left " +
                                         "as they were. Try again in a moment."

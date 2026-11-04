@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.Perform
 import com.inkslate.core.PerformAction
@@ -48,8 +49,6 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
     val issue=Recording.issue!=null && Recording.issue?.root==state.root?.absolutePath
     val expanded=!state.stripCollapsed && !state.homeInFront
     val visible=(expanded || active || issue || Recording.loading || panels.open || state.expandedMusicCategory!=null) && !state.homeInFront && !ScoreTools.checking
-    var controllers by remember { mutableStateOf(false) }
-    var goTo by remember { mutableStateOf(false) }
     var position by remember { mutableStateOf(0L) }
     LaunchedEffect(Recording.session) { while(Recording.session) { position=Recording.player?.positionMs ?:0;delay(100) } }
     DisposableEffect(state) { onDispose {
@@ -63,14 +62,28 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
         val viewportHeight=maxHeight
         val annotation=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
         val essentials=annotation && maxHeight<340.dp
-        // A wide floating editor gets the rail's space temporarily on a small display.
-        // Keep page/transport controls below it and restore the chosen widgets on close.
-        val panelNeedsSpace=Overlays.wanted?.let {it+252.dp>maxWidth}==true
-        val widgets=if(expanded && state.expandedMusicCategory==null && !issue && !essentials && !panelNeedsSpace && !panels.open && !SelfRecorder.recording)state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }else emptyList()
-        val widgetHeight=if(maxHeight<440.dp || (active && maxHeight<700.dp))116.dp else 132.dp
-        val layout=if(widgets.isEmpty())MusicDockView.SHELF else chooseMusicDock(state.shelf.view,maxWidth.value,maxHeight.value,state.pageAspect,widgetHeight.value)
+        val category=state.expandedMusicCategory
+        val configuredWidgets=state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }
+        val workspace=expanded && !essentials && !panels.open && !SelfRecorder.recording &&
+            (category!=null || (!issue && configuredWidgets.isNotEmpty()))
+        val widgets=if(workspace && category==null && !issue)configuredWidgets else emptyList()
+        // Opening a category changes the dock's content, never the edge chosen for it. Auto
+        // compares against one compact footprint rather than reconsidering for each menu.
+        val layout=if(!workspace && category==null)MusicDockView.SHELF else chooseMusicDock(state.shelf.view,maxWidth.value,maxHeight.value,state.pageAspect,176f)
         val rail=visible && layout==MusicDockView.STUDIO
         val railRight=state.shelf.railSide==StudioRailSide.RIGHT
+        val showLiveStatus=active && !(category==ShelfWidget.RECORDING && Recording.session &&
+            !SelfRecorder.recording && !SharedMetronome.running && !Listener.active && ScoreTools.barNow()==null && Click.counting==0 && Transcriber.busy==null)
+        val footerAllowance=if(viewportWidth<600.dp)88.dp else 48.dp
+        val contentLimit=(viewportHeight-footerAllowance-128.dp-(if(showLiveStatus)48.dp else 0.dp)).coerceAtLeast(96.dp)
+        val workspaceHeight=minOf(when {
+            category==ShelfWidget.SCORE -> 208.dp
+            category==null && active && viewportHeight<700.dp -> 142.dp
+            else -> 176.dp
+        },contentLimit)
+        val categoryCompact=category==null
+        val controllers={state.expandMusicCategory(ShelfWidget.DEVICES,"controllers")}
+        val goTo={state.expandMusicCategory(ShelfWidget.SCORE,"bar")}
         LaunchedEffect(visible,bottom,rail,railRight,panels.height) {
             panels.base=bottom
             val height=if(visible)bottom+panels.height else 0f
@@ -82,12 +95,15 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
             state.platform.setStudioRailWidth(if(rail)236f else 0f)
         }
         if(rail) Surface(tonalElevation=2.dp,modifier=Modifier.align(if(railRight)Alignment.TopEnd else Alignment.TopStart).width(236.dp)
+            .testTag("music-dock-rail")
             .fillMaxHeight().padding(bottom=bottom.dp)) {
-            Column {
+            if(category!=null) CompositionLocalProvider(LocalMusicCategoryRail provides true) {
+                MusicCategoryBar(state,position)
+            } else Column {
                 if(state.companion.leading || state.companion.following!=null) SessionQuickActions(state,quick=true)
                 Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                 widgets.forEach { widget ->
-                    Box(Modifier.fillMaxWidth().height(132.dp)) { MusicDockWidget(state,widget,position,{controllers=true},{goTo=true}) }
+                    Box(Modifier.fillMaxWidth().height(132.dp)) { MusicDockWidget(state,widget,position,controllers,goTo) }
                     HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f))
                 }
                 }
@@ -97,17 +113,15 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
             .onSizeChanged { bottom=with(density){it.height.toDp().value} }) {
             Column {
                 PlaybackProblem(state)
-                if(state.expandedMusicCategory!=null) {
-                    val footerHeight=if(viewportWidth<600.dp)88.dp else 48.dp
-                    val categoryHeight=minOf(420.dp,maxOf(216.dp,viewportHeight*.44f),(viewportHeight-footerHeight-128.dp-(if(active)40.dp else 0.dp)).coerceAtLeast(128.dp))
-                    Box(Modifier.fillMaxWidth().height(categoryHeight)){MusicCategoryBar(state,position)}
+                if(category!=null && !rail) Box(Modifier.fillMaxWidth().height(workspaceHeight).testTag("music-dock-shelf")) {
+                    CompositionLocalProvider(LocalMusicCategoryRail provides false) {MusicCategoryBar(state,position)}
                 }
                 if(Recording.loading) Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(15.dp),strokeWidth=2.dp)
                     Text("Opening recording…",Modifier.weight(1f).padding(start=8.dp),style=MaterialTheme.typography.labelSmall)
                     TextButton(onClick={Recording.end(state)}) {Text("Cancel playback")}
                 }
-                if(essentials && expanded && state.expandedMusicCategory==null) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically) {
+                if(essentials && expanded && categoryCompact) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically) {
                     DockAction(Icons.Default.MusicNote,"Music","Return to music workspace") {Perform.run(PerformAction.FULLSCREEN)}
                     DockAction(Icons.Default.Timer,"${SharedMetronome.bpm.toInt()}","Metronome settings") {state.metronomeOpen=true}
                     DockAction(Icons.Default.PlayArrow,"Click","Start or pause metronome",active=SharedMetronome.running) {Click.toggle(state)}
@@ -118,8 +132,11 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
                 val shelfScroll=rememberScrollState()
                 val scope=rememberCoroutineScope()
                 val cellWidth=if(viewportWidth>=1000.dp)maxOf(236.dp,viewportWidth/widgets.size.coerceAtLeast(1))else 236.dp
-                // On a phone the overflow must be discoverable without a swipe or a settings visit.
-                if(!rail && widgets.size>1 && viewportWidth<cellWidth*widgets.size) Row(Modifier.fillMaxWidth().height(26.dp),verticalAlignment=Alignment.CenterVertically) {
+                val tabs=widgets.size>1 && viewportWidth<cellWidth*widgets.size
+                // The compact and expanded shelf occupy the same reserved workspace. Tabs make
+                // horizontally offscreen categories reachable without guessing a swipe.
+                if(!rail && widgets.isNotEmpty()) Column(Modifier.fillMaxWidth().height(workspaceHeight).testTag("music-dock-shelf")) {
+                if(tabs) Row(Modifier.fillMaxWidth().height(26.dp),verticalAlignment=Alignment.CenterVertically) {
                     val stride=with(density){(cellWidth+1.dp).toPx()}
                     val nearest=widgets.indices.minByOrNull { kotlin.math.abs(shelfScroll.value-(stride*it).coerceAtMost(shelfScroll.maxValue.toFloat())) }
                     widgets.forEachIndexed { index,widget ->
@@ -131,16 +148,18 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
                             textAlign=androidx.compose.ui.text.style.TextAlign.Center,color=widgetColor(widget),style=MaterialTheme.typography.labelSmall)
                     }
                 }
-                if(!rail && widgets.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(shelfScroll)) {
+                val widgetHeight=workspaceHeight-(if(tabs)26.dp else 0.dp)
+                Row(Modifier.fillMaxWidth().horizontalScroll(shelfScroll)) {
                     widgets.forEach { widget ->
                         Box(Modifier.width(cellWidth).height(widgetHeight)) {
-                            CompositionLocalProvider(LocalDockDense provides (widgetHeight<132.dp)) { MusicDockWidget(state,widget,position,{controllers=true},{goTo=true}) }
+                            CompositionLocalProvider(LocalDockDense provides (widgetHeight<132.dp)) { MusicDockWidget(state,widget,position,controllers,goTo) }
                         }
                         VerticalDivider(Modifier.height(widgetHeight).padding(vertical=8.dp),color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
                     }
                 }
-                if(expanded && !rail && state.expandedMusicCategory==null && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
-                if(active) MusicLiveStatus(state,position)
+                }
+                if(expanded && !rail && categoryCompact && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
+                if(showLiveStatus) MusicLiveStatus(state,position)
                 if(expanded) {
                     HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
                     Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,content=footer)
@@ -154,8 +173,6 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
     }
     if(state.arrangingShelf) DockWorkspaceEditor(state) {state.arrangingShelf=false}
     if(state.scorePanelOpen && (state.homeInFront || ScoreTools.checking)) ScoreToolsPanel(state) {state.scorePanelOpen=false}
-    if(controllers) SheetDialog("Pedals & watch",onDismiss={controllers=false},wide=true) {Column(Modifier.verticalScroll(rememberScrollState())) {ControllerSettings(state);WatchSettings(state)}}
-    if(goTo) GoToBar(state) {goTo=false}
 }
 
 @Composable private fun MusicLiveStatus(state:SheetsState,position:Long) {

@@ -31,7 +31,9 @@ data class ImportCandidate(
     val isImage: Boolean,
     val pageCount: Int,
     val width: Float,
-    val height: Float
+    val height: Float,
+    /** Displayed dimensions for each PDF page; PDFs may mix paper sizes and rotations. */
+    val pageSizes: List<Pair<Float, Float>> = emptyList()
 )
 
 /**

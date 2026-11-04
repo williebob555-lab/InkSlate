@@ -71,13 +71,16 @@ internal object ScoreTools {
     var maskBrushEnabled by mutableStateOf(false)
         private set
     private var maskBrushPath: String? = null
-    private data class CleanView(val visible: Boolean=true,val masksOnly: Boolean=false)
+    private data class CleanView(val visible: Boolean=false,val masksOnly: Boolean=false)
     private val cleanViews=java.util.WeakHashMap<SheetsState,MutableMap<String,CleanView>>()
     private fun cleanView(s: SheetsState,path: String): CleanView = cleanViews.getOrPut(s) { hashMapOf() }.getOrPut(path) {
         when(Transcriber.keptEdit(s,File(path),"sheets_clean_view")) {
             "hidden_all" -> CleanView(false,false)
             "hidden_masks" -> CleanView(false,true)
             "masks" -> CleanView(true,true)
+            // Older clean data has no visibility record. Treat it as off until the player
+            // explicitly asks to see it: opening a part during a performance must never make a
+            // saved experiment appear over the print by itself.
             else -> CleanView()
         }
     }
@@ -390,7 +393,7 @@ internal object ScoreTools {
         }
         val was = tool
         tool = if (tool == t && !wasMask) Tool.NONE else t
-        if(tool==Tool.CLEAN) state?.let { s -> s.currentPath?.let { showClean(s,it,CleanView()) } }
+        if(tool==Tool.CLEAN) state?.let { s -> s.currentPath?.let { showClean(s,it,CleanView(visible=true)) } }
         // The select tool put away: what it chose let go with it (a choice left over, out of sight,
         // would steer Play to bars far from the page in front).
         if (was == Tool.SELECT && tool != Tool.SELECT) { selection = null; pressStart = null; pressed = null; changed() }
@@ -417,7 +420,11 @@ internal object ScoreTools {
     fun select(range: IntRange?) { selection = range; changed() }
 
     /** Show bars [numbers] of [path] cleaned up (a test). */
-    internal fun cleanUp(path: String, numbers: Collection<Int>) { cleanedIn(path) += numbers; changed() }
+    internal fun cleanUp(path: String, numbers: Collection<Int>) {
+        cleanedIn(path) += numbers
+        state?.let { showClean(it,path,CleanView(visible=true)) }
+        changed()
+    }
 
     /** Every bar of [path] shown as printed again (for tests: not kept). */
     internal fun undoAllClean(path: String) { cleaned.remove(path); changed() }
@@ -1079,6 +1086,7 @@ internal object ScoreTools {
     private val pageWidth = HashMap<Pair<String, Int>, Float>()
 
     private fun gesture(path: String, page: Int, pts: FloatArray, done: Boolean) {
+        Transcriber.activity() // Also covers mouse/touch paths which bypass native pen input.
         val score = scoreOf(path) ?: run { said = "Read the music first"; return }
         val k = scaleOf(score, page, pageWidth[path to page] ?: return) ?: return
         if (maskBrushEnabled) {
@@ -1200,12 +1208,16 @@ internal object ScoreTools {
                 cached.mask?.strokes == brush?.strokes && cached.flash == flash) return cached.marks
         }
         val k = scaleOf(score, page, width) ?: return null
-        val maskStrokes = brush?.strokes?.map {stroke -> scaledMaskStroke(stroke,k)}
+        val maskStrokes = brush?.strokes?.let {strokes -> scaledMaskStrokes(key,strokes,k)}
         val partialMask = maskStrokes?.let { PageMark.Mask(it,false,width,height,key) }
         val fullMask = maskStrokes?.let { PageMark.Mask(it,true,width,height,key) }
+        val pageMeasures=score.measures.filter { it.page==page }
+        val cleanLayers=if(clean.isNotEmpty() || brush!=null) cleanPageLayers(key,pageMeasures,k) else null
         val out = ArrayList<PageMark>()
+        var pageIndex=-1
         for ((index, m) in score.measures.withIndex()) {
             if (m.page != page) continue
+            pageIndex++
             val sp = m.space * k
             val left = m.box.left * k; val right = m.box.right * k
             val top = m.box.top * k; val bottom = m.box.bottom * k
@@ -1239,46 +1251,7 @@ internal object ScoreTools {
             cueHere[index]?.let { out += cueMarks(it, left, right, top, sp) }
             val cleaningStart = out.size
             when {
-                // A bar in doubt is never redrawn: a guess drawn cleanly is worse than the print. It
-                // stays as printed, framed, until it is checked (Fix) - then it is redrawn.
-                (numbers.first in clean || brush != null) && !m.sure -> {
-                    val pad = sp * 0.4f
-                    out += PageMark.line(left, top - sp * 2f, right, top - sp * 2f, pad * 0.35f, DOUBT)
-                    out += PageMark.line(left, bottom + sp * 2f, right, bottom + sp * 2f, pad * 0.35f, DOUBT)
-                    out += PageMark.line(left, top - sp * 2f, left, bottom + sp * 2f, pad * 0.35f, DOUBT)
-                    out += PageMark.line(right, top - sp * 2f, right, bottom + sp * 2f, pad * 0.35f, DOUBT)
-                }
-                numbers.first in clean || brush != null -> {
-                    // Cleaned up: the print hidden, the reading in its place.
-                    // The paper over the print reaches as far as what is redrawn in its place (a dynamic under it, a high note).
-                    val drawn = engraved(m, k, INK)
-                    val (above, below) = reachOf(m)
-                    out += paper(m, k, above, below, PAPER)
-                    out += drawn
-                    // What the redraw does not draw, kept as printed: whole, never cut at the paper's edge.
-                    // Each in its own shade: ink black, pencil and highlighter light, as printed. Its own
-                    // and its neighbours' on the line that reach into it (each shape is kept by one bar).
-                    val paperTop = (m.box.top - m.space * above) ; val paperBottom = (m.box.bottom + m.space * below)
-                    val shapes = score.measures.filter { o -> o.page == m.page && o.staff == m.staff && kotlin.math.abs(o.number - m.number) <= 3 }.flatMap { o ->
-                        o.kept.indices.filter { i -> o === m || o.kept[i].let { loop ->
-                            var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
-                            for (j in loop.indices step 2) { l = minOf(l, loop[j]); r = maxOf(r, loop[j]); t = minOf(t, loop[j + 1]); b = maxOf(b, loop[j + 1]) }
-                            r >= m.box.left && l <= m.box.right && b >= paperTop && t <= paperBottom
-                        } }.map { i -> o.kept[i] to (o.keptShade.getOrNull(i) ?: 0) }
-                    }
-                    // Paper under every kept shape first: the print under it hidden, so a word or a mark
-                    // drawn back is never seen twice, a pixel or two apart.
-                    for ((loop, _) in shapes) {
-                        var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
-                        for (j in loop.indices step 2) { l = minOf(l, loop[j]); r = maxOf(r, loop[j]); t = minOf(t, loop[j + 1]); b = maxOf(b, loop[j + 1]) }
-                        if (l <= r) out += PageMark.rect((l - 2) * k, (t - 2) * k, (r + 2) * k, (b + 2) * k, PAPER)
-                    }
-                    shapes.indices.groupBy { shapes[it].second / 32 }.forEach { (band, ids) ->
-                        val grey = (band * 32 + 16).coerceAtMost(220).let { if (band == 0) 0 else it }
-                        out += PageMark(PageMark.Kind.FILL, ids.map { i -> shapes[i].first.let { loop -> FloatArray(loop.size) { loop[it] * k } } },
-                            keptColor ?: if (band == 0) INK else (0xFF shl 24) or (grey shl 16) or (grey shl 8) or grey)
-                    }
-                }
+                numbers.first in clean || brush != null -> out += cleanLayers?.get(pageIndex).orEmpty()
                 underlay -> {
                     out += engraved(m, k, UNDER)
                     if (!m.sure) {
@@ -1302,18 +1275,89 @@ internal object ScoreTools {
         return out
     }
 
+    private data class CleanPageLayers(val measures:List<Measure>,val scale:Float,val color:Int?,
+                                       val layers:List<List<PageMark>>)
+    private val cleanPageCache=object:LinkedHashMap<Pair<String,Int>,CleanPageLayers>(8,.75f,true) {
+        override fun removeEldestEntry(eldest:MutableMap.MutableEntry<Pair<String,Int>,CleanPageLayers>?)=size>8
+    }
+    /** Brush clips change every frame; the score's paper, glyphs and retained print do not. */
+    private fun cleanPageLayers(key:Pair<String,Int>,measures:List<Measure>,k:Float):List<List<PageMark>> {
+        cleanPageCache[key]?.let { cached ->
+            if(cached.scale==k && cached.color==keptColor && cached.measures==measures)return cached.layers
+        }
+        val layers=measures.map { m -> cleanLayer(m,measures,k) }
+        cleanPageCache[key]=CleanPageLayers(measures,k,keptColor,layers)
+        return layers
+    }
+    private fun cleanLayer(m:Measure,neighbours:List<Measure>,k:Float):List<PageMark> {
+        val out=ArrayList<PageMark>()
+        val sp=m.space*k
+        val left=m.box.left*k;val right=m.box.right*k
+        val top=m.box.top*k;val bottom=m.box.bottom*k
+        if(!m.sure) {
+            val width=sp*.4f*.35f
+            out += PageMark.line(left,top-sp*2f,right,top-sp*2f,width,DOUBT)
+            out += PageMark.line(left,bottom+sp*2f,right,bottom+sp*2f,width,DOUBT)
+            out += PageMark.line(left,top-sp*2f,left,bottom+sp*2f,width,DOUBT)
+            out += PageMark.line(right,top-sp*2f,right,bottom+sp*2f,width,DOUBT)
+            return out
+        }
+        // Cleaned up: the print hidden, the reading in its place.
+        // The paper over the print reaches as far as what is redrawn in its place (a dynamic under it, a high note).
+        val drawn = engraved(m, k, INK)
+        val (above, below) = reachOf(m)
+        out += paper(m, k, above, below, PAPER)
+        out += drawn
+        // What the redraw does not draw, kept as printed: whole, never cut at the paper's edge.
+        // Each in its own shade: ink black, pencil and highlighter light, as printed. Its own
+        // and its neighbours' on the line that reach into it (each shape is kept by one bar).
+        val paperTop = (m.box.top - m.space * above) ; val paperBottom = (m.box.bottom + m.space * below)
+        val shapes = neighbours.filter { o -> o.page == m.page && o.staff == m.staff && kotlin.math.abs(o.number - m.number) <= 3 }.flatMap { o ->
+            o.kept.indices.filter { i -> o === m || o.kept[i].let { loop ->
+                var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+                for (j in loop.indices step 2) { l = minOf(l, loop[j]); r = maxOf(r, loop[j]); t = minOf(t, loop[j + 1]); b = maxOf(b, loop[j + 1]) }
+                r >= m.box.left && l <= m.box.right && b >= paperTop && t <= paperBottom
+            } }.map { i -> o.kept[i] to (o.keptShade.getOrNull(i) ?: 0) }
+        }
+        // Paper under every kept shape first: the print under it hidden, so a word or a mark
+        // drawn back is never seen twice, a pixel or two apart.
+        for ((loop, _) in shapes) {
+            var l = Int.MAX_VALUE; var r = Int.MIN_VALUE; var t = Int.MAX_VALUE; var b = Int.MIN_VALUE
+            for (j in loop.indices step 2) { l = minOf(l, loop[j]); r = maxOf(r, loop[j]); t = minOf(t, loop[j + 1]); b = maxOf(b, loop[j + 1]) }
+            if (l <= r) out += PageMark.rect((l - 2) * k, (t - 2) * k, (r + 2) * k, (b + 2) * k, PAPER)
+        }
+        shapes.indices.groupBy { shapes[it].second / 32 }.forEach { (band, ids) ->
+            val grey = (band * 32 + 16).coerceAtMost(220).let { if (band == 0) 0 else it }
+            out += PageMark(PageMark.Kind.FILL, ids.map { i -> shapes[i].first.let { loop -> FloatArray(loop.size) { loop[it] * k } } },
+                keptColor ?: if (band == 0) INK else (0xFF shl 24) or (grey shl 16) or (grey shl 8) or grey)
+        }
+        return out
+    }
+
     /**
      * [m] drawn cleanly where it is, as shapes on the page at [k] (page units to the reading's
      * pixels). Across the bar each point follows the staff as printed there - its lines' height and
      * spacing at the bar's left and right ends ([Measure.lines]) - so a bar redrawn on a scan whose
      * staff runs aslant meets the print either side of it without a step.
      */
-    private val scaledStrokes=java.util.WeakHashMap<PageMark.MaskStroke,MutableMap<Float,PageMark.MaskStroke>>()
-    private fun scaledMaskStroke(stroke:PageMark.MaskStroke,k:Float):PageMark.MaskStroke {
-        val scales=scaledStrokes.getOrPut(stroke){linkedMapOf()}
-        scales[k]?.let{return it}
-        if(scales.size>=3)scales.clear()
-        return PageMark.MaskStroke(stroke.contours.map {p->FloatArray(p.size){p[it]*k}},stroke.erase).also{scales[k]=it}
+    private data class ScaledPageMask(val scale:Float,val source:List<PageMark.MaskStroke>,val scaled:List<PageMark.MaskStroke>)
+    private val scaledMaskPages=object:LinkedHashMap<Pair<String,Int>,ScaledPageMask>(8,.75f,true) {
+        override fun removeEldestEntry(eldest:MutableMap.MutableEntry<Pair<String,Int>,ScaledPageMask>?)=size>8
+    }
+    private fun scaledMaskStrokes(key:Pair<String,Int>,strokes:List<PageMark.MaskStroke>,k:Float):List<PageMark.MaskStroke> {
+        if(k==1f)return strokes
+        val old=scaledMaskPages[key]?.takeIf {it.scale==k}
+        if(old?.source===strokes)return old.scaled
+        var prefix=0
+        if(old!=null)while(prefix<minOf(strokes.size,old.source.size) && strokes[prefix]===old.source[prefix])prefix++
+        val scaled=ArrayList<PageMark.MaskStroke>(strokes.size)
+        if(prefix>0)scaled.addAll(old!!.scaled.subList(0,prefix))
+        for(i in prefix until strokes.size) {
+            val stroke=strokes[i]
+            scaled+=PageMark.MaskStroke(stroke.contours.map {p->FloatArray(p.size){p[it]*k}},stroke.erase)
+        }
+        scaledMaskPages[key]=ScaledPageMask(k,strokes,scaled)
+        return scaled
     }
     private val cleanDrawings=object:LinkedHashMap<Measure,Engraver.Drawing>(128,.75f,true) {
         override fun removeEldestEntry(eldest:MutableMap.MutableEntry<Measure,Engraver.Drawing>?)=size>256

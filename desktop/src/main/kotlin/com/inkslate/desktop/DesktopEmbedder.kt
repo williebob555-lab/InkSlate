@@ -157,35 +157,42 @@ object DesktopEmbedder {
         incremental: Boolean
     ) {
         Loader.loadPDF(file).use { pdf ->
-            val catalog = pdf.documentCatalog
-
-            val spec = PDComplexFileSpecification().apply {
-                this.file = NAME
-                fileDescription = "InkSlate handwriting. Safe to ignore; do not edit by hand."
-            }
-            spec.embeddedFile = PDEmbeddedFile(pdf, ByteArrayInputStream(payload)).apply {
-                subtype = "application/octet-stream"
-                size = payload.size
-                creationDate = java.util.Calendar.getInstance()
-            }
-
-            // Keep every other name the document has. Replacing the dictionary wholesale is how
-            // a PDF quietly loses its internal links.
-            val names = catalog.names ?: PDDocumentNameDictionary(catalog)
-            val existing = names.embeddedFiles?.names?.toMutableMap() ?: mutableMapOf()
-            existing[NAME] = spec
-            names.embeddedFiles = PDEmbeddedFilesNameTreeNode().apply { this.names = existing }
-            catalog.names = names
-            catalog.cosObject.setName(COSName.getPDFName("PageMode"), "UseAttachments")
+            attachPayload(pdf, payload)
 
             if (incremental) {
-                catalog.cosObject.setNeedToBeUpdated(true)
+                pdf.documentCatalog.cosObject.setNeedToBeUpdated(true)
                 pdf.document.trailer.setNeedToBeUpdated(true)
                 pdf.saveIncremental(out)
             } else {
                 pdf.save(out)
             }
         }
+    }
+
+    /** Put [doc] into an already-loaded PDF, for an atomic structural rewrite. */
+    internal fun attach(pdf: PDDocument, doc: InkDocument) =
+        attachPayload(pdf, InkPayload.encode(doc))
+
+    private fun attachPayload(pdf: PDDocument, payload: ByteArray) {
+        val catalog = pdf.documentCatalog
+        val spec = PDComplexFileSpecification().apply {
+            file = NAME
+            fileDescription = "InkSlate handwriting. Safe to ignore; do not edit by hand."
+        }
+        spec.embeddedFile = PDEmbeddedFile(pdf, ByteArrayInputStream(payload)).apply {
+            subtype = "application/octet-stream"
+            size = payload.size
+            creationDate = java.util.Calendar.getInstance()
+        }
+
+        // Keep every other name the document has. Replacing the dictionary wholesale is how a
+        // PDF quietly loses its internal links.
+        val names = catalog.names ?: PDDocumentNameDictionary(catalog)
+        val existing = names.embeddedFiles?.names?.toMutableMap() ?: mutableMapOf()
+        existing[NAME] = spec
+        names.embeddedFiles = PDEmbeddedFilesNameTreeNode().apply { this.names = existing }
+        catalog.names = names
+        catalog.cosObject.setName(COSName.getPDFName("PageMode"), "UseAttachments")
     }
 
     private fun commit(staged: File, target: File) {

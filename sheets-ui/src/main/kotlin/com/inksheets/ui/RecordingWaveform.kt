@@ -139,12 +139,13 @@ internal fun RecordingWaveform(state: SheetsState, track: AudioTrack?, position:
             }
         }
     }
-    if(expanded) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        androidx.compose.material3.TextButton(onClick={heldWindow=null;zoom=(zoom/2).coerceAtLeast(1f)}) { androidx.compose.material3.Text("− Zoom") }
-        androidx.compose.material3.Text("${zoom.toInt()}×",modifier=Modifier.padding(top=12.dp))
-        androidx.compose.material3.TextButton(onClick={heldWindow=null;zoom=(zoom*2).coerceAtMost(32f)}) { androidx.compose.material3.Text("+ Zoom") }
+    if(expanded) Row(horizontalArrangement=Arrangement.spacedBy(4.dp),verticalAlignment=androidx.compose.ui.Alignment.CenterVertically,
+        modifier=Modifier.height(if(LocalMusicCategoryContent.current!=null)28.dp else 48.dp)) {
+        androidx.compose.material3.TextButton(onClick={heldWindow=null;zoom=(zoom/2).coerceAtLeast(1f)},modifier=Modifier.height(28.dp),contentPadding=PaddingValues(horizontal=4.dp,vertical=0.dp)) {androidx.compose.material3.Text("- Zoom")}
+        androidx.compose.material3.Text("${zoom.toInt()}x",style=MaterialTheme.typography.labelSmall)
+        androidx.compose.material3.TextButton(onClick={heldWindow=null;zoom=(zoom*2).coerceAtMost(32f)},modifier=Modifier.height(28.dp),contentPadding=PaddingValues(horizontal=4.dp,vertical=0.dp)) {androidx.compose.material3.Text("+ Zoom")}
     }
-    Canvas(modifier.fillMaxWidth().height(if(expanded) 144.dp else 24.dp).clipToBounds().semantics {
+    Canvas(modifier.fillMaxWidth().height(if(expanded && LocalMusicCategoryContent.current!=null && !LocalMusicCategoryRail.current)80.dp else if(expanded)144.dp else 24.dp).clipToBounds().semantics {
         contentDescription = if (loaded) "Recording waveform; tap to seek, hold to mark a practice loop" else if (peaks == null) "Recording waveform unavailable" else "Recording waveform"
     }.then(waveformDrawing).pointerInput(loaded,duration,track?.file,expanded,zoom) {
         if(expanded && loaded && duration>0) {

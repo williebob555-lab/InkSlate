@@ -27,7 +27,9 @@ data class ImportCandidate(
     val isImage: Boolean,
     val pageCount: Int,
     val width: Float,
-    val height: Float
+    val height: Float,
+    /** Displayed dimensions for each PDF page; PDFs may mix paper sizes and rotations. */
+    val pageSizes: List<Pair<Float, Float>> = emptyList()
 )
 
 /**
@@ -151,14 +153,22 @@ fun ImportPagesDialog(
 fun inspectForImport(file: java.io.File): ImportCandidate? = runCatching {
     when {
         DesktopSources.isPdf(file) -> org.apache.pdfbox.Loader.loadPDF(file).use { pdf ->
-            val first = pdf.getPage(0).mediaBox
+            val sizes = (0 until pdf.numberOfPages).map { index ->
+                val page = pdf.getPage(index)
+                val box = page.cropBox ?: page.mediaBox
+                val turn = ((page.rotation % 360) + 360) % 360
+                if (turn == 90 || turn == 270) box.height to box.width
+                else box.width to box.height
+            }
+            val first = sizes.first()
             ImportCandidate(
                 path = file.absolutePath,
                 displayName = file.name,
                 isImage = false,
                 pageCount = pdf.numberOfPages,
-                width = first.width,
-                height = first.height
+                width = first.first,
+                height = first.second,
+                pageSizes = sizes
             )
         }
 
@@ -184,8 +194,9 @@ fun importedPages(
     documentWidth: Float,
     documentHeight: Float
 ): List<ImportedPage> = picked.map { (candidate, pageIndex, fit) ->
-    val w = if (candidate.isImage && fit) documentWidth else candidate.width
-    val h = if (candidate.isImage && fit) documentHeight else candidate.height
+    val own = candidate.pageSizes.getOrNull(pageIndex) ?: (candidate.width to candidate.height)
+    val w = if (candidate.isImage && fit) documentWidth else own.first
+    val h = if (candidate.isImage && fit) documentHeight else own.second
     ImportedPage(
         path = candidate.path,
         pageIndex = pageIndex,

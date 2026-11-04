@@ -24,10 +24,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
@@ -85,6 +87,17 @@ internal fun BookmarksPane(state: SheetsState, marked: List<Song>) {
     val leaving = remember { mutableStateMapOf<String, Boolean>() }
     val order = remember(marked, sort) {
         sortMarks(marked.flatMap { song -> song.bookmarks.map { Marked(song, it) } }, sort).toMutableStateList()
+    }
+    val latestOrder by rememberUpdatedState(order)
+    DisposableEffect(state) {
+        onDispose {
+            // The three-second fade is an undo window only while this tab remains visible.
+            // Leaving the tab cancels its coroutines, so finish any removals here instead of
+            // making the player wait for an animation before navigating away.
+            latestOrder.filter { leaving[it.key] == true }.forEach { row ->
+                state.library?.song(row.song.id)?.let { current -> state.removeBookmark(current,row.mark) }
+            }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {

@@ -381,6 +381,37 @@ class Library(private val log: LibraryLog, now: () -> Long = System::currentTime
         wanted.forEachIndexed { index, p -> writePart(songId, p, index.toDouble()) }
     }
 
+    /** Replace one whole-file part with page-ranged parts, carrying page-bound metadata with it. */
+    fun replacePartWithRanges(songId: String, originalId: String, replacements: List<Part>) {
+        if (replacements.size < 2) return
+        val before = song(songId) ?: return
+        if (before.parts.none { it.id == originalId }) return
+        fun at(page: Int?) = page?.let { p -> replacements.firstOrNull {
+            p <= (it.lastPage ?: Int.MAX_VALUE) && p >= (it.firstPage ?: 1)
+        } }
+        val wanted = before.parts.flatMap { if (it.id == originalId) replacements else listOf(it) }
+        setParts(songId, wanted)
+        val marks = before.bookmarks.map { mark ->
+            if (mark.part == originalId) at(mark.page)?.let { mark.copy(part = it.id) } ?: mark else mark
+        }
+        val audio = before.audio.map { track ->
+            val oldTurns = track.partTurns[originalId]
+            var turns = track.partTurns - originalId
+            if (oldTurns != null) for (part in replacements) {
+                val first = (part.firstPage ?: 1) - 1
+                val lastExclusive = ((part.lastPage ?: part.firstPage ?: 1) - 1).coerceAtLeast(first)
+                if (first < oldTurns.size) turns = turns + (part.id to oldTurns.subList(first, minOf(lastExclusive, oldTurns.size)))
+            }
+            val paired = if (track.excerptPart == originalId)
+                at(track.excerptStartPage ?: replacements.first().firstPage)?.id else track.excerptPart
+            track.copy(partTurns = turns, excerptPart = paired)
+        }
+        if (marks != before.bookmarks || audio != before.audio) editSong(songId) {
+            bookmarks = marks
+            this.audio = audio
+        }
+    }
+
     /** Write one part's record, only the fields that differ from what is recorded. */
     fun writePart(songId: String, p: Part, order: Double? = null) = synchronized(this) {
         val f = state.fields(PART, p.id)

@@ -211,7 +211,8 @@ fun PagesSheet(
                             isImage = it.isImage,
                             pageCount = it.pageCount,
                             width = it.width,
-                            height = it.height
+                            height = it.height,
+                            pageSizes = it.pageSizes
                         )
                     }
                 }
@@ -341,17 +342,19 @@ fun PagesSheet(
                     ) { Icon(Icons.Default.Layers, "Copy") }
                     // Not a plain white page on one tap, as on Windows: the paper is half of what a
                     // blank page is, so this asks - pattern, both colours, spacing, size, how many.
-                    IconButton(onClick = { insertOpen = true }) {
-                        Icon(Icons.Default.Add, "Add blank pages after this one")
+                    TextButton(onClick = { insertOpen = true }) {
+                        Icon(Icons.Default.Add, null, Modifier.size(18.dp))
+                        Text("New page", Modifier.padding(start = 4.dp))
                     }
-                    IconButton(
+                    TextButton(
                         enabled = !staging,
                         // PDFs and pictures in one picker: from here they are the same thing,
                         // which is a page this document is about to gain.
                         onClick = { picker.launch(arrayOf("application/pdf", "image/*")) }
                     ) {
                         if (staging) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Default.LibraryAdd, "Add pages from another file")
+                        else Icon(Icons.Default.LibraryAdd, null, Modifier.size(18.dp))
+                        Text("From file", Modifier.padding(start = 4.dp))
                     }
                     IconButton(
                         // Exports the document as it is on disk, so an unapplied plan would export
@@ -588,8 +591,10 @@ fun PagesSheet(
                 importing = null
                 if (chosen.isEmpty()) return@ImportPagesDialog
                 val fresh = chosen.map { (candidate, pageIndex, fit) ->
-                    val w = if (candidate.isImage && fit) defaultPageWidth else candidate.width
-                    val h = if (candidate.isImage && fit) defaultPageHeight else candidate.height
+                    val own = candidate.pageSizes.getOrNull(pageIndex)
+                        ?: (candidate.width to candidate.height)
+                    val w = if (candidate.isImage && fit) defaultPageWidth else own.first
+                    val h = if (candidate.isImage && fit) defaultPageHeight else own.second
                     PlannedPage(
                         source = -1,
                         uid = nextUid++,

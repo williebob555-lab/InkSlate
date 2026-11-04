@@ -23,6 +23,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.graphics.toArgb
@@ -1560,12 +1563,27 @@ private fun DrawScope.drawPageMarks(marks: List<com.inkslate.core.PageMark>) {
         val group=marks.subList(i,end)
         if (mask == null) drawPageMarksPrimitive(group) else {
             val path = musicMaskPaths.getOrPut(mask) { musicMaskPath(mask) }
-            clipPath(path) { drawPageMarksPrimitive(group) }
+            // The notation is unchanged while the brush moves. Rasterize it at the current
+            // device resolution once; clipping one image avoids a complex clip per glyph.
+            val matrix=drawContext.canvas.nativeCanvas.localToDeviceAsMatrix33.mat
+            val deviceScale=maxOf(kotlin.math.hypot(matrix[0],matrix[3]),kotlin.math.hypot(matrix[1],matrix[4]))
+            val raster=musicMarkRasters.get(group,mask.width,mask.height,deviceScale) { w,h,resolution ->
+                ImageBitmap(w,h).also { image ->
+                    CanvasDrawScope().draw(this,layoutDirection,Canvas(image),Size(w.toFloat(),h.toFloat())) {
+                        scale(resolution,resolution,pivot=Offset.Zero) {drawPageMarksPrimitive(group)}
+                    }
+                }
+            }
+            clipPath(path) {
+                if(raster==null)drawPageMarksPrimitive(group)
+                else scale(1f/raster.scale,1f/raster.scale,pivot=Offset.Zero){drawImage(raster.image)}
+            }
         }
         i=end
     }
 }
 
+private val musicMarkRasters=com.inkslate.core.MusicMarkRasterCache<ImageBitmap>()
 private val musicMaskPaths = java.util.WeakHashMap<com.inkslate.core.PageMark.Mask, androidx.compose.ui.graphics.Path>()
 private val incrementalMusicMasks = com.inkslate.core.MusicMaskCache<androidx.compose.ui.graphics.Path>(
     empty = { mask -> androidx.compose.ui.graphics.Path().apply {

@@ -89,7 +89,7 @@ fun ExportDialog(
     var scope by remember {
         mutableStateOf(if (presetPages.isNullOrEmpty()) ExportScope.ALL else ExportScope.SELECTED)
     }
-    var destination by remember { mutableStateOf(ExportDestination.SHARE) }
+    var destination by remember { mutableStateOf(ExportDestination.BESIDE) }
     var flatten by remember { mutableStateOf(true) }
     var fromText by remember { mutableStateOf((currentPage + 1).toString()) }
     var toText by remember { mutableStateOf(pageCount.toString()) }

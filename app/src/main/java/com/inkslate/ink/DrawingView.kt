@@ -3860,6 +3860,7 @@ class DrawingView @JvmOverloads constructor(
         endRulerTwoFinger()
         removeCallbacks(detailRequest)
         clearDetail()
+        musicMarkRasters.clear()
         removeCallbacks(indicatorWatchdog)
         eraserCursor = null
         live = null
@@ -4883,12 +4884,40 @@ class DrawingView @JvmOverloads constructor(
                 val path = musicMaskPaths.getOrPut(mask) { incrementalMusicMasks.path(mask) }
                 val saved = canvas.save()
                 canvas.clipPath(path)
-                drawPageMarksPrimitive(canvas,group)
+                canvas.getMatrix(musicRasterMatrix)
+                musicRasterMatrix.getValues(musicRasterTransform)
+                val deviceScale=maxOf(kotlin.math.hypot(musicRasterTransform[0],musicRasterTransform[3]),
+                    kotlin.math.hypot(musicRasterTransform[1],musicRasterTransform[4]))
+                val raster=try {
+                    musicMarkRasters.get(group,mask.width,mask.height,deviceScale) { w,h,resolution ->
+                        Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888).also { image ->
+                            val layer=Canvas(image);layer.scale(resolution,resolution)
+                            drawPageMarksPrimitive(layer,group)
+                        }
+                    }
+                } catch (_:OutOfMemoryError) {
+                    // A mask is an optional acceleration. Under pressure, keep drawing correctly
+                    // with vectors instead of letting one cache allocation kill the performance app.
+                    musicMarkRasters.clear()
+                    null
+                }
+                if(raster==null)drawPageMarksPrimitive(canvas,group)
+                else {
+                    canvas.scale(1f/raster.scale,1f/raster.scale)
+                    canvas.drawBitmap(raster.image,0f,0f,musicRasterPaint)
+                }
                 canvas.restoreToCount(saved)
             }
             i=end
         }
     }
+    // At most about 8 MB of ARGB pixels. Page rasters, thumbnails and the reader all share the
+    // same Android heap, so the desktop-sized default is unsafe on a tablet.
+    private val musicMarkRasters=com.inkslate.core.MusicMarkRasterCache<Bitmap>(
+        maxPixels=1_500_000L,totalPixels=2_000_000L,dispose={ if(!it.isRecycled)it.recycle() })
+    private val musicRasterMatrix=android.graphics.Matrix()
+    private val musicRasterTransform=FloatArray(9)
+    private val musicRasterPaint=Paint(Paint.FILTER_BITMAP_FLAG)
     private val incrementalMusicMasks = com.inkslate.core.MusicMaskCache<android.graphics.Path>(
         empty={ mask -> android.graphics.Path().apply {if(mask.baseFull)addRect(0f,0f,mask.width,mask.height,android.graphics.Path.Direction.CW)} },
         copy={ old -> android.graphics.Path(old) },

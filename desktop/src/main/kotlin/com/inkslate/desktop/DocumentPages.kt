@@ -50,32 +50,61 @@ object DocumentPages {
     ): Result<InkDocument> = runCatching {
         if (DesktopSources.isImage(source)) return@runCatching turnImage(source, ink, plan)
         require(DesktopSources.isPdf(source)) { "Only PDFs can have their pages rearranged" }
+        require(plan.isNotEmpty()) { "A document needs at least one page" }
 
         val sizes = HashMap<Int, Pair<Float, Float>>()
-        val remapped = Loader.loadPDF(source).use { pdf ->
-            for (i in 0 until pdf.numberOfPages) {
-                val box = pdf.getPage(i).let { it.cropBox ?: it.mediaBox }
-                sizes[i] = box.width to box.height
-            }
-            val ordered = PagePlan.remapInk(ink, plan) { i ->
-                sizes[i] ?: (612f to 792f)
+        val staged = File(source.parentFile, ".${source.name}.pages.pdf")
+        staged.delete()
+        try {
+            val remapped = Loader.loadPDF(source).use { pdf ->
+                for (i in 0 until pdf.numberOfPages) {
+                    val box = pdf.getPage(i).let { it.cropBox ?: it.mediaBox }
+                    sizes[i] = box.width to box.height
+                }
+                val ordered = PagePlan.remapInk(ink, plan) { i ->
+                    sizes[i] ?: (612f to 792f)
+                }
+
+                applyToPdf(pdf, plan).use {
+                    // The page tree and the editable handwriting describe one another. Put both
+                    // into the staged file before it is proved readable and replaces the source.
+                    DesktopEmbedder.attach(pdf, ordered)
+                    FileOutputStream(staged).use { out -> pdf.save(out) }
+                }
+                ordered
             }
 
-            applyToPdf(pdf, plan).use {
-                val tmp = File(source.parentFile, "." + source.name + ".pages")
-                FileOutputStream(tmp).use { out -> pdf.save(out) }
-                if (!tmp.renameTo(source)) {
-                    tmp.copyTo(source, overwrite = true)
-                    tmp.delete()
-                }
+            // PDFBox keeps the source file open for the life of PDDocument. In particular,
+            // Windows will not replace that file until the `use` above has closed it. This
+            // commit deliberately sits outside that block.
+            val pages = Loader.loadPDF(staged).use { it.numberOfPages }
+            val carried = DesktopEmbedder.read(staged)
+            check(pages == plan.size && carried?.let {
+                it.layout == remapped.layout && it.totalStrokes == remapped.totalStrokes
+            } == true) {
+                "The rearranged ${source.name} did not read back correctly, so it was left unchanged"
             }
-            ordered
+            replace(staged, source)
+            EventLog.info("pages", "${source.name}: rearranged into $pages page(s)")
+            remapped
+        } finally {
+            staged.delete()
         }
-        EventLog.info(
-            "pages",
-            "${source.name}: rearranged into ${plan.size} page(s)"
-        )
-        remapped
+    }
+
+    private fun replace(staged: File, target: File) {
+        try {
+            java.nio.file.Files.move(
+                staged.toPath(), target.toPath(),
+                java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+        } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+            java.nio.file.Files.move(
+                staged.toPath(), target.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING
+            )
+        }
     }
 
     /**
@@ -181,7 +210,7 @@ object DocumentPages {
         val borrowed = BorrowedDocuments()
 
         val used = HashSet<Int>()
-        val rebuilt = plan.mapNotNull { p ->
+        val rebuilt = plan.mapIndexed { index, p ->
             val page = when {
                 p.import != null -> importedPage(pdf, p, borrowed)
                 p.isNew -> blankPage(pdf, p)
@@ -191,7 +220,11 @@ object DocumentPages {
                 used.add(p.source) -> originals[p.source]
                 else -> duplicate(originals[p.source])
             }
-            page?.also {
+            checkNotNull(page) {
+                val imported = p.import
+                if (imported != null) "Could not add page ${index + 1} from ${File(imported.path).name}"
+                else "Page ${index + 1} no longer exists in this document"
+            }.also {
                 if (p.quarterTurns != 0) {
                     it.rotation = normaliseDegrees(it.rotation + p.quarterTurns * 90)
                 }

@@ -114,15 +114,19 @@ class MusicDockLifecycleTest {
         }
     }
 
-    @Test fun `wide floating panel borrows studio space on small landscape and restores it on close`() {
+    @Test fun `connection category replaces the rail on small landscape without borrowing score space`() {
         val state=state()
         state.shelf.chooseView(MusicDockView.STUDIO)
         runDesktopComposeUiTest(width=640,height=360) {
             setContent {MaterialTheme {Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
             runOnIdle {assertEquals(236f,AppFlavor.studioRailDp,.01f);state.companionOpen=true}
             waitForIdle()
-            runOnIdle {assertEquals(0f,AppFlavor.studioRailDp,.01f)}
+            runOnIdle {assertEquals(236f,AppFlavor.studioRailDp,.01f)}
             onNodeWithText("Lead",useUnmergedTree=true).assertIsDisplayed()
+            val rail=onNodeWithTag("music-dock-rail").fetchSemanticsNode().boundsInRoot
+            val content=onNodeWithTag("music-category-content").fetchSemanticsNode().boundsInRoot
+            assertTrue("Connection controls stay inside the rail",content.left>=rail.left && content.right<=rail.right)
+            assertTrue("Connection controls have usable height",content.height>=80f)
             val issues=UiAudit.check(this,"phone-small-land","dock-floating-panel",640,360)
             assertTrue(issues.joinToString(),issues.isEmpty())
             onNodeWithContentDescription("Compact categories").performClick()

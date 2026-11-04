@@ -91,7 +91,7 @@ internal fun ReassignRow(state: SheetsState) {
                 Thread({ state.reassignInstruments() }, "reassign").apply { isDaemon = true; start() }
             }) { Text("Redo automatic assignment") }
             Text(
-                state.reassigned ?: "Reads every part's instrument and every song's tempo again - from names, first pages and scans - with the instruments below. Anything you set yourself stays as it is.",
+                state.reassigned ?: "Reads every part's instrument and every song's tempo again - from names, first pages and scans - and splits a combined parts PDF at each titled instrument page. Anything you set yourself stays as it is.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

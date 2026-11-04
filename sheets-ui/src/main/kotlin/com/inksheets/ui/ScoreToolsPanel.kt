@@ -36,6 +36,7 @@ private data class ScoreAction(
  */
 @Composable
 internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
+    val inline=LocalMusicCategoryContent.current!=null
     val file = state.currentPath?.let(::File)
     val here = state.pageShown.first
     val score = remember(state.currentPath, Transcriber.shown, Transcriber.busy) { ScoreTools.scoreHere(state) }
@@ -64,22 +65,18 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
             }
         }
     }
-    if (printingFor && file != null && score != null) {
-        PrintFor(state, file, score) { printingFor = false }
-        return
-    }
     SheetDialog(title = "Score tools", wide = true, onDismiss = onClose,
         buttons = { TextButton(onClick = onClose) { Text("Done") } }) {
-        Column(Modifier.verticalScroll(rememberScrollState()).testTag("score-tools-body"), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).testTag("score-tools-body"), verticalArrangement = Arrangement.spacedBy(if(inline)6.dp else 12.dp)) {
             val statusColor = when { busy != null -> MaterialTheme.colorScheme.primary; ready -> Color(0xFF2C8A6B); else -> MaterialTheme.colorScheme.tertiary }
             Surface(color = statusColor.copy(alpha = .09f), shape = RoundedCornerShape(10.dp)) {
-                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth().padding(if(inline)4.dp else 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(if (busy != null) Icons.Default.HourglassTop else if (ready) Icons.Default.CheckCircle else Icons.Default.MenuBook,
                         null, tint = statusColor)
                     Column(Modifier.weight(1f)) {
                         Text(when { busy != null -> busy; ready -> "Page ${here + 1} is read"; else -> "Page ${here + 1} is not read yet" },
-                            style = MaterialTheme.typography.titleSmall, color = statusColor)
-                        Text(when {
+                            style = if(inline)MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleSmall, color = statusColor)
+                        if(!inline) Text(when {
                             file == null -> "Open a part to use score tools."
                             busy != null -> "Stopping keeps pages already read."
                             !ready -> "Read this page to review, clean or practise its music."
@@ -93,10 +90,10 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
             }
             ScoreSection("Read & review", Icons.Default.Spellcheck, MaterialTheme.colorScheme.primary) {
                 ScoreActionGrid(listOf(
-                    ScoreAction("Read page ${here + 1}", "This page only", Icons.Default.Description,
-                        enabled = file != null && busy == null, action = { read(setOf(here)) }),
                     ScoreAction("Read whole part", "Every page in this file", Icons.Default.MenuBook,
                         enabled = file != null && busy == null, action = { read() }),
+                    ScoreAction("Read page ${here + 1}", "This page only", Icons.Default.Description,
+                        enabled = file != null && busy == null, action = { read(setOf(here)) }),
                     ScoreAction("Review reading", "Colour confidence; tap a bar to correct it", Icons.Default.Spellcheck,
                         enabled = ready && busy == null, selected = ScoreTools.colours,
                         action = { usePage { ScoreTools.toggleCheck(state) } }),
@@ -191,6 +188,7 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
             }
         }
     }
+    if(printingFor && file!=null && score!=null) PrintFor(state,file,score){printingFor=false}
 }
 
 @Composable
@@ -210,7 +208,13 @@ private fun ScoreActionGrid(actions: List<ScoreAction>, accent: Color = Material
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // A 640dp phone in landscape has about 584dp inside the dialog. Two columns there
         // keep useful tools visible rather than spending the whole viewport on two read rows.
-        val columns = if (maxWidth >= 520.dp) 2 else 1
+        val inline=LocalMusicCategoryContent.current!=null
+        val columns = when {
+            inline && !LocalMusicCategoryRail.current && maxWidth>=720.dp -> 4
+            inline && !LocalMusicCategoryRail.current && maxWidth>=300.dp -> 2
+            maxWidth>=520.dp -> 2
+            else -> 1
+        }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             actions.chunked(columns).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -227,16 +231,17 @@ private fun ScoreActionGrid(actions: List<ScoreAction>, accent: Color = Material
 
 @Composable
 private fun ScoreActionRow(action: ScoreAction, accent: Color) {
+    val inline=LocalMusicCategoryContent.current!=null
     val ink = if (action.enabled) accent else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)
     Surface(shape = RoundedCornerShape(8.dp), color = if (action.selected) accent.copy(alpha = .1f) else Color.Transparent) {
         Row(Modifier.fillMaxWidth().clickable(enabled = action.enabled, onClick = action.action)
-            .testTag("score-action-${action.title}").padding(horizontal = 8.dp, vertical = 10.dp),
+            .testTag("score-action-${action.title}").padding(horizontal = if(inline)4.dp else 8.dp, vertical = if(inline)5.dp else 10.dp).heightIn(min=44.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(action.icon, null, Modifier.size(22.dp), tint = ink)
             Column(Modifier.weight(1f)) {
-                Text(action.title, style = MaterialTheme.typography.titleSmall, color = if (action.enabled) MaterialTheme.colorScheme.onSurface else ink)
-                Text(action.detail, style = MaterialTheme.typography.bodySmall, color = if (action.enabled) MaterialTheme.colorScheme.onSurfaceVariant else ink,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(action.title, style = if(inline)MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleSmall, color = if (action.enabled) MaterialTheme.colorScheme.onSurface else ink)
+                Text(action.detail, style = if(inline)MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall, color = if (action.enabled) MaterialTheme.colorScheme.onSurfaceVariant else ink,
+                    maxLines = if(inline)1 else 2, overflow = TextOverflow.Ellipsis)
             }
             if (action.selected) Icon(Icons.Default.Check, "Active", Modifier.size(17.dp), tint = ink)
         }

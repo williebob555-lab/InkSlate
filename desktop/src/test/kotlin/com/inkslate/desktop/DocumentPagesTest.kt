@@ -2,6 +2,7 @@ package com.inkslate.desktop
 
 import com.inkslate.core.InkDocument
 import com.inkslate.core.InkPoint
+import com.inkslate.core.ImportedPage
 import com.inkslate.core.PagePlan
 import com.inkslate.core.PaperSpec
 import com.inkslate.core.PlannedPage
@@ -111,12 +112,81 @@ class DocumentPagesTest {
             )
         )
 
-        DocumentPages.rearrange(file, ink, plan).getOrThrow()
+        val remapped = DocumentPages.rearrange(file, ink, plan).getOrThrow()
 
         assertEquals(3, pageCountOf(file))
         DesktopSources.open(file)!!.use {
             assertNotNull("the inserted page should render", it.render(1, 160))
         }
+        val carried = DesktopEmbedder.read(file)
+        assertNotNull("the rearranged file must carry its editable handwriting", carried)
+        assertEquals(
+            "the file itself must carry handwriting for the new page arrangement",
+            remapped.layout,
+            carried!!.layout
+        )
+    }
+
+    @Test
+    fun `a page from another PDF is inserted and renders its own paper`() {
+        val (file, ink) = document(1)
+        val borrowed = BlankDocumentFactory.create(
+            temp.newFolder(),
+            BlankDocumentFactory.Spec(name = "Red", paperColor = 0xFFFF0000.toInt())
+        ).getOrThrow()
+        val plan = PagePlan.inserted(
+            PagePlan.identity(1), 1,
+            listOf(
+                PlannedPage(
+                    source = -1,
+                    uid = 91L,
+                    import = ImportedPage(
+                        path = borrowed.absolutePath,
+                        pageIndex = 0,
+                        isImage = false,
+                        width = 612f,
+                        height = 792f
+                    )
+                )
+            )
+        )
+
+        DocumentPages.rearrange(file, ink, plan).getOrThrow()
+
+        assertEquals(2, pageCountOf(file))
+        org.apache.pdfbox.Loader.loadPDF(file).use { pdf ->
+            val image = org.apache.pdfbox.rendering.PDFRenderer(pdf).renderImage(1, 0.25f)
+            val rgb = image.getRGB(image.width / 2, image.height / 2)
+            assertTrue("the imported red page should render red, got ${Integer.toHexString(rgb)}",
+                (rgb shr 16 and 0xFF) > 220 && (rgb shr 8 and 0xFF) < 40)
+        }
+    }
+
+    @Test
+    fun `a missing imported page leaves the document unchanged`() {
+        val (file, ink) = document(1)
+        val before = file.readBytes()
+        val plan = PagePlan.inserted(
+            PagePlan.identity(1), 1,
+            listOf(
+                PlannedPage(
+                    source = -1,
+                    uid = 92L,
+                    import = ImportedPage(
+                        path = File(file.parentFile, "gone.pdf").absolutePath,
+                        pageIndex = 0,
+                        isImage = false,
+                        width = 612f,
+                        height = 792f
+                    )
+                )
+            )
+        )
+
+        val result = DocumentPages.rearrange(file, ink, plan)
+
+        assertTrue(result.isFailure)
+        assertTrue("a failed import must not rewrite the source", before.contentEquals(file.readBytes()))
     }
 
     @Test
@@ -142,6 +212,7 @@ class DocumentPagesTest {
     @Test
     fun `duplicating does not double the file`() {
         val (file, ink) = document(1)
+        DesktopEmbedder.write(file, ink).getOrThrow()
         val before = file.length()
 
         DocumentPages.rearrange(

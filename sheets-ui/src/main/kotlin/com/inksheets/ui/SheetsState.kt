@@ -713,6 +713,10 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             onProgress(i, todo.size)
             val file = partFile(song, part) ?: return@forEachIndexed
             if (!file.isFile || file.length() == 0L) return@forEachIndexed
+            if (splitCombinedPart(song,part) > 1) {
+                tried.remove(part.id);tried+=key(part,file)
+                return@forEachIndexed
+            }
             // The page's own words where it has them; a scan read where it does not.
             val text = runCatching { platform.pageText(file, part.firstPage ?: 1) }.getOrNull()
                 ?.takeIf { com.inksheets.core.InstrumentReader.read(it) != null }
@@ -735,6 +739,25 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         }
         if (unsaved > 0) platform.setPref(K_TRIED, tried.joinToString(","))
         onProgress(todo.size, todo.size)
+    }
+
+    /** Split an automatically managed whole PDF when titled instrument pages prove it is a pack. */
+    private fun splitCombinedPart(song:com.inksheets.core.Song,part:com.inksheets.core.Part):Int {
+        if(part.source==com.inksheets.core.InstrumentSource.PERSON || part.firstPage!=null || part.lastPage!=null || part.dup)return 0
+        val lib=library ?: return 0
+        val file=partFile(song,part)?.takeIf {it.isFile} ?: return 0
+        val count=runCatching {platform.pageCount(file)}.getOrNull() ?: return 0
+        if(count<2)return 0
+        val texts=runCatching {platform.pageTexts(file,count)}.getOrElse {emptyList()}
+        val planned=com.inksheets.core.ImportPlan.splitCombinedParts(part.file,song.title,count,
+            textOf={page->texts.getOrNull(page-1)},
+            recognise={page->if(platform.canRecognise)runCatching {platform.recognise(file,page)}.getOrNull() else null})
+        if(planned.size<2)return 0
+        val ranged=planned.map {p->p.toPart().copy(id=com.inksheets.core.Library.partIdFor(
+            "${part.file}#${p.firstPage}-${p.lastPage}"))}
+        lib.replacePartWithRanges(song.id,part.id,ranged)
+        platform.onMain {version=lib.version}
+        return ranged.size
     }
 
     /**
@@ -1336,6 +1359,17 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
      */
     fun reassignInstruments() {
         val lib = library ?: return
+        val combined=lib.songs.flatMap {song->song.parts.filter {
+            it.source!=com.inksheets.core.InstrumentSource.PERSON && it.firstPage==null && it.lastPage==null && !it.dup
+        }.map {song to it}}
+        var splitFiles=0
+        var splitParts=0
+        platform.onMain {reassigning=0 to combined.size;reassigned=null}
+        combined.forEachIndexed {i,(song,part)->
+            platform.onMain {reassigning=i to combined.size}
+            val made=splitCombinedPart(song,part)
+            if(made>1){splitFiles++;splitParts+=made}
+        }
         val todo = lib.songs.flatMap { song -> song.parts.filter { it.source != com.inksheets.core.InstrumentSource.PERSON }.map { song to it } }
         var changed = 0
         platform.onMain { reassigning = 0 to todo.size; reassigned = null }
@@ -1370,7 +1404,8 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         runCatching { scanFolder() }
         platform.onMain {
             reassigning = null
-            reassigned = if (changed == 0) "Every part already had the instrument it reads as." else "$changed part${if (changed == 1) "" else "s"} given a different instrument."
+            val split=if(splitFiles>0)"$splitFiles combined PDF${if(splitFiles==1)""else"s"} split into $splitParts parts. " else ""
+            reassigned = split + if (changed == 0) "Every part already had the instrument it reads as." else "$changed part${if (changed == 1) "" else "s"} given a different instrument."
         }
     }
 

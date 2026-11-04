@@ -2375,20 +2375,22 @@ fun EditorScreen(
                         // only one of the two writes. This one takes that over first; the other
                         // carries on drawing, and its marks follow the pages to where they went.
                         val session = link
-                        if (session != null && !session.mayWriteNow(System.currentTimeMillis())) {
+                        if (session != null && !session.mayRestructureNow(System.currentTimeMillis())) {
                             session.requestSave()
-                            val waiting = launch {
+                            // A paired device is not itself a problem. Only put up a wait message
+                            // when that device actually has this same document open.
+                            val waiting = if (session.openPeers().isNotEmpty()) launch {
                                 snackbar.showSnackbar(
-                                    "Waiting for your other device...",
+                                    "Finishing the page change with your other device...",
                                     duration = SnackbarDuration.Indefinite
                                 )
-                            }
+                            } else null
                             val giveUpAt = System.currentTimeMillis() + REARRANGE_WAIT_MS
                             while (link === session && System.currentTimeMillis() < giveUpAt &&
-                                !session.mayWriteNow(System.currentTimeMillis())
+                                !session.mayRestructureNow(System.currentTimeMillis())
                             ) delay(250)
-                            waiting.cancel()
-                            if (link !== session || !session.mayWriteNow(System.currentTimeMillis())) {
+                            waiting?.cancel()
+                            if (link !== session || !session.mayRestructureNow(System.currentTimeMillis())) {
                                 snackbar.showSnackbar(
                                     "Your other device did not answer, so the pages were left " +
                                         "as they were. Try again in a moment."
@@ -2397,10 +2399,12 @@ fun EditorScreen(
                             }
                         }
                         busy = true
-                        writeThrough()
                         restructuring = true
+                        val toArrange = currentInk()
+                        ink = toArrange
                         val done = withContext(Dispatchers.IO) {
-                            DocumentPages.rearrange(file, ink, plan)
+                            DocumentIO.saveWorking(file, toArrange)
+                            DocumentPages.rearrange(file, toArrange, plan)
                         }
                         busy = false
                         done.onSuccess { rearranged ->

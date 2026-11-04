@@ -71,9 +71,13 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     // Folded with the action strip (a tap in the middle of the page, its corner button) and back
     // with it: the two strips go together. The tools stay as they were, only out of sight.
     val open = ScoreTools.open && !state.stripCollapsed
+    var wasOpen by remember { mutableStateOf(open) }
     LaunchedEffect(open) {
         state.platform.setMusicLane(open)
-        Perform.recentre?.invoke()
+        // Opening tools must not throw away the exact passage the player zoomed and panned to.
+        // Closing them returns to the performance view, fitted to the page.
+        if (wasOpen && !open) Perform.recentre?.invoke()
+        wasOpen = open
     }
     androidx.compose.runtime.SideEffect { if (!open) Overlays.musicOut = 0.dp }
     // The player's own instruments, loading in the background before anything is played.
@@ -287,8 +291,8 @@ fun BoxScope.MusicStrip(state: SheetsState) {
 /** The speed-up settings: from what share of the tempo, and how much faster each time round. */
 @Composable
 internal fun SpeedUpMenu(open: Boolean, onDismiss: () -> Unit) {
-    DropdownMenu(open, onDismissRequest = onDismiss) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).width(240.dp)) {
+    val body: @Composable () -> Unit = {
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).fillMaxWidth()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Speed up each time round", Modifier.weight(1f))
                 androidx.compose.material3.Switch(checked = ScoreTools.ramp, onCheckedChange = { ScoreTools.ramp = it; if (it) ScoreTools.loop = true })
@@ -300,12 +304,17 @@ internal fun SpeedUpMenu(open: Boolean, onDismiss: () -> Unit) {
             Text("Up to the metronome's tempo, then round at that.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+    if(LocalMusicCategoryContent.current!=null) {
+        if(open) InlineMusicPage("Tempo ramp",onDismiss,null,scroll=true,content=body)
+    } else DropdownMenu(open,onDismissRequest=onDismiss) {
+        Column(Modifier.width(240.dp)) {body()}
+    }
 }
 
 /** Which instrument the bars are played as: the part's own, or another's. */
 @Composable
 internal fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit) {
-    DropdownMenu(open, onDismissRequest = onDismiss) {
+    val body: @Composable () -> Unit = {
         DropdownMenuItem(text = { Text("The part's own instrument" + if (ScoreTools.soundAs == null) "  ✓" else "") }, onClick = { ScoreTools.soundAs = null; onDismiss() })
         // The player's own sampled instruments first (see Settings, Instruments).
         val yours = remember(open, SampledInstruments.version) { if (open) SampledInstruments.ensure(state).list().map { it.name } else emptyList() }
@@ -322,6 +331,9 @@ internal fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit)
             DropdownMenuItem(text = { Text(name + if (ScoreTools.soundAs == id) "  ✓" else "") }, onClick = { ScoreTools.soundAs = id; onDismiss() })
         }
     }
+    if(LocalMusicCategoryContent.current!=null) {
+        if(open) InlineMusicPage("Playback sound",onDismiss,null,scroll=true,content=body)
+    } else DropdownMenu(open,onDismissRequest=onDismiss) {body()}
 }
 
 /** A bar number, and straight there. */
@@ -329,26 +341,18 @@ internal fun SoundMenu(state: SheetsState, open: Boolean, onDismiss: () -> Unit)
 internal fun GoToBar(state: SheetsState, onDone: () -> Unit) {
     var text by remember { mutableStateOf("") }
     fun go() { text.trim().toIntOrNull()?.let { if (ScoreTools.goTo(state, it)) onDone() } }
-    AlertDialog(
-        onDismissRequest = onDone,
-        title = { Text("Go to bar") },
-        text = {
-            Column {
-                OutlinedTextField(text, { text = it.filter(Char::isDigit).take(4) }, singleLine = true, label = { Text("Bar number") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { go() }))
-                ScoreTools.said?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            }
-        },
-        confirmButton = {
-            Row {
-                // Or straight to playing from it - the band or the part, as last played.
-                TextButton(onClick = { text.trim().toIntOrNull()?.let { n -> if (ScoreTools.goTo(state, n)) { onDone(); if (ScoreTools.bandMode || ScoreTools.band) ScoreTools.playBand(state, n) else ScoreTools.play(state, n) } } }) { Text("Play from it") }
-                TextButton(onClick = { go() }) { Text("Go") }
-            }
-        },
-        dismissButton = { TextButton(onClick = onDone) { Text("Cancel") } }
-    )
+    SheetDialog("Go to bar",onDismiss=onDone,buttons={
+        TextButton(onClick=onDone) {Text("Cancel")}
+        TextButton(onClick={text.trim().toIntOrNull()?.let {n->if(ScoreTools.goTo(state,n)) {onDone();ScoreTools.playSelected(state,n)}}}) {Text("Play")}
+        TextButton(onClick={go()}) {Text("Go")}
+    }) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
+            OutlinedTextField(text,{text=it.filter(Char::isDigit).take(4)},singleLine=true,label={Text("Bar number")},
+                modifier=Modifier.fillMaxWidth(),keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),
+                keyboardActions=androidx.compose.foundation.text.KeyboardActions(onDone={go()}))
+            ScoreTools.said?.let {Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
+        }
+    }
 }
 
 /** The part engraved afresh from its reading, as a PDF beside the app's shared files, handed to the system to open or send. */
@@ -370,10 +374,7 @@ internal fun cleanPrint(state: SheetsState, file: File, score: com.inksheets.cor
 @Composable
 internal fun PrintFor(state: SheetsState, file: File, score: com.inksheets.core.omr.Score, onDone: () -> Unit) {
     val own = state.partShown()?.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }?.let { com.inksheets.core.Instruments.byId[it] }
-    AlertDialog(
-        onDismissRequest = onDone,
-        title = { Text("Print it for...") },
-        text = {
+    SheetDialog("Print for another instrument",onDismiss=onDone,buttons={TextButton(onClick=onDone){Text("Cancel")}}) {
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 Text("Re-written so it sounds the same, in the other instrument's key.", style = MaterialTheme.typography.bodySmall)
                 for (ins in com.inksheets.core.Instruments.byId.values.sortedBy { it.name }) {
@@ -384,9 +385,7 @@ internal fun PrintFor(state: SheetsState, file: File, score: com.inksheets.core.
                     }.padding(vertical = 8.dp))
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDone) { Text("Cancel") } }
-    )
+    }
 }
 
 private fun Modifier.fillMaxWidthClickable(onClick: () -> Unit): Modifier = this.fillMaxWidth().clickable(onClick = onClick)

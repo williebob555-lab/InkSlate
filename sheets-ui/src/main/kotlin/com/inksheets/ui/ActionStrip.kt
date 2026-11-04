@@ -6,6 +6,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -219,7 +220,6 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 @Composable
 private fun ReaderFooter(state:SheetsState) {
     var more by remember { mutableStateOf(false) }
-    var excerpt by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val narrow=maxWidth<600.dp
         val toolsOut=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
@@ -239,7 +239,11 @@ private fun ReaderFooter(state:SheetsState) {
                 Mini(Icons.AutoMirrored.Filled.Redo,"Redo","Redo"){Perform.run(PerformAction.REDO)}
             }
             Mini(if(toolsOut)Icons.Default.Close else Icons.Default.Construction,if(toolsOut)"Hide"else"Tools",if(toolsOut)"Hide annotation tools"else"All tools",toolsOut){Perform.run(PerformAction.FULLSCREEN)}
-            Mini(Icons.Default.Bookmark,"Excerpt","Bookmark excerpt"){excerpt=true}
+            val bookmarked=state.bookmarkHere()!=null
+            Mini(if(bookmarked)Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                if(bookmarked)"Marked" else "Mark",
+                if(bookmarked)"Remove bookmark from this page" else "Bookmark this page",
+                bookmarked){state.toggleBookmark()}
             Mini(Icons.Default.GraphicEq,"Tuner","Tuner",width=48.dp){state.tunerOpen=true}
         }
         val navigation:@Composable RowScope.()->Unit={
@@ -290,7 +294,6 @@ private fun ReaderFooter(state:SheetsState) {
             OutsideControls()
         }
     }
-    if(excerpt) state.current?.let {BookmarkEditorDialog(state,it,null){excerpt=false}}
 }
 
 private fun partName(p: com.inksheets.core.Part): String =

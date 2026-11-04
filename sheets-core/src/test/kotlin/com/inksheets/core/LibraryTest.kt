@@ -209,4 +209,23 @@ class LibraryTest {
         assertEquals(listOf("the Autumn Show", "Gig", "Spring Concert"), lib.setlistsIn(band.id).map { it.name })
         assertEquals(listOf("2024", "2025"), lib.foldersIn(band.id).map { it.name })
     }
+
+    @Test fun `splitting a combined PDF carries bookmarks recording pairs and page turns`() {
+        val (_,lib)=device("ranges")
+        val whole=Part(id="whole",file="Give Us This Day.pdf",instrument="piccolo",source=InstrumentSource.OCR)
+        val song=lib.addSong("Give Us This Day",listOf(whole)) {
+            bookmarks=listOf(Bookmark("Euph",part=whole.id,page=103))
+            audio=listOf(AudioTrack("take.wav",partTurns=mapOf(whole.id to (1L..141L).toList()),
+                excerptPart=whole.id,excerptStartPage=102,excerptEndPage=105))
+        }
+        val piccolo=Part(id="piccolo",file=whole.file,firstPage=1,lastPage=4,instrument="piccolo")
+        val euph=Part(id="euph",file=whole.file,firstPage=102,lastPage=105,instrument="euphonium")
+        lib.replacePartWithRanges(song.id,whole.id,listOf(piccolo,euph))
+        val split=lib.song(song.id)!!
+        assertEquals(listOf("piccolo","euph"),split.parts.map {it.id})
+        assertEquals("euph",split.bookmarks.single().part)
+        assertEquals("euph",split.audio.single().excerptPart)
+        assertEquals(listOf(1L,2L,3L),split.audio.single().partTurns["piccolo"])
+        assertEquals(listOf(102L,103L,104L),split.audio.single().partTurns["euph"])
+    }
 }

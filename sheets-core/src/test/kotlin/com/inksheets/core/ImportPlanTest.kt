@@ -65,4 +65,28 @@ class ImportPlanTest {
         assertEquals("All About That Bass", ImportPlan.cleanTitle("All About That Bass - Trombone 1"))
         assertEquals("Mr. Brightside", ImportPlan.cleanTitle("Mr. Brightside - Electric Bass"))
     }
+
+    @Test fun `one combined PDF is split at each titled part page and keeps multi page ranges`() {
+        val pages=mapOf(
+            1 to "Piccolo\nGive Us This Day\nShort Symphony", 2 to "2 Piccolo\nII.",
+            3 to "Piccolo\n92", 4 to "4 Piccolo\n210",
+            5 to "Flute 1\nGive Us This Day\nShort Symphony", 6 to "2 Flute 1\n78",
+            7 to "Flute 1 3\n50", 8 to "4 Flute 1\n115", 9 to "Flute 1 5\n214",
+            10 to "Flute 2\nGive Us This Day\nShort Symphony", 11 to "2 Flute 2\n80",
+            12 to "Flute 2 3\n60", 13 to "4 Flute 2\n185",
+            14 to "Euphonium\nGive Us This Day\nShort Symphony", 15 to "2 Euphonium\nII.",
+            16 to "Euphonium 3\n111", 17 to "4 Euphonium\n250"
+        )
+        val parts=ImportPlan.splitCombinedParts("Give Us This Day.pdf","Give Us This Day",17,{pages[it]})
+        assertEquals(listOf("piccolo","flute","flute","euphonium"),parts.map {it.instrument})
+        assertEquals(listOf(null,1,2,null),parts.map {it.chair})
+        assertEquals(listOf(1 to 4,5 to 9,10 to 13,14 to 17),parts.map {it.firstPage to it.lastPage})
+    }
+
+    @Test fun `repeated title pages do not split one ordinary instrument part`() {
+        val parts=ImportPlan.splitCombinedParts("Solo.pdf","Long Solo",4,{
+            if(it==1 || it==3) "Long Solo\nTrombone" else "Trombone\ncontinued"
+        })
+        assertEquals(emptyList<ImportPlan.PlannedPart>(),parts)
+    }
 }

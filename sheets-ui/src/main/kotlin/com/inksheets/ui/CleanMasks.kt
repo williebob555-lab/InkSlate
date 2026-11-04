@@ -23,6 +23,8 @@ import java.util.WeakHashMap
  */
 object CleanMasks {
     private const val KIND = "sheets_clean_masks"
+    private class RenderedMask(val committed:List<PageMark.MaskStroke>,val preview:PageMark.MaskStroke?,
+                               val mask:PageMark.Mask)
     private class FileMasks {
         var saved: String? = null
         var loaded = false
@@ -31,6 +33,7 @@ object CleanMasks {
         val undo = arrayListOf<Pair<Int, List<PageMark.MaskStroke>>>()
         var preview: Pair<Int, PageMark.MaskStroke>? = null
         var previewAt=0L
+        val rendered=hashMapOf<Pair<Int,Boolean>,RenderedMask>()
     }
     private val states = WeakHashMap<SheetsState, MutableMap<String, FileMasks>>()
 
@@ -55,8 +58,20 @@ object CleanMasks {
     /** Returned polygons must be multiplied by the reading-to-page scale by the renderer. */
     fun getMask(state: SheetsState, path: String, page: Int, baseFull: Boolean = false): PageMark.Mask? {
         val data = masks(state, path)
-        val strokes = data.pages[page].orEmpty() + listOfNotNull(data.preview?.takeIf { it.first == page }?.second)
-        return if (strokes.isEmpty() && !baseFull) null else PageMark.Mask(strokes, baseFull)
+        val committed=data.pages[page].orEmpty()
+        val preview=data.preview?.takeIf { it.first==page }?.second
+        val key=page to baseFull
+        if(committed.isEmpty() && preview==null && !baseFull) {
+            data.rendered.remove(key)
+            return null
+        }
+        data.rendered[key]?.let {
+            if(it.committed===committed && it.preview===preview)return it.mask
+        }
+        val strokes=if(preview==null)committed else committed+preview
+        return PageMark.Mask(strokes,baseFull).also {
+            data.rendered[key]=RenderedMask(committed,preview,it)
+        }
     }
 
     fun hasMask(state: SheetsState, path: String, page: Int): Boolean =

@@ -67,6 +67,16 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         }
     }.getOrNull()
 
+    override fun pageTexts(file: File, pageCount: Int): List<String?> = runCatching {
+        Loader.loadPDF(file).use { pdf ->
+            val stripper=PDFTextStripper().apply {sortByPosition=true}
+            (1..minOf(pageCount,pdf.numberOfPages)).map { page ->
+                stripper.startPage=page;stripper.endPage=page
+                stripper.getText(pdf).lines().filter {it.isNotBlank()}.take(15).joinToString("\n").ifBlank {null}
+            }
+        }
+    }.getOrElse { List(pageCount) {null} }
+
     /**
      * Tesseract, where it is installed: `sudo dnf install tesseract` on Fedora, the UB Mannheim
      * installer on Windows. Nothing is bundled - where it is missing, scans are left for a device
@@ -188,17 +198,14 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
     override fun setMusicShelfHeight(dp: Float) {
         if (com.inkslate.desktop.AppFlavor.musicShelfDp == dp) return
         com.inkslate.desktop.AppFlavor.musicShelfDp = dp
-        com.inkslate.core.Perform.recentre?.invoke()
     }
     override fun setStudioRailWidth(dp: Float) {
         if (com.inkslate.desktop.AppFlavor.studioRailDp == dp) return
         com.inkslate.desktop.AppFlavor.studioRailDp = dp
-        com.inkslate.core.Perform.recentre?.invoke()
     }
     override fun setStudioRailSide(onRight:Boolean) {
         if(com.inkslate.desktop.AppFlavor.studioRailOnRight==onRight)return
         com.inkslate.desktop.AppFlavor.studioRailOnRight=onRight
-        com.inkslate.core.Perform.recentre?.invoke()
     }
 
     override var readingMode: com.inkslate.core.ReadingMode
@@ -209,7 +216,6 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
         val lane = if (open) 64f else 0f
         if (com.inkslate.desktop.AppFlavor.stripLaneDp == lane) return
         com.inkslate.desktop.AppFlavor.stripLaneDp = lane
-        com.inkslate.core.Perform.recentre?.invoke()
     }
 
     override fun setTurnStyle(style: String) {

@@ -60,14 +60,18 @@ object ImportStaging {
             return null
         }
         source.use {
-            val dim = it.pageDim(0)
+            val sizes = (0 until maxOf(1, it.pageCount)).map { page ->
+                it.pageDim(page).let { dim -> dim.width to dim.height }
+            }
+            val dim = sizes.first()
             StagedImport(
                 file = target,
                 displayName = name,
                 isImage = PageSources.isImage(target),
                 pageCount = maxOf(1, it.pageCount),
-                width = dim.width,
-                height = dim.height
+                width = dim.first,
+                height = dim.second,
+                pageSizes = sizes
             )
         }
     }.onFailure { EventLog.error("import", it.message ?: "Import failed") }.getOrNull()
@@ -95,5 +99,6 @@ data class StagedImport(
     val isImage: Boolean,
     val pageCount: Int,
     val width: Float,
-    val height: Float
+    val height: Float,
+    val pageSizes: List<Pair<Float, Float>>
 )

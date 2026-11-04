@@ -25,6 +25,25 @@ import com.inksheets.core.omr.Box
 class CleanMaskTest {
     @get:Rule val tmp = TemporaryFolder()
 
+    @Test fun `legacy clean data without an explicit visibility choice stays off`() {
+        val folder=tmp.newFolder("legacy-clean-hidden")
+        val path=file(folder,"score.pdf")
+        val score=Score(listOf(Measure(1,0,0,Box(20,40,240,80),10f,Clef.TREBLE,Key(0),TimeSig(4,4),emptyList())),1,listOf(800))
+        val writer=SheetsState(Platform(folder)).apply {currentPath=path;pageShown=0 to 1}
+        Transcriber.keepEdit(writer,File(path),"sheets_clean","1")
+        val state=SheetsState(Platform(folder)).apply {currentPath=path;pageShown=0 to 1}
+        ScoreTools.install(state);ScoreTools.scoreSource={if(it==path)score else null}
+        try {
+            assertEquals(1,ScoreTools.cleanCount(state))
+            assertFalse("Saved clean work is not permission to show it during a later performance",ScoreTools.cleanEnabled(state))
+            val print=Color(0xFFBA3348)
+            assertEquals(print,raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)[150,55])
+            ScoreTools.toggleClean(state)
+            assertTrue(ScoreTools.cleanEnabled(state))
+            assertEquals(Color.White,raster(ScoreTools.marks(path,0,800f,800f).orEmpty(),print)[150,55])
+        } finally {ScoreTools.close(state);ScoreTools.scoreSource=null}
+    }
+
     @Test fun `selecting mask never reveals previously saved whole clean outside painted regions`() {
         val folder=tmp.newFolder("mask-only-after-whole")
         val state=SheetsState(Platform(folder));val path=file(folder,"score.pdf")

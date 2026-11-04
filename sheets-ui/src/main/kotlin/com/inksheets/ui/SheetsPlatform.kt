@@ -35,6 +35,9 @@ interface SheetsPlatform {
      */
     fun pageText(file: File, page: Int = 1): String?
 
+    /** The first lines of several 1-based pages. Platforms override to open a PDF only once. */
+    fun pageTexts(file: File, pageCount: Int): List<String?> = (1..pageCount).map { pageText(file,it) }
+
     /** How many pages [file] has: 0 when it will not open, null when that cannot be told here. */
     fun pageCount(file: File): Int? = null
 

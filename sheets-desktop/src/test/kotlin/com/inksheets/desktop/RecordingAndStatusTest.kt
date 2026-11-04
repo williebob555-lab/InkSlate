@@ -45,7 +45,7 @@ class RecordingAndStatusTest {
                     assertFalse(ReaderPanels.open)
                     assertTrue("Score must retain visible space; shelf=${state.shelfHeight}",state.shelfHeight<240f)
                 }
-                onNodeWithText("Record yourself").performClick()
+                onNodeWithContentDescription("Record yourself").performClick()
                 waitForIdle()
                 runOnIdle {
                     assertTrue(SelfRecorder.recording)
