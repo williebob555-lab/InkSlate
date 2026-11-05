@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
  * last.
  */
 internal object Sound {
+    data class Health(val bufferedMs: Int, val underruns: Int)
     private val sources = ConcurrentHashMap<String, (FloatArray) -> Unit>()
     private val paused = ConcurrentHashMap<String, (FloatArray) -> Unit>()
     /** Sources made ahead of the speaker (see RenderAhead): the instrument, not the metronome, whose clicks must be on time. */
@@ -46,6 +47,7 @@ internal object Sound {
     fun playing(who: String) = sources.containsKey(who)
     /** The source cursor handed to AudioOut; no guessed subtraction for the device's own latency. */
     fun consumedFrames(who: String): Long? = ahead[who]?.consumedFrames
+    fun health(who: String): Health? = ahead[who]?.let { Health(it.bufferedMs, it.underruns) }
 
     /** Silence this source without losing its queued audio, note tails or repeat position. */
     fun pause(who: String): Boolean {

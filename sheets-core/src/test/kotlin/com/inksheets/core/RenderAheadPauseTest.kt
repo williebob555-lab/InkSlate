@@ -8,6 +8,15 @@ import java.util.concurrent.TimeUnit
 import com.inksheets.core.omr.*
 
 class RenderAheadPauseTest {
+    @Test fun `reports queued audio and underruns`() {
+        val ahead=RenderAhead(1000,200,20) { samples -> samples.fill(.25f) }
+        ahead.start(prefillMs=80)
+        assertTrue(ahead.bufferedMs >= 60)
+        val block=FloatArray(240)
+        ahead.read(block)
+        assertTrue(ahead.underruns >= 1)
+        ahead.stop()
+    }
     @Test fun sustainedScoreResumesWithIdenticalSamplesToUninterruptedPlayback() {
         val bar=Measure(1,0,0,Box(0,0,300,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),
             listOf(Note(listOf(4),listOf(Pitch(0,4)),Duration(1),30f,tie=true)))

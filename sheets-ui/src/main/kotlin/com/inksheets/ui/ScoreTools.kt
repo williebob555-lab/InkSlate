@@ -68,6 +68,12 @@ internal object ScoreTools {
         private set
     var playbackProgress by mutableStateOf(0f)
         private set
+    var playbackUnderruns by mutableStateOf(0)
+        private set
+    var playbackBufferedMs by mutableStateOf(0)
+        private set
+    var pageFollowSuspended by mutableStateOf(false)
+        private set
     var maskBrushEnabled by mutableStateOf(false)
         private set
     private var maskBrushPath: String? = null
@@ -1513,6 +1519,8 @@ internal object ScoreTools {
         playbackProgress = 0f
         playing = Triple(range.first + offset, start.toInt(), 0)
         pageFollow = PlaybackPageFollow(s.pageShown.first)
+        pageFollowSuspended = false
+        playbackUnderruns = 0; playbackBufferedMs = 0
         syncTool()
         fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.bpm,p.round,p.finished)
         val history=com.inksheets.core.omr.PlaybackHistory(cursor())
@@ -1538,6 +1546,8 @@ internal object ScoreTools {
                         }
                         val clock = System.currentTimeMillis()
                         pageFollow?.observe(s.pageShown.first, clock)
+                        updatePlaybackHealth()
+                        if (pageFollowSuspended != (pageFollow?.suspended == true)) { pageFollowSuspended = pageFollow?.suspended == true; changed() }
                         // The page follows until the reader flips one manually. Manual browsing is
                         // then left alone for the rest of this playback instead of snapping back.
                         if (heard.bar != lastBar) {
@@ -1710,6 +1720,8 @@ internal object ScoreTools {
             fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.tempo,finished=p.finished)
             val history=com.inksheets.core.omr.PlaybackHistory(cursor())
             pageFollow = PlaybackPageFollow(s.pageShown.first)
+            pageFollowSuspended = false
+            playbackUnderruns = 0; playbackBufferedMs = 0
             Sound.play(s, WHO, ahead = true, aheadMs = 720, prefillMs = 180) { buf ->
                 val at=p.synth.position;val before=cursor()
                 p.fill(buf)
@@ -1731,6 +1743,8 @@ internal object ScoreTools {
                             }
                             val clock = System.currentTimeMillis()
                             pageFollow?.observe(s.pageShown.first, clock)
+                            updatePlaybackHealth()
+                            if (pageFollowSuspended != (pageFollow?.suspended == true)) { pageFollowSuspended = pageFollow?.suspended == true; changed() }
                             if (now.first != lastBar) {
                                 lastBar = now.first
                                 whole.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m ->
@@ -1829,6 +1843,7 @@ internal object ScoreTools {
         halt()
         paused = null
         playbackProgress = 0f
+        playbackUnderruns = 0; playbackBufferedMs = 0; pageFollowSuspended = false
         syncTool()
         changed()
     }
@@ -1869,6 +1884,23 @@ internal object ScoreTools {
         val whole = scoreOf(path) ?: return n
         val offset = Transcriber.partOf(whole, s.partShown()).second
         return n - offset
+    }
+
+    /** Resume automatic score turns after the reader has browsed elsewhere during playback. */
+    fun resumePageFollow(s: SheetsState) {
+        if (playing == null) return
+        pageFollow = PlaybackPageFollow(s.pageShown.first)
+        pageFollowSuspended = false
+        changed()
+    }
+
+    private fun updatePlaybackHealth() {
+        val health = Sound.health(WHO) ?: return
+        if (playbackUnderruns != health.underruns || kotlin.math.abs(playbackBufferedMs - health.bufferedMs) >= 20) {
+            playbackUnderruns = health.underruns
+            playbackBufferedMs = health.bufferedMs
+            changed()
+        }
     }
 
     /** Stop where it is, to go on from there. */

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -78,11 +79,17 @@ fun BoxScope.PlaybackBar(state: SheetsState) {
                     Text("♩ ${playing?.second ?: SharedMetronome.bpm.toInt()}", style = MaterialTheme.typography.titleSmall,
                         textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 52.dp))
                     Btn(Icons.Default.Add, "Faster") { ScoreTools.nudgeTempo(state, 4) }
+                    if (ScoreTools.pageFollowSuspended) Btn(Icons.Default.Visibility, "Follow score") { ScoreTools.resumePageFollow(state) }
                     Btn(Icons.Default.Stop, "Stop") { ScoreTools.stop(state) }
                 }
             }
             val where: @Composable () -> Unit = {
-                Text((if (playing != null) "Bar $shownBar" else "Paused at bar $shownBar") + " · tap a bar to play from it",
+                val status = buildString {
+                    append(if (playing != null) "Bar $shownBar" else "Paused at bar $shownBar")
+                    append(if (ScoreTools.pageFollowSuspended) " · browsing pages" else " · tap a bar to play from it")
+                    if (ScoreTools.playbackUnderruns > 0) append(" · audio recovered ${ScoreTools.playbackUnderruns}×")
+                }
+                Text(status,
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
             // One row where there is room for it all; else the moves over the tempo.

@@ -26,6 +26,9 @@ class RenderAhead(
     @Volatile private var consumed = 0L
     /** Actual source frames handed to the output; underrun silence does not move this cursor. */
     val consumedFrames: Long get()=consumed
+    /** Source audio currently ready for the device callback. */
+    val bufferedFrames: Long get()=(written-consumed).coerceAtLeast(0L)
+    val bufferedMs: Int get()=(bufferedFrames*1000/sampleRate.coerceAtLeast(1)).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     @Volatile private var running = false
     private var thread: Thread? = null
 
