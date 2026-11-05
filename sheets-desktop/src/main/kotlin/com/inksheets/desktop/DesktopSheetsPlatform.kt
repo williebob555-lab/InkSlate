@@ -7,6 +7,7 @@ import com.inksheets.core.Song
 import com.inksheets.ui.AudioOut
 import com.inksheets.ui.Microphone
 import com.inksheets.ui.SheetsPlatform
+import com.inksheets.ui.StereoAudioOut
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.text.PDFTextStripper
 import java.io.File
@@ -321,7 +322,7 @@ class DesktopSheetsPlatform(private val openFile: (File) -> Unit) : SheetsPlatfo
  * metronome writes its clicks into the samples themselves, so the only delay is how far ahead
  * the line is filled.
  */
-private class JavaSoundOut : AudioOut {
+private class JavaSoundOut : AudioOut, StereoAudioOut {
     override val sampleRate = 48_000
     @Volatile private var thread: Thread? = null
     @Volatile private var running = false
@@ -356,6 +357,34 @@ private class JavaSoundOut : AudioOut {
         thread?.join(200)
         thread = null
     }
+
+    override fun startStereo(fill: (FloatArray, FloatArray) -> Unit) {
+        stop()
+        running = true
+        thread = Thread({
+            runCatching {
+                val format = AudioFormat(sampleRate.toFloat(), 16, 2, true, false)
+                val line = OutLine(format, sampleRate / 10 * 4)
+                val left = FloatArray(480)
+                val right = FloatArray(480)
+                val bytes = ByteArray(left.size * 4)
+                while (running) {
+                    fill(left, right)
+                    for (i in left.indices) {
+                        val l = (left[i].coerceIn(-1f, 1f) * 32767).toInt()
+                        val r = (right[i].coerceIn(-1f, 1f) * 32767).toInt()
+                        val at = i * 4
+                        bytes[at] = l.toByte(); bytes[at + 1] = (l shr 8).toByte()
+                        bytes[at + 2] = r.toByte(); bytes[at + 3] = (r shr 8).toByte()
+                    }
+                    line.write(bytes, bytes.size)
+                }
+                line.close()
+            }.onFailure { EventLog.warn("sheets", "Stereo sound out failed: ${it.message}") }
+        }, "stage-stereo").apply { isDaemon = true; priority = Thread.MAX_PRIORITY; start() }
+    }
+
+    override fun stopStereo() = stop()
 }
 
 /**

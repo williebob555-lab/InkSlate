@@ -251,6 +251,16 @@ interface AudioOut {
     fun stop()
 }
 
+/** Optional stereo output for stage/offline audition. It is deliberately separate from
+ * [AudioOut], so the ordinary metronome and score-player path remains mono and allocation-free.
+ */
+interface StereoAudioOut {
+    val sampleRate: Int
+    /** Pull aligned left/right frames until [stopStereo]. Buffers have equal lengths. */
+    fun startStereo(fill: (left: FloatArray, right: FloatArray) -> Unit)
+    fun stopStereo()
+}
+
 /** A mono float input delivered in blocks. */
 interface Microphone {
     val sampleRate: Int

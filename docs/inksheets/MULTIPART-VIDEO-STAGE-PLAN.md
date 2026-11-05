@@ -293,6 +293,8 @@ The first additive foundation is now implemented behind explicit ensemble/stage 
   mute/solo behavior, and automatic concert-band seating are covered by signal and routing tests.
   An opt-in top-down editor can drag performers and microphones and adjust gain, pan, pattern,
   mute, and solo. Versioned per-song sidecars load only in that editor and fail back to a preset.
+  Desktop and Android expose stereo through a separate optional output contract; the established
+  mono `Sound` path remains unchanged until stage playback is explicitly wired to it.
 - Band playback can choose a per-song subset of instruments before it reads or synthesizes other
   parts. Offline part stems render one at a time through a reusable block for bounded export and
   later stage routing.

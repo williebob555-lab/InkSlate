@@ -18,6 +18,7 @@ import com.inksheets.core.Song
 import com.inksheets.ui.AudioOut
 import com.inksheets.ui.Microphone
 import com.inksheets.ui.SheetsPlatform
+import com.inksheets.ui.StereoAudioOut
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.File
@@ -441,7 +442,7 @@ class AndroidSheetsPlatform(
 }
 
 /** The metronome's output: a low-latency float AudioTrack kept full by a writer thread. */
-private class TrackOut : AudioOut {
+private class TrackOut : AudioOut, StereoAudioOut {
     override val sampleRate = 48_000
     @Volatile private var running = false
     private var thread: Thread? = null
@@ -490,6 +491,42 @@ private class TrackOut : AudioOut {
         thread?.join(200)
         thread = null
     }
+
+    override fun startStereo(fill: (FloatArray, FloatArray) -> Unit) {
+        stop()
+        running = true
+        thread = Thread({
+            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO) }
+            runCatching {
+                val min = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_STEREO, AudioFormat.ENCODING_PCM_FLOAT)
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                    .setAudioFormat(AudioFormat.Builder().setSampleRate(sampleRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())
+                    .setBufferSizeInBytes(maxOf(min * 2, sampleRate * 12 / 100 * 2 * 4))
+                    .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_POWER_SAVING)
+                    .build()
+                track.play()
+                val left = FloatArray(480)
+                val right = FloatArray(480)
+                val interleaved = FloatArray(960)
+                while (running) {
+                    fill(left, right)
+                    for (i in left.indices) {
+                        interleaved[i * 2] = left[i]
+                        interleaved[i * 2 + 1] = right[i]
+                    }
+                    track.write(interleaved, 0, interleaved.size, AudioTrack.WRITE_BLOCKING)
+                }
+                track.stop()
+                track.release()
+            }.onFailure { EventLog.warn("sheets", "Stereo sound out failed: ${it.message}") }
+        }, "stage-stereo").apply { priority = Thread.MAX_PRIORITY; isDaemon = true; start() }
+    }
+
+    override fun stopStereo() = stop()
 }
 
 /** The microphone for the tuner. Asks for permission the first time; false until it is given. */

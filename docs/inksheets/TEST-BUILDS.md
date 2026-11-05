@@ -16,7 +16,9 @@ Newest first. These notes describe changes made, not confirmation that every rep
   automatic concert-band seating and a stereo cardioid pair. Performers and microphones can be
   dragged; gain, pan, pickup pattern, mute, and solo can be adjusted. Scenes use isolated,
   versioned per-song sidecars and a corrupt sidecar falls back to the preset. Stage audio machinery
-  still does not initialize during ordinary sheet reading.
+  still does not initialize during ordinary sheet reading. Desktop and Android now expose a
+  separate stereo output capability for the future live stage audition; existing mono playback is
+  unchanged.
 - **Band playback can use only the instruments you choose.** Score tools now has a Band instruments
   picker scoped to the current song. Unselected parts are not read or synthesized when Band
   accompaniment starts; changing songs returns to all available parts.
