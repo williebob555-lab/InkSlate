@@ -222,12 +222,12 @@ internal fun ensembleDocument(song: com.inksheets.core.Song, includedPartIds: Se
     return document to (candidates.size - document.parts.size)
 }
 
-/** Build a type-1 MIDI from readings already on this device. This never starts OMR: an explicit
- * export cannot make the ordinary reader or the screen wait on every other part.
+/** Complete readings already cached on this device. Shared by ensemble export and the optional
+ * stage editor; inspecting them never queues recognition.
  */
-internal fun prepareEnsembleMidi(state: SheetsState, song: com.inksheets.core.Song,
-                                 includedPartIds: Set<String>? = null): Result<EnsembleMidiExport> = runCatching {
-    val (document, missing) = ensembleDocument(song, includedPartIds) score@{ part ->
+internal fun cachedEnsembleDocument(state: SheetsState, song: com.inksheets.core.Song,
+                                    includedPartIds: Set<String>? = null): Pair<com.inksheets.core.omr.ScoreDocument, Int> =
+    ensembleDocument(song, includedPartIds) score@{ part ->
         val file = state.partFile(song, part)?.takeIf { it.isFile } ?: return@score null
         val whole = Transcriber.cached(state, file) ?: return@score null
         val first = (part.firstPage ?: 1) - 1
@@ -235,6 +235,13 @@ internal fun prepareEnsembleMidi(state: SheetsState, song: com.inksheets.core.So
         if (first < 0 || last < first || last >= whole.pages || !(first..last).all(whole::hasRead)) null
         else Transcriber.partOf(whole, part).first
     }
+
+/** Build a type-1 MIDI from readings already on this device. This never starts OMR: an explicit
+ * export cannot make the ordinary reader or the screen wait on every other part.
+ */
+internal fun prepareEnsembleMidi(state: SheetsState, song: com.inksheets.core.Song,
+                                 includedPartIds: Set<String>? = null): Result<EnsembleMidiExport> = runCatching {
+    val (document, missing) = cachedEnsembleDocument(state, song, includedPartIds)
     require(document.parts.isNotEmpty()) { "No complete part readings are available yet" }
     val bpm = song.tempo?.toDouble()?.takeIf { it > 0 } ?: SharedMetronome.bpm
     val bytes = Midi.write(document, bpm)

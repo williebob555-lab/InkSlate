@@ -49,6 +49,7 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     var printingFor by remember { mutableStateOf(false) }
     var ensembleMidiOpen by remember { mutableStateOf(false) }
     var bandPartsOpen by remember { mutableStateOf(false) }
+    var stageOpen by remember { mutableStateOf(false) }
     var bar by remember { mutableStateOf("") }
 
     fun usePage(action: () -> Unit) {
@@ -176,6 +177,11 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                         popup = { if (ensembleMidiOpen) state.current?.let { song ->
                             EnsembleMidiDialog(state, song, onClose = { ensembleMidiOpen = false }) { ScoreTools.said = it }
                         } }),
+                    ScoreAction("Stage & microphones", "Place cached parts in a stereo scene", Icons.Default.SpatialAudio,
+                        enabled = state.current != null, action = { stageOpen = true },
+                        popup = { if (stageOpen) StageEditorForSong(state, onClose = { stageOpen = false }) {
+                            ScoreTools.said = it
+                        } }),
                     ScoreAction("Clean PDF", "Print the notation afresh", Icons.Default.PictureAsPdf, enabled = available,
                         action = { if (file != null && score != null) ScoreTools.said = cleanPrint(state, file, score) }),
                     ScoreAction("PDF for another instrument", "Transpose and print for a different instrument", Icons.Default.SwapHoriz, enabled = available,
@@ -200,6 +206,33 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
         }
     }
     if(printingFor && file!=null && score!=null) PrintFor(state,file,score){printingFor=false}
+}
+
+@Composable
+private fun StageEditorForSong(state: SheetsState, onClose: () -> Unit, onMessage: (String) -> Unit) {
+    val song = state.current ?: return
+    val prepared = remember(song.id, Transcriber.shown) { cachedEnsembleDocument(state, song) }
+    val (document, missing) = prepared
+    if (document.parts.isEmpty()) {
+        SheetDialog("Stage & microphones", onDismiss = onClose,
+            buttons = { TextButton(onClick = onClose) { Text("Close") } }) {
+            Text("Read at least one complete instrument part before opening its stage. The stage editor does not start recognition in the background.",
+                modifier = Modifier.padding(12.dp))
+        }
+        return
+    }
+    var scene by remember(song.id, document.parts.map { it.id }) { mutableStateOf(StageSceneFiles.load(state, song.id, document)) }
+    fun saveAndClose() {
+        StageSceneFiles.save(state, song.id, scene).fold(
+            onSuccess = {
+                onMessage("Saved stage with ${scene.performers.size} part${if (scene.performers.size == 1) "" else "s"}" +
+                    if (missing > 0) " ($missing unread part${if (missing == 1) "" else "s"} omitted)" else "")
+            },
+            onFailure = { onMessage("Couldn't save the stage: ${it.message}") }
+        )
+        onClose()
+    }
+    StageEditorPanel(scene, onSceneChange = { scene = it }, onClose = ::saveAndClose)
 }
 
 @Composable

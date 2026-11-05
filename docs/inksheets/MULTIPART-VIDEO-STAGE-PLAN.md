@@ -291,6 +291,8 @@ The first additive foundation is now implemented behind explicit ensemble/stage 
   ensemble export without starting background recognition.
 - The optional stereo direct mixer, serializable stage scene, deterministic direct-path routing,
   mute/solo behavior, and automatic concert-band seating are covered by signal and routing tests.
+  An opt-in top-down editor can drag performers and microphones and adjust gain, pan, pattern,
+  mute, and solo. Versioned per-song sidecars load only in that editor and fail back to a preset.
 - Band playback can choose a per-song subset of instruments before it reads or synthesizes other
   parts. Offline part stems render one at a time through a reusable block for bounded export and
   later stage routing.
@@ -301,6 +303,6 @@ The first additive foundation is now implemented behind explicit ensemble/stage 
   and retains explicit review reasons for ambiguous spacing, alignment, confidence, and staff
   counts. It is not called by the single-part reader.
 
-No video decoder, staff-lane detector, stage editor, Arrangement Studio behavior, or automatic
-ensemble initialization has been added. Those remain later phases and do not participate in the
-ordinary reader lifecycle.
+No video decoder, staff-lane detector, live stage-audio hookup, Arrangement Studio behavior, or
+automatic ensemble initialization has been added. Those remain later phases and do not participate
+in the ordinary reader lifecycle.

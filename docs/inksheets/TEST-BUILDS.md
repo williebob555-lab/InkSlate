@@ -12,10 +12,11 @@ Newest first. These notes describe changes made, not confirmation that every rep
   easy/advanced alternatives are explicit, source measures map to durable canonical bars, and
   source-file/video provenance stays separate from the notation. Existing single-part caches are
   adapted rather than migrated.
-- **Stage and stereo playback foundations remain opt-in.** A serializable stage scene, microphone
-  routing, mute/solo, deterministic concert-band seating, and bounded stereo direct mixing are
-  implemented and signal-tested, but no stage UI or audio machinery initializes during ordinary
-  sheet reading yet.
+- **Stage and microphone placement is an opt-in score tool.** The top-down editor starts from
+  automatic concert-band seating and a stereo cardioid pair. Performers and microphones can be
+  dragged; gain, pan, pickup pattern, mute, and solo can be adjusted. Scenes use isolated,
+  versioned per-song sidecars and a corrupt sidecar falls back to the preset. Stage audio machinery
+  still does not initialize during ordinary sheet reading.
 - **Band playback can use only the instruments you choose.** Score tools now has a Band instruments
   picker scoped to the current song. Unselected parts are not read or synthesized when Band
   accompaniment starts; changing songs returns to all available parts.
