@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -43,6 +44,7 @@ import com.inksheets.core.omr.Midi
 import com.inksheets.core.omr.MusicGlyphs
 import com.inksheets.core.omr.Score
 import java.io.File
+import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 
@@ -57,6 +59,7 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
     val shown = Transcriber.shown
     var all by remember { mutableStateOf(true) }
     var said by remember { mutableStateOf<String?>(null) }
+    var ensembleMidiOpen by remember { mutableStateOf(false) }
     SheetDialog(title = "The music, read", onDismiss = onClose, wide = true, movable = true) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             Transcriber.busy?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary) }
@@ -74,6 +77,9 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 6.dp)) {
                 OutlinedButton(onClick = { said = exportMidi(state, file, score) }) { Text("Save as MIDI") }
+                state.current?.takeIf { it.parts.size > 1 }?.let { song ->
+                    OutlinedButton(onClick = { ensembleMidiOpen = true }) { Text("Save ensemble MIDI") }
+                }
                 TextButton(onClick = { Transcriber.read(state, file, again = true, pages = score.readPages?.toSet()) { } }, enabled = Transcriber.busy == null) { Text("Read again") }
             }
             said?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary) }
@@ -107,6 +113,9 @@ internal fun ReadMusicPanel(state: SheetsState, onClose: () -> Unit) {
                 }
             }
         }
+    }
+    state.current?.takeIf { ensembleMidiOpen }?.let { song ->
+        EnsembleMidiDialog(state, song, onClose = { ensembleMidiOpen = false }) { said = it }
     }
 }
 
@@ -191,4 +200,92 @@ internal fun exportMidi(state: SheetsState, file: File, score: Score): String {
         state.platform.share(out)
         "Saved ${out.name} (${bytes.size / 1024 + 1} KB, at ${bpm.toInt()} bpm${instrument?.let { ", as a ${it.name} sounds" } ?: ""})"
     }.getOrElse { "Couldn't save the MIDI file: ${it.message}" }
+}
+
+internal data class EnsembleMidiExport(val file: File, val message: String)
+
+internal fun ensembleCandidates(song: com.inksheets.core.Song): List<com.inksheets.core.Part> =
+    song.parts.filterNot { part ->
+        part.instrument?.substringBefore(':') == "score" || part.label?.contains("score", ignoreCase = true) == true
+    }
+
+/** Assemble only independent instrument parts. Full-score entries would duplicate their parts,
+ * and unread/partial parts are reported rather than silently represented as empty tracks.
+ */
+internal fun ensembleDocument(song: com.inksheets.core.Song, includedPartIds: Set<String>? = null,
+                              scoreFor: (com.inksheets.core.Part) -> Score?): Pair<com.inksheets.core.omr.ScoreDocument, Int> {
+    val candidates = ensembleCandidates(song).filter { includedPartIds == null || it.id in includedPartIds }
+    val readings = candidates.mapNotNull { part ->
+        scoreFor(part)?.takeIf { it.measures.isNotEmpty() }?.let { part.id to listOf(it) }
+    }.toMap(LinkedHashMap())
+    val document = com.inksheets.core.omr.ScoreDocument.fromSong(song, readings)
+    return document to (candidates.size - document.parts.size)
+}
+
+/** Build a type-1 MIDI from readings already on this device. This never starts OMR: an explicit
+ * export cannot make the ordinary reader or the screen wait on every other part.
+ */
+internal fun prepareEnsembleMidi(state: SheetsState, song: com.inksheets.core.Song,
+                                 includedPartIds: Set<String>? = null): Result<EnsembleMidiExport> = runCatching {
+    val (document, missing) = ensembleDocument(song, includedPartIds) score@{ part ->
+        val file = state.partFile(song, part)?.takeIf { it.isFile } ?: return@score null
+        val whole = Transcriber.cached(state, file) ?: return@score null
+        val first = (part.firstPage ?: 1) - 1
+        val last = (part.lastPage ?: whole.pages) - 1
+        if (first < 0 || last < first || last >= whole.pages || !(first..last).all(whole::hasRead)) null
+        else Transcriber.partOf(whole, part).first
+    }
+    require(document.parts.isNotEmpty()) { "No complete part readings are available yet" }
+    val bpm = song.tempo?.toDouble()?.takeIf { it > 0 } ?: SharedMetronome.bpm
+    val bytes = Midi.write(document, bpm)
+    val safeTitle = song.title.replace(Regex("[\\\\/:*?\"<>|]"), "-").ifBlank { "Score" }
+    val out = File(state.platform.cacheFolder, "$safeTitle-ensemble.mid")
+    out.parentFile?.mkdirs()
+    out.writeBytes(bytes)
+    EnsembleMidiExport(out, "Saved ${out.name} with ${document.parts.size} part${if (document.parts.size == 1) "" else "s"}" +
+        if (missing > 0) " ($missing unread part${if (missing == 1) "" else "s"} omitted)" else "")
+}
+
+/** Choose the exact instrument tracks for an export. It inspects cached readings only after Save. */
+@Composable
+internal fun EnsembleMidiDialog(state: SheetsState, song: com.inksheets.core.Song,
+                                onClose: () -> Unit, onMessage: (String) -> Unit) {
+    val candidates = remember(song) { ensembleCandidates(song) }
+    var selected by remember(song.id) { mutableStateOf(candidates.map { it.id }.toSet()) }
+    var working by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    SheetDialog("Ensemble MIDI", onDismiss = onClose, buttons = {
+        TextButton(onClick = onClose, enabled = !working) { Text("Cancel") }
+        TextButton(onClick = {
+            working = true
+            scope.launch {
+                val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    prepareEnsembleMidi(state, song, selected)
+                }
+                working = false
+                result.fold(
+                    onSuccess = { export -> state.platform.share(export.file); onMessage(export.message); onClose() },
+                    onFailure = { onMessage("Couldn't save the ensemble MIDI: ${it.message}") }
+                )
+            }
+        }, enabled = selected.isNotEmpty() && !working) { Text(if (working) "Preparing..." else "Save") }
+    }) {
+        Column(Modifier.fillMaxWidth()) {
+            Text("Each selected instrument becomes its own MIDI track. Parts not completely read on this device are reported and omitted.",
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                items(candidates, key = { it.id }) { part ->
+                    val checked = part.id in selected
+                    Row(Modifier.fillMaxWidth().clickable {
+                        selected = if (checked) selected - part.id else selected + part.id
+                    }.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        Checkbox(checked = checked, onCheckedChange = { on ->
+                            selected = if (on) selected + part.id else selected - part.id
+                        })
+                        Text(com.inksheets.core.Instruments.partName(part), modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
+    }
 }

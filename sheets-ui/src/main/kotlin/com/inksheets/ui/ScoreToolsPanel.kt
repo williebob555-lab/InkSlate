@@ -47,6 +47,7 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     var sounds by remember { mutableStateOf(false) }
     var speeding by remember { mutableStateOf(false) }
     var printingFor by remember { mutableStateOf(false) }
+    var ensembleMidiOpen by remember { mutableStateOf(false) }
     var bar by remember { mutableStateOf("") }
 
     fun usePage(action: () -> Unit) {
@@ -165,6 +166,12 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                         selected = ScoreTools.cues, action = { ScoreTools.showCues(state, !ScoreTools.cues) }),
                     ScoreAction("Save MIDI", "Export the notes read from this part", Icons.Default.Piano, enabled = available,
                         action = { if (file != null && score != null) ScoreTools.said = exportMidi(state, file, score) }),
+                    ScoreAction("Save ensemble MIDI", "One track per already-read instrument", Icons.Default.QueueMusic,
+                        enabled = state.current?.parts?.size?.let { it > 1 } == true,
+                        action = { ensembleMidiOpen = true },
+                        popup = { if (ensembleMidiOpen) state.current?.let { song ->
+                            EnsembleMidiDialog(state, song, onClose = { ensembleMidiOpen = false }) { ScoreTools.said = it }
+                        } }),
                     ScoreAction("Clean PDF", "Print the notation afresh", Icons.Default.PictureAsPdf, enabled = available,
                         action = { if (file != null && score != null) ScoreTools.said = cleanPrint(state, file, score) }),
                     ScoreAction("PDF for another instrument", "Transpose and print for a different instrument", Icons.Default.SwapHoriz, enabled = available,

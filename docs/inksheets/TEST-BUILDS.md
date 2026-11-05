@@ -4,6 +4,19 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Export selected instruments as a real multi-track MIDI.** The score tools can now build an
+  ensemble file from complete readings already cached on the device, with one named track per
+  selected instrument and a shared conductor track. Unread parts are reported and omitted; the
+  export never starts recognition or waits on every library part in the normal reading path.
+- **Multi-part scores now have a lightweight semantic foundation.** Parts may own multiple staves,
+  easy/advanced alternatives are explicit, source measures map to durable canonical bars, and
+  source-file/video provenance stays separate from the notation. Existing single-part caches are
+  adapted rather than migrated.
+- **Stage and stereo playback foundations remain opt-in.** A serializable stage scene, microphone
+  routing, mute/solo, deterministic concert-band seating, and bounded stereo direct mixing are
+  implemented and signal-tested, but no stage UI or audio machinery initializes during ordinary
+  sheet reading yet.
+
 - **Music reading no longer exhausts a 512 MB Android heap.** The page thresholding pass now uses rolling row-sized totals instead of two 64-bit buffers as large as the whole page, and it reuses the reader's existing greyscale pixels. Android also gives each recognition raster a live heap-relative pixel ceiling, pauses automatic reading when that safe budget disappears, bounds decoded-score and Fix-picture caches, and clears them on system memory pressure. The replacement thresholding is pixel-for-pixel equivalent in tests; the reported Galaxy Tab crash still needs confirmation on the device.
 
 - **Android memory use is bounded during performance tools.** Crash reports from build 313 showed `OutOfMemoryError`: page rasters and several independent image/tool caches could together consume more than a tablet heap. InkSheets now gives resident pages a smaller heap-relative budget, caps Mask's notation raster at about 8 MB, recycles evicted Android bitmaps and falls back to vector drawing if that optional raster cannot be allocated.
