@@ -118,6 +118,10 @@ import com.inkslate.core.InputMode
 
 import com.inkslate.core.Tool
 
+/** Whole-page music never needs more pixels across than the screen's shorter side can show. */
+internal fun musicRenderWidthPx(screenWidthPx:Float,screenHeightPx:Float):Int =
+    (minOf(screenWidthPx,screenHeightPx)*1.05f).toInt().coerceIn(720,1600)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
@@ -313,11 +317,12 @@ fun EditorScreen(
     val density = androidx.compose.ui.platform.LocalDensity.current
     val renderWidthPx = remember(config.screenWidthDp, config.screenHeightDp, doc) {
         // Music is shown a whole page at a time, so a page is never wider on screen than the
-        // screen's longer side allows: rendered at that, a turn's picture is ready in about half
-        // the time and memory of twice the width.
+        // screen's shorter side. The old longer-side estimate made one portrait page 15-22 MB on
+        // common tablets even though those pixels could never be shown at once.
         if (com.inkslate.AppFlavor.musicView) {
-            val longer = with(density) { maxOf(config.screenWidthDp, config.screenHeightDp).dp.toPx() }
-            return@remember (longer * 0.8f).toInt().coerceIn(800, 2000)
+            val width = with(density) { config.screenWidthDp.dp.toPx() }
+            val height = with(density) { config.screenHeightDp.dp.toPx() }
+            return@remember musicRenderWidthPx(width, height)
         }
         val base = with(density) { (config.screenWidthDp.dp.toPx() * 2f).toInt() }
         val pages = doc?.pageCount ?: 1
@@ -570,21 +575,6 @@ fun EditorScreen(
         }
     }
 
-    // A song waiting in a set, not on screen yet: the page it opens on is drawn now, so turning
-    // to it shows it at once instead of after a moment of rendering.
-    var warmPage by remember { mutableStateOf<Pair<Int, android.graphics.Bitmap>?>(null) }
-    val onScreen = host.views.any { it.view != null }
-    LaunchedEffect(doc, onScreen) {
-        val d = doc ?: return@LaunchedEffect
-        if (!com.inkslate.AppFlavor.musicView || onScreen || warmPage != null) return@LaunchedEffect
-        val index = if (pendingCamera == null && pendingPage in 0 until d.pageCount) pendingPage else 0
-        val bmp = withContext(Dispatchers.IO) {
-            runCatching { d.source.renderPage(index, renderWidthPx) }.getOrNull()
-        } ?: return@LaunchedEffect
-        warmPage = index to bmp
-    }
-    DisposableEffect(Unit) { onDispose { warmPage?.second?.recycle(); warmPage = null } }
-
     // Declare the pages to each surface as soon as their geometry is known, and render what each
     // one shows. Per view, because two views of one document look at different pages - and each
     // surface holds pictures of only the pages it is showing.
@@ -637,13 +627,7 @@ fun EditorScreen(
                     "open",
                     "Declared ${pageDims.size} page(s) for ${d.file.name}, layout ${layout.name}"
                 )
-                warmPage?.let { (index, bmp) ->
-                    warmPage = null
-                    if (index == view.currentPage && !view.hasBitmap(index)) {
-                        view.setPageBitmap(index, bmp)
-                        if (focused) com.inkslate.ui.TurnClock.shown("drawn ahead")
-                    } else bmp.recycle()
-                }
+                slot.visiblePages = listOf(view.currentPage)
                 slot.wantedPages = listOf(view.currentPage)
             }
 
@@ -667,7 +651,11 @@ fun EditorScreen(
                         // Two views on screen share the memory one used to have to itself.
                         val budget = bitmapBudgetBytes / host.views.count { it.view != null }.coerceAtLeast(1)
 
-                        for (index in pages) {
+                        val visible = slot.visiblePages.ifEmpty { listOf(view.currentPage) }
+                        val orderedPages = pages.distinct().sortedBy { page ->
+                            visible.minOfOrNull { kotlin.math.abs(page - it) } ?: Int.MAX_VALUE
+                        }
+                        for (index in orderedPages) {
                             if (index !in 0 until d.pageCount) continue
                             if (d.source.kind == "pdf" && index >= d.source.pageCount) {
                                 // Not a rendering failure: the file has no such page. Said once, not
@@ -690,7 +678,7 @@ fun EditorScreen(
                                 // Free everything that is not on screen and try this page once
                                 // more. Running out of memory is the usual cause, and it is
                                 // recoverable.
-                                view.retainBitmaps(pages, 0L)
+                                view.retainBitmaps(visible, 0L)
                                 val retry = withContext(Dispatchers.IO) {
                                     runCatching { d.source.renderPage(index, renderWidthPx / 2) }.getOrNull()
                                 }
@@ -706,11 +694,14 @@ fun EditorScreen(
                                 if (focused && index == view.currentPage) com.inkslate.ui.TurnClock.shown("drawn on arrival")
                                 if (index == view.currentPage) renderFailed = false
                             }
+                            // Evict between pages. Waiting until every read-ahead page had been
+                            // rendered allowed several full ARGB pages to coexist and OOM first.
+                            view.retainBitmaps(visible, budget)
                         }
 
                         // Hold a margin of pages around the viewport, bounded by memory rather than
                         // by a page count, so scrolling back a page does not force a re-render.
-                        view.retainBitmaps(pages, budget)
+                        view.retainBitmaps(visible, budget)
                         RenderStats.pagesResident = host.views.sumOf { it.view?.residentPageCount() ?: 0 }
                     }
             }
@@ -2182,11 +2173,13 @@ fun EditorScreen(
                                 }
                             }
                             view.onVisiblePagesChanged = { visible ->
+                                slot.visiblePages = visible.ifEmpty { listOf(view.currentPage) }
                                 // pad by one page either side so scrolling does not reveal blanks;
                                 // music, turned a page at a time and often quickly, two ahead
                                 val lo = (visible.minOrNull() ?: 0) - 1
                                 val hi = (visible.maxOrNull() ?: 0) + if (com.inkslate.AppFlavor.musicView) 2 else 1
                                 slot.wantedPages = (lo..hi).filter { it in 0 until (doc?.pageCount ?: 1) }
+                                slot.renderNonce++
                             }
                             view.onCurrentPageChanged = { slot.page = it }
                             view.imageResolver = { id -> imageStore.load(id) }
@@ -2276,6 +2269,7 @@ fun EditorScreen(
                     // looking is kept, and put back when the view is shown again.
                     onRelease = { view ->
                         view.cameraState()?.let { slot.savedCamera = it }
+                        view.releaseBitmaps()
                         if (slot.view === view) slot.view = null
                     },
                     // The workspace's one set of tools, applied to every surface whenever it

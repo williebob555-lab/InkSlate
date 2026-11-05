@@ -114,6 +114,9 @@ data class PaneRef(val tabId: String, val view: Int)
 class DocView(val index: Int) {
     var view by mutableStateOf<DrawingView?>(null)
     var page by mutableStateOf(0)
+    /** Pages actually intersecting the viewport; these alone may never be evicted. */
+    var visiblePages by mutableStateOf(listOf(0))
+    /** Visible pages plus the small read-ahead margin the renderer should try to keep. */
     var wantedPages by mutableStateOf(listOf(0))
 
     /**

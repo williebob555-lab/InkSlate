@@ -23,4 +23,21 @@ class InkSlateApp : Application() {
         // InkSlate or InkSheets: each flavour has its own FlavorSetup.
         FlavorSetup.install(this)
     }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if(level>=android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)clearRebuildableMemory()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        clearRebuildableMemory()
+    }
+
+    private fun clearRebuildableMemory() {
+        com.inkslate.data.FileRepo.clearThumbnailCache()
+        com.inkslate.data.ImageStore.clearCache()
+        com.inkslate.ink.StrokeRasteriser.clearCache()
+        com.inkslate.pdf.PdfText.clearCache()
+    }
 }

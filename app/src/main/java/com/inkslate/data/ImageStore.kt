@@ -86,7 +86,8 @@ class ImageStore(private val sourceFile: File) {
         fun keepLinked(id: String, png: ByteArray): Boolean = Pictures.keep(id, png)
 
         /** Shared across documents; keyed by folder so two files cannot collide. */
-        private val cache = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
+        private val cache = object : LruCache<String, Bitmap>(
+            (Runtime.getRuntime().maxMemory()/16).coerceIn(4L*1024*1024,24L*1024*1024).toInt()) {
             override fun sizeOf(key: String, value: Bitmap) = value.byteCount
         }
 

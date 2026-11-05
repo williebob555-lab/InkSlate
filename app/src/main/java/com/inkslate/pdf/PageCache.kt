@@ -25,6 +25,9 @@ import java.util.zip.InflaterInputStream
 object PageCache {
 
     private const val DISK_LIMIT = 800L * 1024 * 1024
+    /** Avoid a second full-page allocation beside the bitmap on small Android heaps. */
+    internal fun maxPixelCopyBytes(maxHeap:Long=Runtime.getRuntime().maxMemory()):Long =
+        (maxHeap/32).coerceIn(2L*1024*1024,6L*1024*1024)
 
     @Volatile private var dir: File? = null
     private val writer = Executors.newSingleThreadExecutor { r -> Thread(r, "page-cache").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
@@ -49,7 +52,12 @@ object PageCache {
             DataInputStream(InflaterInputStream(f.inputStream().buffered(1 shl 16), java.util.zip.Inflater(), 1 shl 16)).use { input ->
                 val w = input.readInt()
                 val h = input.readInt()
-                val bytes = ByteArray(w * h * 4)
+                val count=w.toLong()*h.toLong()*4L
+                if(w<=0 || h<=0 || count>maxPixelCopyBytes() || count>Int.MAX_VALUE) {
+                    f.delete()
+                    return@runCatching null
+                }
+                val bytes = ByteArray(count.toInt())
                 input.readFully(bytes)
                 Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { copyPixelsFromBuffer(ByteBuffer.wrap(bytes)) }
             }
@@ -63,7 +71,8 @@ object PageCache {
         val d = dir ?: return
         // A backlog means pages are arriving faster than they can be written: skip, not queue
         // tens of megabytes. The page is simply drawn again next time.
-        if (queued >= 2 || bitmap.config != Bitmap.Config.ARGB_8888) return
+        val count=bitmap.width.toLong()*bitmap.height.toLong()*4L
+        if (queued >= 1 || bitmap.config != Bitmap.Config.ARGB_8888 || count>maxPixelCopyBytes()) return
         val w = bitmap.width
         val h = bitmap.height
         val bytes = runCatching { ByteBuffer.allocate(w * h * 4).also { bitmap.copyPixelsToBuffer(it) }.array() }.getOrNull() ?: return

@@ -1708,7 +1708,12 @@ class DrawingView @JvmOverloads constructor(
 
     fun setPageBitmap(index: Int, bitmap: Bitmap?) {
         if (index == detailPage) detailRequestedFor = null
-        slots.getOrNull(index)?.let { slot ->
+        val slot=slots.getOrNull(index)
+        if(slot==null) {
+            bitmap?.takeIf { !it.isRecycled }?.recycle()
+            return
+        }
+        slot.let {
             if (slot.bitmap !== bitmap) slot.bitmap?.recycle()
             slot.bitmap = bitmap
             // Looking for the margins reads the picture, on the main thread: only when cropping.
@@ -1721,6 +1726,16 @@ class DrawingView @JvmOverloads constructor(
             }
             invalidate()
         }
+    }
+
+    /** Release every large raster owned by a surface that is leaving composition. */
+    fun releaseBitmaps() {
+        clearDetail()
+        slots.forEach { slot -> slot.bitmap?.takeIf { !it.isRecycled }?.recycle();slot.bitmap=null }
+        arriving?.shot?.takeIf { !it.isRecycled }?.recycle();arriving=null
+        turnAnim?.takeIf { it.owned }?.from?.takeIf { !it.isRecycled }?.recycle();turnAnim=null
+        turnShot?.takeIf { !it.isRecycled }?.recycle();turnShot=null
+        musicMarkRasters.clear()
     }
 
     fun hasBitmap(index: Int) = slots.getOrNull(index)?.bitmap?.takeIf { !it.isRecycled } != null

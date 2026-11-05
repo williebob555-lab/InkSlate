@@ -552,8 +552,11 @@ class FileRepo(private val context: Context) {
         const val THUMB_PX = 320
 
         /** Bounded by bytes rather than count, since page sizes vary wildly. */
-        private val memCache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
+        private val memCache = object : LruCache<String, Bitmap>(
+            (Runtime.getRuntime().maxMemory()/24).coerceIn(4L*1024*1024,16L*1024*1024).toInt()) {
             override fun sizeOf(key: String, value: Bitmap) = value.byteCount
         }
+
+        fun clearThumbnailCache() = memCache.evictAll()
     }
 }
