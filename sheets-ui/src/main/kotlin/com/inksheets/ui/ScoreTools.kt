@@ -1436,10 +1436,11 @@ internal object ScoreTools {
     /** Show bar [n] of the part in front, lit a moment; false when there is no such bar. */
     fun goTo(s: SheetsState, n: Int): Boolean {
         val path = s.currentPath ?: return false
-        val score = scoreOf(path) ?: run { said = "Read the music first"; return false }
+        val whole = scoreOf(path) ?: run { said = "Read the music first"; return false }
+        val (score, offset) = Transcriber.partOf(whole, s.partShown())
         val m = score.measures.firstOrNull { n >= it.number && n < it.number + it.bars } ?: run { said = "No bar $n in this part"; return false }
         Perform.jumpTo?.invoke(path, m.page)
-        found = n to System.currentTimeMillis()
+        found = (n + offset) to System.currentTimeMillis()
         said = null
         changed()
         // The light goes after a moment.
@@ -1451,6 +1452,7 @@ internal object ScoreTools {
 
     private var player: ScorePlayer? = null
     private var watcher: java.util.Timer? = null
+    private var pageFollow: PlaybackPageFollow? = null
     private const val WHO = "score"
 
     val isPlaying get() = playing != null
@@ -1472,14 +1474,23 @@ internal object ScoreTools {
         stop(s)
         leaveCheck()
         val path = s.currentPath ?: return
-        val score = scoreOf(path) ?: run { said = "Read the music first"; return }
+        val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
+        // A combined band book is many independent parts in one PDF. Playback is always scoped to
+        // the part in front; it must never run off the Euphonium pages into the following Tuba part.
+        val (score, offset) = Transcriber.partOf(whole, s.partShown())
         val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return }
         val (id, transpose) = instrumentOf(s)
         // A passage chosen (and, if from a bar, one in it): from there to its end, straight through,
         // for practising it. Else from the bar asked (or the page in front) on, repeats and all.
-        val sel = selection?.takeIf { from == null || from in it }?.takeIf { r -> onPageShown(s, score, r) }
+        fun local(number: Int): Int = when {
+            score.measures.any { number >= it.number && number < it.number + it.bars } -> number
+            else -> number - offset
+        }
+        val localFrom = from?.let(::local)
+        val sel = selection?.let { (it.first - offset)..(it.last - offset) }
+            ?.takeIf { localFrom == null || localFrom in it }?.takeIf { r -> onPageShown(s, score, r) }
         val last = score.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: 1
-        val first = from ?: sel?.first ?: score.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
+        val first = localFrom ?: sel?.first ?: score.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
         val range = if (sel != null) first..sel.last else first..last
         val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(score, first) else null
         bandMode = false
@@ -1487,11 +1498,12 @@ internal object ScoreTools {
             "chosen ${selection ?: "none"}${if (selection != null && sel == null) ", not on this page: let be" else ""}; asked from ${from ?: "-"})")
         val tempo = SharedMetronome.bpm
         val start = if (ramp && loop) tempo * rampFrom / 100.0 else tempo
-        val sounding = soundAs ?: id
+        val percussionName = listOfNotNull(s.partShown()?.label, s.partShown()?.instrument, File(path).nameWithoutExtension).joinToString(" ")
+        val sounding = soundAs ?: com.inksheets.core.omr.DrumKind.pitchedInstrument(id, percussionName) ?: id
         val source = score
         // A drum part on the drums (unless asked to sound as something else).
         val shown = s.partShown()
-        val drums = if (soundAs != null) null else com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(shown?.label, shown?.instrument, File(path).nameWithoutExtension).joinToString(" "))
+        val drums = if (soundAs != null) null else com.inksheets.core.omr.DrumKind.of(id, percussionName)
         // The metronome going: its click moves into the music - on the music's own beats, its
         // ritardandos and fermatas too - instead of ticking on beside it on a clock of its own.
         val click = takeClick(s)
@@ -1499,7 +1511,8 @@ internal object ScoreTools {
             loop = loop, rampTo = if (ramp && loop) tempo else null, rampStep = rampStep.toDouble(), drums = drums, click = click, order = order)
         player = p
         playbackProgress = 0f
-        playing = Triple(range.first, start.toInt(), 0)
+        playing = Triple(range.first + offset, start.toInt(), 0)
+        pageFollow = PlaybackPageFollow(s.pageShown.first)
         syncTool()
         fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.bpm,p.round,p.finished)
         val history=com.inksheets.core.omr.PlaybackHistory(cursor())
@@ -1518,15 +1531,20 @@ internal object ScoreTools {
                         if (!(ramp && loop) && kotlin.math.abs(SharedMetronome.bpm - p.bpm) > 0.01) p.setTempo(SharedMetronome.bpm)
                         val heard=history.at(Sound.consumedFrames(WHO) ?: 0L)
                         if (heard.finished) { stop(s); return@onMain }
-                        val now=Triple(heard.bar,heard.tempo.toInt(),heard.round)
+                        val now=Triple(heard.bar + offset,heard.tempo.toInt(),heard.round)
                         val progress = heard.progress
                         if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
                             playing = now; playbackProgress = progress; changed()
                         }
-                        // The page follows the music.
-                        if (now.first != lastBar) {
-                            lastBar = now.first
-                            score.measures.firstOrNull { it.number == now.first }?.let { m -> if (m.page != s.pageShown.first) Perform.jumpTo?.invoke(path, m.page) }
+                        val clock = System.currentTimeMillis()
+                        pageFollow?.observe(s.pageShown.first, clock)
+                        // The page follows until the reader flips one manually. Manual browsing is
+                        // then left alone for the rest of this playback instead of snapping back.
+                        if (heard.bar != lastBar) {
+                            lastBar = heard.bar
+                            score.measures.firstOrNull { it.number == heard.bar }?.let { m ->
+                                if (pageFollow?.turnTo(m.page, s.pageShown.first, clock) == true) Perform.jumpTo?.invoke(path, m.page)
+                            }
                         }
                     }
                 }
@@ -1657,8 +1675,10 @@ internal object ScoreTools {
                 val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
                 val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
                 // A drum part on the drums: which drum each note is, from the part and where the note sits.
-                val drums = com.inksheets.core.omr.DrumKind.of(id, listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" "))
-                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, SampledInstruments.patchFor(s, id), drums)
+                val percussionName = listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" ")
+                val drums = com.inksheets.core.omr.DrumKind.of(id, percussionName)
+                val sounding = com.inksheets.core.omr.DrumKind.pitchedInstrument(id, percussionName) ?: id
+                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, SampledInstruments.patchFor(s, sounding), drums)
             }
             if (voices.isEmpty()) {
                 said = if(otherParts(s).any { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) })
@@ -1668,9 +1688,14 @@ internal object ScoreTools {
             }
             val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
             // As for this part alone (see play): a passage chosen straight through, else from a bar on, repeats and all.
+            fun local(number: Int): Int = when {
+                mine.measures.any { number >= it.number && number < it.number + it.bars } -> number
+                else -> number - offset
+            }
+            val localFrom = from?.let(::local)
             val sel = selection?.takeIf { from == null || from in it }?.takeIf { r -> onPageShown(s, whole, r) }?.let { (it.first - offset)..(it.last - offset) }
             val last = mine.measures.lastOrNull()?.let { it.number + it.bars - 1 } ?: 1
-            val first = from?.minus(offset) ?: sel?.first ?: mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
+            val first = localFrom ?: sel?.first ?: mine.measures.firstOrNull { it.page >= s.pageShown.first }?.number ?: 1
             val range = if (sel != null) first..sel.last else first..last
             val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(mine, first) else null
             // This part too, where asked: to hear the whole, or to hear how it fits.
@@ -1684,7 +1709,8 @@ internal object ScoreTools {
             syncTool()
             fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.tempo,finished=p.finished)
             val history=com.inksheets.core.omr.PlaybackHistory(cursor())
-            Sound.play(s, WHO, ahead = true) { buf ->
+            pageFollow = PlaybackPageFollow(s.pageShown.first)
+            Sound.play(s, WHO, ahead = true, aheadMs = 720, prefillMs = 180) { buf ->
                 val at=p.synth.position;val before=cursor()
                 p.fill(buf)
                 history.record(at,p.synth.position,before,cursor())
@@ -1703,9 +1729,13 @@ internal object ScoreTools {
                             if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
                                 playing = now; playbackProgress = progress; changed()
                             }
+                            val clock = System.currentTimeMillis()
+                            pageFollow?.observe(s.pageShown.first, clock)
                             if (now.first != lastBar) {
                                 lastBar = now.first
-                                whole.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m -> if (m.page != s.pageShown.first) Perform.jumpTo?.invoke(path, m.page) }
+                                whole.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m ->
+                                    if (pageFollow?.turnTo(m.page, s.pageShown.first, clock) == true) Perform.jumpTo?.invoke(path, m.page)
+                                }
                             }
                         }
                     }
@@ -1806,6 +1836,7 @@ internal object ScoreTools {
     /** The sound stopped, where it was kept or not. */
     private fun halt() {
         pausedPlayback=null
+        pageFollow=null
         ensemble?.let { ensemble = null; Sound.stop(WHO) }
         watcher?.cancel(); watcher = null
         if (player != null) Sound.stop(WHO)
@@ -1830,6 +1861,15 @@ internal object ScoreTools {
 
     /** The bar playing now, or paused at. */
     fun barNow(): Int? = playing?.first ?: paused
+
+    /** The bar number as printed in the part in front, not its collision-free file-cache number. */
+    fun visibleBar(s: SheetsState, fileBar: Int? = barNow()): Int? {
+        val n = fileBar ?: return null
+        val path = s.currentPath ?: return n
+        val whole = scoreOf(path) ?: return n
+        val offset = Transcriber.partOf(whole, s.partShown()).second
+        return n - offset
+    }
 
     /** Stop where it is, to go on from there. */
     fun pause(s: SheetsState) {

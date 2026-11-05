@@ -218,7 +218,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
         if(ScoreTools.barNow()!=null) {
             IconButton(onClick={if(ScoreTools.playing!=null)ScoreTools.pause(state)else ScoreTools.resume(state)}) {Icon(if(ScoreTools.playing!=null)Icons.Default.Pause else Icons.Default.PlayArrow,"Pause or resume notes",Modifier.size(18.dp))}
             Column(Modifier.width(110.dp).padding(vertical=4.dp)) {
-                Text("${if(ScoreTools.playing!=null)"Playing"else"Paused"} · bar ${ScoreTools.barNow()}",style=MaterialTheme.typography.labelSmall)
+                Text("${if(ScoreTools.playing!=null)"Playing"else"Paused"} · bar ${ScoreTools.visibleBar(state)}",style=MaterialTheme.typography.labelSmall)
                 LinearProgressIndicator(progress={ScoreTools.playbackProgress},modifier=Modifier.fillMaxWidth().height(3.dp))
             }
             IconButton(onClick={ScoreTools.stepBars(state,-1)}) {Icon(Icons.Default.SkipPrevious,"Back a bar",Modifier.size(18.dp))}

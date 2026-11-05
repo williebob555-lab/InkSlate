@@ -22,6 +22,9 @@ object Midi {
         "violin" -> 40; "viola" -> 41; "cello" -> 42; "double-bass", "string-bass" -> 43
         "bass-guitar", "electric-bass" -> 33; "guitar" -> 25
         "voice", "soprano", "alto", "tenor", "bass" -> 52
+        "glockenspiel", "orchestra-bells", "crotales" -> 9
+        "vibraphone" -> 11; "marimba" -> 12; "xylophone" -> 13
+        "chimes", "tubular-bells" -> 14; "timpani" -> 47
         else -> 0
     }
 
@@ -90,6 +93,7 @@ object Midi {
         val transpose: Int = 0,
         val program: Int = 0,
         val percussion: Boolean = false,
+        val drums: DrumKind? = null,
     ) {
         constructor(score: Score, name: String = "Part", transpose: Int = 0, program: Int = 0,
                     percussion: Boolean = false) : this(listOf(score), name, transpose, program, percussion)
@@ -104,12 +108,15 @@ object Midi {
             val instrument = part.instrument?.substringBefore(':')
             val named = part.label ?: com.inksheets.core.Instruments.byId[instrument]?.name
                 ?.let { if (part.chair != null) "$it ${part.chair}" else it } ?: part.id
+            val pitched = DrumKind.pitchedInstrument(instrument, named)
+            val drums = DrumKind.of(instrument, named)
             Part(
                 staves = part.staves,
                 name = named,
                 transpose = part.transposition,
-                program = program(instrument),
-                percussion = instrument in setOf("percussion", "drumline", "drums")
+                program = program(pitched ?: instrument),
+                percussion = drums != null || (pitched == null && instrument in setOf("percussion", "drumline", "drums")),
+                drums = drums
             )
         }, bpm
     )
@@ -162,8 +169,8 @@ object Midi {
                         if (t >= bar) break
                         if (e is Note) {
                             val end = minOf(t + len, bar)
-                            for (p in e.pitches) {
-                                val key = (p.midi - part.transpose).coerceIn(0, 127)
+                            val keys = part.drums?.keys(e) ?: e.pitches.map { (it.midi - part.transpose).coerceIn(0, 127) }
+                            for (key in keys) {
                                 events += Triple(at + t, 3, byteArrayOf((0x90 or channel).toByte(), key.toByte(), 88))
                                 events += Triple(at + maxOf(t + 1, end - 8), 2, byteArrayOf((0x80 or channel).toByte(), key.toByte(), 0))
                             }

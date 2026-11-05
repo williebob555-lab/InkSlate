@@ -308,3 +308,18 @@ The first additive foundation is now implemented behind explicit ensemble/stage 
 No video decoder, staff-lane detector, live stage-audio hookup, Arrangement Studio behavior, or
 automatic ensemble initialization has been added. Those remain later phases and do not participate
 in the ordinary reader lifecycle.
+
+### Playback stabilization checkpoint
+
+The first hands-on review of the live reader found that the additive semantic foundations had not
+yet replaced two legacy assumptions. Combined part PDFs were played as one continuous score, and
+`EnsemblePlayer` reselected every other instrument's measure by printed number. The stabilization
+pass now scopes playback/navigation to the part in front, aligns written sequences before applying
+one shared repeat order, represents multimeasure rests as silent canonical slots, preserves manual
+page flips, pre-fills a deeper ensemble render queue, and removes quadratic note-queue shifts.
+
+Named orchestral percussion now distinguishes pitched instruments (including timpani and mallets)
+from unpitched triangle, suspended cymbal, concert bass drum, tambourine, tam-tam, woodblock, and
+cowbell for live playback and MIDI routing. This is still a bridge: live playback has not yet been
+migrated to the reusable part-bus `PerformancePlan`, and stage audio remains intentionally silent
+until that shared transport is the sole source of truth. See `PLAYBACK-STABILIZATION-REVIEW.md`.

@@ -213,7 +213,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     // Where it is, and how fast: always said, never guessed.
                     Text(
                         when {
-                            playing != null -> "Bar ${playing.first}\n♩ ${playing.second}" + if (playing.third > 0) "\nround ${playing.third + 1}" else ""
+                            playing != null -> "Bar ${ScoreTools.visibleBar(state, playing.first) ?: playing.first}\n♩ ${playing.second}" + if (playing.third > 0) "\nround ${playing.third + 1}" else ""
                             else -> "♩ ${SharedMetronome.bpm.toInt()}"
                         },
                         style = MaterialTheme.typography.labelSmall, fontSize = 10.sp, lineHeight = 11.sp, textAlign = TextAlign.Center,

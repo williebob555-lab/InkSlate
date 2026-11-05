@@ -43,6 +43,7 @@ fun BoxScope.PlaybackBar(state: SheetsState) {
     val paused = ScoreTools.paused
     if (playing == null && paused == null) return
     val bar = playing?.first ?: paused ?: return
+    val shownBar = ScoreTools.visibleBar(state, bar) ?: bar
     // A window over the music like any other: where the strips leave it too little room (a small
     // phone stood up), they step aside to their tabs while it plays.
     Opened("Playing", 300.dp)
@@ -66,7 +67,7 @@ fun BoxScope.PlaybackBar(state: SheetsState) {
                     Btn(Icons.Default.SkipPrevious, "Back a line") { ScoreTools.stepLines(state, -1) }
                     Btn(Icons.Default.FastRewind, "Back a bar") { ScoreTools.stepBars(state, -1) }
                     if (playing != null) Btn(Icons.Default.Pause, "Pause", main = true) { ScoreTools.pause(state) }
-                    else Btn(Icons.Default.PlayArrow, "Go on from bar $bar", main = true) { ScoreTools.resume(state) }
+                    else Btn(Icons.Default.PlayArrow, "Go on from bar $shownBar", main = true) { ScoreTools.resume(state) }
                     Btn(Icons.Default.FastForward, "On a bar") { ScoreTools.stepBars(state, 1) }
                     Btn(Icons.Default.SkipNext, "On a line") { ScoreTools.stepLines(state, 1) }
                 }
@@ -81,7 +82,7 @@ fun BoxScope.PlaybackBar(state: SheetsState) {
                 }
             }
             val where: @Composable () -> Unit = {
-                Text((if (playing != null) "Bar $bar" else "Paused at bar $bar") + " · tap a bar to play from it",
+                Text((if (playing != null) "Bar $shownBar" else "Paused at bar $shownBar") + " · tap a bar to play from it",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
             // One row where there is room for it all; else the moves over the tempo.

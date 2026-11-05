@@ -20,14 +20,19 @@ internal object Sound {
 
     /** [who] is heard from now: [fill] writes its next samples into the buffer it is given. False with no output here. */
     @Synchronized
-    fun play(state: SheetsState, who: String, ahead: Boolean = false, fill: (FloatArray) -> Unit): Boolean {
+    fun play(state: SheetsState, who: String, ahead: Boolean = false,
+             /** A denser ensemble gets a deeper producer queue without changing the device API. */
+             aheadMs: Int = 260, prefillMs: Int = 120,
+             fill: (FloatArray) -> Unit): Boolean {
         val o = state.platform.audioOut ?: return false
         paused.remove(who)
         this.ahead.remove(who)?.stop()
         if (ahead) {
-            // Rendered on a thread of its own, 200 ms in front: a busy device cannot starve the speaker.
-            val made = com.inksheets.core.RenderAhead(o.sampleRate, 200, 480, fill)
-            made.start(prefillMs = 0)
+            // Render on a high-priority producer. Starting the device only after a short prefill is
+            // important: an empty queue made the first expensive ensemble block an immediate xrun.
+            val block = if (o.sampleRate >= 88_200) 960 else 480
+            val made = com.inksheets.core.RenderAhead(o.sampleRate, aheadMs.coerceIn(160, 1_200), block, fill)
+            made.start(prefillMs = prefillMs.coerceIn(40, aheadMs - 20))
             this.ahead[who] = made
             sources[who] = { buf -> if(!paused.containsKey(who)) made.read(buf) }
         } else sources[who] = fill

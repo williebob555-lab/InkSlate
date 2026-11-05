@@ -482,6 +482,10 @@ class Synth(val sampleRate: Int) {
     }
 
     private val pending = ArrayList<Tone>()
+    /** First unread entry in [pending]. Keeping a cursor avoids shifting every later note on each
+     * note-on (which made dense ensemble playback quadratic in the number of scheduled notes).
+     */
+    private var pendingAt = 0
     private val voices = ArrayList<Voice>()
     private val sampled = ArrayList<SampledVoice>()
     private var noise = 12345L
@@ -495,6 +499,10 @@ class Synth(val sampleRate: Int) {
 
     @Synchronized
     fun add(tones: List<Tone>) {
+        if (pendingAt > 0) {
+            pending.subList(0, pendingAt).clear()
+            pendingAt = 0
+        }
         pending += tones
         pending.sortBy { it.start }
     }
@@ -510,8 +518,8 @@ class Synth(val sampleRate: Int) {
         val now = position
         fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
         fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib, t.attack)
-        val shifted = pending.map { moved(it) }
-        pending.clear(); pending += shifted
+        val shifted = pending.subList(pendingAt, pending.size).map { moved(it) }
+        pending.clear(); pending += shifted; pendingAt = 0
         for (v in voices) {
             val t = v.tone
             val end = t.start + t.length
@@ -528,7 +536,7 @@ class Synth(val sampleRate: Int) {
     /** Everything stopped at once, and the clock back to [to]. */
     @Synchronized
     fun reset(to: Long = 0L) {
-        pending.clear(); voices.clear(); sampled.clear(); position = to
+        pending.clear(); pendingAt = 0; voices.clear(); sampled.clear(); position = to
     }
 
     /**
@@ -583,8 +591,8 @@ class Synth(val sampleRate: Int) {
         // Notes starting in this block begin at their own sample.
         // (A slurred note is taken a little ahead: its voice starts fading in before its own start.)
         val lead = (sampleRate * 0.07).toLong()
-        while (pending.isNotEmpty() && pending.first().start - lead < end) {
-            val t = pending.removeAt(0)
+        while (pendingAt < pending.size && pending[pendingAt].start - lead < end) {
+            val t = pending[pendingAt++]
             val bank = t.patch.sampled
             if (bank != null) {
                 if (t.legato) {
@@ -643,6 +651,12 @@ class Synth(val sampleRate: Int) {
             voices += Voice(t).apply {
                 if (t.patch.drum) drum = DrumVoice(t.midi, t.start, t.velocity, t.accent, t.patch.gain, t.patch.tune, t.start * 31 + t.midi)
             }
+        }
+        // Long pieces can schedule tens of thousands of notes. Reclaim consumed references in
+        // coarse chunks off the note-on hot path, without copying the tail for every note.
+        if (pendingAt >= 4096 && pendingAt * 2 >= pending.size) {
+            pending.subList(0, pendingAt).clear()
+            pendingAt = 0
         }
         val it = voices.iterator()
         while (it.hasNext()) {
@@ -1187,7 +1201,7 @@ class EnsemblePlayer(
             mineBars += if (mm.bars > 1) null else mm
         }
         val len = lengths.toDoubleArray()
-        fun along(v: Voice): List<Measure?> = numbers.map { n -> v.score.measures.firstOrNull { n >= it.number && n < it.number + it.bars }?.takeIf { it.bars == 1 } }
+        fun along(v: Voice): List<Measure?> = EnsembleBarAlignment.align(mine, order, v.score)
         // Every part planned on the one timeline; one tempo for all, led by the part played from.
         val plans = others.map { v -> Interpretation.analyse(along(v), len, v.drums) }
         val lead = Interpretation.analyse(mineBars, len)

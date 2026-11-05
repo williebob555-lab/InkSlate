@@ -18,12 +18,21 @@ enum class DrumKind {
     BASS_DRUMS,
     /** Tenors (quads, quints): four or five drums and a spock, high to low down the staff. */
     TENORS,
-    CYMBALS;
+    CYMBALS,
+    /** Orchestral single-instrument parts, rather than a five-line drum kit. */
+    CONCERT_BASS_DRUM, SUSPENDED_CYMBAL, TRIANGLE, TAMBOURINE, TAM_TAM, WOODBLOCK, COWBELL;
 
     /** The drum note [step] (half-spaces down from the top line) is, as a General MIDI drum number. */
     fun key(step: Int): Int = when (this) {
         SNARE -> 38
         CYMBALS -> 49
+        CONCERT_BASS_DRUM -> 36
+        SUSPENDED_CYMBAL -> 51
+        TRIANGLE -> 81
+        TAMBOURINE -> 54
+        TAM_TAM -> 52
+        WOODBLOCK -> 76
+        COWBELL -> 56
         // Played on toms' sound, tuned down (see Synth.BASS_DRUMS) or up (Synth.TENORS).
         BASS_DRUMS, TENORS -> when {
             step <= 1 -> 50; step <= 3 -> 48; step <= 4 -> 47; step <= 5 -> 45; step <= 6 -> 43; else -> 41
@@ -55,6 +64,21 @@ enum class DrumKind {
     companion object {
         private val pitched = listOf("mallet", "xylo", "marimba", "vibe", "bells", "glock", "timpani", "chime", "crotale", "steel pan", "pans")
 
+        /** A detailed pitched-percussion voice recovered from a generic Percussion library part. */
+        fun pitchedInstrument(instrumentId: String?, name: String): String? {
+            val n = name.lowercase()
+            return when {
+                "timpani" in n || Regex("\\btimp\\b").containsMatchIn(n) -> "timpani"
+                "glock" in n || "orchestra bell" in n -> "glockenspiel"
+                "crotale" in n -> "crotales"
+                "vibraphone" in n || Regex("\\bvibes?\\b").containsMatchIn(n) -> "vibraphone"
+                "marimba" in n -> "marimba"
+                "xylophone" in n || Regex("\\bxylo\\b").containsMatchIn(n) -> "xylophone"
+                "tubular bell" in n || "chime" in n -> "tubular-bells"
+                else -> null
+            }
+        }
+
         /**
          * The drums a part is, from its instrument ([instrumentId]: drums, drumline, percussion) and its
          * name: null for a part with pitches (a tenor sax, mallets, timpani).
@@ -65,6 +89,13 @@ enum class DrumKind {
             val drummy = instrumentId in setOf("drums", "drumline", "percussion") || drumWords
             if (!drummy || pitched.any { it in n }) return null
             return when {
+                "suspended cymbal" in n || "sus cymbal" in n -> SUSPENDED_CYMBAL
+                "concert bass drum" in n || "orchestral bass drum" in n -> CONCERT_BASS_DRUM
+                "triangle" in n -> TRIANGLE
+                "tambourine" in n -> TAMBOURINE
+                "tam-tam" in n || "tam tam" in n || Regex("\\bgong\\b").containsMatchIn(n) -> TAM_TAM
+                "woodblock" in n || "wood block" in n -> WOODBLOCK
+                "cowbell" in n -> COWBELL
                 "bass drum" in n -> BASS_DRUMS
                 "tenor" in n || "quad" in n || "quint" in n -> TENORS
                 "snare" in n -> SNARE
@@ -89,6 +120,7 @@ internal class DrumVoice(private val key: Int, private val start: Long, private 
 
     /** How long it rings, in seconds. */
     private val ring = when (key) {
+        81 -> 2.4; 54 -> 0.7; 52 -> 4.0; 76, 77 -> 0.22; 56 -> 0.8
         49, 57 -> 2.2; 51, 59 -> 1.4; 46 -> 0.6; 42, 44 -> 0.12; 35, 36 -> 0.45; 38, 40 -> 0.35; else -> 0.6
     }
 
@@ -119,6 +151,28 @@ internal class DrumVoice(private val key: Int, private val start: Long, private 
                 51, 59 -> {
                     phase += 2 * PI * 520.0 / sr
                     highpass(white(), 0.9) * exp(-t / 0.35) * 0.35 + Synth.sine(phase) * exp(-t / 0.4) * 0.12
+                }
+                // Triangle: inharmonic high partials which ring well past the strike.
+                81 -> {
+                    phase += 2 * PI * 2350.0 / sr
+                    (Synth.sine(phase) + 0.55 * Synth.sine(phase * 1.47) + 0.3 * Synth.sine(phase * 2.11)) * exp(-t / 0.9) * 0.42
+                }
+                // Tambourine: a short skin hit with a longer spray of metal jingles.
+                54 -> highpass(white(), 0.88) * (0.8 * exp(-t / 0.16) + 0.3 * exp(-t / 0.5))
+                // Tam-tam / gong: a slow, dark wash with several moving low partials.
+                52 -> {
+                    phase += 2 * PI * 150.0 / sr
+                    (0.45 * Synth.sine(phase) + 0.35 * Synth.sine(phase * 1.37) + highpass(white(), 0.72) * 0.35) *
+                        (1 - exp(-t / 0.025)) * exp(-t / 1.45)
+                }
+                76, 77 -> {
+                    val f = if (key == 76) 860.0 else 620.0
+                    phase += 2 * PI * f / sr
+                    (Synth.sine(phase) + 0.35 * Synth.sine(phase * 2.7)) * exp(-t / 0.055) * 0.8
+                }
+                56 -> {
+                    phase += 2 * PI * 560.0 / sr
+                    (Synth.sine(phase) + 0.7 * Synth.sine(phase * 1.48)) * exp(-t / 0.24) * 0.65
                 }
                 // Toms (and tuned drums on them): a skin's pitch, falling a little, ringing.
                 else -> {
