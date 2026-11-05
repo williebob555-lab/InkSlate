@@ -4,6 +4,8 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Music reading no longer exhausts a 512 MB Android heap.** The page thresholding pass now uses rolling row-sized totals instead of two 64-bit buffers as large as the whole page, and it reuses the reader's existing greyscale pixels. Android also gives each recognition raster a live heap-relative pixel ceiling, pauses automatic reading when that safe budget disappears, bounds decoded-score and Fix-picture caches, and clears them on system memory pressure. The replacement thresholding is pixel-for-pixel equivalent in tests; the reported Galaxy Tab crash still needs confirmation on the device.
+
 - **Android memory use is bounded during performance tools.** Crash reports from build 313 showed `OutOfMemoryError`: page rasters and several independent image/tool caches could together consume more than a tablet heap. InkSheets now gives resident pages a smaller heap-relative budget, caps Mask's notation raster at about 8 MB, recycles evicted Android bitmaps and falls back to vector drawing if that optional raster cannot be allocated.
 - **Follow-up after device crashes in 314.** The first bound was applied after a whole read-ahead batch, and every prefetched page was mistakenly protected as if it were visible. Eviction now happens after each page and protects only pages actually on screen. Background setlist tabs no longer each retain a full-page warm raster, released surfaces explicitly recycle page/turn images, whole-page music renders against the screen's shorter side, and the disk page cache will not make an oversized second pixel copy. Thumbnail and embedded-image caches now scale with the device heap and clear on Android memory pressure.
 

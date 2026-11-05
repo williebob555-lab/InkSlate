@@ -56,32 +56,47 @@ class Ink(val width: Int, val height: Int, val bits: BooleanArray = BooleanArray
          * (Sauvola), so a scan darker at one side than the other still comes out clean.
          */
         fun fromGrey(width: Int, height: Int, grey: IntArray, window: Int = 31, k: Double = 0.2): Ink {
-            val w1 = width + 1
-            val sum = LongArray(w1 * (height + 1))
-            val sq = LongArray(w1 * (height + 1))
-            for (y in 0 until height) {
-                var rs = 0L; var rq = 0L
-                for (x in 0 until width) {
-                    val g = grey[y * width + x].toLong()
-                    rs += g; rq += g * g
-                    sum[(y + 1) * w1 + x + 1] = sum[y * w1 + x + 1] + rs
-                    sq[(y + 1) * w1 + x + 1] = sq[y * w1 + x + 1] + rq
-                }
-            }
             val r = window / 2
             val out = Ink(width, height)
+            // A full summed-area table needs two LongArrays as large as the page (16 bytes per
+            // pixel). Music pages are deliberately rendered large enough to read small notes, so
+            // those two temporary arrays alone could exhaust Android's heap. Keep the same box
+            // sums as rolling column totals instead: two rows of longs rather than two pages.
+            val columnSum = LongArray(width)
+            val columnSq = LongArray(width)
+            for (yy in 0 until min(height, r + 1)) for (x in 0 until width) {
+                val g = grey[yy * width + x].toLong()
+                columnSum[x] += g
+                columnSq[x] += g * g
+            }
             for (y in 0 until height) {
                 val y0 = max(0, y - r); val y1 = min(height, y + r + 1)
+                var s = 0L; var q = 0L
+                for (xx in 0 until min(width, r + 1)) { s += columnSum[xx]; q += columnSq[xx] }
                 for (x in 0 until width) {
                     val x0 = max(0, x - r); val x1 = min(width, x + r + 1)
                     val n = ((x1 - x0) * (y1 - y0)).toDouble()
-                    val s = sum[y1 * w1 + x1] - sum[y0 * w1 + x1] - sum[y1 * w1 + x0] + sum[y0 * w1 + x0]
-                    val q = sq[y1 * w1 + x1] - sq[y0 * w1 + x1] - sq[y1 * w1 + x0] + sq[y0 * w1 + x0]
                     val mean = s / n
                     val sd = kotlin.math.sqrt(max(0.0, q / n - mean * mean))
                     val threshold = mean * (1 + k * (sd / 128.0 - 1))
                     // Paper stays paper: nothing lighter than mid-grey is ink.
                     out.bits[y * width + x] = grey[y * width + x] < threshold && grey[y * width + x] < 200
+                    val removeX = x - r
+                    if (removeX >= 0) { s -= columnSum[removeX]; q -= columnSq[removeX] }
+                    val addX = x + r + 1
+                    if (addX < width) { s += columnSum[addX]; q += columnSq[addX] }
+                }
+                val removeY = y - r
+                val addY = y + r + 1
+                if (removeY >= 0 || addY < height) for (x in 0 until width) {
+                    if (removeY >= 0) {
+                        val g = grey[removeY * width + x].toLong()
+                        columnSum[x] -= g; columnSq[x] -= g * g
+                    }
+                    if (addY < height) {
+                        val g = grey[addY * width + x].toLong()
+                        columnSum[x] += g; columnSq[x] += g * g
+                    }
                 }
             }
             return out

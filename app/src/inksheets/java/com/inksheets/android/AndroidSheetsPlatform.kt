@@ -126,6 +126,7 @@ class AndroidSheetsPlatform(
     /** Set from the activities' lifecycle (FlavorSetup): false once none is started - backgrounded, or the screen off. */
     @Volatile var started = 1
     override val inForeground: Boolean get() = started > 0
+    override val backgroundReadingAllowed: Boolean get() = readingPixelBudget() > 0
 
     override var readingMode: com.inkslate.core.ReadingMode
         get() = com.inkslate.AppFlavor.readingMode.value
@@ -261,6 +262,7 @@ class AndroidSheetsPlatform(
         val source = com.inkslate.pdf.PageSources.open(file) ?: return null
         return object : com.inksheets.ui.PagePeek {
             override val pageCount = source.pageCount
+            override val readingPixelBudget: Int get() = Companion.readingPixelBudget()
             override fun render(index: Int, widthPx: Int) =
                 runCatching<androidx.compose.ui.graphics.ImageBitmap?> { source.renderPage(index, widthPx)?.asImageBitmap() }.getOrNull()
             override fun printed(index: Int) = if (file.extension.equals("pdf", true)) AndroidPrinted.read(context, file, index) else null
@@ -402,6 +404,28 @@ class AndroidSheetsPlatform(
 
     companion object {
         private const val K_DEVICE = "sheets_device"
+        private const val MIN_READING_PIXELS = 4_000_000L
+        private const val MAX_READING_PIXELS = 12_000_000L
+
+        /**
+         * The reader briefly needs the rendered bitmap, ARGB, greyscale and recognition rasters at
+         * once. Leave room for the open app and the recognizer's smaller working copies instead of
+         * treating Android's entire heap as page storage.
+         */
+        internal fun readingPixelBudget(maxHeap: Long, availableHeap: Long): Int {
+            if (maxHeap <= 0L || availableHeap <= 0L) return 0
+            val reserve = maxOf(64L shl 20, maxHeap / 6)
+            val byWholeHeap = maxHeap / 48
+            val byCurrentHeadroom = (availableHeap - reserve).coerceAtLeast(0L) / 20
+            val pixels = minOf(MAX_READING_PIXELS, byWholeHeap, byCurrentHeadroom)
+            return if (pixels >= MIN_READING_PIXELS) pixels.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else 0
+        }
+
+        private fun readingPixelBudget(): Int {
+            val rt = Runtime.getRuntime()
+            val used = rt.totalMemory() - rt.freeMemory()
+            return readingPixelBudget(rt.maxMemory(), rt.maxMemory() - used)
+        }
 
         /** A copy of what [uri] points at, under its own name, in the app's cache. */
         fun copyIn(context: Context, uri: android.net.Uri): File? = runCatching {

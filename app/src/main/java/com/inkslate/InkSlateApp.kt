@@ -39,5 +39,6 @@ class InkSlateApp : Application() {
         com.inkslate.data.ImageStore.clearCache()
         com.inkslate.ink.StrokeRasteriser.clearCache()
         com.inkslate.pdf.PdfText.clearCache()
+        FlavorSetup.trimMemory()
     }
 }

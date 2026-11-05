@@ -106,4 +106,9 @@ object FlavorSetup {
             ActionStrip(stateFor(LocalContext.current))
         }
     }
+
+    /** Stop speculative reading and release InkSheets' decoded-score and page-picture caches. */
+    fun trimMemory() {
+        state?.trimMemory()
+    }
 }

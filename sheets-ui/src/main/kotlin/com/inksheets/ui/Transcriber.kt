@@ -58,6 +58,20 @@ internal object Transcriber {
         backgroundStatus = null
     }
 
+    /** Release everything that can be rebuilt when Android reports heap pressure. Active reading
+     * yields at its next page boundary; explicit user-requested work is left intact.
+     */
+    fun trimMemory(state: SheetsState) {
+        if (backgroundState === state) {
+            backgroundPaused = true
+            queue.cancelWhere { it.startsWith("background:") }
+            backgroundStatus = null
+        }
+        synchronized(drawn) { drawn.clear() }
+        synchronized(known) { known.clear() }
+        synchronized(looksKnown) { looksKnown.clear() }
+    }
+
     /** Refresh from the viewer lifecycle: current piece first, then unread files in the library.
      * Planning/checksums run on the reader worker, never during composition or on the UI thread.
      */
@@ -310,7 +324,7 @@ internal object Transcriber {
     private fun looksFile(dir: File, page: Int) = File(dir, "looks-p${page + 1}.json")
 
     /** The second looks read lately, by folder and page. */
-    private val looksKnown = HashMap<String, Map<Int, List<Measure>>>()
+    private val looksKnown = LinkedHashMap<String, Map<Int, List<Measure>>>(16, .75f, true)
 
     /**
      * What the second looks at bar [m] of [file] saw - taken as each page was read, so Fix has them
@@ -320,13 +334,16 @@ internal object Transcriber {
         val f = looksFile(folder(state, file), m.page)
         val key = "${f.path}:${f.lastModified()}"
         val byBar = synchronized(looksKnown) { looksKnown[key] } ?: (runCatching { Scores.decode(f.readText()) }.getOrNull()?.measures?.groupBy { it.number } ?: emptyMap())
-            .also { synchronized(looksKnown) { looksKnown[key] = it } }
+            .also { value -> synchronized(looksKnown) {
+                looksKnown[key] = value
+                while (looksKnown.size > 24) looksKnown.remove(looksKnown.keys.first())
+            } }
         return byBar[m.number].orEmpty()
     }
 
     /** What was read and when it was looked for: the folder looked at again only every few seconds (another device may add pages). */
     private class Known(val score: Score?, val at: Long, val signature: String)
-    private val known = HashMap<String, Known>()
+    private val known = LinkedHashMap<String, Known>(16, .75f, true)
 
     /** The pages of [file] (0-based) whose reading is an earlier reader's, not read again since - offered to be read again. */
     fun olderPages(state: SheetsState, file: File): Set<Int> {
@@ -355,7 +372,10 @@ internal object Transcriber {
         val pages: List<File> = mine.toList() + (older?.listFiles { f: File -> PAGE_FILE.matches(f.name) && pageOf(f) !in minePages }?.toList() ?: emptyList())
         dir.listFiles { f -> f.name.contains(".sync-conflict-") }?.forEach { runCatching { it.delete() } }
         val signature = pages.sortedBy { it.path }.joinToString { "${it.path}:${it.length()}:${it.lastModified()}" }
-        synchronized(known) { known[key]?.takeIf { it.signature == signature }?.let { known[key] = Known(it.score, now, signature); return it.score } }
+        synchronized(known) { known[key]?.takeIf { it.signature == signature }?.let {
+            known[key] = Known(it.score, now, signature)
+            return it.score
+        } }
         val parts = pages.mapNotNull { f -> runCatching { Scores.decode(f.readText()) }.getOrNull() }
         val score = if (parts.isEmpty()) null else {
             val count = parts.maxOf { it.pages }
@@ -364,7 +384,10 @@ internal object Transcriber {
             // (Numbered so no bar number comes twice: see Scores.numberedOnce.)
             Score(Scores.numberedOnce(parts.flatMap { it.measures }.sortedWith(compareBy({ it.page }, { it.staff }, { it.box.left }))), count, widths, read.takeIf { it.size < count })
         }
-        synchronized(known) { known[key] = Known(score, now, signature) }
+        synchronized(known) {
+            known[key] = Known(score, now, signature)
+            while (known.size > 24) known.remove(known.keys.first())
+        }
         return score
     }
 
@@ -753,7 +776,7 @@ internal object Transcriber {
      * page, and each wants it drawn whole and large - drawn once, not once a bar. (One page kept; two
      * where there is the memory: the one ahead drawn while this one is looked at.)
      */
-    private val drawn = LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>()
+    private val drawn = LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>(4, .75f, true)
 
     private fun drawnPage(state: SheetsState, file: File, page: Int, width: Int): androidx.compose.ui.graphics.ImageBitmap? {
         val key = "${file.absolutePath}|${file.lastModified()}|$page|$width"
@@ -761,15 +784,18 @@ internal object Transcriber {
         val img = state.platform.peek(file)?.use { it.render(page, width) } ?: return null
         synchronized(drawn) {
             drawn[key] = img
-            val keep = if (Workers.roomy) 2 else 1
-            while (drawn.size > keep) drawn.remove(drawn.keys.first())
+            val maxHeap = Runtime.getRuntime().maxMemory()
+            val keep = if (Workers.roomy && maxHeap >= (768L shl 20)) 2 else 1
+            val byteLimit = (maxHeap / 16).coerceIn(16L shl 20, 128L shl 20)
+            fun bytesHeld() = drawn.values.sumOf { it.width.toLong() * it.height * 4L }
+            while (drawn.isNotEmpty() && (drawn.size > keep || bytesHeld() > byteLimit)) drawn.remove(drawn.keys.first())
         }
         return img
     }
 
     /** Page [page] of [file] drawn ahead (quietly, after whatever is being looked at), for the next bar in Fix. */
     fun drawAhead(state: SheetsState, file: File, page: Int, width: Int) {
-        if (!Workers.roomy) return
+        if (!Workers.roomy || Runtime.getRuntime().maxMemory() < (768L shl 20)) return
         looker.execute { runCatching { drawnPage(state, file, page, width) } }
     }
 
@@ -836,17 +862,34 @@ internal object Transcriber {
      * makes a space 18 pixels. (Drawn one at a time: the page ahead may be drawn on another thread.)
      */
     private fun pageInk(peek: PagePeek, page: Int): Pair<IntArray, Ink>? {
-        val first = inkOf(peek, page, 1600)?.second ?: return null
-        val space = Recognizer().metrics(first)?.second
-        val width = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
+        val pixelBudget = peek.readingPixelBudget
+        if (pixelBudget <= 0) return null
+        var probe: Pair<IntArray, Ink>? = inkOf(peek, page, 1600) ?: return null
+        var probeInk: Ink? = probe!!.second
+        val space = Recognizer().metrics(probeInk!!)?.second
+        val wanted = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
+        val probeWidth = probeInk.width
+        val probeHeight = probeInk.height
+        val maxWidth = kotlin.math.sqrt(pixelBudget.toDouble() * probeWidth / probeHeight.coerceAtLeast(1)).toInt()
+        if (maxWidth < 1000) return null
+        val width = wanted.coerceAtMost(maxWidth)
+        if (width == probeWidth) return probe
+        // Do not retain the probe's greyscale and ink while allocating the full reading.
+        probe = null
+        probeInk = null
         return inkOf(peek, page, width)
     }
 
     private fun inkOf(peek: PagePeek, page: Int, width: Int): Pair<IntArray, Ink>? {
         // The reader's draw: after any page the screen wants, one at a time (see RenderGate).
-        val img = com.inkslate.core.RenderGate.reading { synchronized(peek) { peek.render(page, width) } } ?: return null
-        val px = IntArray(img.width * img.height)
-        img.readPixels(px)
-        return com.inksheets.core.omr.Strips.grey(px) to Ink.fromArgb(img.width, img.height, px)
+        val raster = run {
+            val img = com.inkslate.core.RenderGate.reading { synchronized(peek) { peek.render(page, width) } } ?: return null
+            val px = IntArray(img.width * img.height)
+            img.readPixels(px)
+            Triple(img.width, img.height, com.inksheets.core.omr.Strips.grey(px))
+        }
+        // Build the monochrome raster from the greys already returned to recognition. Converting
+        // from ARGB again used to allocate a second full-page greyscale array.
+        return raster.third to Ink.fromGrey(raster.first, raster.second, raster.third)
     }
 }

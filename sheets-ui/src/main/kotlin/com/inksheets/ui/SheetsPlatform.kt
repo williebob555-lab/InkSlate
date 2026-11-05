@@ -277,6 +277,10 @@ interface Microphone {
 /** A file's pages as pictures, for a quick look. Close it when done. */
 interface PagePeek : java.io.Closeable {
     val pageCount: Int
+    /** Maximum pixels the reader may keep for one rendered page; zero while there is not enough
+     * heap to read safely. Display rendering has its own, separate budget.
+     */
+    val readingPixelBudget: Int get() = Int.MAX_VALUE
     fun render(index: Int, widthPx: Int): androidx.compose.ui.graphics.ImageBitmap?
     /** What page [index]'s PDF says is printed on it, where it writes its notes as music-font characters; null otherwise. */
     fun printed(index: Int): com.inksheets.core.omr.Printed? = null

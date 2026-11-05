@@ -18,6 +18,9 @@ import java.io.File
  */
 class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
+    /** Called by the host when the OS asks the app to shed rebuildable memory. */
+    fun trimMemory() = Transcriber.trimMemory(this)
+
     internal val shelf = MusicShelfPreferences(platform)
     internal var expandedMusicCategory by mutableStateOf<ShelfWidget?>(null)
     internal var musicCategoryPage by mutableStateOf<String?>(null)
