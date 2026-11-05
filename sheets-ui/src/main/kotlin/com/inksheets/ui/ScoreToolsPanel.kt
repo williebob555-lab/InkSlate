@@ -48,6 +48,7 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     var speeding by remember { mutableStateOf(false) }
     var printingFor by remember { mutableStateOf(false) }
     var ensembleMidiOpen by remember { mutableStateOf(false) }
+    var bandPartsOpen by remember { mutableStateOf(false) }
     var bar by remember { mutableStateOf("") }
 
     fun usePage(action: () -> Unit) {
@@ -124,6 +125,9 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                         action = { if (playing) ScoreTools.stop(state) else usePage { ScoreTools.playSelected(state) } }),
                     ScoreAction("Band accompaniment", "Other parts play alongside you", Icons.Default.Groups,
                         enabled = ready, selected = ScoreTools.band, action = { ScoreTools.toggleBand(state) }),
+                    ScoreAction("Band instruments", "${ScoreTools.selectedBandPartIds(state).size} selected", Icons.Default.QueueMusic,
+                        enabled = ready && ScoreTools.bandCandidates(state).isNotEmpty(), action = { bandPartsOpen = true },
+                        popup = { if (bandPartsOpen) BandPartsDialog(state) { bandPartsOpen = false } }),
                     ScoreAction("Include my part", if (ScoreTools.bandWithMe) "Your part plays with the band" else "Leave your part for you to play", Icons.Default.Person,
                         enabled = ready && ScoreTools.band, selected = ScoreTools.bandWithMe,
                         action = { ScoreTools.chooseBandWithMe(state, !ScoreTools.bandWithMe) }),
@@ -196,6 +200,36 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
         }
     }
     if(printingFor && file!=null && score!=null) PrintFor(state,file,score){printingFor=false}
+}
+
+@Composable
+private fun BandPartsDialog(state: SheetsState, onClose: () -> Unit) {
+    val candidates = remember(state.current?.id, state.currentPath) { ScoreTools.bandCandidates(state) }
+    var selected by remember(candidates) { mutableStateOf(ScoreTools.selectedBandPartIds(state)) }
+    SheetDialog("Band instruments", onDismiss = onClose, buttons = {
+        TextButton(onClick = onClose) { Text("Cancel") }
+        TextButton(onClick = { ScoreTools.chooseBandParts(state, selected); onClose() }, enabled = selected.isNotEmpty()) {
+            Text("Use ${selected.size}")
+        }
+    }) {
+        Column(Modifier.fillMaxWidth()) {
+            Text("Only these parts will be read and played when Band accompaniment starts.",
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
+            Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                candidates.forEach { part ->
+                    val checked = part.id in selected
+                    Row(Modifier.fillMaxWidth().clickable {
+                        selected = if (checked) selected - part.id else selected + part.id
+                    }.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked, onCheckedChange = { on ->
+                            selected = if (on) selected + part.id else selected - part.id
+                        })
+                        Text(com.inksheets.core.Instruments.partName(part), Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

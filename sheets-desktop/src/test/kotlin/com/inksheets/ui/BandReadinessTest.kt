@@ -64,4 +64,27 @@ class BandReadinessTest {
         assertEquals(listOf(1,2),complete.single().score.measures.map {it.page})
         assertTrue("A fully read but empty part is not a playable band voice",cachedBand("empty-pages",listOf(0,1,2),true).isEmpty())
     }
+
+    @Test fun `band part choice is scoped to the song and does not hide available candidates`() {
+        val root=tmp.newFolder("selection")
+        listOf("mine.pdf","flute.pdf","trumpet.pdf").forEach { File(root,it).writeText(it) }
+        val state=SheetsState(Platform(root))
+        val mine=Part(id="mine",file="mine.pdf",instrument="clarinet")
+        val flute=Part(id="flute",file="flute.pdf",instrument="flute")
+        val trumpet=Part(id="trumpet",file="trumpet.pdf",instrument="trumpet")
+        state.change { addSong("Selection",listOf(mine,flute,trumpet)) }
+        state.current=state.library!!.songs.first {it.title=="Selection"}
+        state.currentPath=File(root,"mine.pdf").absolutePath
+
+        assertEquals(setOf("flute","trumpet"),ScoreTools.bandCandidates(state).map {it.id}.toSet())
+        assertEquals(setOf("flute","trumpet"),ScoreTools.selectedBandPartIds(state))
+        ScoreTools.chooseBandParts(state,setOf("trumpet"))
+        assertEquals(setOf("trumpet"),ScoreTools.selectedBandPartIds(state))
+        assertEquals(setOf("flute","trumpet"),ScoreTools.bandCandidates(state).map {it.id}.toSet())
+
+        state.change { addSong("Another",listOf(mine.copy(id="mine-2"),flute.copy(id="flute-2"))) }
+        state.current=state.library!!.songs.first {it.title=="Another"}
+        state.currentPath=File(root,"mine.pdf").absolutePath
+        assertEquals(setOf("flute-2"),ScoreTools.selectedBandPartIds(state))
+    }
 }

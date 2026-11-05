@@ -16,6 +16,14 @@ Newest first. These notes describe changes made, not confirmation that every rep
   routing, mute/solo, deterministic concert-band seating, and bounded stereo direct mixing are
   implemented and signal-tested, but no stage UI or audio machinery initializes during ordinary
   sheet reading yet.
+- **Band playback can use only the instruments you choose.** Score tools now has a Band instruments
+  picker scoped to the current song. Unselected parts are not read or synthesized when Band
+  accompaniment starts; changing songs returns to all available parts.
+- **Video and full-score work has bounded core seams, not reader overhead.** Optional video jobs
+  can enforce frame/byte/page budgets, select sharp scene changes, merge nearby frames to remove
+  temporary obstructions, and retain time provenance. Detected staff geometry can be grouped into
+  reviewable score systems. Decoders, URL resolvers, staff detection, and review UI are not loaded
+  or invoked by normal single-part reading.
 
 - **Music reading no longer exhausts a 512 MB Android heap.** The page thresholding pass now uses rolling row-sized totals instead of two 64-bit buffers as large as the whole page, and it reuses the reader's existing greyscale pixels. Android also gives each recognition raster a live heap-relative pixel ceiling, pauses automatic reading when that safe budget disappears, bounds decoded-score and Fix-picture caches, and clears them on system memory pressure. The replacement thresholding is pixel-for-pixel equivalent in tests; the reported Galaxy Tab crash still needs confirmation on the device.
 

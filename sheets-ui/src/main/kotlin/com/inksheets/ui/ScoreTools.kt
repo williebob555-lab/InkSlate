@@ -1543,8 +1543,8 @@ internal object ScoreTools {
     var bandReading by mutableStateOf<String?>(null)
         private set
 
-    /** The song's other parts that have files of their own here: (part, file). */
-    private fun otherParts(s: SheetsState): List<Pair<com.inksheets.core.Part, File>> {
+    /** The song's other playable parts that have files of their own here: (part, file). */
+    private fun availableOtherParts(s: SheetsState): List<Pair<com.inksheets.core.Part, File>> {
         val song = s.current ?: return emptyList()
         val mine = s.partShown()
         return song.parts.filter { it.id != mine?.id && !(it.label ?: "").contains("score", true) &&
@@ -1552,6 +1552,34 @@ internal object ScoreTools {
             .mapNotNull { p -> s.fileOf(p.file)?.takeIf { f -> f.isFile }?.let { p to it } }
             // A part sharing this part's pages is this part.
             .filter { (p, f) -> f.absolutePath != s.currentPath || (p.firstPage != null && p.firstPage != mine?.firstPage) }
+    }
+
+    private var bandPartSong: String? = null
+    var bandPartIds by mutableStateOf<Set<String>?>(null)
+        private set
+
+    /** Parts offered by the playback picker, before its current selection is applied. */
+    internal fun bandCandidates(s: SheetsState): List<com.inksheets.core.Part> =
+        availableOtherParts(s).map { it.first }
+
+    /** Defaults to every available part. An explicit choice is scoped to one song. */
+    internal fun selectedBandPartIds(s: SheetsState): Set<String> {
+        val candidates = bandCandidates(s).map { it.id }.toSet()
+        val chosen = bandPartIds.takeIf { bandPartSong == s.current?.id } ?: return candidates
+        return chosen.intersect(candidates)
+    }
+
+    fun chooseBandParts(s: SheetsState, ids: Set<String>) {
+        val candidates = bandCandidates(s).map { it.id }.toSet()
+        require(ids.isNotEmpty() && ids.all { it in candidates }) { "Choose at least one available band part" }
+        bandPartSong = s.current?.id
+        bandPartIds = ids.toSet()
+    }
+
+    /** Only selected parts are read and rendered; choosing parts never starts work on its own. */
+    private fun otherParts(s: SheetsState): List<Pair<com.inksheets.core.Part, File>> {
+        val selected = selectedBandPartIds(s)
+        return availableOtherParts(s).filter { it.first.id in selected }
     }
 
     /** A file cache may contain only the currently viewed part of a shared band pack. */

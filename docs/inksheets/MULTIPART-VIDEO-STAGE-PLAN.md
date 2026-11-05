@@ -291,7 +291,16 @@ The first additive foundation is now implemented behind explicit ensemble/stage 
   ensemble export without starting background recognition.
 - The optional stereo direct mixer, serializable stage scene, deterministic direct-path routing,
   mute/solo behavior, and automatic concert-band seating are covered by signal and routing tests.
+- Band playback can choose a per-song subset of instruments before it reads or synthesizes other
+  parts. Offline part stems render one at a time through a reusable block for bounded export and
+  later stage routing.
+- Video import now has platform-neutral, budgeted source/decoder contracts, cancellation and
+  progress models, perceptual scene evidence, and a bounded temporal median merge for removing
+  transient hands, cursors, or highlights. No platform decoder or URL resolver is registered yet.
+- Full-score setup has a geometry-only first pass that groups detected staff lanes into systems
+  and retains explicit review reasons for ambiguous spacing, alignment, confidence, and staff
+  counts. It is not called by the single-part reader.
 
-No video decoder, full-score detector, stage editor, Arrangement Studio behavior, or automatic
+No video decoder, staff-lane detector, stage editor, Arrangement Studio behavior, or automatic
 ensemble initialization has been added. Those remain later phases and do not participate in the
 ordinary reader lifecycle.
