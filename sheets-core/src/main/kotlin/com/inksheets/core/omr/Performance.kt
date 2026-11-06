@@ -19,6 +19,21 @@ object Performance {
     /** How loud each dynamic is played, 0-1 (mf 0.68). */
     val LEVELS = mapOf("ppp" to 0.2f, "pp" to 0.28f, "p" to 0.38f, "mp" to 0.54f, "mf" to 0.68f, "f" to 0.87f, "ff" to 0.98f, "fff" to 1.06f)
 
+    /**
+     * Bar lengths for a performed passage. A clearly read short bar can be a pickup or a final
+     * partial bar, but treating every internally under-filled green reading as a pickup makes one
+     * missed note collapse the timeline and sends the playback marker racing across the page.
+     * Preserve short bars at musical boundaries; hold an isolated internal short read to its time.
+     */
+    internal fun barLengths(bars: List<Measure>): DoubleArray = DoubleArray(bars.size) { i ->
+        val m = bars[i]
+        val written = m.time.quarters * m.bars
+        val read = m.playedQuarters
+        val short = m.bars == 1 && read < written - 1e-6
+        val boundary = m.number <= 1 || m.showsTime || i == bars.lastIndex || bars.getOrNull(i + 1)?.showsTime == true
+        if (short && !boundary) written else read
+    }
+
     /** A dynamic that strikes one note hard and then returns ("sfz"), or drops at once after ("fp"). */
     private val STRUCK = setOf("sf", "sfz", "sffz", "fz", "rfz", "rf", "sfp", "fp", "sfzp")
 
@@ -32,7 +47,7 @@ object Performance {
              drums: DrumKind? = null,
              /** The metronome's click with it, on the music's own beats (its ritardandos and fermatas too). */
              click: Boolean = false): Played {
-        val lengths = DoubleArray(bars.size) { bars[it].playedQuarters }
+        val lengths = barLengths(bars)
         val plan = Interpretation.analyse(bars, lengths, drums)
         val map = Interpretation.tempoMap(listOf(plan), bpm, ensemble = false)
         val tones = ArrayList(Interpretation.tones(plan, map, rate, transpose, patch, at, 1f, drums))

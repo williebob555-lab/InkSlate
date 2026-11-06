@@ -59,7 +59,9 @@ class Printed(val width: Float, val height: Float, val symbols: List<Symbol>, va
                       val beams: Int = -1, val dots: Int = -1, val confidence: Float = 1f,
                       /** Learned: the odds behind those (see [Note.odds]). */
                       val odds: List<Float> = emptyList(),
-                      val bounds:List<Float> = emptyList())
+                      val bounds:List<Float> = emptyList(),
+                      /** Learned: independent probabilities for the 12 symbol classes. */
+                      val classOdds: List<Float> = emptyList())
     /** A stem: upright at [x], from [y0] (top) to [y1]. */
     data class Stem(val x: Float, val y0: Float, val y1: Float)
     /** A beam: a filled slab across [x0]..[x1], its middle at [y0] and [y1] at each end, [thick] thick. */

@@ -6,10 +6,20 @@ import androidx.compose.runtime.setValue
 import com.inksheets.core.omr.Ink
 import com.inksheets.core.omr.Learned
 import com.inksheets.core.omr.Measure
+import com.inksheets.core.omr.MeasureEvidence
+import com.inksheets.core.omr.MeasureSpecialistEvidence
 import com.inksheets.core.omr.Net
+import com.inksheets.core.omr.DotAudit
+import com.inksheets.core.omr.ReadingAuditPlanner
+import com.inksheets.core.omr.ReadingAuditVariants
+import com.inksheets.core.omr.ReadingConfidence
+import com.inksheets.core.omr.ReadingEvidence
+import com.inksheets.core.omr.RestAudit
+import com.inksheets.core.omr.MultiRestAudit
 import com.inksheets.core.omr.Recognizer
 import com.inksheets.core.omr.Score
 import com.inksheets.core.omr.Scores
+import com.inksheets.core.omr.SpecialistEvidenceCodec
 import com.inksheets.core.omr.Workers
 import java.io.File
 
@@ -38,7 +48,7 @@ internal object Transcriber {
             Recording.playing || Recording.loading || SelfRecorder.recording || SharedMetronome.running || Listener.active ||
             ScoreTools.playing != null || Click.counting > 0
         if (occupied) deeperAfter = maxOf(deeperAfter, now + 15_000L)
-        return !backgroundPaused && s.readMusic && !occupied && now >= activityUntil
+        return !backgroundPaused && s.readMusic && s.backgroundReading && !occupied && now >= activityUntil
     }
 
     /** Annotation input can keep the reader out of the way without putting up any panel. */
@@ -70,6 +80,20 @@ internal object Transcriber {
         synchronized(drawn) { drawn.clear() }
         synchronized(known) { known.clear() }
         synchronized(looksKnown) { looksKnown.clear() }
+        synchronized(specialistsKnown) { specialistsKnown.clear() }
+    }
+
+    /** OOM is recoverable only after all rebuildable page state is released and automatic work is
+     * stopped. Never immediately retry the same allocation: Android may have native page bitmaps
+     * which are not reflected in the Java heap's free count yet.
+     */
+    private fun memoryFailure(state: SheetsState, file: File, phase: String, error: OutOfMemoryError): Score? {
+        val rt = Runtime.getRuntime()
+        val used = rt.totalMemory() - rt.freeMemory()
+        state.platform.log("$phase ${file.name} stopped for low memory: ${error.message ?: "allocation failed"}; " +
+            "heap used=${used shr 20}MB max=${rt.maxMemory() shr 20}MB available=${(rt.maxMemory() - used).coerceAtLeast(0) shr 20}MB")
+        trimMemory(state)
+        return null
     }
 
     /** Refresh from the viewer lifecycle: current piece first, then unread files in the library.
@@ -81,6 +105,9 @@ internal object Transcriber {
         backgroundState = state
         backgroundToken = token
         backgroundPaused = false
+        // Opening a song/page and its first button presses must settle before even library
+        // inventory work begins. Global input extends this through RenderGate.touch().
+        activityUntil = maxOf(activityUntil, System.currentTimeMillis() + 5_000L)
         queue.cancelWhere { it.startsWith("background:") }
         val root = state.root ?: return
         val current = state.current
@@ -93,6 +120,8 @@ internal object Transcriber {
                 }
                 songs.forEach { song -> song.parts.forEach { p -> state.partFile(song, p)?.let { add(it to ReadingQueue.LIBRARY) } } }
             }.distinctBy { it.first.absolutePath }
+            data class AuditPlan(val file: File, val current: Boolean, val priority: Int)
+            val audits = ArrayList<AuditPlan>()
             for ((file, priority) in ordered) {
                 if (control.shouldYield()) return@submit null
                 if (!file.isFile || file.absolutePath in stoppedBackground || state.root != root) continue
@@ -102,23 +131,39 @@ internal object Transcriber {
                     if (state.root != root || file.absolutePath in stoppedBackground) return@submit null
                     state.platform.onMain { backgroundStatus = "Reading ${file.nameWithoutExtension}" }
                     automaticPass = true
+                    Workers.backgroundSerial = true
                     try {
                         readNow(state, file, quiet = true, mayContinue = { !work.shouldYield() }, pageSaved = {
                             state.platform.onMain {
                                 if (state.currentPath == file.absolutePath) { cached(state, file)?.let { shown = file to it }; ScoreTools.marksMoved() }
                             }
                         })
-                    } finally { automaticPass = false; state.platform.onMain { backgroundStatus = null } }
+                    } catch (error: OutOfMemoryError) {
+                        memoryFailure(state, file, "Background reading", error)
+                    } finally { Workers.backgroundSerial = false; automaticPass = false; state.platform.onMain { backgroundStatus = null } }
                 }
-                // Further looks are alternatives for unsure bars, never silent changes to a
-                // musician's corrections or to the base reading.
-                val completed = HashSet<Pair<Int, Int>>()
+                // Full confidence used to open every page's audit sidecars during song switches.
+                // The idle audit writes one tiny summary instead; planning reads only that integer.
+                val storedPriority = runCatching { auditPriorityFile(folder(state, file)).readText().trim().toInt() }.getOrDefault(0)
+                audits += AuditPlan(file, priority == ReadingQueue.CURRENT_PIECE, storedPriority)
+            }
+            // Further looks audit every generated bar, including green ones. They remain shadow
+            // evidence and never enter Fix's alternatives. Current music stays first; then the
+            // library is ordered by evidence that useful work remains.
+            audits.sortedWith(compareByDescending<AuditPlan> { it.current }.thenByDescending { it.priority }
+                .thenBy { it.file.absolutePath }).forEach { plan ->
+                val file = plan.file
+                val completed = HashSet<String>()
                 queue.submit("background:deeper:${file.absolutePath}", ReadingQueue.DEEPER) { work ->
                     if (state.root != root || file.absolutePath in stoppedBackground) return@submit null
                     val idleAt = maxOf(activityUntil + 15_000L, deeperAfter)
                     if (System.currentTimeMillis() < idleAt) { work.defer(idleAt - System.currentTimeMillis()); return@submit null }
                     automaticPass = true
-                    try { deepenNow(state, file, work, completed) } finally { automaticPass = false }
+                    Workers.backgroundSerial = true
+                    state.platform.onMain { backgroundStatus = "Auditing ${file.nameWithoutExtension}" }
+                    try { deepenNow(state, file, work, completed) }
+                    catch (error: OutOfMemoryError) { memoryFailure(state, file, "Background audit", error) }
+                    finally { Workers.backgroundSerial = false; automaticPass = false; state.platform.onMain { backgroundStatus = null } }
                 }
             }
             null
@@ -126,45 +171,85 @@ internal object Transcriber {
     }
 
     private fun deepenNow(state: SheetsState, file: File, control: ReadingQueue.Control,
-                          completed: MutableSet<Pair<Int, Int>>): Score? {
+                          completed: MutableSet<String>): Score? {
         val score = cached(state, file) ?: return null
-        if (score.measures.none { !it.sure && it.bars == 1 }) return score
         if (!keptEdit(state, file, "sheets_structure").isNullOrBlank()) return score
         val dir = folder(state, file)
         val net = Net.shipped ?: return score
+        // Fix/look pictures can be redrawn. Do not begin a full-page multi-pass audit while those
+        // large cached bitmaps are competing for the same heap.
+        synchronized(drawn) { drawn.clear() }
         val peek = state.platform.peek(file) ?: return score
         peek.use {
-            for ((page, bars) in score.measures.filter { !it.sure && it.bars == 1 }.groupBy { it.page }) {
+            val fixedAtStart = Scores.decodeFixes(keptEdit(state, file, "sheets_fixed").orEmpty()).keys
+            val batches = ReadingAuditPlanner.batches(score, fixedAtStart)
+            fun baseIndex(measures: List<Measure>) = measures.minOfOrNull {
+                ReadingConfidence.measure(it, ReadingEvidence.assess(it, emptyList())).index
+            } ?: 100
+            val pages = batches.groupBy { it.page }.entries.sortedWith(compareBy({ baseIndex(it.value.flatMap { b -> b.measures }) }, { it.key }))
+            for ((page, unorderedBatches) in pages) {
+                val pageBatches = unorderedBatches.sortedWith(compareBy({ baseIndex(it.measures) }, { it.staff }))
                 if (control.shouldYield()) return score
                 val stamp = pageFile(dir, page).lastModified().toString()
-                val mark = File(dir, "deeper-p${page + 1}")
+                // Pass-specific marker: the older red-bars-only deeper marker must not suppress
+                // the first audit of measures that the rule reader happened to call green.
+                val mark = File(dir, "audit-v6-p${page + 1}")
                 if (runCatching { mark.readText() }.getOrNull() == stamp) continue
-                if (runCatching { peek.printed(page) }.getOrNull() != null) {
+                val printedPage = try { peek.printed(page) }
+                catch (error: OutOfMemoryError) { throw error }
+                catch (_: Throwable) { null }
+                if (printedPage != null) {
                     runCatching { mark.writeText(stamp) }; continue
                 }
                 val (grey, ink) = pageInk(peek, page) ?: continue
-                val existing = runCatching { Scores.decode(looksFile(dir, page).readText())?.measures.orEmpty() }.getOrDefault(emptyList()).toMutableList()
-                for (bar in bars) {
+                val existing = runCatching { Scores.decode(auditLooksFile(dir, page).readText())?.measures.orEmpty() }.getOrDefault(emptyList()).toMutableList()
+                val oldKeys = existing.map { Scores.encode(Score(listOf(it), score.pages)) }.toHashSet()
+                // A variant page is built once, used for every staff, then falls out of scope before
+                // another is allocated. The audit therefore stays at base + one alternate Ink page.
+                for (variant in ReadingAuditVariants.all) {
                     if (control.shouldYield()) return score
-                    if ((page to bar.number) in completed) continue
-                    // Fixes are stored separately from generated readings. Recheck at each bar:
-                    // a correction made while this pass was queued must never be reconsidered.
-                    val fixed = Scores.decodeFixes(keptEdit(state, file, "sheets_fixed").orEmpty()).keys
-                    if (bar.number in fixed) { completed += page to bar.number; continue }
-                    val alternatives = Recognizer().lookAgain(ink, grey, net, bar, deeper = true)
-                    val oldKeys = existing.map { Scores.encode(Score(listOf(it), score.pages)) }.toHashSet()
-                    alternatives.forEach { option ->
-                        if (oldKeys.add(Scores.encode(Score(listOf(option), score.pages)))) existing += option
+                    val variantInk = ReadingAuditVariants.ink(ink, grey, variant)
+                    for (batch in pageBatches) {
+                        if (control.shouldYield()) return score
+                        val passKey = "$page:${batch.staff}:${variant.id}"
+                        if (passKey in completed) continue
+                        // Recheck before every staff: a correction made while this pass was queued
+                        // is never reconsidered.
+                        val fixed = Scores.decodeFixes(keptEdit(state, file, "sheets_fixed").orEmpty()).keys
+                        val bars = batch.measures.filter { it.number !in fixed }
+                        if (bars.isEmpty()) { completed += passKey; continue }
+                        val first = score.measures.firstOrNull { it.page == page && it.staff == batch.staff } ?: continue
+                        val alternatives = Recognizer().lookAgainStaff(variantInk, grey, net, bars, first,
+                            looks = listOf(variant.look))
+                        for (bar in bars) alternatives[bar.number].orEmpty().forEach { option ->
+                            if (oldKeys.add(Scores.encode(Score(listOf(option), score.pages)))) existing += option
+                        }
+                        completed += passKey
+                        // Save after every staff/variant so a foreground request can yield without
+                        // losing completed work. Candidates never replace the base or a correction.
+                        atomicText(auditLooksFile(dir, page), Scores.encode(Score(existing, score.pages, score.pageWidths, listOf(page))))
                     }
-                    // Retain alternatives for Fix's established rescorer rather than silently
-                    // replacing playable notes on a duration guess or changing a fixed bar.
-                    val value = Scores.encode(Score(existing, score.pages, score.pageWidths, listOf(page)))
-                    atomicText(looksFile(dir, page), value)
-                    completed += page to bar.number
                 }
+                // Symbol specialists are cheap, local, and deliberately stored apart from full
+                // alternate readings. Recheck fixed bars once more before inspecting the page.
+                val fixedNow = Scores.decodeFixes(keptEdit(state, file, "sheets_fixed").orEmpty()).keys
+                val specialist = pageBatches.flatMap { it.measures }.distinctBy { it.number }
+                    .filter { it.number !in fixedNow }
+                    .map { MeasureSpecialistEvidence(it.number, DotAudit.inspect(it, grey, ink.width, ink.height),
+                        RestAudit.inspect(it, ink), MultiRestAudit.inspect(it, ink)) }
+                atomicText(specialistFile(dir, page), SpecialistEvidenceCodec.encode(specialist))
                 runCatching { mark.writeText(stamp) }
             }
         }
+        // Written only after a complete idle audit. Future song switches can rank a library by
+        // confidence without decoding every alternate-reading sidecar in the navigation path.
+        val fixed = Scores.decodeFixes(keptEdit(state, file, "sheets_fixed").orEmpty()).keys
+        val confidence = ArrayList<com.inksheets.core.omr.MeasureConfidence>()
+        for (measure in score.measures) {
+            if (control.shouldYield()) return score
+            if (measure.number !in fixed) confidence += confidenceFor(state, file, measure)
+        }
+        atomicText(auditPriorityFile(dir), ReadingConfidence.score(confidence).priority.toString())
         return score
     }
 
@@ -176,7 +261,12 @@ internal object Transcriber {
         runCatching { java.nio.file.Files.move(temporary.toPath(), file.toPath(),
             java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
             .getOrElse { java.nio.file.Files.move(temporary.toPath(), file.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING) }
-        if (file.name.startsWith("looks-")) synchronized(looksKnown) { looksKnown.keys.removeAll { it.startsWith(file.path + ":") } }
+        if (file.name.startsWith("looks-") || file.name.startsWith("audit-looks-")) synchronized(looksKnown) {
+            looksKnown.keys.removeAll { it.startsWith(file.path + ":") }
+        }
+        if (file.name.startsWith("audit-specialists-")) synchronized(specialistsKnown) {
+            specialistsKnown.keys.removeAll { it.startsWith(file.path + ":") }
+        }
     }
     /** What it is doing: "Reading page 2 of 4..." - null when idle. */
     var busy by mutableStateOf<String?>(null)
@@ -322,24 +412,61 @@ internal object Transcriber {
 
     /** What the second looks at a page's unsure bars saw, kept beside its reading (see [lookedFor]). */
     private fun looksFile(dir: File, page: Int) = File(dir, "looks-p${page + 1}.json")
+    /** Shadow audit candidates never enter Fix's offered alternatives. */
+    private fun auditLooksFile(dir: File, page: Int) = File(dir, "audit-looks-p${page + 1}.json")
+    /** Symbol-specific evidence, also shadow-only and versioned by the audit marker. */
+    private fun specialistFile(dir: File, page: Int) = File(dir, "audit-specialists-p${page + 1}.json")
+    /** One small scheduling summary; full evidence remains in page sidecars. */
+    private fun auditPriorityFile(dir: File) = File(dir, "audit-priority-v6.txt")
 
     /** The second looks read lately, by folder and page. */
     private val looksKnown = LinkedHashMap<String, Map<Int, List<Measure>>>(16, .75f, true)
+    private val specialistsKnown = LinkedHashMap<String, Map<Int, MeasureSpecialistEvidence>>(16, .75f, true)
 
     /**
      * What the second looks at bar [m] of [file] saw - taken as each page was read, so Fix has them
      * at once - or nothing, where none were taken (a PDF that states its notes; a page read before).
      */
-    fun lookedFor(state: SheetsState, file: File, m: Measure): List<Measure> {
-        val f = looksFile(folder(state, file), m.page)
+    private fun readingsIn(f: File, number: Int): List<Measure> {
         val key = "${f.path}:${f.lastModified()}"
         val byBar = synchronized(looksKnown) { looksKnown[key] } ?: (runCatching { Scores.decode(f.readText()) }.getOrNull()?.measures?.groupBy { it.number } ?: emptyMap())
             .also { value -> synchronized(looksKnown) {
                 looksKnown[key] = value
                 while (looksKnown.size > 24) looksKnown.remove(looksKnown.keys.first())
             } }
-        return byBar[m.number].orEmpty()
+        return byBar[number].orEmpty()
     }
+
+    fun lookedFor(state: SheetsState, file: File, m: Measure): List<Measure> =
+        readingsIn(looksFile(folder(state, file), m.page), m.number)
+
+    /** Alternate image passes kept only for confidence measurement and later candidate ranking. */
+    fun auditedFor(state: SheetsState, file: File, m: Measure): List<Measure> =
+        readingsIn(auditLooksFile(folder(state, file), m.page), m.number)
+
+    fun specialistFor(state: SheetsState, file: File, m: Measure): MeasureSpecialistEvidence? {
+        val f = specialistFile(folder(state, file), m.page)
+        val key = "${f.path}:${f.lastModified()}"
+        val byBar = synchronized(specialistsKnown) { specialistsKnown[key] } ?: runCatching {
+            SpecialistEvidenceCodec.decode(f.readText()).associateBy { it.number }
+        }.getOrDefault(emptyMap()).also { value -> synchronized(specialistsKnown) {
+            specialistsKnown[key] = value
+            while (specialistsKnown.size > 24) specialistsKnown.remove(specialistsKnown.keys.first())
+        } }
+        return byBar[m.number]
+    }
+
+    /** Shadow multi-pass evidence for [m]. It is deliberately not used by [Measure.certainty] yet:
+     * benchmark calibration must establish safe thresholds before visible colours change.
+     */
+    fun evidenceFor(state: SheetsState, file: File, m: Measure): MeasureEvidence =
+        ReadingEvidence.assess(m, auditedFor(state, file, m)).let { evidence ->
+            specialistFor(state, file, m)?.let { evidence.copy(dot = it.dot, rest = it.rest, multiRest = it.multiRest) } ?: evidence
+        }
+
+    /** Ordering evidence for background work and a future confidence UI; never changes certainty. */
+    fun confidenceFor(state: SheetsState, file: File, m: Measure) =
+        ReadingConfidence.measure(m, evidenceFor(state, file, m))
 
     /** What was read and when it was looked for: the folder looked at again only every few seconds (another device may add pages). */
     private class Known(val score: Score?, val at: Long, val signature: String)
@@ -386,7 +513,10 @@ internal object Transcriber {
         }
         synchronized(known) {
             known[key] = Known(score, now, signature)
-            while (known.size > 24) known.remove(known.keys.first())
+            // Library planning touches many parts in succession. On phone heaps, retaining 24
+            // decoded scores defeats the page-level raster budget even though each score is small.
+            val limit = if (Workers.roomy) 24 else 6
+            while (known.size > limit) known.remove(known.keys.first())
         }
         return score
     }
@@ -420,12 +550,14 @@ internal object Transcriber {
                 else pages.forEach { pageFile(dir, it).delete() }
                 synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
             }
-            readNow(state, file, pages).also {
-                if (stopAsked) {
-                    stoppedBackground.add(file.absolutePath)
-                    queue.cancelWhere { key -> key.startsWith("background:") && key.endsWith(file.absolutePath) }
+            try {
+                readNow(state, file, pages).also {
+                    if (stopAsked) {
+                        stoppedBackground.add(file.absolutePath)
+                        queue.cancelWhere { key -> key.startsWith("background:") && key.endsWith(file.absolutePath) }
+                    }
                 }
-            }
+            } catch (error: OutOfMemoryError) { memoryFailure(state, file, "Reading", error) }
         }.whenComplete { score, error ->
             if (error != null) state.platform.log("Reading ${file.name} failed: ${error.message}")
             state.platform.onMain {
@@ -477,12 +609,20 @@ internal object Transcriber {
      * Read [file] whole, off the screen's thread, saying nothing on the screen - several at once
      * (the band's parts before the band plays). Kept like any reading.
      */
-    fun readQuietly(state: SheetsState, file: File): Score? = runCatching {
+    fun readQuietly(state: SheetsState, file: File): Score? = try {
         if (queue.isWorkerThread()) readNow(state, file, null, quiet = true)
         else queue.submit("quiet:${file.absolutePath}", ReadingQueue.REQUESTED_QUIET) { work ->
-            readNow(state, file, null, quiet = true, mayContinue = { !work.shouldYield() })
+            try { readNow(state, file, null, quiet = true, mayContinue = { !work.shouldYield() }) }
+            catch (error: OutOfMemoryError) { memoryFailure(state, file, "Requested reading", error) }
         }.get()
-    }.onFailure { state.platform.log("Reading ${file.name} failed: ${it.message}") }.getOrNull()
+    } catch (error: OutOfMemoryError) {
+        memoryFailure(state, file, "Requested reading", error)
+    } catch (error: Throwable) {
+        // CompletableFuture wraps worker failures; preserve the underlying low-memory recovery.
+        val cause = (error as? java.util.concurrent.ExecutionException)?.cause
+        if (cause is OutOfMemoryError) memoryFailure(state, file, "Requested reading", cause)
+        else { state.platform.log("Reading ${file.name} failed: ${error.message}"); null }
+    }
 
     private fun readNow(state: SheetsState, file: File, only: Set<Int>? = null,
                         /** Read beside others (the band's parts): no word of it on the screen - the caller says how far they all are. */
@@ -512,8 +652,20 @@ internal object Transcriber {
             // The next page drawn while this one is read, on a device with the cores and memory for
             // it (two pages held at once): the reading the same, only sooner.
             var ahead: Pair<Int, java.util.concurrent.FutureTask<Pair<IntArray, Ink>?>>? = null
+            fun await(task: java.util.concurrent.FutureTask<Pair<IntArray, Ink>?>): Pair<IntArray, Ink>? = try {
+                task.get()
+            } catch (error: java.util.concurrent.ExecutionException) {
+                val cause = error.cause
+                if (cause is OutOfMemoryError) throw cause
+                null
+            } catch (error: OutOfMemoryError) { throw error }
             fun drawn(p: Int): Pair<IntArray, Ink>? {
-                ahead?.takeIf { it.first == p }?.let { ahead = null; return runCatching { it.second.get() }.getOrNull() ?: pageInk(peek, p) }
+                ahead?.takeIf { it.first == p }?.let {
+                    ahead = null
+                    // A non-memory render failure can fall back to the ordinary path. OOM is
+                    // propagated and never retried while the same page allocations are resident.
+                    return await(it.second) ?: pageInk(peek, p)
+                }
                 return pageInk(peek, p)
             }
             try { for ((i, p) in todo.withIndex()) {
@@ -542,15 +694,16 @@ internal object Transcriber {
                 val pageStarted = System.currentTimeMillis()
                 val (grey, ink) = drawn(p) ?: continue
                 todo.getOrNull(i + 1)?.takeIf { !quiet }?.let { next ->
-                    val rt = Runtime.getRuntime()
-                    if (Workers.roomy && rt.maxMemory() - (rt.totalMemory() - rt.freeMemory()) > (256L shl 20)) {
+                    if (roomForSecondPage()) {
                         val task = java.util.concurrent.FutureTask { pageInk(peek, next) }
                         ahead = next to task
                         Thread(task, "read-ahead").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
                     }
                 }
                 // A PDF that states its notes is read from them, exactly; a scan by the trained reader.
-                val printed = runCatching { com.inkslate.core.RenderGate.reading { synchronized(peek) { peek.printed(p) } } }.getOrNull()
+                val printed = try { com.inkslate.core.RenderGate.reading { synchronized(peek) { peek.printed(p) } } }
+                catch (error: OutOfMemoryError) { throw error }
+                catch (_: Throwable) { null }
                 val reading = Recognizer().read(ink, p, number, carry, printed, grey = grey, net = if (printed == null) Net.shipped else null)
                 measures += reading.measures
                 // The width the page really came back at: a renderer may draw a small page narrower
@@ -562,7 +715,7 @@ internal object Transcriber {
                 // read once a look, the staves side by side where there are the cores.
                 val net = if (printed == null) Net.shipped else null
                 val unsure = reading.measures.filter { !it.sure && it.bars == 1 }
-                if (net != null && unsure.isNotEmpty()) runCatching {
+                if (net != null && unsure.isNotEmpty()) try {
                     if (!quiet) state.platform.onMain { busy = "Looking again at ${unsure.size} unsure bar${if (unsure.size == 1) "" else "s"} on page ${p + 1}..." }
                     val looked = Workers.map(unsure.groupBy { it.staff }.entries.toList()) { (staff, bars) ->
                         val first = reading.measures.first { it.staff == staff }
@@ -570,7 +723,12 @@ internal object Transcriber {
                     }.flatMap { it.values.flatten() }
                     dir.mkdirs()
                     atomicText(looksFile(dir, p), Scores.encode(Score(looked, peek.pageCount, List(peek.pageCount) { if (it == p) ink.width else 0 }, listOf(p))))
-                }.onFailure { state.platform.log("Looking again at page ${p + 1} of ${file.name} failed: ${it.message}") }
+                } catch (error: OutOfMemoryError) {
+                    // Never swallow OOM and continue into persistence with the heap still exhausted.
+                    throw error
+                } catch (error: Throwable) {
+                    state.platform.log("Looking again at page ${p + 1} of ${file.name} failed: ${error.message}")
+                }
                 pageTimes += System.currentTimeMillis() - pageStarted
                 // Kept as soon as read: a reading stopped part way carries on from here, and the
                 // pages read so far reach the other devices.
@@ -583,7 +741,7 @@ internal object Transcriber {
                 pageSaved()
             } } finally {
                 // The page ahead finished drawing before the file is closed under it.
-                ahead?.second?.let { runCatching { it.get() } }
+                ahead?.second?.let { await(it) }
             }
             val score = cached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
             if (only == null && (0 until peek.pageCount).all { score.hasRead(it) }) wholeMark(dir).delete()
@@ -603,16 +761,25 @@ internal object Transcriber {
         looker.execute {
             // Gone on to another bar before this one's turn: not looked at at all.
             if (!wanted()) return@execute
-            val found = runCatching {
-                val peek = state.platform.peek(file) ?: return@runCatching emptyList()
-                peek.use {
+            val found = try {
+                val peek = state.platform.peek(file)
+                if (peek == null) emptyList() else peek.use {
                     val net = Net.shipped
-                    if (net == null || runCatching { peek.printed(m.page) }.getOrNull() != null) return@use emptyList()
+                    val printed = try { peek.printed(m.page) }
+                    catch (error: OutOfMemoryError) { throw error }
+                    catch (_: Throwable) { null }
+                    if (net == null || printed != null) return@use emptyList()
                     val img = drawnPage(state, file, m.page, width) ?: return@use emptyList()
                     val px = IntArray(img.width * img.height).also { img.readPixels(it) }
                     Recognizer().lookAgain(Ink.fromArgb(img.width, img.height, px), com.inksheets.core.omr.Strips.grey(px), net, m, deeper)
                 }
-            }.onFailure { state.platform.log("Looking again at bar ${m.number} of ${file.name} failed: ${it.message}") }.getOrNull().orEmpty()
+            } catch (error: OutOfMemoryError) {
+                memoryFailure(state, file, "Looking again", error)
+                emptyList()
+            } catch (error: Throwable) {
+                state.platform.log("Looking again at bar ${m.number} of ${file.name} failed: ${error.message}")
+                emptyList()
+            }
             state.platform.onMain { onDone(found) }
         }
     }
@@ -625,7 +792,7 @@ internal object Transcriber {
                    wanted: () -> Boolean = { true }, onDone: (androidx.compose.ui.graphics.ImageBitmap?) -> Unit) {
         looker.execute {
             if (!wanted()) return@execute
-            val picture = runCatching {
+            val picture = try {
                 run {
                     val page = drawnPage(state, file, m.page, width) ?: return@run null
                     val sp = m.space
@@ -677,7 +844,10 @@ internal object Transcriber {
                     }
                     out
                 }
-            }.getOrNull()
+            } catch (error: OutOfMemoryError) {
+                memoryFailure(state, file, "Drawing bar picture", error)
+                null
+            } catch (_: Throwable) { null }
             state.platform.onMain { onDone(picture) }
         }
     }
@@ -691,7 +861,9 @@ internal object Transcriber {
                   /** How it was come to: "pick" (one of the readings offered) or "hand" (put right in the editor). */
                   how: String = "pick",
                   /** How many times "None of these" was pressed for the bar first. */
-                  noneCount: Int = 0) {
+                  noneCount: Int = 0,
+                  /** What the player identified as wrong before choosing this correction. */
+                  focus: String? = null) {
         val root = state.root ?: return
         val rel = state.relative(file) ?: return
         // Whether it adds up to its bar's time: a pick that does not is taken with a grain of salt
@@ -702,6 +874,7 @@ internal object Transcriber {
                 val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
                 val line = buildString {
                     append("{\"how\":\"").append(how).append("\",\"adds\":").append(adds).append(",\"none\":").append(noneCount)
+                    if (focus != null) append(",\"focus\":").append(kotlinx.serialization.json.JsonPrimitive(focus))
                     append(",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
                     append(",\"id\":\"").append(idOf(file)).append('"')
                     append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
@@ -721,7 +894,8 @@ internal object Transcriber {
      * these" was pressed - the bars no reading offered could put right (a time or key misread, a
      * reading far off), for finding what the readings offered miss.
      */
-    fun recordSkip(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int, rejected: List<List<com.inksheets.core.omr.Event>>, noneCount: Int) {
+    fun recordSkip(state: SheetsState, file: File, m: com.inksheets.core.omr.Measure, width: Int,
+                   rejected: List<List<com.inksheets.core.omr.Event>>, noneCount: Int, focus: String? = null) {
         val root = state.root ?: return
         val rel = state.relative(file) ?: return
         looker.execute {
@@ -729,6 +903,7 @@ internal object Transcriber {
                 val dir = File(root, "${com.inksheets.core.LibraryScan.TRAINING}/Fixes").apply { mkdirs() }
                 val line = buildString {
                     append("{\"kind\":\"skip\",\"none\":").append(noneCount)
+                    if (focus != null) append(",\"focus\":").append(kotlinx.serialization.json.JsonPrimitive(focus))
                     append(",\"file\":").append(kotlinx.serialization.json.JsonPrimitive(rel))
                     append(",\"id\":\"").append(idOf(file)).append('"')
                     append(",\"page\":").append(m.page).append(",\"staff\":").append(m.staff).append(",\"number\":").append(m.number)
@@ -778,6 +953,16 @@ internal object Transcriber {
      */
     private val drawn = LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>(4, .75f, true)
 
+    /** Speculative page copies are an optimisation only. Keep them out unless both the device's
+     * total heap and its headroom right now are comfortably above a complete page working set.
+     */
+    private fun roomForSecondPage(): Boolean {
+        if (!Workers.roomy) return false
+        val rt = Runtime.getRuntime()
+        val available = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
+        return rt.maxMemory() >= (768L shl 20) && available > (384L shl 20)
+    }
+
     private fun drawnPage(state: SheetsState, file: File, page: Int, width: Int): androidx.compose.ui.graphics.ImageBitmap? {
         val key = "${file.absolutePath}|${file.lastModified()}|$page|$width"
         synchronized(drawn) { drawn[key]?.let { return it } }
@@ -785,7 +970,7 @@ internal object Transcriber {
         synchronized(drawn) {
             drawn[key] = img
             val maxHeap = Runtime.getRuntime().maxMemory()
-            val keep = if (Workers.roomy && maxHeap >= (768L shl 20)) 2 else 1
+            val keep = if (roomForSecondPage()) 2 else 1
             val byteLimit = (maxHeap / 16).coerceIn(16L shl 20, 128L shl 20)
             fun bytesHeld() = drawn.values.sumOf { it.width.toLong() * it.height * 4L }
             while (drawn.isNotEmpty() && (drawn.size > keep || bytesHeld() > byteLimit)) drawn.remove(drawn.keys.first())
@@ -795,8 +980,12 @@ internal object Transcriber {
 
     /** Page [page] of [file] drawn ahead (quietly, after whatever is being looked at), for the next bar in Fix. */
     fun drawAhead(state: SheetsState, file: File, page: Int, width: Int) {
-        if (!Workers.roomy || Runtime.getRuntime().maxMemory() < (768L shl 20)) return
-        looker.execute { runCatching { drawnPage(state, file, page, width) } }
+        if (!roomForSecondPage()) return
+        looker.execute {
+            try { drawnPage(state, file, page, width) }
+            catch (error: OutOfMemoryError) { memoryFailure(state, file, "Drawing ahead", error) }
+            catch (_: Throwable) { }
+        }
     }
 
     /** Bar [m] of [file] is a rest of [count] bars, said in Fix: written down beside the fixes, for teaching how a rest's figure is read. */
@@ -862,21 +1051,26 @@ internal object Transcriber {
      * makes a space 18 pixels. (Drawn one at a time: the page ahead may be drawn on another thread.)
      */
     private fun pageInk(peek: PagePeek, page: Int): Pair<IntArray, Ink>? {
-        val pixelBudget = peek.readingPixelBudget
-        if (pixelBudget <= 0) return null
+        val initialPixelBudget = peek.readingPixelBudget
+        if (initialPixelBudget <= 0) return null
         var probe: Pair<IntArray, Ink>? = inkOf(peek, page, 1600) ?: return null
         var probeInk: Ink? = probe!!.second
         val space = Recognizer().metrics(probeInk!!)?.second
         val wanted = if (space == null || space <= 0f) 1600 else (1600 * 18f / space).toInt().coerceIn(1000, 5000)
         val probeWidth = probeInk.width
         val probeHeight = probeInk.height
-        val maxWidth = kotlin.math.sqrt(pixelBudget.toDouble() * probeWidth / probeHeight.coerceAtLeast(1)).toInt()
-        if (maxWidth < 1000) return null
-        val width = wanted.coerceAtMost(maxWidth)
-        if (width == probeWidth) return probe
+        if (wanted == probeWidth) return probe
         // Do not retain the probe's greyscale and ink while allocating the full reading.
         probe = null
         probeInk = null
+        // Rendering the probe can itself populate PDF/bitmap caches. Re-read live headroom before
+        // the larger allocation; a budget measured before the probe is not permission to overrun
+        // memory which the renderer or foreground acquired in the meantime.
+        val pixelBudget = minOf(initialPixelBudget, peek.readingPixelBudget)
+        if (pixelBudget <= 0) return null
+        val maxWidth = kotlin.math.sqrt(pixelBudget.toDouble() * probeWidth / probeHeight.coerceAtLeast(1)).toInt()
+        if (maxWidth < 1000) return null
+        val width = wanted.coerceAtMost(maxWidth)
         return inkOf(peek, page, width)
     }
 

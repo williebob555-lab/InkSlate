@@ -26,8 +26,8 @@ import kotlinx.coroutines.launch
 internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope.() -> Unit) {
     val density=LocalDensity.current
     val panels=remember(state){ReaderPanels.forState(state)}
-    LaunchedEffect(state.root,state.currentPath,state.version,state.readMusic,state.homeInFront,ScoreTools.checking) {
-        while(!state.homeInFront && state.readMusic && !ScoreTools.checking) {
+    LaunchedEffect(state.root,state.currentPath,state.version,state.readMusic,state.backgroundReading,state.homeInFront,ScoreTools.checking) {
+        while(!state.homeInFront && state.readMusic && state.backgroundReading && !ScoreTools.checking) {
             if(state.platform.inForeground)Transcriber.background(state)
             delay(2000)
         }

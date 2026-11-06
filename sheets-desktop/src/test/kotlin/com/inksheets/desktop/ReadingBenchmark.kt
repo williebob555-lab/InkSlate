@@ -38,7 +38,8 @@ import kotlin.math.abs
  */
 class ReadingBenchmark {
     private val music = File(System.getenv("USERPROFILE") ?: "", "Music/Sheet Music/InkSheets")
-    private val results = File("bench")
+    /** Override for experimental/shadow runs so they never replace the checked-in comparison. */
+    private val results = System.getProperty("inksheets.bench.results")?.let(::File) ?: File("bench")
 
     // ---- the corpus ---------------------------------------------------------------------------
 
@@ -83,6 +84,11 @@ class ReadingBenchmark {
     private val calibration = HashMap<String, Int>()
     /** How often another look at a page reads a bar asked about right (see -Dinksheets.bench.looks). */
     private val looks = HashMap<String, Int>()
+    /** Whether the shipped idle audit catches wrong green bars without challenging right ones. */
+    private val audit = HashMap<String, Int>()
+    private val auditDetails = java.util.Collections.synchronizedList(ArrayList<String>())
+    private val dotAuditDetails = java.util.Collections.synchronizedList(ArrayList<Pair<Float, String>>())
+    private val multiRestAuditDetails = java.util.Collections.synchronizedList(ArrayList<String>())
     private val barShots = java.util.Collections.synchronizedList(ArrayList<BufferedImage>())
     private val barsFrom = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
@@ -519,6 +525,71 @@ class ReadingBenchmark {
             if (usedR.any { !it }) return false
             return if (plain) true else null
         }
+        // -Dinksheets.bench.audit=1: every bar receives the four variants shipped in the idle
+        // audit. This is shadow evidence only: measure selection and colours remain unchanged.
+        if (System.getProperty("inksheets.bench.audit") != null && net != null && greyPage != null) {
+            val variants = com.inksheets.core.omr.ReadingAuditVariants.all
+            val otherPages = variants.map { variant ->
+                val variantInk = com.inksheets.core.omr.ReadingAuditVariants.ink(ink, greyPage, variant)
+                Recognizer().read(variantInk, grey = greyPage, net = net, look = variant.look).measures
+            }
+            for ((mi, m) in reading.measures.withIndex()) {
+                if (!m.sure || m.bars > 1) continue
+                val right = barRight(mi, m.events) ?: continue
+                val found = variants.zip(otherPages).mapNotNull { (variant, page) ->
+                    page.firstOrNull { o -> o.staff == m.staff && o.bars == 1 &&
+                        abs(o.box.left - m.box.left) <= sp * 0.6f && abs(o.box.right - m.box.right) <= sp * 0.6f }?.let { variant to it }
+                }
+                val alternatives = found.map { it.second }
+                val evidence = com.inksheets.core.omr.ReadingEvidence.assess(m, alternatives)
+                val challenged = evidence.hasCriticalDisagreement
+                val alternativeRight = alternatives.any { barRight(mi, it.events) == true }
+                val dotEvidence = com.inksheets.core.omr.DotAudit.inspect(m, greyPage, ink.width, ink.height)
+                val restEvidence = com.inksheets.core.omr.RestAudit.inspect(m, ink)
+                val multiRestEvidence = com.inksheets.core.omr.MultiRestAudit.inspect(m, ink)
+                val confidence = com.inksheets.core.omr.ReadingConfidence.measure(m,
+                    evidence.copy(dot = dotEvidence, rest = restEvidence, multiRest = multiRestEvidence))
+                val confidenceReview = confidence.tier == com.inksheets.core.omr.ReadingConfidenceTier.REVIEW ||
+                    confidence.tier == com.inksheets.core.omr.ReadingConfidenceTier.URGENT
+                dotEvidence.strongest?.let { c -> dotAuditDetails += c.score to
+                    "${if (right) "right" else "wrong"} ${f.nameWithoutExtension} p${page + 1} m${m.number}: $c" }
+                if (multiRestEvidence.suspicious) multiRestAuditDetails +=
+                    "${if (right) "right" else "wrong"} ${f.nameWithoutExtension} p${page + 1} m${m.number}: " +
+                        "${multiRestEvidence.candidates}; events=${m.events.joinToString { "${it::class.simpleName}:${it.duration}" }}"
+                synchronized(audit) {
+                    audit.merge("green", 1, Int::plus)
+                    audit.merge("green ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    audit.merge("green ${if (right) "right" else "wrong"} ${evidence.stability.name.lowercase()}", 1, Int::plus)
+                    if (!right) for (cause in causes[mi].orEmpty()) audit.merge("green wrong cause: $cause", 1, Int::plus)
+                    if (challenged) audit.merge("green ${if (right) "right" else "wrong"} challenged", 1, Int::plus)
+                    if (dotEvidence.suspicious) audit.merge("dot specialist challenged ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    if (restEvidence.suspicious) audit.merge("rest specialist challenged ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    if (multiRestEvidence.suspicious) audit.merge("multi-rest specialist challenged ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    audit.merge("confidence ${confidence.tier.name.lowercase()} ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    if (confidenceReview) audit.merge("confidence review-or-urgent ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    confidence.reasons.forEach { reason ->
+                        audit.merge("confidence reason ${reason.name.lowercase()} ${if (right) "right" else "wrong"}", 1, Int::plus)
+                    }
+                    if (!right && alternativeRight) audit.merge("green wrong with right alternative", 1, Int::plus)
+                    if (alternatives.size < variants.size) audit.merge("green incompletely audited", 1, Int::plus)
+                    for ((variant, alternative) in found) {
+                        if (!com.inksheets.core.omr.ReadingEvidence.sameMeasure(m, alternative))
+                            audit.merge("${variant.id} challenged ${if (right) "right" else "wrong"}", 1, Int::plus)
+                        if (!right && barRight(mi, alternative.events) == true)
+                            audit.merge("${variant.id} found right alternative", 1, Int::plus)
+                    }
+                }
+                if (!right && auditDetails.size < 30) {
+                    val model = com.inksheets.core.omr.ReadingEvidence.modelEvidence(m)
+                    auditDetails += "${f.nameWithoutExtension} p${page + 1} m${m.number} ${causes[mi].orEmpty().sorted()}: " +
+                        "confidence=${confidence.tier}/${confidence.index}/${confidence.reasons.sortedBy { it.name }}; " +
+                        "heads=${model.minHeadProbability} valueMargin=${model.minValueMargin} dotMargin=${model.minDotMargin} " +
+                        "headVsRest=${model.minHeadVsRestMargin} restVsHead=${model.minRestVsHeadMargin} restKind=${model.minRestKindMargin}; " +
+                        m.events.filterIsInstance<Note>().joinToString { "${it.duration} dotsOdds=${it.odds.drop(4).take(3)}" } +
+                        "; dotSpecialist=${dotEvidence.strongest}; restSpecialist=${restEvidence.candidates}; multiRestSpecialist=${multiRestEvidence.candidates}"
+                }
+            }
+        }
         // -Dinksheets.bench.looks=1: the page read again a few more ways (each staff a little larger,
         // smaller, higher, lower), for how often one of them reads a bar asked about right.
         val looking = System.getProperty("inksheets.bench.looks") != null && net != null && greyPage != null
@@ -689,6 +760,15 @@ class ReadingBenchmark {
             println("COSTS: " + com.inksheets.core.omr.BarChoices.costsFrom(kinds, bars - none).entries.sortedBy { it.value }.joinToString { "\"${it.key}\" to ${"%.2f".format(java.util.Locale.ROOT, it.value)}f" })
         }
         if (looks.isNotEmpty()) println("LOOKS: " + looks.entries.sortedBy { it.key }.joinToString { "${it.key} ${it.value}" })
+        if (audit.isNotEmpty()) {
+            val wrong = audit["green wrong"] ?: 0; val caught = audit["green wrong challenged"] ?: 0
+            val right = audit["green right"] ?: 0; val challenged = audit["green right challenged"] ?: 0
+            println("AUDIT: wrong green challenged ${pct(caught, wrong)} ($caught/$wrong); correct green challenged ${pct(challenged, right)} ($challenged/$right); " +
+                audit.entries.sortedBy { it.key }.joinToString { "${it.key} ${it.value}" })
+            if (auditDetails.isNotEmpty()) println("AUDIT WRONG GREEN:\n  " + auditDetails.joinToString("\n  "))
+            if (dotAuditDetails.isNotEmpty()) println("DOT AUDIT STRONGEST:\n  " + dotAuditDetails.sortedByDescending { it.first }.take(30).joinToString("\n  ") { it.second })
+            if (multiRestAuditDetails.isNotEmpty()) println("MULTI-REST AUDIT HITS:\n  " + multiRestAuditDetails.take(50).joinToString("\n  "))
+        }
         println("WRONG BARS BY CAUSE: " + causes.entries.sortedByDescending { it.value }.joinToString { "${it.key} ${it.value}" })
         println("GRACE: ${grace["bars"] ?: 0} bars with grace notes; correct ${pct(grace["correct"] ?: 0, grace["verifiable"] ?: 0)} (${grace["correct"] ?: 0}/${grace["verifiable"] ?: 0}); " +
             "sure ${grace["sure"] ?: 0}, trust ${pct(grace["sure correct"] ?: 0, grace["sure verifiable"] ?: 0)}; " +

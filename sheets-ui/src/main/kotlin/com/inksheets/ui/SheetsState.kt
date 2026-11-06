@@ -558,6 +558,17 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         get() = readMusicState
         set(on) { readMusicState = on; platform.setPref(K_READ_MUSIC, on.toString()) }
 
+    private var backgroundReadingState by mutableStateOf(platform.pref(K_BACKGROUND_READING) != "false")
+
+    /** Automatic idle-time library reading. Manual Read commands remain available when this is off. */
+    var backgroundReading: Boolean
+        get() = backgroundReadingState
+        set(on) {
+            backgroundReadingState = on
+            platform.setPref(K_BACKGROUND_READING, on.toString())
+            Transcriber.pauseBackground(this, !on)
+        }
+
     /** The music-reading panel is up. */
     var readMusicOpen by mutableStateOf(false)
 
@@ -1578,6 +1589,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
         private const val K_ENTRY_SORT = "sheets_entry_sort"
         private const val K_LISTEN = "sheets_listen_turns"
         private const val K_READ_MUSIC = "sheets_read_music"
+        private const val K_BACKGROUND_READING = "sheets_background_reading"
         private const val K_PAGE_COLOUR = "sheets_page_colour"
     }
 }

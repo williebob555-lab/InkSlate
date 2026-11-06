@@ -15,6 +15,7 @@ class PlaybackPageFollowTest {
     @Test fun `an automatic page turn gets time to settle`() {
         val follow = PlaybackPageFollow(4)
         assertTrue(follow.turnTo(5, 4, 100))
+        assertFalse("the same asynchronous turn is not queued again", follow.turnTo(5, 4, 200))
         follow.observe(4, 500)
         assertFalse(follow.suspended)
         follow.observe(5, 600)

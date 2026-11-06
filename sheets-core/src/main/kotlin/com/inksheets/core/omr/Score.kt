@@ -151,7 +151,9 @@ data class Note(
     /** Original observed page anchors; optional so old readings and hand corrections remain valid. */
     val geometry: NoteGeometry? = null,
     /** MIDI pitches with verified outgoing tie endpoints. Empty with tie=true is the legacy form. */
-    val tiedPitches: List<Int> = emptyList()
+    val tiedPitches: List<Int> = emptyList(),
+    /** Selected head evidence less the strongest rest evidence; compacted from transient classes. */
+    val headVsRestMargin: Float? = null
 ) : Event()
 
 /**
@@ -180,7 +182,12 @@ data class Rest(
     override val x: Float,
     /** Its height on the staff (steps down from the top line), where known: in two voices, which voice's it is. */
     val step: Int? = null,
-    val geometry: SourceGlyph? = null
+    val geometry: SourceGlyph? = null,
+    val confidence: Float = 1f,
+    /** Strongest rest evidence less the strongest head evidence. */
+    val restVsHeadMargin: Float? = null,
+    /** Selected rest-kind evidence less the strongest other rest kind. */
+    val restKindMargin: Float? = null
 ) : Event()
 
 /** All source geometry is in absolute reading-page pixels, never reflow coordinates. */

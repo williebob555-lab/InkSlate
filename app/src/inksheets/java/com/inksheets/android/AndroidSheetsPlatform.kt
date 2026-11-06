@@ -264,8 +264,13 @@ class AndroidSheetsPlatform(
         return object : com.inksheets.ui.PagePeek {
             override val pageCount = source.pageCount
             override val readingPixelBudget: Int get() = Companion.readingPixelBudget()
-            override fun render(index: Int, widthPx: Int) =
-                runCatching<androidx.compose.ui.graphics.ImageBitmap?> { source.renderPage(index, widthPx)?.asImageBitmap() }.getOrNull()
+            override fun render(index: Int, widthPx: Int): androidx.compose.ui.graphics.ImageBitmap? = try {
+                source.renderPage(index, widthPx)?.asImageBitmap()
+            } catch (error: OutOfMemoryError) {
+                // The reader owns recovery: it stops automatic work and clears every rebuildable
+                // cache. Returning null here used to hide OOM and let a later allocation retry it.
+                throw error
+            } catch (_: Throwable) { null }
             override fun printed(index: Int) = if (file.extension.equals("pdf", true)) AndroidPrinted.read(context, file, index) else null
             override fun close() = source.close()
         }
@@ -416,8 +421,11 @@ class AndroidSheetsPlatform(
         internal fun readingPixelBudget(maxHeap: Long, availableHeap: Long): Int {
             if (maxHeap <= 0L || availableHeap <= 0L) return 0
             val reserve = maxOf(64L shl 20, maxHeap / 6)
-            val byWholeHeap = maxHeap / 48
-            val byCurrentHeadroom = (availableHeap - reserve).coerceAtLeast(0L) / 20
+            // A background audit retains greyscale plus base and alternate binary rasters while
+            // recognition has its own strips/planes. Leave more headroom than the original
+            // single-pass reader: Android may also hold the visible Compose/PDF page natively.
+            val byWholeHeap = maxHeap / 64
+            val byCurrentHeadroom = (availableHeap - reserve).coerceAtLeast(0L) / 28
             val pixels = minOf(MAX_READING_PIXELS, byWholeHeap, byCurrentHeadroom)
             return if (pixels >= MIN_READING_PIXELS) pixels.coerceAtMost(Int.MAX_VALUE.toLong()).toInt() else 0
         }

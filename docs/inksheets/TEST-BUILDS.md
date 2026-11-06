@@ -4,50 +4,81 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
-- **Export selected instruments as a real multi-track MIDI.** The score tools can now build an
-  ensemble file from complete readings already cached on the device, with one named track per
-  selected instrument and a shared conductor track. Unread parts are reported and omitted; the
-  export never starts recognition or waits on every library part in the normal reading path.
-- **Multi-part scores now have a lightweight semantic foundation.** Parts may own multiple staves,
-  easy/advanced alternatives are explicit, source measures map to durable canonical bars, and
-  source-file/video provenance stays separate from the notation. Existing single-part caches are
-  adapted rather than migrated.
-- **Stage and microphone placement is an opt-in score tool.** The top-down editor starts from
-  automatic concert-band seating and a stereo cardioid pair. Performers and microphones can be
-  dragged; gain, pan, pickup pattern, mute, and solo can be adjusted. Scenes use isolated,
-  versioned per-song sidecars and a corrupt sidecar falls back to the preset. Stage audio machinery
-  still does not initialize during ordinary sheet reading. Desktop and Android now expose a
-  separate stereo output capability for the future live stage audition; existing mono playback is
-  unchanged.
-- **Band playback can use only the instruments you choose.** Score tools now has a Band instruments
-  picker scoped to the current song. Unselected parts are not read or synthesized when Band
-  accompaniment starts; changing songs returns to all available parts.
-- **Video and full-score work has bounded core seams, not reader overhead.** Optional video jobs
-  can enforce frame/byte/page budgets, select sharp scene changes, merge nearby frames to remove
-  temporary obstructions, and retain time provenance. Detected staff geometry can be grouped into
-  reviewable score systems. Decoders, URL resolvers, staff detection, and review UI are not loaded
-  or invoked by normal single-part reading.
+- **Background reading can be turned off independently.** Settings → Read Music now has a
+  Background reading switch. Manual Read and Fix actions remain available when it is off.
+- **Automatic reading is lower-impact and more memory-bounded.** It waits after app input, yields
+  during display work and playback, uses one recognition worker in the background, adapts raster
+  size to current heap headroom, and clears/cancels rebuildable work after allocation failure rather
+  than immediately retrying it. Page and decoded-score caches are smaller on constrained devices.
+- **Multi-pass reading now records evidence instead of trusting green once.** Idle audits revisit
+  every generated measure, including green ones, at several scales and crops. Dot, rest and
+  multi-measure-rest specialists contribute separate evidence, and songs receive a confidence
+  priority for later passes. These passes do not yet silently replace notation or recolour bars.
+- **Fix distinguishes triplet failures.** “Triplet missing” offers readings that add a triplet;
+  “Triplet invented” offers readings that remove one. The direction is retained in accepted-fix
+  and skipped-bar training records.
+- **Playback following is steadier.** An asynchronous automatic page turn is requested once rather
+  than re-queued every 100 ms, and an isolated under-filled green measure in the middle of a passage
+  no longer collapses the playback timeline and races the marker across the page.
+- **Interaction work takes priority.** Page gestures, keys and buttons extend a quiet window before
+  automatic recognition resumes; library planning no longer opens every measure audit while a song
+  is being switched.
 
-- **Music reading no longer exhausts a 512 MB Android heap.** The page thresholding pass now uses rolling row-sized totals instead of two 64-bit buffers as large as the whole page, and it reuses the reader's existing greyscale pixels. Android also gives each recognition raster a live heap-relative pixel ceiling, pauses automatic reading when that safe budget disappears, bounds decoded-score and Fix-picture caches, and clears them on system memory pressure. The replacement thresholding is pixel-for-pixel equivalent in tests; the reported Galaxy Tab crash still needs confirmation on the device.
+## 1.2.2-test.320 — playback diagnostics
 
-- **Android memory use is bounded during performance tools.** Crash reports from build 313 showed `OutOfMemoryError`: page rasters and several independent image/tool caches could together consume more than a tablet heap. InkSheets now gives resident pages a smaller heap-relative budget, caps Mask's notation raster at about 8 MB, recycles evicted Android bitmaps and falls back to vector drawing if that optional raster cannot be allocated.
-- **Follow-up after device crashes in 314.** The first bound was applied after a whole read-ahead batch, and every prefetched page was mistakenly protected as if it were visible. Eviction now happens after each page and protects only pages actually on screen. Background setlist tabs no longer each retain a full-page warm raster, released surfaces explicitly recycle page/turn images, whole-page music renders against the screen's shorter side, and the disk page cache will not make an oversized second pixel copy. Thumbnail and embedded-image caches now scale with the device heap and clear on Android memory pressure.
+- Added visible render-ahead buffer/underrun status to playback so an audio recovery can be told
+  apart from a score-position error.
+- Added a visible action to resume automatic score following after a deliberate manual page turn.
+- This build includes all alignment changes from 319; it did not add another alignment algorithm.
 
-- **One PDF can now supply every part.** Automatic instrument reading detects titled instrument pages inside a combined parts PDF and turns them into inclusive multi-page ranges that still share the original file. Existing bookmarks, recording excerpt pairings and page turns are remapped to the new ranges. The 142-page “Give Us This Day” pack is covered as 34 parts, including Piccolo pages 1–4, Euphonium 102–105 and Piano 116–124.
+## 1.2.2-test.319 — playback alignment and percussion
 
-- **Bookmarking from the reader is direct again.** The footer button marks or unmarks the page immediately instead of opening the heavier excerpt editor.
-- **Bookmark removal no longer traps navigation.** A removed bookmark still fades while the Bookmarks tab remains open, but leaving the tab commits the removal immediately instead of waiting for the animation.
+- Scoped solo playback and bar navigation to the current instrument inside a combined-parts PDF,
+  keeping internal cache offsets out of the displayed bar number.
+- Replaced cross-part first-match-by-number alignment with monotonic written-order alignment that
+  follows shared repeats and leaves explicit silence for multi-measure-rest gaps.
+- Manual page browsing suspends automatic playback following. Playback rendering now prefills a
+  bounded queue and avoids quadratic note scheduling on long/dense scores.
+- Added routing and synthesis for named orchestral and pitched percussion, including corrected MIDI
+  channel/program behavior.
 
-- **Opening tools preserves the view.** Opening the annotation bar, full tools, shelf or side rail no longer recentres the page. Closing either tool surface still fits the page as before.
+## 1.2.2-test.318 — multipart, stage and export foundations
 
-- **Clean stays off until explicitly requested.** Old Clean data without a saved visibility choice is hidden on open, so it cannot appear unexpectedly during a performance.
+- Added selected-instrument Band playback controls and multi-track MIDI export from already cached
+  readings.
+- Added the semantic multipart score/alignment model used by later work, plus bounded core pieces
+  for full-score/video import. The normal reader did not yet construct that model automatically.
+- Added an opt-in stage/microphone editor with versioned per-song scenes and stereo-output
+  capability. Existing live score playback remained mono; the stage was not yet audible.
 
-- **Expanded tools stay on the dock's edge.** Opening a category replaces the shelf or the selected left/right rail, with the music fitted beside it. Switching categories keeps the same layout; Score gets a small extra allowance when needed.
-- **Denser Score tools.** Less padding, a compact read-status line and more columns on wide shelves leave more actual tools visible. Playback sound and tempo-ramp settings open within the dock, with Back returning to the category.
-- **Recording excerpt menus stay in the dock.** Choosing a pairing or entering a page range no longer requires a separate popup over the score.
-- **Recording opens on playback, not setup.** The selected recording's transport, waveform and loop handles lead the expanded view. Record remains a direct microphone action; the recording list and detailed settings replace that same dock page when opened.
-- **Play Together starts with your role.** Lead/Follow choices, relevant rehearsal shortcuts and connected-device heartbeat feedback replace the crowded landing page. Connection administration and remote settings remain available as inline detail pages.
-- **Mask drawing reuses unchanged music.** Static notation/retained print and mask history are cached separately from the moving brush. Native masked drawing can reuse a bounded raster of the unchanged notation at the current display scale; device responsiveness still needs verification.
+## 1.2.2-test.317 — reader heap bound
+
+- Delivered the reader-heap changes whose 316 workflow failed: rolling threshold totals, reuse of
+  greyscale pixels, a live heap-relative recognition raster ceiling, bounded decoded/Fix caches,
+  and cancellation/cleanup on Android memory pressure.
+- Moved the Android reader memory test to the InkSheets-specific test source set so the build could
+  complete. Device confirmation was still required.
+
+## 1.2.2-test.316 — not published successfully
+
+- The workflow for this build failed. Its Android reader-heap changes were included in successful
+  build 317 instead; there was no complete 316 installer to evaluate.
+
+## 1.2.2-test.315 — Android page-raster OOM follow-up
+
+- Evicted read-ahead pages after each page and protected only pages actually visible, instead of
+  protecting every prefetched page until a whole batch ended.
+- Removed full-page warm rasters from background setlist tabs, recycled released page/turn images,
+  bounded whole-page music rendering and disk-cache copies, and scaled image caches with heap size.
+
+## 1.2.2-test.314 — Android memory, combined PDFs and dock corrections
+
+- Bounded resident pages and Mask notation rasters, recycled evicted Android bitmaps, and allowed
+  optional masked rendering to fall back to vectors after allocation failure.
+- Detected titled instrument ranges in a combined parts PDF and remapped bookmarks, recording
+  excerpts and page turns to those shared-file ranges.
+- Restored direct bookmarking, fixed bookmark-removal navigation, kept the page stable while tools
+  open, made Clean opt-in on old data, and introduced the in-place denser music dock/category flow.
 
 ## 1.2.2-test.313 — desktop load and update history
 

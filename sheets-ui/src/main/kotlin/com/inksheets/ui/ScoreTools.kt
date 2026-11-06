@@ -790,7 +790,7 @@ internal object ScoreTools {
         // What it really is, kept for teaching the reader (the bar as it was read: its place on the page).
         scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
             val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
-            Transcriber.recordFix(s, File(path), read, w, choice.events, how, noneCount)
+            Transcriber.recordFix(s, File(path), read, w, choice.events, how, noneCount, focus)
         }
         next(s)
     }
@@ -859,7 +859,7 @@ internal object ScoreTools {
     /** Putting the bar up's number right (Fix's "Bar number"). */
     var numbering by mutableStateOf(false)
 
-    /** The readings offered again, all about [what] (Pitch, Length, Notes, Rests) - or as before (null). */
+    /** The readings offered again, all about [what] (including directional triplet failures) - or as before (null). */
     fun narrow(s: SheetsState, what: String?) {
         val m = barUp(s) ?: return
         focus = what
@@ -948,7 +948,7 @@ internal object ScoreTools {
         if (path != null && m != null) history += Triple(checkAt, m.number, fixesOf(path)[m.number])
         if (path != null && m != null) scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
             val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
-            Transcriber.recordSkip(s, File(path), read, w, rejected + offered.map { it.events }, noneCount)
+            Transcriber.recordSkip(s, File(path), read, w, rejected + offered.map { it.events }, noneCount, focus)
         }
         next(s)
     }

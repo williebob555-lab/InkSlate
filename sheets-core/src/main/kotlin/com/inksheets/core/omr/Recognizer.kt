@@ -5,6 +5,16 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+private fun classMargin(values: List<Float>, selected: IntRange, competing: IntRange): Float? =
+    values.takeIf { it.size == 12 }?.let { selected.maxOf { i -> it[i] } - competing.maxOf { i -> it[i] } }
+
+private fun restKindMargin(values: List<Float>, base: Int): Float? {
+    val selected = when (base) { 1 -> 3; 2 -> 4; 4 -> 5; 8 -> 6; 16, 32 -> 7; else -> return null }
+    return values.takeIf { it.size == 12 }?.let { odds ->
+        odds[selected] - (3..7).filter { it != selected }.maxOf { odds[it] }
+    }
+}
+
 /**
  * Reading printed music off a page picture (optical music recognition).
  *
@@ -18,6 +28,16 @@ import kotlin.math.roundToInt
  */
 /** [adapt]: fit the notehead's size to each page, and take borderline heads that carry a stem (off only to measure against). */
 class Recognizer(private val debug: Boolean = false, private val adapt: Boolean = true) {
+    companion object {
+        /** Staff fits used for the immediate audit and the wider idle audit. Public so benchmark
+         * evidence is produced by exactly the variants shipped in the background reader.
+         */
+        fun lookVariants(deeper: Boolean): List<Pair<Float, Float>> = if (deeper) {
+            listOf(1.15f to 0f, 0.87f to 0f, 1.08f to 0.25f, 0.93f to -0.25f)
+        } else {
+            listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f)
+        }
+    }
 
     /** One staff: its five lines' heights at every x from [left] to [right]. */
     class Staff(val left: Int, val right: Int, val lines: Array<FloatArray>, val space: Float) {
@@ -1050,8 +1070,8 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
      * as [lookAgain] looks at one, but the staff read once for each look rather than once a bar: what
      * each look saw of each, by its number (numbered as read).
      */
-    fun lookAgainStaff(ink: Ink, grey: IntArray, net: Net, bars: List<Measure>, first: Measure, deeper: Boolean = false): Map<Int, List<Measure>> {
-        val looks = if (deeper) listOf(1.15f to 0f, 0.87f to 0f, 1.08f to 0.25f, 0.93f to -0.25f) else listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f)
+    fun lookAgainStaff(ink: Ink, grey: IntArray, net: Net, bars: List<Measure>, first: Measure, deeper: Boolean = false,
+                       looks: List<Pair<Float, Float>> = lookVariants(deeper)): Map<Int, List<Measure>> {
         val out = HashMap<Int, MutableList<Measure>>()
         for (look in looks) {
             val r = Recognizer().read(ink, first.page, first.number, Carry(first.clef, first.key, first.time), grey = grey, net = net, look = look, onlyStaff = first.staff)
@@ -1062,8 +1082,7 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
     }
 
     fun lookAgain(ink: Ink, grey: IntArray, net: Net, m: Measure, deeper: Boolean = false): List<Measure> {
-        val looks = if (deeper) listOf(1.15f to 0f, 0.87f to 0f, 1.08f to 0.25f, 0.93f to -0.25f) else listOf(1.08f to 0f, 0.93f to 0f, 1f to 0.15f, 1f to -0.15f)
-        return looks.mapNotNull { look ->
+        return lookVariants(deeper).mapNotNull { look ->
             val r = Recognizer().read(ink, m.page, m.number, Carry(m.clef, m.key, m.time), grey = grey, net = net, look = look, onlyStaff = m.staff)
             r.measures.firstOrNull { o -> o.staff == m.staff && o.bars == 1 && abs(o.box.left - m.box.left) <= m.space * 0.6f && abs(o.box.right - m.box.right) <= m.space * 0.6f }
         }
@@ -3817,7 +3836,9 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }
             if (staves.any { o -> o !== s && abs((o.top + o.bottom) / 2f - r.y) < abs(mid - r.y) && r.x >= o.left && r.x <= o.right }) return@mapNotNull null
             val dotted = p.symbols.any { d -> d.kind == Printed.Kind.DOT && d.x > r.x + r.width * 0.8f && d.x < r.x + r.width + sp * 1.2f && abs(d.y - r.y) < sp * 1.5f }
-            Rest(Duration(base, if (dotted) 1 else 0), r.x, ((r.y - s.lineY(0, r.x.roundToInt())) / (sp / 2)).roundToInt(),geometry=sourceGlyph(r,sp)) to 1f
+            Rest(Duration(base, if (dotted) 1 else 0), r.x, ((r.y - s.lineY(0, r.x.roundToInt())) / (sp / 2)).roundToInt(),
+                geometry=sourceGlyph(r,sp), confidence=r.confidence,
+                restVsHeadMargin=classMargin(r.classOdds, 3..7, 0..2), restKindMargin=restKindMargin(r.classOdds, base)) to 1f
         }
     }
 
@@ -4223,8 +4244,10 @@ class Recognizer(private val debug: Boolean = false, private val adapt: Boolean 
             }else emptyList()
             // Its stem's direction where its stem was seen (a trained reader's head whose stem was not found on the page: unknown).
             val seen = h.stemX >= 0 && (this.printed?.learned != true || h.stemEnd != 0)
+            val symbol = symbolOf[h]
             events += Note(c.map { it.step }.sorted(), pitches, dur, c.minOf { it.x }.toFloat(), accs, h.up.takeIf { seen }, c.minOf { it.score }, marks, tied,
-                odds = symbolOf[h]?.odds.orEmpty(),geometry=noteGeometry(clean,s,c,dur),tiedPitches=tiedKeys)
+                odds = symbol?.odds.orEmpty(),geometry=noteGeometry(clean,s,c,dur),tiedPitches=tiedKeys,
+                headVsRestMargin=classMargin(symbol?.classOdds.orEmpty(), 0..2, 3..7))
         }
         // As printed: where each stem ends, and which notes one beam joins - a stroke along from one
         // stem's end to the next's - so a redrawn bar keeps the print's groups and their slant.

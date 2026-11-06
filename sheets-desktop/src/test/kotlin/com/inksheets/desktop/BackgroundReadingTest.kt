@@ -69,6 +69,20 @@ class BackgroundReadingTest {
         fail("${file.name} did not finish its cached pages")
     }
 
+    @Test fun `background reading switch persists without disabling an explicit read`() {
+        val root = tmp.newFolder()
+        val manual = document(root, "manual-only.pdf")
+        val platform = Stand(root, mapOf(manual.name to 1))
+        val state = SheetsState(platform)
+        state.backgroundReading = false
+        assertFalse(SheetsState(platform).backgroundReading)
+
+        val done = CountDownLatch(1)
+        Transcriber.read(state, manual) { done.countDown() }
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        assertTrue(Transcriber.cached(state, manual)?.hasRead(0) == true)
+    }
+
     @Test fun `resource pressure blocks automatic scans but explicit reading still completes and background resumes`() {
         val root=tmp.newFolder()
         val automatic=document(root,"automatic.pdf")

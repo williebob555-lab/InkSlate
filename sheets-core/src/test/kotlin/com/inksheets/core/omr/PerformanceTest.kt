@@ -25,6 +25,13 @@ class PerformanceTest {
     }
 
     @Test
+    fun `an isolated short green read does not collapse the middle of playback`() {
+        val full = listOf(note(10f), note(20f), note(30f), note(40f))
+        val p = play(bar(1, full), bar(2, listOf(note(10f))), bar(3, full))
+        assertEquals(listOf(0L, 4000L, 8000L), p.barStarts.toList())
+    }
+
+    @Test
     fun `tied notes are one note held, across the barline too`() {
         val p = play(bar(1, listOf(note(10f), note(20f), note(30f), note(40f, tie = true))), bar(2, listOf(note(10f, base = 2), note(50f, base = 2))))
         // Four in bar 1, the last held into bar 2's first: four tones in all, not six... one of them 3 beats long.

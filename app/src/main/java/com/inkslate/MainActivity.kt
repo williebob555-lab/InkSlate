@@ -55,10 +55,20 @@ class MainActivity : ComponentActivity() {
      * table knows is dealt with before anything else sees it, unless a text field is taking typing.
      */
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) com.inkslate.core.RenderGate.touch(3000)
         val typing = (getSystemService(INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
             ?.isAcceptingText == true
         if (com.inkslate.data.PedalKeys.handle(this, event, typing)) return true
         return super.dispatchKeyEvent(event)
+    }
+
+    /** Every button, page gesture and dialog gets foreground priority before its handler runs. */
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN ||
+            event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
+            com.inkslate.core.RenderGate.touch(3000)
+        }
+        return super.dispatchTouchEvent(event)
     }
 
     override fun onResume() {

@@ -18,6 +18,11 @@ internal class PlaybackPageFollow(startPage: Int) {
             if (!suspended) expectedPage = shownPage
             return false
         }
+        // A viewer page turn is asynchronous. The 100 ms playback watcher can see the old page
+        // several more times before it settles; issuing the same jump each time queues competing
+        // animations/loads and can make playback appear to skip around. One request stays pending
+        // until the viewer reaches it or its settling deadline expires.
+        if (page == expectedPage && nowMs <= automaticTurnDeadline) return false
         expectedPage = page
         automaticTurnDeadline = nowMs + 1_200L
         return true

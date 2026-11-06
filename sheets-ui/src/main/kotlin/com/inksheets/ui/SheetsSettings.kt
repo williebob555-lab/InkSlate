@@ -235,7 +235,24 @@ private fun LibraryHealth(state: SheetsState, health: Boolean = true, experiment
             }
             androidx.compose.material3.Switch(checked = state.readMusic, onCheckedChange = { state.readMusic = it })
         }
-        if (state.readMusic) InstrumentsSettings(state)
+        if (state.readMusic) {
+            Row(
+                Modifier.fillMaxWidth().clickable { state.backgroundReading = !state.backgroundReading }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Background reading")
+                    Text(
+                        "Read and audit the library only while the app is idle. Turn this off without disabling manual Read commands.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                androidx.compose.material3.Switch(checked = state.backgroundReading,
+                    onCheckedChange = { state.backgroundReading = it })
+            }
+            InstrumentsSettings(state)
+        }
         WatchSettings(state)
     }
     }

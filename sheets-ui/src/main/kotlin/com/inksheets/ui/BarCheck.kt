@@ -202,7 +202,8 @@ private fun FixFoot(state: SheetsState, m: Measure, short: Boolean) {
         }
         // What's wrong, always here in the same order: every answer in a row where there is room;
         // on a phone one chip opening the list, so the readings above keep their room.
-        val answers = listOf("Pitch", "Length", "Extra note", "Missing note", "Rests", "Grace note", "Clef, key, time", "Bar number", "Not one bar")
+        val answers = listOf("Pitch", "Length", "Extra note", "Missing note", "Rests", "Grace note",
+            "Triplet missing", "Triplet invented", "Clef, key, time", "Bar number", "Not one bar")
         fun choose(what: String) = when (what) {
             "Rests" -> if(m.events.isNotEmpty() && m.events.all { it is Rest }) { ScoreTools.restCounting=true } else ScoreTools.narrow(state, if(ScoreTools.focus==what) null else what)
             "Clef, key, time" -> ScoreTools.sigDraft = if (ScoreTools.sigDraft != null) null else com.inksheets.core.omr.SigFix(m.clef, m.key.fifths, m.time.beats, m.time.beatType)

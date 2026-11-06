@@ -70,6 +70,9 @@ object Learned {
             // A head's left edge and width as a font's character would give them; the rest by their middles.
             val width = when (kind) { Printed.Kind.HEAD_WHOLE -> space * 1.6f; Printed.Kind.HEAD_BLACK, Printed.Kind.HEAD_HALF -> space * 1.18f; Printed.Kind.DOT -> space * 0.4f; else -> space }
             var beams = -1; var dots = -1; var conf = p; var odds = emptyList<Float>()
+            // Only heads and rests need cross-class evidence. Avoid twelve boxed floats on every
+            // dot and accidental peak: a busy page can contain hundreds of those transient symbols.
+            val classOdds = if (c <= 7) List(NC) { cc -> Math.round(sigmoid(at(cc, y, x)) * 1000f) / 1000f } else emptyList()
             if (c <= 2) {
                 beams = argmax(4) { at(NC + 2 + it, y, x) }
                 dots = argmax(3) { at(NC + 6 + it, y, x) }
@@ -78,7 +81,8 @@ object Learned {
                 // How sure, all told: that it is a head, and of its value.
                 conf = p * softmaxMax(4) { at(NC + 2 + it, y, x) } * softmaxMax(3) { at(NC + 6 + it, y, x) }
             }
-            found += Found(Printed.Symbol(kind, px - width / 2, py, width, space * 4f, beams = beams, dots = dots, confidence = conf, odds = odds), abs(row - (Strips.TOP + 20f)))
+            found += Found(Printed.Symbol(kind, px - width / 2, py, width, space * 4f, beams = beams, dots = dots,
+                confidence = conf, odds = odds, classOdds = classOdds), abs(row - (Strips.TOP + 20f)))
         }
         return found
     }

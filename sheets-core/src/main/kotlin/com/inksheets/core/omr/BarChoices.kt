@@ -31,7 +31,7 @@ object BarChoices {
         // Fitted on the tuning songs as scans (557 bars read wrong, 95 right a change or two away).
         "rest" to 0.84f, "remove" to 1.17f, "value" to 1.21f, "pitch" to 3.19f, "chord-head" to 3.19f, "dot" to 3.48f,
         // Never the right change there: as dear as the rarest seen.
-        "add" to 3.5f, "triplet" to 3.5f, "hollow" to 3.5f,
+        "add" to 3.5f, "triplet" to 3.5f, "triplet-add" to 3.5f, "triplet-remove" to 3.5f, "hollow" to 3.5f,
         // A beamed group's value all at once (one beam counted wrong is every note under it wrong),
         // and a rest taken out (a dynamic, a letter or a breath mark read as one).
         // (Measured on the held-out scans: a rest taken out is the right change as often as -ln says;
@@ -134,10 +134,15 @@ object BarChoices {
         }
         // What the reader saw and let go, put back.
         for (a in m.maybe) out += Edit(-1, "add", cost("add", 1f - ((a as? Note)?.confidence ?: 0.5f)), "${name(a)} there after all", add = a)
-        // Three equal notes or rests together, taken as a triplet.
+        // Three equal notes or rests together, taken as a triplet. Keep adding and removing a
+        // tuplet separate: Fix can then follow an explicit "missing" or "invented" report and the
+        // training record preserves which failure the reader made.
         for (i in 0..events.size - 3) {
             val d = events[i].duration
-            if (!d.tuplet && d.dots == 0 && (1..2).all { events[i + it].duration == d }) out += Edit(i, "triplet", cost("triplet", 0f), "a triplet from the ${named(events, i)}")
+            if (d.dots == 0 && (1..2).all { events[i + it].duration == d }) {
+                if (!d.tuplet) out += Edit(i, "triplet-add", cost("triplet-add", 0f), "a triplet from the ${named(events, i)}")
+                else if (d.actual == 3 && d.normal == 2) out += Edit(i, "triplet-remove", cost("triplet-remove", 0f), "the triplet from the ${named(events, i)} is not a triplet")
+            }
         }
         return out.sortedBy { it.cost }
     }
@@ -173,13 +178,17 @@ object BarChoices {
                 for ((k, base) in e.group) { out[k] = out[k]?.let { withBase(it, base) }; touched += k }
                 continue
             }
-            if (e.kind == "triplet") {
+            if (e.kind == "triplet-add" || e.kind == "triplet-remove") {
                 if ((0..2).any { e.index + it in touched }) return null
                 for (k in 0..2) {
                     val ev = out[e.index + k] ?: return null
                     out[e.index + k] = when (ev) {
-                        is Note -> ev.copy(duration = ev.duration.copy(actual = 3, normal = 2))
-                        is Rest -> ev.copy(duration = ev.duration.copy(actual = 3, normal = 2))
+                        is Note -> ev.copy(duration = ev.duration.copy(
+                            actual = if (e.kind == "triplet-add") 3 else 1,
+                            normal = if (e.kind == "triplet-add") 2 else 1))
+                        is Rest -> ev.copy(duration = ev.duration.copy(
+                            actual = if (e.kind == "triplet-add") 3 else 1,
+                            normal = if (e.kind == "triplet-add") 2 else 1))
                     }
                     touched += e.index + k
                 }
@@ -264,13 +273,15 @@ object BarChoices {
     /** What the player can say is off with a bar's readings, and the kinds of change each means. */
     val FOCUS: Map<String, Set<String>> = linkedMapOf(
         "Pitch" to setOf("pitch", "chord-head"),
-        "Length" to setOf("value", "dot", "hollow", "triplet", "group"),
+        "Length" to setOf("value", "dot", "hollow", "triplet-add", "triplet-remove", "group"),
         "Notes" to setOf("remove", "add", "rest-out", "chord-head"),
         "Rests" to setOf("rest", "rest-out"),
         // What the player can say is wrong, in their words (Fix's "What's wrong" row).
         "Extra note" to setOf("remove", "rest-out"),
         "Missing note" to setOf("add"),
-        "Grace note" to setOf("remove")
+        "Grace note" to setOf("remove"),
+        "Triplet missing" to setOf("triplet-add"),
+        "Triplet invented" to setOf("triplet-remove")
     )
 
     /** Every reading a change or two away (for measuring which kinds of change are right how often). */
