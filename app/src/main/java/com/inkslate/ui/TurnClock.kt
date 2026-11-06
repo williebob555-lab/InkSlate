@@ -19,6 +19,13 @@ object TurnClock {
         watchFrames()
     }
 
+    /** Start timing an in-document page turn unless a song/instrument switch is already timed. */
+    fun startPage(title: String, page: Int): Boolean {
+        if (startedAt != 0L) return false
+        start("$title page ${page + 1}")
+        return true
+    }
+
     @Volatile private var watchUntil = 0L
     @Volatile private var stalls = 0
     private var lastFrameNs = 0L
@@ -40,7 +47,17 @@ object TurnClock {
                     if (gap >= STALL_MS && stalls < 5) {
                         stalls++
                         val since = android.os.SystemClock.uptimeMillis() - (watchUntil - WATCH_MS)
-                        EventLog.warn("turn", "Screen froze ${gap}ms, ${since}ms after turning to ${to ?: "a song"}")
+                        val rt = Runtime.getRuntime()
+                        val heap = (rt.totalMemory() - rt.freeMemory()) / 1048576
+                        val marks = com.inkslate.core.PageMarkStats
+                        val draw = com.inkslate.ink.RenderStats
+                        EventLog.warn(
+                            "turn",
+                            "Screen froze ${gap}ms, ${since}ms after turning to ${to ?: "a song"}; " +
+                                "heap ${heap}/${rt.maxMemory() / 1048576}MB, pages ${draw.pagesResident}, " +
+                                "overlay ${"%.1f".format(draw.lastMusicMarksMs)}ms, " +
+                                "overlay build ${"%.1f".format(marks.lastBuildMs)}ms/${marks.lastMarkCount} marks"
+                        )
                     }
                 }
                 lastFrameNs = frameNs

@@ -349,3 +349,36 @@ class PageMark(val kind: Kind, val contours: List<FloatArray>, val color: Int, v
             PageMark(Kind.LINE, listOf(floatArrayOf(x1, y1, x2, y2)), color, width)
     }
 }
+
+/** Allocation-free counters shared by the score overlay and the Android diagnostics screen. */
+object PageMarkStats {
+    @Volatile var builds: Long = 0
+        private set
+    @Volatile var lastBuildMs: Float = 0f
+        private set
+    @Volatile var worstBuildMs: Float = 0f
+        private set
+    @Volatile var lastMarkCount: Int = 0
+        private set
+
+    fun recordBuild(nanos: Long, marks: Int) {
+        val ms = nanos / 1_000_000f
+        builds++
+        lastBuildMs = ms
+        lastMarkCount = marks
+        if (ms > worstBuildMs) worstBuildMs = ms
+    }
+
+    fun reset() {
+        builds = 0
+        lastBuildMs = 0f
+        worstBuildMs = 0f
+        lastMarkCount = 0
+    }
+}
+
+/** A stable, expensive page layer plus the handful of marks that move during playback. */
+interface LayeredPageMarks : List<PageMark> {
+    val staticMarks: List<PageMark>
+    val transientMarks: List<PageMark>
+}

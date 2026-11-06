@@ -120,8 +120,8 @@ class SheetsTouchTest {
             tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Metronome settings"), useUnmergedTree = true).onFirst())
             shot("metronome")
             println("after tapping Metronome: page ${page()}")
-            // Close the settings panel explicitly; its settings launcher is not a toggle.
-            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Close"), useUnmergedTree = true).onFirst())
+            // Close the inline category explicitly; its settings launcher is not a toggle.
+            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Compact categories"), useUnmergedTree = true).onFirst())
             assertTrue("Metronome settings closed", !sheets().metronomeOpen)
 
             // Pages: a tap at the right, one at the left, a flick each way.

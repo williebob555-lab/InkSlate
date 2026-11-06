@@ -74,6 +74,10 @@ private const val PRELOAD_AFTER_TURN_MS = 700L
 /** And between one song read ahead and the next, so no two are built in the same moment. */
 private const val PRELOAD_BETWEEN_MS = 400L
 
+/** Hidden editor preloads cost more memory than they save on the 512 MB class of music tablets. */
+internal fun songPreloadOffsets(maxHeap: Long): List<Int> =
+    if (maxHeap <= 768L * 1024 * 1024) emptyList() else listOf(1, -1, 2)
+
 /**
  * The application: a row of tabs across the top, each an open document, plus a pinned Home tab for
  * finding the next one.
@@ -179,7 +183,8 @@ fun AppRoot(
         // then the one after next.
         if (com.inkslate.AppFlavor.musicView) {
             val at = tabs.indexOfFirst { it.id == id }
-            val ahead = listOf(at + 1, at - 1, at + 2).mapNotNull { tabs.getOrNull(it) }
+            val ahead = songPreloadOffsets(Runtime.getRuntime().maxMemory())
+                .mapNotNull { offset -> tabs.getOrNull(at + offset) }
                 .filter { it.title != null && !it.closeRequested.value && !it.loaded }
             preloading?.cancel()
             if (ahead.isNotEmpty()) preloading = scope.launch {
@@ -270,6 +275,12 @@ fun AppRoot(
     }
 
     fun swapTab(old: File, new: File) {
+        val rt = Runtime.getRuntime()
+        val used = (rt.totalMemory() - rt.freeMemory()) / 1048576
+        com.inkslate.data.EventLog.info(
+            "switch",
+            "Instrument switch ${old.name} -> ${new.name}; heap ${used}/${rt.maxMemory() / 1048576}MB"
+        )
         val was = tabs.indexOfFirst { it.file.absolutePath == old.absolutePath && !it.closeRequested.value }
         openFile(new)
         val fresh = tabs.indexOfFirst { it.file.absolutePath == new.absolutePath && !it.closeRequested.value }

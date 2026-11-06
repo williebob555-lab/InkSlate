@@ -288,6 +288,7 @@ class AndroidSheetsPlatform(
             ?: android.os.Build.MODEL).ifBlank { "Tablet" }
 
     override fun log(message: String) = EventLog.info("sheets", message)
+    override fun warn(message: String) = EventLog.warn("sheets", message)
 
     /** Wi-Fi out of power saving, while leading or following: the lowest-latency lock there is. */
     private val wifiLock: android.net.wifi.WifiManager.WifiLock? by lazy {
@@ -477,16 +478,29 @@ private class TrackOut : AudioOut, StereoAudioOut {
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build()
                     )
-                    // 120 ms held ahead at least: the smallest the device allows breaks up at any pause, and
-                    // a loaded phone or tablet (xruns) needs room. (The instrument is also rendered ahead: see Sound.)
-                    .setBufferSizeInBytes(maxOf(min * 2, sampleRate * 12 / 100 * 4))
+                    // A quarter second at the device boundary. Ensemble synthesis has its own
+                    // render-ahead queue, but Android can still deschedule this writer during GC
+                    // or a PDF render; 120 ms proved insufficient on 512 MB tablets.
+                    .setBufferSizeInBytes(maxOf(min * 2, sampleRate * 24 / 100 * 4))
                     .setPerformanceMode(AudioTrack.PERFORMANCE_MODE_POWER_SAVING)
                     .build()
                 track.play()
                 val block = FloatArray(480)
+                var reportedUnderruns = track.underrunCount
+                var nextHealthAt = android.os.SystemClock.elapsedRealtime() + 1_000L
                 while (running) {
                     fill(block)
-                    track.write(block, 0, block.size, AudioTrack.WRITE_BLOCKING)
+                    val wrote = track.write(block, 0, block.size, AudioTrack.WRITE_BLOCKING)
+                    if (wrote != block.size) EventLog.warn("audio", "AudioTrack wrote $wrote of ${block.size} frames")
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now >= nextHealthAt) {
+                        val xruns = track.underrunCount
+                        if (xruns > reportedUnderruns) {
+                            EventLog.warn("audio", "Android audio output underrun +${xruns - reportedUnderruns} (total $xruns)")
+                            reportedUnderruns = xruns
+                        }
+                        nextHealthAt = now + 1_000L
+                    }
                 }
                 track.stop()
                 track.release()

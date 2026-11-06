@@ -1179,7 +1179,7 @@ class DrawingView @JvmOverloads constructor(
     private fun snapshot(): Bitmap? = runCatching {
         if (width <= 0 || height <= 0) return null
         val shot = turnShot?.takeIf { it.width == width && it.height == height && !it.isRecycled }
-            ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { turnShot?.recycle(); turnShot = it }
+            ?: Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565).also { turnShot?.recycle(); turnShot = it }
         turnAnim = null
         draw(android.graphics.Canvas(shot))
         shot
@@ -1736,6 +1736,7 @@ class DrawingView @JvmOverloads constructor(
         turnAnim?.takeIf { it.owned }?.from?.takeIf { !it.isRecycled }?.recycle();turnAnim=null
         turnShot?.takeIf { !it.isRecycled }?.recycle();turnShot=null
         musicMarkRasters.clear()
+        musicMarkPictures.clear()
     }
 
     fun hasBitmap(index: Int) = slots.getOrNull(index)?.bitmap?.takeIf { !it.isRecycled } != null
@@ -1939,9 +1940,16 @@ class DrawingView @JvmOverloads constructor(
      */
     fun handOff(dir: Int) {
         if (!fitWholePage || width <= 0 || height <= 0 || turnAnimation == TURN_NONE && !hasBitmap(currentPage)) return
+        val started = android.os.SystemClock.elapsedRealtime()
         val shot = runCatching {
-            Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { draw(android.graphics.Canvas(it)) }
+            // The handoff is an opaque, short-lived screen image. RGB_565 halves its heap cost;
+            // allocating another full ARGB screen while the next PDF opens caused avoidable OOMs.
+            Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565).also { draw(android.graphics.Canvas(it)) }
         }.getOrNull() ?: return
+        val took = android.os.SystemClock.elapsedRealtime() - started
+        if (took >= 50) com.inkslate.data.EventLog.info(
+            "turn", "Captured outgoing song in ${took}ms (${shot.byteCount / 1048576}MB)"
+        )
         handoff?.shot?.recycle()
         handoff = Handoff(shot, dir, android.os.SystemClock.uptimeMillis())
         handedOff = true
@@ -2817,7 +2825,12 @@ class DrawingView @JvmOverloads constructor(
             // The edge belongs to the whole surface, so on a canvas it goes round the canvas.
             canvas.drawRect(canvasRect ?: pageRect, pageEdge)
             // The music tools' marks: over the print, under the ink (InkSheets).
-            musicPath?.let { path -> com.inkslate.core.Perform.pageMarks?.invoke(path, slot.index, slot.width, slot.height)?.let { drawPageMarks(canvas, it) } }
+            musicPath?.let { path ->
+                val overlayStarted = System.nanoTime()
+                com.inkslate.core.Perform.pageMarks?.invoke(path, slot.index, slot.width, slot.height)
+                    ?.let { drawPageMarks(canvas, it, slot.width, slot.height) }
+                RenderStats.recordMusicMarks(System.nanoTime() - overlayStarted)
+            }
 
             // Clip so ink cannot bleed from one page onto its neighbour - except on a canvas,
             // which has no neighbour and where the clip would instead hide the end of a stroke
@@ -3876,6 +3889,7 @@ class DrawingView @JvmOverloads constructor(
         removeCallbacks(detailRequest)
         clearDetail()
         musicMarkRasters.clear()
+        musicMarkPictures.clear()
         removeCallbacks(indicatorWatchdog)
         eraserCursor = null
         live = null
@@ -4888,7 +4902,32 @@ class DrawingView @JvmOverloads constructor(
     private val markPaths = java.util.WeakHashMap<List<FloatArray>, android.graphics.Path>()
 
     /** The music tools' marks, in the page's own coordinates. */
-    private fun drawPageMarks(canvas: Canvas, marks: List<com.inkslate.core.PageMark>) {
+    private fun drawPageMarks(
+        canvas: Canvas,
+        marks: List<com.inkslate.core.PageMark>,
+        pageWidth: Float,
+        pageHeight: Float
+    ) {
+        val layered = marks as? com.inkslate.core.LayeredPageMarks
+        if (layered != null && layered.staticMarks.none { it.mask != null }) {
+            val stable = layered.staticMarks
+            if (stable.isNotEmpty()) {
+                var picture = musicMarkPictures[stable]
+                if (picture == null) {
+                    if (musicMarkPictures.size >= 6) musicMarkPictures.clear()
+                    picture = android.graphics.Picture()
+                    val recording = picture.beginRecording(
+                        pageWidth.toInt().coerceAtLeast(1), pageHeight.toInt().coerceAtLeast(1)
+                    )
+                    drawPageMarksPrimitive(recording, stable)
+                    picture.endRecording()
+                    musicMarkPictures[stable] = picture
+                }
+                canvas.drawPicture(picture)
+            }
+            drawPageMarksPrimitive(canvas, layered.transientMarks)
+            return
+        }
         var i=0
         while(i<marks.size) {
             val mask = marks[i].mask
@@ -4930,6 +4969,7 @@ class DrawingView @JvmOverloads constructor(
     // same Android heap, so the desktop-sized default is unsafe on a tablet.
     private val musicMarkRasters=com.inkslate.core.MusicMarkRasterCache<Bitmap>(
         maxPixels=1_500_000L,totalPixels=2_000_000L,dispose={ if(!it.isRecycled)it.recycle() })
+    private val musicMarkPictures = java.util.IdentityHashMap<List<com.inkslate.core.PageMark>, android.graphics.Picture>()
     private val musicRasterMatrix=android.graphics.Matrix()
     private val musicRasterTransform=FloatArray(9)
     private val musicRasterPaint=Paint(Paint.FILTER_BITMAP_FLAG)

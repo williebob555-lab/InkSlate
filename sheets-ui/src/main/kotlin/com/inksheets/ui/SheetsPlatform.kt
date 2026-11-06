@@ -151,6 +151,9 @@ interface SheetsPlatform {
     /** A line in the event log (Settings), for things worth keeping but not worth a pop-up. */
     fun log(message: String) {}
 
+    /** A diagnostic that should be visible without expanding the ordinary information lines. */
+    fun warn(message: String) = log(message)
+
     /**
      * Keep the network quick while playing together - on a tablet, Wi-Fi's power saving holds
      * back what arrives for seconds at a time. Calls pair up: true, then false.

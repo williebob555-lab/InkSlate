@@ -4,6 +4,23 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Playback no longer rebuilds the whole score overlay for every cursor or buffer update.** The
+  stable notation is cached as a display list and the moving playback indicator is drawn as a
+  separate tiny layer. A regression test runs 100 cursor frames without allowing another static
+  overlay build.
+- **Band playback has substantially more underrun protection.** Ensemble synthesis now holds up to
+  1.2 seconds ahead and prefills 500 ms before starting; solo playback also gets a deeper default
+  queue, and Android's output buffer is doubled. Both producer and Android-output underruns are
+  recorded with buffered time and the slowest synth block so popping can be diagnosed directly.
+- **512 MB tablets retain less speculative work.** Music page rasters are capped at 32 MB, hidden
+  setlist editors are not preloaded on constrained heaps, and opening a music part no longer scans
+  every PDF page for geometry. Page-render, overlay-build, heap and resident-page timings are added
+  to turn diagnostics.
+- **Validation:** focused overlay, render-ahead, playback-speed and Android memory suites pass
+  locally. Diva-with-band and page-turn behavior still require confirmation on the affected tablet.
+
+## 1.2.2-test.321 — multi-pass reading and interaction priority
+
 - **Background reading can be turned off independently.** Settings → Read Music now has a
   Background reading switch. Manual Read and Fix actions remain available when it is off.
 - **Automatic reading is lower-impact and more memory-bounded.** It waits after app input, yields

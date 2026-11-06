@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
  * last.
  */
 internal object Sound {
-    data class Health(val bufferedMs: Int, val underruns: Int)
+    data class Health(val bufferedMs: Int, val underruns: Int, val worstFillMs: Float)
     private val sources = ConcurrentHashMap<String, (FloatArray) -> Unit>()
     private val paused = ConcurrentHashMap<String, (FloatArray) -> Unit>()
     /** Sources made ahead of the speaker (see RenderAhead): the instrument, not the metronome, whose clicks must be on time. */
@@ -23,7 +23,7 @@ internal object Sound {
     @Synchronized
     fun play(state: SheetsState, who: String, ahead: Boolean = false,
              /** A denser ensemble gets a deeper producer queue without changing the device API. */
-             aheadMs: Int = 260, prefillMs: Int = 120,
+             aheadMs: Int = 600, prefillMs: Int = 250,
              fill: (FloatArray) -> Unit): Boolean {
         val o = state.platform.audioOut ?: return false
         paused.remove(who)
@@ -47,7 +47,7 @@ internal object Sound {
     fun playing(who: String) = sources.containsKey(who)
     /** The source cursor handed to AudioOut; no guessed subtraction for the device's own latency. */
     fun consumedFrames(who: String): Long? = ahead[who]?.consumedFrames
-    fun health(who: String): Health? = ahead[who]?.let { Health(it.bufferedMs, it.underruns) }
+    fun health(who: String): Health? = ahead[who]?.let { Health(it.bufferedMs, it.underruns, it.worstFillMs) }
 
     /** Silence this source without losing its queued audio, note tails or repeat position. */
     fun pause(who: String): Boolean {

@@ -41,6 +41,28 @@ class ScorePlaybackPauseTest {
         assertTrue("Condition did not become ready",condition())
     }
 
+    @Test fun playbackCursorDoesNotRebuildStaticNotationEveryTick() {
+        val platform=Platform(tmp.newFolder());val state=SheetsState(platform)
+        val path=File(platform.startFolder,"overlay-score.pdf").apply { writeText("fixture") }.absolutePath
+        state.currentPath=path;state.pageShown=0 to 1;ScoreTools.install(state)
+        val bar=Measure(1,0,0,Box(0,0,300,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),
+            listOf(Note(listOf(4),listOf(Pitch(0,4)),Duration(1),30f)))
+        ScoreTools.scoreSource={Score(listOf(bar),1,listOf(400))}
+        try {
+            ScoreTools.showUnderlay(true)
+            ScoreTools.playbackFrame(Triple(1,120,0),0f)
+            ScoreTools.marks(path,0,400f,500f)
+            val built=ScoreTools.staticMarkBuilds
+            repeat(100) { tick ->
+                ScoreTools.playbackFrame(Triple(1,120,0),tick/100f)
+                assertNotNull(ScoreTools.marks(path,0,400f,500f))
+            }
+            assertEquals("100 cursor frames reuse one static overlay",built,ScoreTools.staticMarkBuilds)
+        } finally {
+            ScoreTools.stop(state);ScoreTools.showUnderlay(false);ScoreTools.scoreSource=null;ScoreTools.close(state)
+        }
+    }
+
     @Test fun pausedScoreKeepsQueuedSamplesWhileAnotherSourceKeepsOutputOpen() {
         val platform=Platform(tmp.newFolder());val state=SheetsState(platform)
         val generated=AtomicInteger()
@@ -62,6 +84,18 @@ class ScorePlaybackPauseTest {
             assertArrayEquals(FloatArray(100) { .1f+(it+100)/100000f },platform.audioOut.pull(100),0f)
             assertEquals("Resume must reuse the still-open output",1,platform.audioOut.starts)
         } finally { Sound.stop(score);Sound.stop(click) }
+    }
+
+    @Test fun ensembleQueueHoldsAFullSecondBeforeTheDeviceConsumesIt() {
+        val platform=Platform(tmp.newFolder());val state=SheetsState(platform)
+        val who="diva-band-buffer-test"
+        try {
+            assertTrue(Sound.play(state,who,ahead=true,aheadMs=1_200,prefillMs=500) { it.fill(.15f) })
+            await { (Sound.health(who)?.bufferedMs ?: 0) >= 1_000 }
+            val health=Sound.health(who)!!
+            assertEquals(0,health.underruns)
+            assertTrue("band queue ${health.bufferedMs}ms",health.bufferedMs>=1_000)
+        } finally { Sound.stop(who) }
     }
 
     @Test fun scorePauseResumeRetainsWithinBarProgressInsteadOfRestartingTheBar() {

@@ -46,6 +46,23 @@ object RenderStats {
     /** Whether the last frame repainted the whole view or just a damaged region. */
     @Volatile var lastFrameFullRedraw: Boolean = true
 
+    /** Time spent obtaining and drawing the music overlay in the last frame. */
+    @Volatile var lastMusicMarksMs: Float = 0f
+    @Volatile var worstMusicMarksMs: Float = 0f
+    @Volatile var lastPageRenderMs: Long = 0
+    @Volatile var worstPageRenderMs: Long = 0
+
+    fun recordMusicMarks(nanos: Long) {
+        val ms = nanos / 1_000_000f
+        lastMusicMarksMs = ms
+        if (ms > worstMusicMarksMs) worstMusicMarksMs = ms
+    }
+
+    fun recordPageRender(ms: Long) {
+        lastPageRenderMs = ms
+        if (ms > worstPageRenderMs) worstPageRenderMs = ms
+    }
+
     /** Frames where the viewport looked wrong and culling was skipped. Should stay at 0. */
     @Volatile var cullingFallbacks: Long = 0
 
@@ -69,6 +86,10 @@ object RenderStats {
         cacheHits = 0
         cacheMisses = 0
         cullingFallbacks = 0
+        worstMusicMarksMs = 0f
+        lastMusicMarksMs = 0f
+        lastPageRenderMs = 0
+        worstPageRenderMs = 0
         frames = 0
     }
 
@@ -89,6 +110,8 @@ object RenderStats {
         append("  cache ").append((cacheHitRate * 100).toInt()).append('%')
         append("  ").append(if (lastFrameFullRedraw) "full" else "partial")
         if (cullingFallbacks > 0) append("  cull-fallback ").append(cullingFallbacks)
+        append("  overlay ").append(String.format("%.1f", lastMusicMarksMs)).append("ms")
+        append("  render ").append(lastPageRenderMs).append("ms")
         append('\n')
         val rt = Runtime.getRuntime()
         append("heap ").append((rt.totalMemory() - rt.freeMemory()) / 1048576).append("MB / ")

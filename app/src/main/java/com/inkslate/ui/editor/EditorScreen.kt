@@ -122,6 +122,10 @@ import com.inkslate.core.Tool
 internal fun musicRenderWidthPx(screenWidthPx:Float,screenHeightPx:Float):Int =
     (minOf(screenWidthPx,screenHeightPx)*1.05f).toInt().coerceIn(720,1600)
 
+/** Page rasters share the heap with recognition, decoded scores, audio and temporary turn shots. */
+internal fun musicBitmapBudgetBytes(maxHeap: Long): Long =
+    (maxHeap / 16).coerceIn(16L * 1024 * 1024, 48L * 1024 * 1024)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
@@ -343,7 +347,7 @@ fun EditorScreen(
     val bitmapBudgetBytes = remember {
         val heap=Runtime.getRuntime().maxMemory()
         if(com.inkslate.AppFlavor.musicView)
-            (heap/8).coerceIn(16L*1024*1024,64L*1024*1024)
+            musicBitmapBudgetBytes(heap)
         else (heap/4).coerceIn(32L*1024*1024,160L*1024*1024)
     }
 
@@ -562,7 +566,11 @@ fun EditorScreen(
         } ?: PageDim(612f, 792f)
         pageDims = List(d.pageCount) { first }
 
-        if (d.pageCount > 1) {
+        // A music book is single-page mode and overwhelmingly uses one page size. Scanning every
+        // page here opens every PDF page serially, delaying instrument switches and competing with
+        // audio/background reading for no visible gain. Non-music documents still need exact
+        // mixed-size geometry for continuous layouts.
+        if (d.pageCount > 1 && !com.inkslate.AppFlavor.musicView) {
             val started = System.currentTimeMillis()
             val measured = withContext(Dispatchers.IO) {
                 (0 until d.pageCount).map { runCatching { d.source.pageDim(it) }.getOrNull() ?: first }
@@ -666,8 +674,20 @@ fun EditorScreen(
                             }
                             if (view.hasBitmap(index)) continue
 
+                            val renderStarted = android.os.SystemClock.elapsedRealtime()
                             val result = withContext(Dispatchers.IO) {
                                 runCatching { d.source.renderPage(index, renderWidthPx) }
+                            }
+                            val renderMs = android.os.SystemClock.elapsedRealtime() - renderStarted
+                            RenderStats.recordPageRender(renderMs)
+                            if (index == view.currentPage || renderMs >= 250) {
+                                val rt = Runtime.getRuntime()
+                                val used = (rt.totalMemory() - rt.freeMemory()) / 1048576
+                                EventLog.info(
+                                    "render",
+                                    "${d.file.name} page ${index + 1} rendered in ${renderMs}ms at ${renderWidthPx}px; " +
+                                        "heap ${used}/${rt.maxMemory() / 1048576}MB, ${view.residentPageCount()} page(s) resident"
+                                )
                             }
                             val bmp = result.getOrNull()
                             if (bmp == null) {
@@ -2181,7 +2201,15 @@ fun EditorScreen(
                                 slot.wantedPages = (lo..hi).filter { it in 0 until (doc?.pageCount ?: 1) }
                                 slot.renderNonce++
                             }
-                            view.onCurrentPageChanged = { slot.page = it }
+                            view.onCurrentPageChanged = {
+                                val moved = slot.page != it
+                                slot.page = it
+                                if (moved && com.inkslate.AppFlavor.musicView &&
+                                    com.inkslate.ui.TurnClock.startPage(file.name, it) && view.hasBitmap(it)
+                                ) {
+                                    com.inkslate.ui.TurnClock.shown("drawn ahead")
+                                }
+                            }
                             view.imageResolver = { id -> imageStore.load(id) }
                             view.textSnapper = { p, pts ->
                                 PdfText.wordsUnderPath(file, p, pts, 4f)

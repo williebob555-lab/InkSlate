@@ -36,6 +36,12 @@ class RenderAhead(
     @Volatile var underruns = 0
         private set
 
+    /** Producer timing for field diagnostics; no history buffer or hot-path allocation. */
+    @Volatile var lastFillMs = 0f
+        private set
+    @Volatile var worstFillMs = 0f
+        private set
+
     // The reader's state: how loud it is now (1 playing, 0 faded out) and the last sample played.
     private var gain = 1f
     private var lastOut = 0f
@@ -52,7 +58,11 @@ class RenderAhead(
             while (running) {
                 if (capacity - (written - consumed) >= block) {
                     java.util.Arrays.fill(buf, 0f)
+                    val started = System.nanoTime()
                     runCatching { fill(buf) }
+                    val elapsed = (System.nanoTime() - started) / 1_000_000f
+                    lastFillMs = elapsed
+                    if (elapsed > worstFillMs) worstFillMs = elapsed
                     val at = (written % capacity).toInt()
                     System.arraycopy(buf, 0, ring, at, block)   // capacity is a whole number of blocks
                     written += block

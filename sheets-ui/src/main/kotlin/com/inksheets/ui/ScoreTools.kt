@@ -113,16 +113,30 @@ internal object ScoreTools {
     /** What was said last (a bar not found, nothing read yet). */
     var said by mutableStateOf<String?>(null)
 
-    /** Bumped at every change, so the pages are drawn again and the marks made afresh. */
+    /** Bumped when the durable page overlay changes, so expensive notation is made afresh. */
     // State, so what is shown from it (Clean lit, the bars' colours) follows every change at once.
     private var version by androidx.compose.runtime.mutableIntStateOf(0)
     private data class CachedMarks(val version: Int, val width: Float, val height: Float,
                                    val mask: PageMark.Mask?, val flash: Int?, val marks: List<PageMark>)
     private val marksCache = HashMap<Pair<String, Int>, CachedMarks>()
 
+    /** Playback must not rebuild the page-wide notation ten times a second. */
+    internal var staticMarkBuilds: Long = 0
+        private set
+
     private fun changed() {
         version++
         Perform.marksChanged()
+    }
+
+    /** The cursor moved, but notation, confidence colours and clean layers did not. */
+    private fun playbackMoved() = Perform.marksChanged()
+
+    /** One playback sample, shared by solo and band playback and exposed to regression tests. */
+    internal fun playbackFrame(now: Triple<Int, Int, Int>, progress: Float) {
+        playing = now
+        playbackProgress = progress
+        playbackMoved()
     }
 
     /** Something drawn on the page changed elsewhere (bars that sounded off). */
@@ -1211,8 +1225,11 @@ internal object ScoreTools {
         val key = path to page
         marksCache[key]?.let { cached ->
             if (cached.version == version && cached.width == width && cached.height == height &&
-                cached.mask?.strokes == brush?.strokes && cached.flash == flash) return cached.marks
+                cached.mask?.strokes == brush?.strokes && cached.flash == flash) {
+                return withPlayback(cached.marks, score, page, width, live)
+            }
         }
+        val buildStarted = System.nanoTime()
         val k = scaleOf(score, page, width) ?: return null
         val maskStrokes = brush?.strokes?.let {strokes -> scaledMaskStrokes(key,strokes,k)}
         val partialMask = maskStrokes?.let { PageMark.Mask(it,false,width,height,key) }
@@ -1273,12 +1290,32 @@ internal object ScoreTools {
                 val mask = if (numbers.first in clean) fullMask else partialMask
                 out += layer.map { PageMark(it.kind,it.contours,it.color,it.width,mask) }
             }
-            // Draw last, so Clean's paper does not erase the playing/paused position.
-            if (live != null && live in numbers) out += PlaybackIndicator.marks(
-                left, top, right, bottom, sp, playbackProgress, paused = playing == null)
         }
+        staticMarkBuilds++
+        com.inkslate.core.PageMarkStats.recordBuild(System.nanoTime() - buildStarted, out.size)
         marksCache[key] = CachedMarks(version,width,height,brush,flash,out)
-        return out
+        return withPlayback(out, score, page, width, live)
+    }
+
+    /** Add the tiny moving cursor without copying or rebuilding the page-wide list. */
+    private fun withPlayback(base: List<PageMark>, score: Score, page: Int, width: Float, live: Int?): List<PageMark> {
+        if (live == null) return base
+        val m = score.measures.firstOrNull {
+            it.page == page && live >= it.number && live < it.number + it.bars
+        } ?: return base
+        val k = scaleOf(score, page, width) ?: return base
+        val moving = PlaybackIndicator.marks(
+            m.box.left * k, m.box.top * k, m.box.right * k, m.box.bottom * k,
+            m.space * k, playbackProgress, paused = playing == null
+        )
+        if (moving.isEmpty()) return base
+        return object : AbstractList<PageMark>(), com.inkslate.core.LayeredPageMarks {
+            override val staticMarks: List<PageMark> get() = base
+            override val transientMarks: List<PageMark> get() = moving
+            override val size: Int get() = base.size + moving.size
+            override fun get(index: Int): PageMark =
+                if (index < base.size) base[index] else moving[index - base.size]
+        }
     }
 
     private data class CleanPageLayers(val measures:List<Measure>,val scale:Float,val color:Int?,
@@ -1542,12 +1579,12 @@ internal object ScoreTools {
                         val now=Triple(heard.bar + offset,heard.tempo.toInt(),heard.round)
                         val progress = heard.progress
                         if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
-                            playing = now; playbackProgress = progress; changed()
+                            playbackFrame(now, progress)
                         }
                         val clock = System.currentTimeMillis()
                         pageFollow?.observe(s.pageShown.first, clock)
                         updatePlaybackHealth()
-                        if (pageFollowSuspended != (pageFollow?.suspended == true)) { pageFollowSuspended = pageFollow?.suspended == true; changed() }
+                        if (pageFollowSuspended != (pageFollow?.suspended == true)) pageFollowSuspended = pageFollow?.suspended == true
                         // The page follows until the reader flips one manually. Manual browsing is
                         // then left alone for the rest of this playback instead of snapping back.
                         if (heard.bar != lastBar) {
@@ -1722,7 +1759,7 @@ internal object ScoreTools {
             pageFollow = PlaybackPageFollow(s.pageShown.first)
             pageFollowSuspended = false
             playbackUnderruns = 0; playbackBufferedMs = 0
-            Sound.play(s, WHO, ahead = true, aheadMs = 720, prefillMs = 180) { buf ->
+            Sound.play(s, WHO, ahead = true, aheadMs = 1_200, prefillMs = 500) { buf ->
                 val at=p.synth.position;val before=cursor()
                 p.fill(buf)
                 history.record(at,p.synth.position,before,cursor())
@@ -1739,12 +1776,12 @@ internal object ScoreTools {
                             val now = Triple(heard.bar + offset, heard.tempo.toInt(), 0)
                             val progress = heard.progress
                             if (playing != now || kotlin.math.abs(playbackProgress - progress) >= .01f) {
-                                playing = now; playbackProgress = progress; changed()
+                                playbackFrame(now, progress)
                             }
                             val clock = System.currentTimeMillis()
                             pageFollow?.observe(s.pageShown.first, clock)
                             updatePlaybackHealth()
-                            if (pageFollowSuspended != (pageFollow?.suspended == true)) { pageFollowSuspended = pageFollow?.suspended == true; changed() }
+                            if (pageFollowSuspended != (pageFollow?.suspended == true)) pageFollowSuspended = pageFollow?.suspended == true
                             if (now.first != lastBar) {
                                 lastBar = now.first
                                 whole.measures.firstOrNull { now.first >= it.number && now.first < it.number + it.bars }?.let { m ->
@@ -1897,9 +1934,13 @@ internal object ScoreTools {
     private fun updatePlaybackHealth() {
         val health = Sound.health(WHO) ?: return
         if (playbackUnderruns != health.underruns || kotlin.math.abs(playbackBufferedMs - health.bufferedMs) >= 20) {
+            val newUnderrun = health.underruns > playbackUnderruns
             playbackUnderruns = health.underruns
             playbackBufferedMs = health.bufferedMs
-            changed()
+            if (newUnderrun) state?.platform?.warn(
+                "PERF audio underrun #${health.underruns}; ${health.bufferedMs}ms buffered; " +
+                    "slowest synth block ${"%.1f".format(health.worstFillMs)}ms"
+            )
         }
     }
 
