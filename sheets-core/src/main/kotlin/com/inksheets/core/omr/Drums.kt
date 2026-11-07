@@ -132,6 +132,11 @@ internal class DrumVoice(private val key: Int, private val start: Long, private 
             if (s < start) continue
             val t = (s - start) / sr
             if (t > ring) return true
+            // Even a hard stick takes a fraction of a millisecond to transfer its energy. Starting
+            // white noise at an arbitrary non-zero sample produces a digital step which sounds
+            // like a pop, especially after 16 kHz ensemble synthesis is upsampled. This short edge
+            // is still a crisp attack but begins continuously at zero.
+            val edge = 1.0 - exp(-t / 0.0015)
             val x = when (key) {
                 // Bass drum: a skin's pitch falling fast, and a click at the front.
                 35, 36 -> {
@@ -182,7 +187,10 @@ internal class DrumVoice(private val key: Int, private val start: Long, private 
                     Synth.sine(phase) * exp(-t / 0.22) + white() * exp(-t / 0.006) * 0.25
                 }
             }
-            buf[i] += (x * strike * gain).toFloat()
+            val raw = x * edge * strike * gain
+            // A single mistranscribed percussion chord must not seize the whole-band limiter.
+            // Soft saturation preserves ordinary hits and rounds only a near-full-scale transient.
+            buf[i] += (kotlin.math.tanh(raw / 0.45) * 0.45).toFloat()
         }
         return from + buf.size - start > ring * sr
     }

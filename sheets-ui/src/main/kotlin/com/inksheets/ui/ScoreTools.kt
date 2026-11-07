@@ -156,6 +156,12 @@ internal object ScoreTools {
 
     fun install(s: SheetsState) {
         if(state!==s) { putMaskBrushDown();if(tool==Tool.CLEAN) tool=Tool.NONE;version++ }
+        if (preparedBandSong != null && preparedBandSong != s.current?.id) {
+            // A prepared full band can hold many decoded scores. It belongs only to the song that
+            // requested it and must not follow the user into the library or the next piece.
+            preparedBandSong = null
+            preparedBandScores = emptyMap()
+        }
         state = s
         Perform.pageMarks = { path, page, w, h ->
             if (h > 0 && w > 0 && path == s.currentPath && kotlin.math.abs(s.pageAspect-w/h) > .01f) {
@@ -196,7 +202,7 @@ internal object ScoreTools {
 
     /** A part's reading with its bars numbered, rests counted and wrong bars marked - but no bar fixed, by hand or carried over. */
     private fun baseOf(path: String): Score? =
-        (scoreSource?.invoke(path) ?: state?.let { Transcriber.cached(it, File(path)) })?.let { original ->
+        (scoreSource?.invoke(path) ?: Transcriber.known(File(path)))?.let { original ->
             val read=com.inksheets.core.omr.MeasureStructure.apply(original,structuresOf(path))
             // Bars you said are wrong, though read as sure: in doubt, until fixed.
             val wrong = wrongOf(path)
@@ -286,7 +292,7 @@ internal object ScoreTools {
         val f = restsOf(path)
         val before=scoreHere(s)
         val shown=before?.measures?.firstOrNull { it.number==number }
-        val source=(scoreSource?.invoke(path) ?: Transcriber.cached(s,File(path)))?.let { com.inksheets.core.omr.MeasureStructure.apply(it,structuresOf(path)) }
+        val source=(scoreSource?.invoke(path) ?: Transcriber.known(File(path)))?.let { com.inksheets.core.omr.MeasureStructure.apply(it,structuresOf(path)) }
         val address=source?.measures?.firstOrNull { shown!=null && it.page==shown.page && it.staff==shown.staff && it.box==shown.box }?.number ?: number
         f[address] = count.coerceIn(1,999)
         restCounting=false
@@ -654,7 +660,7 @@ internal object ScoreTools {
         // Cheap first: has any reading or fix changed since last looked?
         val files = (listOf(File(path)) + (s.current?.parts.orEmpty().mapNotNull { s.fileOf(it.file) })).distinctBy { it.absolutePath }
         val stamp = files.joinToString(",") { f ->
-            val read = if (scoreSource != null) scoreSource?.invoke(f.absolutePath) else Transcriber.cached(s, f)
+            val read = if (scoreSource != null) scoreSource?.invoke(f.absolutePath) else Transcriber.known(f)
             "${System.identityHashCode(read)}:${fixesOf(f.absolutePath).size}:${carriedOf(f.absolutePath).size}"
         }
         carryChecked[path] = now to stamp
@@ -811,7 +817,7 @@ internal object ScoreTools {
         fix(path, m.number, choice.events)
         // What it really is, kept for teaching the reader (the bar as it was read: its place on the page).
         scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
-            val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
+            val read = Transcriber.known(File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
             Transcriber.recordFix(s, File(path), read, w, choice.events, how, noneCount, focus)
         }
         next(s)
@@ -926,7 +932,7 @@ internal object ScoreTools {
         fun <T> shift(map: MutableMap<Int,T>,after: Int=m.number) {
             val moved=map.mapKeys { (n,_) -> if(n>after) n+delta else n };map.clear();map.putAll(moved)
         }
-        val raw=(scoreSource?.invoke(path) ?: Transcriber.cached(s,File(path))) ?: return
+        val raw=(scoreSource?.invoke(path) ?: Transcriber.known(File(path))) ?: return
         val structured=com.inksheets.core.omr.MeasureStructure.apply(raw,structuresOf(path))
         val rawNumber=structured.measures.firstOrNull { it.page==m.page && it.staff==m.staff && it.box==m.box }?.number ?: return
         val beforeNumbering=renumberedBack(path,m.number)
@@ -969,7 +975,7 @@ internal object ScoreTools {
         val m = barUp(s)
         if (path != null && m != null) history += Triple(checkAt, m.number, fixesOf(path)[m.number])
         if (path != null && m != null) scoreHere(s)?.pageWidths?.getOrNull(m.page)?.takeIf { it > 0 }?.let { w ->
-            val read = Transcriber.cached(s, File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
+            val read = Transcriber.known(File(path))?.measures?.firstOrNull { it.number == m.number } ?: m
             Transcriber.recordSkip(s, File(path), read, w, rejected + offered.map { it.events }, noneCount, focus)
         }
         next(s)
@@ -1642,6 +1648,10 @@ internal object ScoreTools {
     private var bandPartSong: String? = null
     var bandPartIds by mutableStateOf<Set<String>?>(null)
         private set
+    /** Part-scoped readings assembled by the background preparation step.  Keeping them here
+     * avoids reopening and decoding 15-25 score caches on the UI thread when Play is pressed. */
+    private var preparedBandSong: String? = null
+    private var preparedBandScores: Map<String, Score> = emptyMap()
 
     /** Parts offered by the playback picker, before its current selection is applied. */
     internal fun bandCandidates(s: SheetsState): List<com.inksheets.core.Part> =
@@ -1659,6 +1669,8 @@ internal object ScoreTools {
         require(ids.isNotEmpty() && ids.all { it in candidates }) { "Choose at least one available band part" }
         bandPartSong = s.current?.id
         bandPartIds = ids.toSet()
+        preparedBandSong = null
+        preparedBandScores = emptyMap()
     }
 
     /** Only selected parts are read and rendered; choosing parts never starts work on its own. */
@@ -1677,7 +1689,8 @@ internal object ScoreTools {
     }
 
     private fun bandScore(s: SheetsState, part: com.inksheets.core.Part, file: File): Score? {
-        val whole=Transcriber.cached(s,file) ?: return null
+        if (preparedBandSong == s.current?.id) preparedBandScores[part.id]?.let { return it }
+        val whole=Transcriber.known(file) ?: return null
         if(!bandPartReady(whole,part)) return null
         return Transcriber.partOf(whole,part).first.takeIf { it.measures.isNotEmpty() }
     }
@@ -1696,7 +1709,8 @@ internal object ScoreTools {
 
     /** Whether some of the band's parts are not read yet; reads them, one after another, quietly. */
     internal fun readBandLater(s: SheetsState): Boolean {
-        val todo = otherParts(s).any { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) }
+        val ready = if (preparedBandSong == s.current?.id) preparedBandScores else emptyMap()
+        val todo = otherParts(s).any { (p,_) -> p.id !in ready }
         if (todo && bandReading == null) readBand(s) {}
         return todo
     }
@@ -1705,22 +1719,50 @@ internal object ScoreTools {
      * Read whichever of the band's parts are not read yet - several at once where the device has
      * the cores for it - then [then]. How many are done is said as they finish.
      */
-    private fun readBand(s: SheetsState, then: () -> Unit) {
-        val todo = otherParts(s).filter { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) }.distinctBy { it.second.absolutePath }
-        if (todo.isEmpty()) { bandReading = null; then(); return }
-        val total = otherParts(s).distinctBy { it.second.absolutePath }.size
-        val done = java.util.concurrent.atomic.AtomicInteger(total - todo.size)
-        bandReading = "${done.get()} of $total"
+    private fun readBand(s: SheetsState, then: (Map<String, Score>) -> Unit) {
+        val songId = s.current?.id
+        val parts = otherParts(s)
+        val already = if (preparedBandSong == songId) preparedBandScores else emptyMap()
+        val missing = parts.filter { (part, _) -> part.id !in already }
+        if (missing.isEmpty()) { bandReading = null; then(already); return }
+
+        // A shared band pack is opened once.  All directory walking, score JSON decoding and any
+        // requested recognition happen on these low-priority workers, never in a click handler.
+        val todo = missing.groupBy { it.second.absolutePath }.values.map { it.first().second }
+        val total = todo.size
+        val done = java.util.concurrent.atomic.AtomicInteger(0)
+        val wholes = java.util.concurrent.ConcurrentHashMap<String, Score>()
+        val began = System.currentTimeMillis()
+        bandReading = "0 of $total"
         // Each reading already shares the reader's own threads; two or three parts side by side
         // keeps every core busy without starving the sound.
         val side = if (com.inksheets.core.omr.Workers.roomy) 3 else 1
         val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(side, todo.size)) { r -> Thread(r, "read-band").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
-        for ((_, f) in todo) pool.execute {
-            Transcriber.readQuietly(s, f)
+        for (f in todo) pool.execute {
+            val sharing = parts.filter { it.second.absolutePath == f.absolutePath }
+            val cached = Transcriber.loadCached(s, f, refresh = true)
+            val whole = cached?.takeIf { score -> sharing.all { (part, _) -> bandPartReady(score, part) } }
+                ?: Transcriber.readQuietly(s, f)
+            if (whole != null) wholes[f.absolutePath] = whole
             val n = done.incrementAndGet()
             s.platform.onMain {
                 bandReading = if (n >= total) null else "$n of $total"
-                if (n >= total) then()
+                if (n >= total) {
+                    val prepared = already.toMutableMap()
+                    parts.forEach { (part, file) ->
+                        wholes[file.absolutePath]?.takeIf { bandPartReady(it, part) }
+                            ?.let { Transcriber.partOf(it, part).first }
+                            ?.takeIf { it.measures.isNotEmpty() }
+                            ?.let { prepared[part.id] = it }
+                    }
+                    if (s.current?.id == songId) {
+                        preparedBandSong = songId
+                        preparedBandScores = prepared
+                    }
+                    s.platform.log("PERF band preparation: ${total} file(s), ${prepared.size} part(s), " +
+                        "${System.currentTimeMillis() - began}ms off UI")
+                    then(prepared)
+                }
             }
         }
         pool.shutdown()
@@ -1736,13 +1778,13 @@ internal object ScoreTools {
         // This part's own bars, numbered as the band's are - and back again for showing.
         val (mine, offset) = Transcriber.partOf(whole, s.partShown())
         bandMode = true
-        readBand(s) {
+        readBand(s) { prepared ->
             // Reading several missing parts can outlive the song that asked for them. Never let
             // its completion resurrect playback over Home or over the next song.
             if (request != playRequest || s.currentPath != path || s.homeInFront) return@readBand
             val voices = otherParts(s).mapNotNull { (p, f) ->
                 // A part in a band pack: its own pages of the pack's reading.
-                val sc = bandScore(s,p,f) ?: return@mapNotNull null
+                val sc = prepared[p.id] ?: return@mapNotNull null
                 val id = p.instrument?.let { com.inksheets.core.PartChoice.seat(it).first }
                 val tr = id?.let { com.inksheets.core.Instruments.byId[it]?.transpose } ?: 0
                 // A drum part on the drums: which drum each note is, from the part and where the note sits.
@@ -1752,7 +1794,7 @@ internal object ScoreTools {
                 com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, SampledInstruments.patchFor(s, sounding), drums)
             }
             if (voices.isEmpty()) {
-                said = if(otherParts(s).any { (p,f) -> !bandPartReady(Transcriber.cached(s,f),p) })
+                said = if(otherParts(s).any { (p,_) -> p.id !in prepared })
                     "Other parts are not fully read yet; read them and try again"
                 else "No other read music in this song to play"
                 return@readBand
@@ -1880,7 +1922,7 @@ internal object ScoreTools {
     private fun cuesFor(s: SheetsState, path: String): Map<Int, List<Measure>> {
         val whole = scoreOf(path) ?: return emptyMap()
         val (mine, _) = Transcriber.partOf(whole, s.partShown())
-        val found = cueBars(mine, otherParts(s).mapNotNull { (p, f) -> Transcriber.cached(s, f)?.let { Transcriber.partOf(it, p).first } })
+        val found = cueBars(mine, otherParts(s).mapNotNull { (p, f) -> bandScore(s, p, f) })
         // Back to the bars of the file, where they are drawn.
         return found.mapKeys { (k, _) -> mine.measures[k].let { m -> whole.measures.indexOfFirst { it.page == m.page && it.box == m.box } } }.filterKeys { it >= 0 }
     }

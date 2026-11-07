@@ -1257,19 +1257,28 @@ class EnsemblePlayer(
         val plans = others.map { v -> Interpretation.analyse(along(v), len, v.drums) }
         val lead = Interpretation.analyse(mineBars, len)
         val map = Interpretation.tempoMap(listOf(lead) + plans, bpm, ensemble = true)
-        // Balanced as a band is: the tune on top a little forward, the inner parts back, the bass firm.
+        // Balance pitched and unpitched sections independently. Counting three percussion parts in
+        // the old all-voice square-root divisor made the winds quieter, while the drums' naturally
+        // larger patch gain still reached the limiter first. The result was quiet harmony under
+        // full-scale clicks. Percussion now gets its own lower transient budget and cannot turn
+        // down the pitched band merely by being present.
         val means = plans.map { p -> p.notes.flatMap { it.keys.toList() }.takeIf { it.isNotEmpty() }?.average() }
         val pitched = others.indices.filter { others[it].drums == null && means[it] != null }
         val top = pitched.maxByOrNull { means[it]!! - others[it].transpose }
         val bottom = pitched.minByOrNull { means[it]!! - others[it].transpose }
-        val base = 0.8f / kotlin.math.sqrt(others.size.coerceAtLeast(1).toFloat())
+        val pitchedBase = 0.95f / kotlin.math.sqrt(pitched.size.coerceAtLeast(1).toFloat())
+        val drumCount = others.count { it.drums != null }
+        // DrumVoice has a much higher crest factor than a sustained wind (the same RMS produces a
+        // far larger instantaneous peak), so its numerical base is intentionally much lower.
+        val drumBase = 0.03f / kotlin.math.sqrt(drumCount.coerceAtLeast(1).toFloat())
         val tones = ArrayList<Synth.Tone>()
         for ((i, v) in others.withIndex()) {
-            val weight = when (i) { top -> 1.2f; bottom -> 1.05f; else -> if (v.drums != null) 1f else 0.88f }
-            tones += Interpretation.tones(plans[i], map, synth.sampleRate, v.transpose, v.patch, 0L, base * weight, v.drums)
+            val weight = when (i) { top -> 1.2f; bottom -> 1.05f; else -> 0.88f }
+            val gain = if (v.drums != null) drumBase else pitchedBase * weight
+            tones += Interpretation.tones(plans[i], map, synth.sampleRate, v.transpose, v.patch, 0L, gain, v.drums)
         }
         // Your own part as well, where wanted - at the loudness asked for.
-        guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose, v.patch, 0L, base * g, v.drums) }
+        guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose, v.patch, 0L, pitchedBase * g, v.drums) }
         synth.clickEnabled=click
         tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
         starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }

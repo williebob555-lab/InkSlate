@@ -4,6 +4,25 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Page turns no longer wait on score-cache storage.** The build 324 stall stacks found a
+  2.9-second directory enumeration and 172 ms score-JSON decode running from `ScoreTools` on the
+  main thread. Screen code now performs a memory-only lookup while two low-priority workers load
+  and refresh the displayed score. Large-band preparation likewise opens and decodes parts on its
+  worker pool, then hands one prepared map to playback instead of reopening each part from a click.
+- **PDF page count no longer contends with rasterization.** An open document captures its immutable
+  count once on the opening I/O thread. The 151 ms `PdfPageSource.getPageCount` lock in the Tyrell
+  trace is therefore removed from `syncPage` and every other turn-time caller.
+- **Band percussion has separate gain staging.** Drum parts no longer reduce the pitched band's
+  normalization level merely by existing. Their high-crest transients receive a much smaller
+  independent budget, a continuous 1.5 ms strike edge and per-hit soft saturation, preventing
+  snare/cymbal output from presenting as full-scale pops. A dense-band regression requires the
+  pitched section to remain above two simultaneous drum parts without clipping.
+- **Diagnostics distinguish asynchronous cache cost from a UI freeze.** Score-cache loads and
+  whole-band preparation record their file/part counts, elapsed time and that the work was off the
+  UI thread.
+
+## 1.2.2-test.324 — field playback and long-page stalls
+
 - **Dense full-band playback now starts inside a guaranteed realtime budget.** Ensembles of 7-12
   parts synthesize internally at 24 kHz and larger groups at 16 kHz, then stream through a
   no-allocation linear adapter to the 48 kHz Android output. Large groups begin dry with four

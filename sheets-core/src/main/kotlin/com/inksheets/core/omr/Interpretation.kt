@@ -487,8 +487,11 @@ object Interpretation {
         class Ramp(val t0: Long, val len: Long, val ref: Float)
         val ramps = ArrayList<Ramp>()
         for ((i, n) in notes.withIndex()) if (n.stepped && i > 0) {
-            val ref = (notes[i - 1].endLevel * balance * 1.1f).coerceIn(0.03f, 1.5f)
-            val own = (n.level * balance * 1.1f).coerceIn(0.05f, 1.5f)
+            // A wind below these floors disappears perceptually; a drum does not. Its high crest
+            // factor remains plainly audible at a much smaller numerical level, and forcing it up
+            // to the pitched floor made ensemble balance unable to turn percussion down at all.
+            val ref = (notes[i - 1].endLevel * balance * 1.1f).coerceIn(if (drums != null) 0.003f else 0.03f, 1.5f)
+            val own = (n.level * balance * 1.1f).coerceIn(if (drums != null) 0.005f else 0.05f, 1.5f)
             val dB = abs(own - ref) * 26.8
             val noteSecs = map.seconds(n.q + n.len) - map.seconds(n.q)
             val secs = if (n.subito) 0.12 else max(max(0.6, dB / 14.0), min(3.0, noteSecs))
@@ -541,8 +544,9 @@ object Interpretation {
                 val sm = (x * x * (3 - 2 * x)).toFloat()
                 return r.ref * (1 - sm) + level * sm
             }
-            val v = shaped((n.level * balance * 1.1f * (if (drums != null && n.inBar < 1e-6) 1.06f else 1f)).coerceIn(0.05f, 1.5f), start)
-            val vEnd = shaped((n.endLevel * balance * 1.1f).coerceIn(0.03f, 1.5f), start + nominal)
+            val v = shaped((n.level * balance * 1.1f * (if (drums != null && n.inBar < 1e-6) 1.06f else 1f))
+                .coerceIn(if (drums != null) 0.005f else 0.05f, 1.5f), start)
+            val vEnd = shaped((n.endLevel * balance * 1.1f).coerceIn(if (drums != null) 0.003f else 0.03f, 1.5f), start + nominal)
             val fromV = v
             val ramp = 0L
             // Grace notes: quick, just before the beat.

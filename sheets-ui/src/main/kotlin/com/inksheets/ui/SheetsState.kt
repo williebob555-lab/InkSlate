@@ -579,9 +579,12 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
 
     /** Show [file]'s notes as read - reading them first if this device has not yet. */
     fun openReadMusic(file: File) {
-        val known = Transcriber.cached(this, file)
+        val known = Transcriber.known(file)
         if (known != null) Transcriber.shown = file to known
-        else Transcriber.read(this, file) { }
+        else Transcriber.preload(this, file) { loaded ->
+            if (loaded != null) Transcriber.shown = file to loaded
+            else Transcriber.read(this, file) { }
+        }
         readMusicOpen = true
     }
 

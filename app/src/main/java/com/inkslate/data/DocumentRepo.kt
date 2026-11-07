@@ -42,7 +42,13 @@ class OpenDocument(
     /** True when the source file changed since the annotations were last saved against it. */
     val sourceChanged: Boolean = false
 ) {
-    val pageCount: Int get() = maxOf(1, source.pageCount)
+    /**
+     * A page source cannot change shape while it is open.  Keep the count captured by the I/O
+     * thread that constructed this document instead of asking PdfRenderer again from Compose.
+     * PdfRenderer serialises pageCount with rendering, so the apparently harmless getter used to
+     * make a page turn wait for the current 150-220 ms raster operation.
+     */
+    val pageCount: Int = maxOf(1, source.pageCount)
 
     /**
      * What each page's ink looked like when it was last written to disk.

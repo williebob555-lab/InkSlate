@@ -229,7 +229,7 @@ internal fun cachedEnsembleDocument(state: SheetsState, song: com.inksheets.core
                                     includedPartIds: Set<String>? = null): Pair<com.inksheets.core.omr.ScoreDocument, Int> =
     ensembleDocument(song, includedPartIds) score@{ part ->
         val file = state.partFile(song, part)?.takeIf { it.isFile } ?: return@score null
-        val whole = Transcriber.cached(state, file) ?: return@score null
+        val whole = Transcriber.known(file) ?: return@score null
         val first = (part.firstPage ?: 1) - 1
         val last = (part.lastPage ?: whole.pages) - 1
         if (first < 0 || last < first || last >= whole.pages || !(first..last).all(whole::hasRead)) null

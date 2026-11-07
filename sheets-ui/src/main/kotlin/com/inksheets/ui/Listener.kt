@@ -108,7 +108,7 @@ internal object Listener {
         val song = state.current ?: return
         // The music read off this part (experimental), when it has been: turns without teaching.
         val partFile = state.currentPath?.let { java.io.File(it) }
-        val score = if (state.readMusic && partFile != null) Transcriber.cached(state, partFile) else null
+        val score = if (state.readMusic && partFile != null) Transcriber.known(partFile) else null
         // Practising: the music as read is followed, even where there is a recording - the microphone hears the player alone.
         val track = if (practice) null else (PlayAlong.currentTrack(state)
             ?.takeIf { Recording.session && Recording.songId==song.id } ?: song.audio.firstOrNull())

@@ -84,6 +84,7 @@ internal object Transcriber {
         }
         synchronized(drawn) { drawn.clear() }
         synchronized(known) { known.clear() }
+        synchronized(hotKnown) { hotKnown.clear() }
         synchronized(looksKnown) { looksKnown.clear() }
         synchronized(specialistsKnown) { specialistsKnown.clear() }
     }
@@ -110,6 +111,17 @@ internal object Transcriber {
         backgroundState = state
         backgroundToken = token
         backgroundPaused = false
+        // Loading the already-read score is ordinary small-file I/O, not recognition.  Start it
+        // immediately on its own low-priority worker so buttons and page turns only consult RAM;
+        // automatic recognition still observes the longer idle gate below.
+        state.currentPath?.let(::File)?.takeIf { it.isFile }?.let { file ->
+            preload(state, file) { score ->
+                if (score != null && state.currentPath == file.absolutePath) {
+                    shown = file to score
+                    ScoreTools.marksMoved()
+                }
+            }
+        }
         // Opening a song/page and its first button presses must settle before even library
         // inventory work begins. Global input extends this through RenderGate.touch().
         activityUntil = maxOf(activityUntil, System.currentTimeMillis() + 5_000L)
@@ -131,7 +143,11 @@ internal object Transcriber {
             for ((file, priority) in ordered) {
                 if (control.shouldYield()) return@submit null
                 if (!file.isFile || file.absolutePath in stoppedBackground || state.root != root) continue
-                val saved = cached(state, file)
+                val saved = loadCached(state, file)
+                if (priority == ReadingQueue.CURRENT_PIECE) {
+                    publish(file, saved)
+                    state.platform.onMain { if (state.currentPath == file.absolutePath) ScoreTools.marksMoved() }
+                }
                 val unread = saved == null || (0 until saved.pages).any { !saved.hasRead(it) } || olderPages(state, file).isNotEmpty()
                 if (unread) queue.submit("background:read:${file.absolutePath}", priority) { work ->
                     if (state.root != root || file.absolutePath in stoppedBackground) return@submit null
@@ -141,7 +157,7 @@ internal object Transcriber {
                     try {
                         readNow(state, file, quiet = true, mayContinue = { !work.shouldYield() }, pageSaved = {
                             state.platform.onMain {
-                                if (state.currentPath == file.absolutePath) { cached(state, file)?.let { shown = file to it }; ScoreTools.marksMoved() }
+                                if (state.currentPath == file.absolutePath) { known(file)?.let { shown = file to it }; ScoreTools.marksMoved() }
                             }
                         })
                     } catch (error: OutOfMemoryError) {
@@ -178,7 +194,7 @@ internal object Transcriber {
 
     private fun deepenNow(state: SheetsState, file: File, control: ReadingQueue.Control,
                           completed: MutableSet<String>): Score? {
-        val score = cached(state, file) ?: return null
+        val score = loadCached(state, file) ?: return null
         if (!keptEdit(state, file, "sheets_structure").isNullOrBlank()) return score
         val dir = folder(state, file)
         val net = Net.shipped ?: return score
@@ -478,6 +494,47 @@ internal object Transcriber {
     private class Known(val score: Score?, val at: Long, val signature: String)
     private val known = LinkedHashMap<String, Known>(16, .75f, true)
 
+    /**
+     * The score currently needed by screen code.  This cache is deliberately keyed only by the
+     * already-known path: asking for it must not hash a PDF, enumerate a Syncthing folder or decode
+     * JSON.  Those operations can take seconds on Android storage and are never page-turn work.
+     */
+    private val hotKnown = LinkedHashMap<String, Score?>(4, .75f, true)
+
+    /** A memory-only lookup, safe to call while composing or handling a button. */
+    fun known(file: File): Score? = synchronized(hotKnown) { hotKnown[file.absolutePath] }
+
+    private fun publish(file: File, score: Score?) = synchronized(hotKnown) {
+        hotKnown[file.absolutePath] = score
+        // Tabs may keep a few scores warm, but never let a library scan turn this into a second
+        // decoded-score library.  Whole-band preparation owns its temporary scores separately.
+        while (hotKnown.size > 4) hotKnown.remove(hotKnown.keys.first())
+    }
+
+    private val cacheLoader = java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "reading-cache").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+    }
+
+    /** Load a displayed score from disk without ever making the caller wait on storage. */
+    fun preload(state: SheetsState, file: File, onDone: (Score?) -> Unit = {}) {
+        synchronized(hotKnown) {
+            if (hotKnown.containsKey(file.absolutePath)) {
+                val score = hotKnown[file.absolutePath]
+                state.platform.onMain { onDone(score) }
+                return
+            }
+        }
+        cacheLoader.execute {
+            val began = System.currentTimeMillis()
+            val score = loadCached(state, file, refresh = true)
+            val elapsed = System.currentTimeMillis() - began
+            val message = "PERF score cache ${file.name}: ${elapsed}ms off UI, ${score?.measures?.size ?: 0} bars"
+            if (elapsed >= 500) state.platform.warn(message) else state.platform.log(message)
+            publish(file, score)
+            state.platform.onMain { onDone(score) }
+        }
+    }
+
     /** The pages of [file] (0-based) whose reading is an earlier reader's, not read again since - offered to be read again. */
     fun olderPages(state: SheetsState, file: File): Set<Int> {
         val own = folder(state, file).listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty().map { pageOf(it) }.toSet()
@@ -488,7 +545,8 @@ internal object Transcriber {
     private fun pageOf(f: File) = f.name.drop(1).removeSuffix(".json").toIntOrNull()?.minus(1) ?: -1
 
     /** [file]'s notes as far as they have been read - here or on another device; null if none of it has. */
-    fun cached(state: SheetsState, file: File): Score? {
+    /** Potentially slow storage access. Call only from a worker. Screen code uses [known]. */
+    fun loadCached(state: SheetsState, file: File, refresh: Boolean = true): Score? {
         val own = folder(state, file)
         // This reader's pages, and an earlier reader's for the pages not read again yet - so reading
         // one page again never loses the rest of the part.
@@ -496,7 +554,7 @@ internal object Transcriber {
         val dir = own
         val now = System.currentTimeMillis()
         val key = own.path + "|" + (older?.path ?: "")
-        synchronized(known) { known[key]?.let { if (now - it.at < 3000) return it.score } }
+        synchronized(known) { known[key]?.let { if (!refresh || now - it.at < 3000) return it.score } }
         // Only the pages' own files: not a copy a syncing program kept of one two devices wrote at
         // once (Syncthing's "p1.sync-conflict-....json") - every bar of it would be there twice. Those
         // copies are let go.
@@ -527,6 +585,11 @@ internal object Transcriber {
         return score
     }
 
+    /** Test/source compatibility for the old name. Production screen paths intentionally use
+     * [known]; this operation may enumerate and decode files. */
+    @Deprecated("Potentially blocking; use known on the UI thread or loadCached on a worker")
+    fun cached(state: SheetsState, file: File): Score? = loadCached(state, file).also { publish(file, it) }
+
     /**
      * [part]'s own bars out of [whole] - the reading of the file it is in: its pages only (a part
      * in a band pack), numbered from 1; and how far its numbers were moved from the file's.
@@ -555,6 +618,7 @@ internal object Transcriber {
                 if (pages == null) dir.listFiles { f -> PAGE_FILE.matches(f.name) }.orEmpty().forEach { it.delete() }
                 else pages.forEach { pageFile(dir, it).delete() }
                 synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
+                synchronized(hotKnown) { hotKnown.remove(file.absolutePath) }
             }
             try {
                 readNow(state, file, pages).also {
@@ -569,7 +633,7 @@ internal object Transcriber {
             state.platform.onMain {
                 busy = null
                 progress = null
-                if (score != null) shown = file to score
+                if (score != null) { publish(file, score); shown = file to score }
                 onDone(score)
             }
         }
@@ -605,7 +669,7 @@ internal object Transcriber {
             // A file just opened wants its pages drawn first: the carrying on starts after a pause.
             com.inkslate.core.RenderGate.touch(2500)
             com.inkslate.core.RenderGate.pause()
-            val c = cached(state, file)
+            val c = loadCached(state, file)
             if (c != null && (0 until c.pages).all { c.hasRead(it) }) { wholeMark(dir).delete(); return@Thread }
             state.platform.onMain { if (busy == null && state.currentPath == file.absolutePath) read(state, file) { com.inkslate.core.Perform.marksChanged() } }
         }, "read-resume").apply { isDaemon = true; start() }
@@ -640,7 +704,7 @@ internal object Transcriber {
             // resumes from its page cache without reopening a foreground progress flow later.
             if (only == null && !quiet) runCatching { dir.mkdirs(); wholeMark(dir).writeText("") }
             // What was read before (here or elsewhere): a whole read carries on where it left off.
-            val before = cached(state, file)
+            val before = loadCached(state, file)
             // A whole read starts at the page in front (a long book is opened at the study being
             // worked on) and goes on from there, coming back round to the pages before it last.
             val here = if (only == null && state.currentPath == file.absolutePath) state.pageShown.first.coerceIn(0, maxOf(0, peek.pageCount - 1)) else 0
@@ -744,12 +808,13 @@ internal object Transcriber {
                     atomicText(pageFile(dir, p), Scores.encode(one))
                 }
                 synchronized(known) { known.keys.removeAll { it.startsWith(dir.path) } }
+                synchronized(hotKnown) { hotKnown.remove(file.absolutePath) }
                 pageSaved()
             } } finally {
                 // The page ahead finished drawing before the file is closed under it.
                 ahead?.second?.let { await(it) }
             }
-            val score = cached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
+            val score = loadCached(state, file) ?: Score(measures, peek.pageCount, widths, todo)
             if (only == null && (0 until peek.pageCount).all { score.hasRead(it) }) wholeMark(dir).delete()
             state.platform.log("Read ${file.name}${if (only != null) " pages ${todo.map { it + 1 }}" else ""}: ${measures.size} bars, ${measures.count { it.sure }} sure, in ${(System.currentTimeMillis() - t0) / 1000}s")
             return score

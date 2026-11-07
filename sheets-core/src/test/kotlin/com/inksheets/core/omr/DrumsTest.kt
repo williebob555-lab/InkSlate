@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 /** Drum parts known by their names, and each drum sounding - struck, then rung out. */
 class DrumsTest {
@@ -41,6 +42,7 @@ class DrumsTest {
             val early = buf.copyOfRange(0, rate / 10).maxOf { abs(it) }
             val late = buf.copyOfRange(rate * 5 / 2, rate * 3).maxOf { abs(it) }
             assertTrue("drum $key heard ($early)", early > 0.02f)
+            assertTrue("drum $key begins continuously instead of popping (${buf[0]})", abs(buf[0]) < 1e-6f)
             assertTrue("drum $key within full scale", buf.all { abs(it) <= 1f })
             assertTrue("drum $key rung out ($late)", late < 1e-4f)
         }
@@ -53,5 +55,38 @@ class DrumsTest {
         val played = Performance.play(listOf(bar), 120.0, 44100, 0, Synth.PIANO, drums = DrumKind.KIT)
         assertEquals(4, played.tones.size)
         assertTrue(played.tones.all { it.midi == 38 && it.patch.drum })
+    }
+
+    @Test
+    fun `dense band keeps pitched section above percussion without clipping`() {
+        val rate = 16_000
+        fun measure(step: Int, midi: Int) = Measure(
+            1, 0, 0, Box(0, 0, 100, 40), 10f, Clef.TREBLE, Key(0), TimeSig(4, 4),
+            List(4) { i -> Note(listOf(step), listOf(Pitch(midi % 7, 4)), Duration(4), i * 10f) }
+        )
+        val lead = Score(listOf(measure(0, 0)), 1, listOf(1000))
+        val pitchedScore = Score(listOf(measure(0, 2)), 1, listOf(1000))
+        val drumScore = Score(listOf(measure(3, 0)), 1, listOf(1000))
+        fun render(voices: List<EnsemblePlayer.Voice>): FloatArray {
+            val player = EnsemblePlayer(Synth(rate), lead, voices, 1, 1, 120.0)
+            val out = FloatArray(rate * 2)
+            val block = FloatArray(160)
+            var at = 0
+            while (at < out.size) {
+                block.fill(0f); player.fill(block)
+                System.arraycopy(block, 0, out, at, minOf(block.size, out.size - at)); at += block.size
+            }
+            return out
+        }
+        fun rms(x: FloatArray) = sqrt(x.sumOf { it.toDouble() * it } / x.size)
+        val pitched = render(List(8) { EnsemblePlayer.Voice(pitchedScore, 0, if (it % 2 == 0) Synth.BRASS else Synth.CLARINET) })
+        val drums = render(listOf(
+            EnsemblePlayer.Voice(drumScore, 0, Synth.DRUMS, DrumKind.SNARE),
+            EnsemblePlayer.Voice(drumScore, 0, Synth.BASS_DRUMS, DrumKind.BASS_DRUMS)
+        ))
+
+        assertTrue("pitched RMS ${rms(pitched)} should exceed percussion ${rms(drums)}", rms(pitched) > rms(drums))
+        assertTrue("percussion remains below output ceiling", drums.maxOf { abs(it) } < .98f)
+        assertTrue("a drum strike begins continuously", abs(drums[0]) < 1e-6f)
     }
 }
