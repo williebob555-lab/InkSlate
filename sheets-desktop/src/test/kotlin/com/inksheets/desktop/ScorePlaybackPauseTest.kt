@@ -47,7 +47,8 @@ class ScorePlaybackPauseTest {
         state.currentPath=path;state.pageShown=0 to 1;ScoreTools.install(state)
         val bar=Measure(1,0,0,Box(0,0,300,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),
             listOf(Note(listOf(4),listOf(Pitch(0,4)),Duration(1),30f)))
-        ScoreTools.scoreSource={Score(listOf(bar),1,listOf(400))}
+        val scoreReads=AtomicInteger()
+        ScoreTools.scoreSource={scoreReads.incrementAndGet();Score(listOf(bar),1,listOf(400))}
         try {
             ScoreTools.showUnderlay(true)
             ScoreTools.playbackFrame(Triple(1,120,0),0f)
@@ -58,6 +59,7 @@ class ScorePlaybackPauseTest {
                 assertNotNull(ScoreTools.marks(path,0,400f,500f))
             }
             assertEquals("100 cursor frames reuse one static overlay",built,ScoreTools.staticMarkBuilds)
+            assertEquals("cached overlay does not reconstruct the whole score",1,scoreReads.get())
         } finally {
             ScoreTools.stop(state);ScoreTools.showUnderlay(false);ScoreTools.scoreSource=null;ScoreTools.close(state)
         }
@@ -70,7 +72,7 @@ class ScorePlaybackPauseTest {
         try {
             assertTrue(Sound.play(state,score,ahead=true) { samples -> samples.indices.forEach { samples[it]=generated.getAndIncrement()/100000f } })
             assertTrue(Sound.play(state,click) { it.fill(.1f) })
-            await { generated.get()>=1920 }
+            await { (Sound.health(score)?.bufferedMs ?: 0)>=250 }
             assertArrayEquals(FloatArray(100) { .1f+it/100000f },platform.audioOut.pull(100),0f)
             assertTrue(Sound.pause(score))
             val frozen=generated.get()
@@ -95,6 +97,39 @@ class ScorePlaybackPauseTest {
             val health=Sound.health(who)!!
             assertEquals(0,health.underruns)
             assertTrue("band queue ${health.bufferedMs}ms",health.bufferedMs>=1_000)
+            assertTrue(health.lastFillMs>=0f)
+        } finally { Sound.stop(who) }
+    }
+
+    @Test fun leavingForHomeStopsPlaybackAndItsProducer() {
+        val platform=Platform(tmp.newFolder());val state=SheetsState(platform)
+        val path=File(platform.startFolder,"leave-score.pdf").apply { writeText("fixture") }.absolutePath
+        state.currentPath=path;state.pageShown=0 to 1;state.homeInFront=false;ScoreTools.install(state)
+        val bar=Measure(1,0,0,Box(0,0,300,40),10f,Clef.TREBLE,Key(0),TimeSig(4,4),
+            listOf(Note(listOf(4),listOf(Pitch(0,4)),Duration(1),30f)))
+        ScoreTools.scoreSource={Score(listOf(bar),1,listOf(400))}
+        try {
+            ScoreTools.play(state)
+            await { ScoreTools.playing != null }
+            ScoreTools.leaveSong(state)
+            assertNull(ScoreTools.playing)
+            assertNull(ScoreTools.paused)
+            assertTrue("audio output stopped on navigation",platform.audioOut.stops>0)
+        } finally { ScoreTools.stop(state);ScoreTools.scoreSource=null;ScoreTools.close(state) }
+    }
+
+    @Test fun denseBandPrefillNeverSleepsTheUiCaller() {
+        val platform=Platform(tmp.newFolder());val state=SheetsState(platform)
+        val who="nonblocking-band-prefill"
+        try {
+            val started=System.nanoTime()
+            assertTrue(Sound.play(state,who,ahead=true,aheadMs=1_200,prefillMs=500) {
+                Thread.sleep(30);it.fill(.1f)
+            })
+            val elapsedMs=(System.nanoTime()-started)/1_000_000
+            assertTrue("play returned in ${elapsedMs}ms instead of waiting for the queue",elapsedMs<100)
+            assertArrayEquals("output stays quiet without consuming while priming",FloatArray(80),platform.audioOut.pull(80),0f)
+            assertEquals(0L,Sound.consumedFrames(who))
         } finally { Sound.stop(who) }
     }
 

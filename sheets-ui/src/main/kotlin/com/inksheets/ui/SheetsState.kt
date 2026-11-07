@@ -444,7 +444,12 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             Listener.pageChanged(this, path, page)
             PracticeLog.touch()
             // A whole read of this part cut off part way (the app closed) carries on.
-            if (currentPath != path) Transcriber.resume(this, File(path))
+            if (currentPath != path) {
+                // Playback belongs to the part that started it. Stop before the next PDF opens so
+                // an ensemble cannot consume the cores needed to draw the new song.
+                ScoreTools.leaveSong(this)
+                Transcriber.resume(this, File(path))
+            }
             currentPath = path
             ScoreTools.syncTool()
             if (pagesWanted == path) { pagesWanted = null; com.inkslate.core.Perform.openPages?.invoke() }

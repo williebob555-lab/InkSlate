@@ -117,8 +117,11 @@ internal object ScoreTools {
     // State, so what is shown from it (Clean lit, the bars' colours) follows every change at once.
     private var version by androidx.compose.runtime.mutableIntStateOf(0)
     private data class CachedMarks(val version: Int, val width: Float, val height: Float,
-                                   val mask: PageMark.Mask?, val flash: Int?, val marks: List<PageMark>)
+                                   val flash: Int?, val marks: List<PageMark>)
     private val marksCache = HashMap<Pair<String, Int>, CachedMarks>()
+    private data class CachedMarkScore(val version: Int, val score: Score)
+    /** One corrected score per document/version, shared by all of its page overlays. */
+    private val markScores = HashMap<String, CachedMarkScore>()
 
     /** Playback must not rebuild the page-wide notation ten times a second. */
     internal var staticMarkBuilds: Long = 0
@@ -126,6 +129,9 @@ internal object ScoreTools {
 
     private fun changed() {
         version++
+        // Stale page lists are cheap to rebuild and must not pin old corrected-score versions.
+        marksCache.clear()
+        markScores.clear()
         Perform.marksChanged()
     }
 
@@ -145,6 +151,8 @@ internal object ScoreTools {
     // ---- which part, and its notes ----------------------------------------------------------
 
     private var state: SheetsState? = null
+    /** Invalidates an ensemble preparation that finishes after its song has been left. */
+    private var playRequest: Long = 0
 
     fun install(s: SheetsState) {
         if(state!==s) { putMaskBrushDown();if(tool==Tool.CLEAN) tool=Tool.NONE;version++ }
@@ -1212,23 +1220,28 @@ internal object ScoreTools {
 
     internal fun marks(path: String, page: Int, width: Float, height: Float): List<PageMark>? {
         pageWidth[path to page] = width
-        val score = scoreOf(path) ?: return null
+        val key = path to page
+        val live = playing?.first ?: paused
+        val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
+        // This is the animation-frame path. Reconstructing the entire corrected score before
+        // consulting the page cache cost 5-12 ms even on pages with no overlay marks. Every
+        // durable change bumps version, so a matching entry is already the complete answer.
+        marksCache[key]?.let { cached ->
+            if (cached.version == version && cached.width == width && cached.height == height &&
+                cached.flash == flash) {
+                if (live == null) return cached.marks
+                return markScore(path)?.let { withPlayback(cached.marks, it, page, width, live) }
+                    ?: cached.marks
+            }
+        }
+        val score = markScore(path) ?: return null
         val view=state?.let { cleanView(it,path) } ?: CleanView()
         val clean = if (!view.visible || view.masksOnly) emptySet() else cleanedIn(path)
         val brush = if (!view.visible) null else state?.let { CleanMasks.getMask(it,path,page) }
-        val live = playing?.first ?: paused
-        val flash = found?.takeIf { System.currentTimeMillis() - it.second < 2_500 }?.first
         val off = Listener.offBars.toSet()
         val cueHere = if (cues) cueCache[path].orEmpty() else emptyMap()
         if (!colours && !underlay && clean.isEmpty() && brush == null && selection == null && live == null && flash == null && off.isEmpty() && cueHere.isEmpty()) return null
         val fixed = if (colours) fixesOf(path).keys + carriedFixes(path).keys else emptySet()
-        val key = path to page
-        marksCache[key]?.let { cached ->
-            if (cached.version == version && cached.width == width && cached.height == height &&
-                cached.mask?.strokes == brush?.strokes && cached.flash == flash) {
-                return withPlayback(cached.marks, score, page, width, live)
-            }
-        }
         val buildStarted = System.nanoTime()
         val k = scaleOf(score, page, width) ?: return null
         val maskStrokes = brush?.strokes?.let {strokes -> scaledMaskStrokes(key,strokes,k)}
@@ -1293,8 +1306,15 @@ internal object ScoreTools {
         }
         staticMarkBuilds++
         com.inkslate.core.PageMarkStats.recordBuild(System.nanoTime() - buildStarted, out.size)
-        marksCache[key] = CachedMarks(version,width,height,brush,flash,out)
+        marksCache[key] = CachedMarks(version,width,height,flash,out)
         return withPlayback(out, score, page, width, live)
+    }
+
+    private fun markScore(path: String): Score? {
+        markScores[path]?.takeIf { it.version == version }?.let { return it.score }
+        val score = scoreOf(path) ?: return null
+        markScores[path] = CachedMarkScore(version, score)
+        return score
     }
 
     /** Add the tiny moving cursor without copying or rebuilding the page-wide list. */
@@ -1711,11 +1731,15 @@ internal object ScoreTools {
         stop(s)
         leaveCheck()
         val path = s.currentPath ?: return
+        val request = ++playRequest
         val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
         // This part's own bars, numbered as the band's are - and back again for showing.
         val (mine, offset) = Transcriber.partOf(whole, s.partShown())
         bandMode = true
         readBand(s) {
+            // Reading several missing parts can outlive the song that asked for them. Never let
+            // its completion resurrect playback over Home or over the next song.
+            if (request != playRequest || s.currentPath != path || s.homeInFront) return@readBand
             val voices = otherParts(s).mapNotNull { (p, f) ->
                 // A part in a band pack: its own pages of the pack's reading.
                 val sc = bandScore(s,p,f) ?: return@mapNotNull null
@@ -1748,7 +1772,13 @@ internal object ScoreTools {
             // This part too, where asked: to hear the whole, or to hear how it fits.
             val (myId, myTranspose) = instrumentOf(s)
             val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, SampledInstruments.patchFor(s, soundAs ?: myId)) to 1f else null
-            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate).apply { clickSound=Click.sound(s) }, mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
+            val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate).apply {
+                clickSound=Click.sound(s)
+                // Twelve partials retain the instrument's family and brightness while bounding
+                // the per-sample cost of a whole band. Health monitoring can step lower only if
+                // this device still cannot render a 10 ms block with UI headroom.
+                harmonicLimit=12
+            }, mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
             playbackProgress = 0f
             playing = Triple(range.first + offset, SharedMetronome.bpm.toInt(), 0)
@@ -1887,6 +1917,7 @@ internal object ScoreTools {
 
     /** The sound stopped, where it was kept or not. */
     private fun halt() {
+        playRequest++
         pausedPlayback=null
         pageFollow=null
         ensemble?.let { ensemble = null; Sound.stop(WHO) }
@@ -1894,6 +1925,12 @@ internal object ScoreTools {
         if (player != null) Sound.stop(WHO)
         player = null
         if (playing != null) { playing = null; changed() }
+    }
+
+    /** Leave a song or return Home: cancel both active sound and a band still being prepared. */
+    fun leaveSong(s: SheetsState) {
+        val active = playing != null || paused != null || player != null || ensemble != null
+        if (active) stop(s) else playRequest++
     }
 
     /** Whether any of bars [range] of [score] is on the page in front. */
@@ -1933,6 +1970,16 @@ internal object ScoreTools {
 
     private fun updatePlaybackHealth() {
         val health = Sound.health(WHO) ?: return
+        ensemble?.let { band ->
+            // A block represents 10 ms at 48 kHz. Above ~7 ms the producer is using most of a
+            // core and leaves too little room for touch, PDF work and GC. Degrade only downward
+            // during this playback, one step per health sample, until it is safely realtime.
+            if (health.lastFillMs >= 7f) band.synth.reduceRealtimeCost()?.let { detail ->
+                state?.platform?.warn(
+                    "PERF band synthesis ${"%.1f".format(health.lastFillMs)}ms/10ms; reduced to $detail"
+                )
+            }
+        }
         if (playbackUnderruns != health.underruns || kotlin.math.abs(playbackBufferedMs - health.bufferedMs) >= 20) {
             val newUnderrun = health.underruns > playbackUnderruns
             playbackUnderruns = health.underruns
@@ -2010,7 +2057,9 @@ internal object ScoreTools {
         SharedMetronome.engine?.let { it.settings = it.settings.copy(bpm = SharedMetronome.bpm) }
         player?.setTempo(SharedMetronome.bpm)
         ensemble?.setTempo(SharedMetronome.bpm)
-        changed()
+        // Show the press immediately. Tempo does not change any static page mark, and rebuilding
+        // that overlay here made a transport action compete with whole-band synthesis.
+        playing = playing?.let { Triple(it.first, SharedMetronome.bpm.toInt(), it.third) }
     }
 
     /**

@@ -4,6 +4,30 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Long method books no longer make every animation frame visit every page.** In one-page music
+  mode, a turn now repositions and draws only the page being left and the page being entered;
+  hundreds of off-screen page rectangles are no longer allocated and checked each frame.
+- **A cached score overlay is now consulted before reconstructing the corrected score.** This
+  removes the 5-12 ms overlay lookup visible on Tyrell pages with zero marks, while retaining the
+  separate playback cursor layer introduced in build 322.
+- **Whole-band playback no longer outranks the interface.** Render-ahead synthesis yields between
+  blocks at normal priority, while the urgent Android output thread and deep audio queue remain in
+  place. Tempo presses publish immediately and multiple presses coalesce into one retime on the
+  synthesis thread instead of rebuilding thousands of scheduled tones on the UI thread.
+- **Dense ensembles have an adaptive realtime budget.** They start with the twelve most audible
+  partials per voice; if a 10 ms synthesis block still takes 7 ms or more, detail steps down before
+  the producer can monopolize a core or drain into catch-up pops. Notes, parts, rhythm, dynamics
+  and instrument selection are unchanged, and every downgrade is written to diagnostics.
+- **Band prefill no longer sleeps the interface.** Android output starts quietly while the 500 ms
+  render-ahead queue fills on its producer thread; it does not consume the playback cursor or
+  report a false underrun, and Play returns to the UI immediately.
+- **Playback now belongs to the song that started it.** Going Home, changing songs or switching
+  parts immediately cancels active playback and any band still being prepared; finishing a
+  background part read can no longer resurrect the previous song. Document-open time is recorded
+  separately from page rendering in diagnostics.
+
+## 1.2.2-test.322 — playback, page-turn and memory performance
+
 - **Playback no longer rebuilds the whole score overlay for every cursor or buffer update.** The
   stable notation is cached as a display list and the moving playback indicator is drawn as a
   separate tiny layer. A regression test runs 100 cursor frames without allowing another static

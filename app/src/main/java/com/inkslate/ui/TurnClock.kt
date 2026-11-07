@@ -56,7 +56,8 @@ object TurnClock {
                             "Screen froze ${gap}ms, ${since}ms after turning to ${to ?: "a song"}; " +
                                 "heap ${heap}/${rt.maxMemory() / 1048576}MB, pages ${draw.pagesResident}, " +
                                 "overlay ${"%.1f".format(draw.lastMusicMarksMs)}ms, " +
-                                "overlay build ${"%.1f".format(marks.lastBuildMs)}ms/${marks.lastMarkCount} marks"
+                                "overlay build ${"%.1f".format(marks.lastBuildMs)}ms/${marks.lastMarkCount} marks, " +
+                                "open ${draw.lastDocumentOpenMs}ms, render ${draw.lastPageRenderMs}ms"
                         )
                     }
                 }

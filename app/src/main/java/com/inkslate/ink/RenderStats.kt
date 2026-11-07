@@ -51,6 +51,8 @@ object RenderStats {
     @Volatile var worstMusicMarksMs: Float = 0f
     @Volatile var lastPageRenderMs: Long = 0
     @Volatile var worstPageRenderMs: Long = 0
+    @Volatile var lastDocumentOpenMs: Long = 0
+    @Volatile var worstDocumentOpenMs: Long = 0
 
     fun recordMusicMarks(nanos: Long) {
         val ms = nanos / 1_000_000f
@@ -61,6 +63,11 @@ object RenderStats {
     fun recordPageRender(ms: Long) {
         lastPageRenderMs = ms
         if (ms > worstPageRenderMs) worstPageRenderMs = ms
+    }
+
+    fun recordDocumentOpen(ms: Long) {
+        lastDocumentOpenMs = ms
+        if (ms > worstDocumentOpenMs) worstDocumentOpenMs = ms
     }
 
     /** Frames where the viewport looked wrong and culling was skipped. Should stay at 0. */
@@ -90,6 +97,8 @@ object RenderStats {
         lastMusicMarksMs = 0f
         lastPageRenderMs = 0
         worstPageRenderMs = 0
+        lastDocumentOpenMs = 0
+        worstDocumentOpenMs = 0
         frames = 0
     }
 
@@ -112,6 +121,7 @@ object RenderStats {
         if (cullingFallbacks > 0) append("  cull-fallback ").append(cullingFallbacks)
         append("  overlay ").append(String.format("%.1f", lastMusicMarksMs)).append("ms")
         append("  render ").append(lastPageRenderMs).append("ms")
+        append("  open ").append(lastDocumentOpenMs).append("ms")
         append('\n')
         val rt = Runtime.getRuntime()
         append("heap ").append((rt.totalMemory() - rt.freeMemory()) / 1048576).append("MB / ")

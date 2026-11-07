@@ -128,6 +128,23 @@ class Vibrato(
 
 class Synth(val sampleRate: Int) {
 
+    /**
+     * Realtime detail can fall without changing notes, timing, dynamics or instrument patches.
+     * Upper partials are the expensive, least audible part of a dense ensemble.
+     */
+    @Volatile var harmonicLimit: Int = MAX_HARMONICS
+    @Volatile var roomEnabled: Boolean = true
+
+    /** Reduce one step without taking the synth lock; safe for a UI health watcher to call. */
+    fun reduceRealtimeCost(): String? = when {
+        harmonicLimit > 12 -> { harmonicLimit = 12; "12 harmonics" }
+        harmonicLimit > 8 -> { harmonicLimit = 8; "8 harmonics" }
+        harmonicLimit > 6 -> { harmonicLimit = 6; "6 harmonics" }
+        harmonicLimit > 4 -> { harmonicLimit = 4; "4 harmonics" }
+        roomEnabled -> { roomEnabled = false; "room effect off" }
+        else -> null
+    }
+
     /** How an instrument family sounds. */
     class Patch(
         /** Each harmonic's strength, the fundamental first. */
@@ -493,6 +510,9 @@ class Synth(val sampleRate: Int) {
     /** Where the music is: samples played since the start. */
     @Volatile var position: Long = 0L
         private set
+    /** Regression visibility: tempo gestures should coalesce before the render thread retimes. */
+    @Volatile internal var retimeCount: Long = 0
+        private set
     /** Score clicks can be enabled/disabled while notes continue uninterrupted. */
     @Volatile var clickEnabled: Boolean = true
     @Volatile var clickSound: com.inksheets.core.ClickSound = com.inksheets.core.ClickSound.TONE
@@ -515,6 +535,7 @@ class Synth(val sampleRate: Int) {
     @Synchronized
     fun retime(ratio: Double) {
         if (ratio <= 0.0 || kotlin.math.abs(ratio - 1.0) < 1e-6) return
+        retimeCount++
         val now = position
         fun at(t: Long) = if (t <= now) t else now + ((t - now) * ratio).toLong()
         fun moved(t: Tone) = Tone(t.midi, at(t.start), (at(t.start + t.length) - at(t.start)).coerceAtLeast(1L), t.velocity, t.patch, t.accent, t.endVelocity, t.legato, t.from, t.fromVelocity, t.ramp, t.art, t.layer, t.vib, t.attack)
@@ -561,7 +582,7 @@ class Synth(val sampleRate: Int) {
         if (mix.size != n) mix = FloatArray(n)
         java.util.Arrays.fill(mix, 0f)
         render(mix)
-        room.process(mix)
+        if (roomEnabled) room.process(mix)
         var peak = 0f
         for (v in mix) peak = max(peak, kotlin.math.abs(v))
         // Headroom: the loudest sample at nine tenths of full scale at most. Turned down over the
@@ -775,7 +796,7 @@ class Synth(val sampleRate: Int) {
                     else if (v.continued && t < dipTime) hump(t / dipTime) * 0.35 else 0.0
                 val loud = (0.45 + 0.55 * min(1.2, vel.toDouble())).coerceIn(0.3, 1.15)
                 val a0 = v.amp0; val a1 = v.amp1
-                for (h in 0 until v.active) {
+                for (h in 0 until min(v.active, harmonicLimit)) {
                     val target = if (h >= v.count) 0.0 else if (a0 != null && a1 != null) (a0[h] + (a1[h] - a0[h]) * prog) * (if (h == 0 || bloom >= 1.0) 1.0 else bloom.pow(1.0 + h * p.bloom))
                         else p.harmonics[h] * (if (h == 0) 1.0 else bloom.pow(1.0 + h * p.bloom) * loud.pow(h * 0.45))
                     // B: the upper harmonics enter a little after the lower ones.
@@ -786,7 +807,7 @@ class Synth(val sampleRate: Int) {
             }
             var x = 0.0
             val w0 = twoPiOverSr * f
-            val top = min(v.active, (nyquist / f).toInt())
+            val top = min(min(v.active, harmonicLimit), (nyquist / f).toInt())
             val phase = v.phase; val now = v.now
             var w = w0
             for (h in 0 until top) {
@@ -1080,6 +1101,8 @@ class ScorePlayer(
     /** The tempo now: goes up round each loop when ramping. */
     @Volatile var bpm: Double = bpm
         private set
+    /** Tempo whose timeline is actually in [synth]; only the render thread changes it. */
+    private var appliedBpm: Double = bpm
 
     /** The bar being played now, and how many times round; for showing where it is. */
     @Volatile var bar: Int = from
@@ -1108,20 +1131,30 @@ class ScorePlayer(
         synth.add(played.tones)
     }
 
-    /** The tempo set to [to] while playing: the music goes on from where it is, at that pace. */
+    /**
+     * Request a tempo while playing. The caller is often the UI thread, so this only publishes
+     * the newest value. The render thread applies (and therefore coalesces) the expensive retime.
+     */
     fun setTempo(to: Double) {
         if (to <= 0 || kotlin.math.abs(to - bpm) < 1e-6) return
-        val ratio = bpm / to
+        bpm = to
+    }
+
+    private fun applyRequestedTempo() {
+        val to = bpm
+        if (to <= 0 || kotlin.math.abs(to - appliedBpm) < 1e-6) return
+        val ratio = appliedBpm / to
         val into = synth.position - passStart
         synth.retime(ratio)
         for (i in starts.indices) if (starts[i] > into) starts[i] = into + ((starts[i] - into) * ratio).toLong()
         if (passLength > into) passLength = into + ((passLength - into) * ratio).toLong()
-        bpm = to
+        appliedBpm = to
     }
 
     /** The next samples into [buf]; keeps [bar] up to date and goes round again when looping. */
     fun fill(buf: FloatArray) {
         if (finished) return
+        applyRequestedTempo()
         synth.fill(buf)
         val into = synth.position - passStart
         val i = starts.indexOfLast { it <= into }
@@ -1129,6 +1162,7 @@ class ScorePlayer(
         if (into >= passLength) {
             if (loop && passLength > 0) {
                 rampTo?.let { top -> bpm = min(top, bpm + rampStep) }
+                appliedBpm = bpm
                 schedule(synth.position)
                 bar = numbers.firstOrNull() ?: from
                 round++
@@ -1178,16 +1212,24 @@ class EnsemblePlayer(
     /** The tempo now: changed while playing by [setTempo]. */
     @Volatile var tempo: Double = bpm
         private set
+    /** Tempo whose pending tones/timeline have been retimed; owned by the render thread. */
+    private var appliedTempo: Double = bpm
 
-    /** The tempo set to [to] while playing: the band goes on from where it is, at that pace. */
+    /** Publish the newest requested tempo; the render thread performs the expensive retime. */
     fun setTempo(to: Double) {
         if (to <= 0 || kotlin.math.abs(to - tempo) < 1e-6) return
-        val ratio = tempo / to
+        tempo = to
+    }
+
+    private fun applyRequestedTempo() {
+        val to = tempo
+        if (to <= 0 || kotlin.math.abs(to - appliedTempo) < 1e-6) return
+        val ratio = appliedTempo / to
         val now = synth.position
         synth.retime(ratio)
         for (i in starts.indices) if (starts[i] > now) starts[i] = now + ((starts[i] - now) * ratio).toLong()
         if (length > now) length = now + ((length - now) * ratio).toLong()
-        tempo = to
+        appliedTempo = to
     }
 
     init {
@@ -1229,6 +1271,7 @@ class EnsemblePlayer(
 
     fun fill(buf: FloatArray) {
         if (finished) return
+        applyRequestedTempo()
         synth.fill(buf)
         val i = starts.indexOfLast { it <= synth.position }
         if (i >= 0) bar = numbers[i]

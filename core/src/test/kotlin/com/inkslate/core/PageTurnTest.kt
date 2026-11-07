@@ -113,4 +113,11 @@ class PageTurnTest {
         val s = stroke(listOf(InkPoint(1f, 2f, 2f)))
         assertTrue(s.turnedWithPage(0, w, h) === s)
     }
+
+    @Test
+    fun `single page drawing stays constant for a long method book`() {
+        assertEquals(18..18, PageArranger.drawRange(400, PageLayout.SINGLE, 18))
+        assertEquals(0..399, PageArranger.drawRange(400, PageLayout.VERTICAL, 18))
+        assertTrue(PageArranger.drawRange(0, PageLayout.SINGLE, 0).isEmpty())
+    }
 }

@@ -32,4 +32,20 @@ class TempoChangeTest {
         assertTrue("bar 3 at about 11 s, not 8 s: ${at / 1000.0}", at in 10_800..11_300)
         assertTrue("it never went silent for long (${longest * 100} ms)", longest <= 3)
     }
+
+    @Test
+    fun `rapid tempo controls coalesce off the caller thread`() {
+        val synth = Synth(1_000)
+        val bars = (1..40).map { bar(it) }
+        val player = ScorePlayer(synth, Score(bars, 1, listOf(100)), 1, 40, 60.0, 0, Synth.BRASS, order = bars)
+
+        player.setTempo(56.0)
+        player.setTempo(52.0)
+        player.setTempo(48.0)
+
+        assertEquals("button presses only publish the newest tempo", 0L, synth.retimeCount)
+        player.fill(FloatArray(100))
+        assertEquals("one render-thread retime applies all three presses", 1L, synth.retimeCount)
+        assertEquals(48.0, player.bpm, 1e-9)
+    }
 }

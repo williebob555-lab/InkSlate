@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.ui.platform.LocalContext
 import com.inksheets.android.AndroidSheetsPlatform
 import com.inksheets.ui.ActionStrip
+import com.inksheets.ui.ScoreTools
 import com.inksheets.ui.SheetsHome
 import com.inksheets.ui.SheetsState
 import java.io.File
@@ -81,11 +82,17 @@ object FlavorSetup {
             openFile = open
             SheetsHome(stateFor(LocalContext.current), onOpenSettings = openSettings)
         }
-        AppFlavor.onHome = { state?.backToSetlist() }
+        AppFlavor.onHome = { state?.let { ScoreTools.leaveSong(it); it.backToSetlist() } }
         AppFlavor.settingsSection = { com.inksheets.ui.SheetsSettings(stateFor(LocalContext.current)) }
         AppFlavor.onTabsMoved = { state?.tabsMoved(it) }
         AppFlavor.onOpenTabs = { state?.openTabs(it) }
-        AppFlavor.onHomeShown = { home -> state?.homeInFront = home }
+        AppFlavor.onHomeShown = { home ->
+            state?.let {
+                it.homeInFront = home
+                // Covers Home reached indirectly (the last tab closing, or a remote action).
+                if (home) ScoreTools.leaveSong(it)
+            }
+        }
         AppFlavor.pagesActions = { path, pages, close ->
             com.inksheets.ui.MusicPageActions(stateFor(LocalContext.current), path, pages, close)
         }

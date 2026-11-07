@@ -30,6 +30,8 @@ class RenderAhead(
     val bufferedFrames: Long get()=(written-consumed).coerceAtLeast(0L)
     val bufferedMs: Int get()=(bufferedFrames*1000/sampleRate.coerceAtLeast(1)).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     @Volatile private var running = false
+    @Volatile private var primed = true
+    @Volatile private var primeFrames = 0L
     private var thread: Thread? = null
 
     /** How many times the ring ran dry. */
@@ -48,10 +50,13 @@ class RenderAhead(
     private val fadeStep = 1f / (sampleRate * 0.006f)
     private var dry = false
 
-    /** Start rendering; returns once the ring is filled ([prefillMs] at least) so the first read has sound to give. */
+    /** Start rendering; normally waits for [prefillMs], or primes silently when [waitForPrefill] is false. */
     @Synchronized
-    fun start(prefillMs: Int = 120) {
+    fun start(prefillMs: Int = 120, waitForPrefill: Boolean = true) {
         if (running || thread?.isAlive==true) return
+        val wanted = (sampleRate.toLong() * prefillMs / 1000).coerceAtMost(capacity.toLong())
+        primeFrames = wanted
+        primed = wanted == 0L
         running = true
         thread = Thread({
             val buf = FloatArray(block)
@@ -66,14 +71,27 @@ class RenderAhead(
                     val at = (written % capacity).toInt()
                     System.arraycopy(buf, 0, ring, at, block)   // capacity is a whole number of blocks
                     written += block
+                    // A deep queue means this producer does not need to monopolise a core. Give
+                    // input/render threads a scheduling point after each block, especially on
+                    // small tablets synthesising an entire band.
+                    Thread.yield()
                 } else {
                     try { Thread.sleep(1) } catch (_: InterruptedException) { return@Thread }
                 }
             }
-        }, "render-ahead").apply { isDaemon = true; priority = Thread.MAX_PRIORITY; start() }
-        val wanted = (sampleRate.toLong() * prefillMs / 1000).coerceAtMost(capacity.toLong())
-        val limit = System.nanoTime() + 1_000_000_000L
-        while (written < wanted && System.nanoTime() < limit) Thread.sleep(1)
+        }, "render-ahead").apply {
+            isDaemon = true
+            // The device AudioTrack thread remains urgent; this producer has 0.6-1.2 seconds in
+            // hand and must not outrank the UI. MAX_PRIORITY made tempo and transport buttons
+            // wait behind continuous ensemble synthesis.
+            priority = Thread.NORM_PRIORITY
+            start()
+        }
+        if (waitForPrefill) {
+            val limit = System.nanoTime() + 1_000_000_000L
+            while (written < wanted && System.nanoTime() < limit) Thread.sleep(1)
+            if (written >= wanted) primed = true
+        }
     }
 
     @Synchronized
@@ -106,6 +124,13 @@ class RenderAhead(
 
     /** The next samples, [out] overwritten; never blocks. */
     fun read(out: FloatArray) {
+        if (!primed) {
+            if (written < primeFrames) {
+                java.util.Arrays.fill(out, 0f)
+                return
+            }
+            primed = true
+        }
         val have = (written - consumed).toInt()
         var at = (consumed % capacity).toInt()
         var taken = 0

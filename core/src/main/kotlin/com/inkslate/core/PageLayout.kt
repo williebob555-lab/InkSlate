@@ -35,6 +35,23 @@ object PageArranger {
     const val FAR_AWAY = 1_000_000f
 
     /**
+     * Pages worth visiting while painting a frame.
+     *
+     * A one-page music view must stay O(1) even when its PDF is a several-hundred-page method
+     * book. The other pages are metadata, not possible drawing candidates. Continuous layouts
+     * still need every slot because several pages can cross the viewport.
+     */
+    fun drawRange(pageCount: Int, layout: PageLayout, currentPage: Int): IntRange {
+        if (pageCount <= 0) return IntRange.EMPTY
+        return if (layout == PageLayout.SINGLE) {
+            val page = currentPage.coerceIn(0, pageCount - 1)
+            page..page
+        } else {
+            0 until pageCount
+        }
+    }
+
+    /**
      * Origins for [extents], one per page, in document space.
      *
      * [canvas] is the extent of a document that grows to fit its content, when it is one. A canvas

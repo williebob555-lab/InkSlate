@@ -8,7 +8,7 @@ import java.util.concurrent.ConcurrentHashMap
  * last.
  */
 internal object Sound {
-    data class Health(val bufferedMs: Int, val underruns: Int, val worstFillMs: Float)
+    data class Health(val bufferedMs: Int, val underruns: Int, val lastFillMs: Float, val worstFillMs: Float)
     private val sources = ConcurrentHashMap<String, (FloatArray) -> Unit>()
     private val paused = ConcurrentHashMap<String, (FloatArray) -> Unit>()
     /** Sources made ahead of the speaker (see RenderAhead): the instrument, not the metronome, whose clicks must be on time. */
@@ -33,7 +33,9 @@ internal object Sound {
             // important: an empty queue made the first expensive ensemble block an immediate xrun.
             val block = if (o.sampleRate >= 88_200) 960 else 480
             val made = com.inksheets.core.RenderAhead(o.sampleRate, aheadMs.coerceIn(160, 1_200), block, fill)
-            made.start(prefillMs = prefillMs.coerceIn(40, aheadMs - 20))
+            // Prime quietly on the producer. Sleeping here blocked the UI for 500-1000 ms when
+            // Play was pressed; read() emits silence without consuming until the queue is ready.
+            made.start(prefillMs = prefillMs.coerceIn(40, aheadMs - 20), waitForPrefill = false)
             this.ahead[who] = made
             sources[who] = { buf -> if(!paused.containsKey(who)) made.read(buf) }
         } else sources[who] = fill
@@ -47,7 +49,7 @@ internal object Sound {
     fun playing(who: String) = sources.containsKey(who)
     /** The source cursor handed to AudioOut; no guessed subtraction for the device's own latency. */
     fun consumedFrames(who: String): Long? = ahead[who]?.consumedFrames
-    fun health(who: String): Health? = ahead[who]?.let { Health(it.bufferedMs, it.underruns, it.worstFillMs) }
+    fun health(who: String): Health? = ahead[who]?.let { Health(it.bufferedMs, it.underruns, it.lastFillMs, it.worstFillMs) }
 
     /** Silence this source without losing its queued audio, note tails or repeat position. */
     fun pause(who: String): Boolean {

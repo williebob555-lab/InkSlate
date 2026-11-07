@@ -60,6 +60,8 @@ class DrawingView @JvmOverloads constructor(
     // ---- page ----------------------------------------------------------------
 
     private val slots = ArrayList<PageSlot>()
+    /** The only slot positioned in SINGLE mode; lets a page turn rearrange two slots, not a book. */
+    private var arrangedSinglePage = -1
 
     var layout: PageLayout = PageLayout.VERTICAL
         private set
@@ -1691,6 +1693,7 @@ class DrawingView @JvmOverloads constructor(
     fun setPages(dims: List<Pair<Float, Float>>, resetView: Boolean) {
         val keep = slots.associate { it.index to it.bitmap }
         slots.clear()
+        arrangedSinglePage = -1
         dims.forEachIndexed { i, (w, h) ->
             slots.add(PageSlot(i, w, h).also { it.bitmap = keep[i] })
         }
@@ -1843,10 +1846,35 @@ class DrawingView @JvmOverloads constructor(
     private var docBoundsCache: RectF? = null
 
     private fun relayout() {
-        PageArranger.arrange(slots, layout, currentPage)
+        if (layout == PageLayout.SINGLE) {
+            // A long method book used to rebuild two full lists of page geometry on every turn.
+            // Park everything once, then move only the page left and the page arrived at.
+            if (arrangedSinglePage !in slots.indices) {
+                for (slot in slots) {
+                    slot.originX = PageArranger.FAR_AWAY
+                    slot.originY = PageArranger.FAR_AWAY
+                }
+            } else if (arrangedSinglePage != currentPage) {
+                slots[arrangedSinglePage].originX = PageArranger.FAR_AWAY
+                slots[arrangedSinglePage].originY = PageArranger.FAR_AWAY
+            }
+            slots.getOrNull(currentPage)?.let {
+                it.originX = 0f
+                it.originY = 0f
+            }
+            arrangedSinglePage = currentPage
+        } else {
+            PageArranger.arrange(slots, layout, currentPage)
+            arrangedSinglePage = -1
+        }
         docBoundsCache = null
         syncCurrentDims()
     }
+
+    /** RectF.intersects without allocating a RectF for every page on every animation frame. */
+    private fun intersects(slot: PageSlot, rect: RectF): Boolean =
+        slot.originX < rect.right && slot.originX + slot.visibleWidth > rect.left &&
+            slot.originY < rect.bottom && slot.originY + slot.visibleHeight > rect.top
 
     private fun syncCurrentDims() {
         slots.getOrNull(currentPage)?.let {
@@ -2781,9 +2809,10 @@ class DrawingView @JvmOverloads constructor(
         canvas.save()
         canvas.concat(pageToView)
 
-        for (slot in slots) {
-            if (RectF.intersects(slot.rect, fullViewportDoc)) drawnPages.add(slot.index)
-            if (cullingSane && !RectF.intersects(slot.rect, viewportDoc)) continue
+        for (slotIndex in com.inkslate.core.PageArranger.drawRange(slots.size, layout, currentPage)) {
+            val slot = slots[slotIndex]
+            if (intersects(slot, fullViewportDoc)) drawnPages.add(slot.index)
+            if (cullingSane && !intersects(slot, viewportDoc)) continue
 
             canvas.save()
             canvas.translate(slot.originX, slot.originY)

@@ -369,7 +369,14 @@ fun EditorScreen(
             // everything downstream that writes the view back treats it as the truth.
             withContext(Dispatchers.IO) { runCatching { previous.close() } }
         }
+        val openStarted = android.os.SystemClock.elapsedRealtime()
         val opened = withContext(Dispatchers.IO) { repo.open(file) }
+        val openMs = android.os.SystemClock.elapsedRealtime() - openStarted
+        RenderStats.recordDocumentOpen(openMs)
+        EventLog.info(
+            "open",
+            "Opened ${file.name} in ${openMs}ms" + (opened?.let { "; ${it.pageCount} page(s)" } ?: "; failed")
+        )
         if (opened == null) {
             loadError = "Could not open ${file.name}. It may be corrupt, password protected, or " +
                 "an unsupported format."

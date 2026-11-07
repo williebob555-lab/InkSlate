@@ -101,7 +101,7 @@ object PageArranger {
         slots.map { com.inkslate.core.PageExtent(it.visibleWidth, it.visibleHeight) }
 
     private fun canvasOf(slots: List<PageSlot>): com.inkslate.core.Box? =
-        slots.firstOrNull { it.canvasRect != null }?.canvasRect?.let {
+        slots.firstOrNull()?.canvasRect?.let {
             com.inkslate.core.Box(it.left, it.top, it.right, it.bottom)
         }
 
@@ -120,13 +120,18 @@ object PageArranger {
     /** Overall extent of the arranged pages, in document space. */
     fun bounds(slots: List<PageSlot>, layout: PageLayout, currentPage: Int): RectF {
         if (slots.isEmpty()) return RectF(0f, 0f, 612f, 792f)
+        canvasOf(slots)?.let { return RectF(it.left, it.top, it.right, it.bottom) }
+        if (layout == PageLayout.SINGLE) {
+            val page = slots[currentPage.coerceIn(0, slots.lastIndex)]
+            return RectF(0f, 0f, page.visibleWidth, page.visibleHeight)
+        }
         val extents = extentsOf(slots)
         val box = com.inkslate.core.PageArranger.bounds(
             extents,
             slots.map { it.originX to it.originY },
             layout,
             currentPage,
-            canvasOf(slots)
+            null
         )
         return RectF(box.left, box.top, box.right, box.bottom)
     }
