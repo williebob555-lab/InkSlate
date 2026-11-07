@@ -2,6 +2,7 @@ package com.inksheets.core.omr
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EnsembleBarAlignmentTest {
@@ -32,5 +33,16 @@ class EnsembleBarAlignmentTest {
         assertEquals(4, aligned[0]!!.events.filterIsInstance<Note>().single().pitches.single().octave)
         assertNull(aligned[1])
         assertNull(aligned[2])
+    }
+
+    @Test fun `printed multi measure rest gets one continuous progress pass`() {
+        val rest = bar(1, 0, bars = 4).copy(events = listOf(Rest(Duration(1), 20f)))
+        val lead = Score(listOf(rest, bar(5, 1)), 1)
+        val synth = Synth(1_000).apply { harmonicLimit = 1; roomEnabled = false }
+        val player = EnsemblePlayer(synth, lead, emptyList(), 1, 5, 60.0)
+        player.fill(FloatArray(4_000))
+        assertTrue("one quarter of the printed rest", player.barProgress in .24f..26f)
+        player.fill(FloatArray(8_000))
+        assertTrue("three quarters of the printed rest", player.barProgress in .74f..76f)
     }
 }

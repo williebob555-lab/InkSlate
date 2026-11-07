@@ -10,8 +10,8 @@ import org.junit.Test
 
 class AndroidMemoryBudgetTest {
     @Test fun `music pages use the screen's shorter side and stay bounded`() {
-        assertEquals(1134,musicRenderWidthPx(1080f,2400f))
-        assertEquals(1600,musicRenderWidthPx(2560f,1600f))
+        assertEquals(1080,musicRenderWidthPx(1080f,2400f))
+        assertEquals(1248,musicRenderWidthPx(2560f,1600f))
         assertEquals(720,musicRenderWidthPx(480f,800f))
     }
 

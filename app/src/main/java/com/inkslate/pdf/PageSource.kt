@@ -173,7 +173,11 @@ class PdfPageSource(private val file: File) : PageSource {
         bmp.getPixels(row, 0, w, 0, 0, w, 1)
         val reference = row[0]
 
-        val step = maxOf(1, h / 400)
+        // Check every row. Music is almost entirely one-pixel staff lines; a stride of eight can
+        // miss all five lines and every small note, falsely call the page blank, then render the
+        // entire page a second time in print mode. A real page exits near its first staff; only a
+        // genuinely blank page scans the full bitmap.
+        val step = 1
         var y = 0
         while (y < h) {
             bmp.getPixels(row, 0, w, 0, y, w, 1)

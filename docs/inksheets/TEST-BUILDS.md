@@ -4,6 +4,31 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Dense full-band playback now starts inside a guaranteed realtime budget.** Ensembles of 7-12
+  parts synthesize internally at 24 kHz and larger groups at 16 kHz, then stream through a
+  no-allocation linear adapter to the 48 kHz Android output. Large groups begin dry with four
+  harmonics instead of spending their opening seconds repeatedly degrading while the queue
+  starves. The producer yields to the interface once it has 300 ms in reserve, not while dry.
+- **Printed multi-measure rests get one continuous playback pass.** Ensemble alignment still
+  expands the hidden bars for timing, but the visible progress rail crosses the one printed rest
+  once instead of resetting for every hidden bar and appearing to loop.
+- **Long music pages are cheaper to turn.** Landscape music rasters now match the actual fitted
+  page width (about 1,250 px on the affected tablet) rather than 1,600 px. Zoom still asks the PDF
+  for a sharp region. The blank-page check now examines every raster row, preventing thin staves
+  from being missed and the entire page being rendered a second time in print mode.
+- **Large arrangements no longer make every part urgent work.** Only the PDF in front receives
+  current-piece background-reading priority; other UBand parts remain ordinary idle library work
+  until Band playback explicitly requests them. Recognition waits eight seconds after display or
+  input activity before resuming.
+- **Repeated part/song opens skip reparsing unchanged plain PDFs.** A no-ink result is cached by
+  path and file fingerprint, while a Syncthing or external change invalidates it immediately. The
+  Cowboys field trace showed 7.8 seconds in document open and only 15 ms in rendering.
+- **A main-thread stall sampler now records the blocking stack.** Turn diagnostics can identify
+  the code holding the interface during a 150 ms+ freeze rather than only reporting the late
+  frame after it has recovered.
+
+## 1.2.2-test.323 — long-book and ensemble CPU bounds
+
 - **Long method books no longer make every animation frame visit every page.** In one-page music
   mode, a turn now repositions and draws only the page being left and the page being entered;
   hundreds of off-screen page rectangles are no longer allocated and checked each frame.

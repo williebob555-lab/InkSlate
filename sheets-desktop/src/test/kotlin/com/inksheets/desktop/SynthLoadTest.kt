@@ -6,6 +6,9 @@ import com.inksheets.core.omr.Score
 import com.inksheets.core.omr.ScorePlayer
 import com.inksheets.core.omr.Scores
 import com.inksheets.core.omr.Synth
+import com.inksheets.core.omr.DrumKind
+import com.inksheets.core.InstrumentReader
+import com.inksheets.desktop.review.T5Data
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -50,5 +53,55 @@ class SynthLoadTest {
         val p2 = time("a band of 12 parts", 20) { band.fill(it) }
         assertTrue("one part in time", p1 < 2.0)
         assertTrue("the band in time", p2 < 4.0)
+    }
+
+    /**
+     * Field reproduction for the two scores that exposed tablet playback failures. This is skipped
+     * on CI, whose checkout does not contain the user's library, but gives us a repeatable profile
+     * against the exact readings instead of a synthetic chord.
+     */
+    @Test
+    fun `real Diva load and Danza rest order`() {
+        val pep = File(music, "Imported/PEP BAND/Music")
+        val diva = File(pep, "Diva")
+        val divaParts = diva.listFiles { f -> f.extension.equals("pdf", true) && !f.name.contains("score", true) }.orEmpty().mapNotNull { pdf ->
+            val score = T5Data.readingOf(pdf)?.let(T5Data::load) ?: return@mapNotNull null
+            val instrument = InstrumentReader.readFileName(pdf.name)?.instrument ?: return@mapNotNull null
+            Triple(score, instrument, DrumKind.of(instrument.id, pdf.nameWithoutExtension))
+        }
+        assumeTrue("no Diva readings here", divaParts.size >= 8)
+        val lead = divaParts.first().first
+        val first = lead.measures.first().number
+        val last = lead.measures.last().let { it.number + it.bars - 1 }
+        fun profile(rate: Int, harmonics: Int, room: Boolean): Double {
+            val synth = Synth(rate).apply { harmonicLimit = harmonics; roomEnabled = room }
+            val voices = divaParts.drop(1).map { (score, instrument, drums) ->
+                EnsemblePlayer.Voice(score, instrument.transpose, Synth.patchFor(com.inksheets.core.omr.Midi.program(instrument.id)), drums)
+            }
+            val player = EnsemblePlayer(synth, lead, voices, first, last, 120.0)
+            val block = rate / 100
+            val buf = FloatArray(block)
+            val began = System.nanoTime()
+            repeat(300) { buf.fill(0f); player.fill(buf) }
+            val ms = (System.nanoTime() - began) / 1_000_000.0
+            println("DIVA-LOAD parts=${voices.size} rate=$rate harmonics=$harmonics room=$room: %.1fms to make 3000ms (x%.2f realtime)".format(ms, 3000.0 / ms))
+            return ms
+        }
+        val full = profile(48_000, 12, true)
+        profile(48_000, 4, false)
+        profile(24_000, 4, false)
+        val bounded = profile(16_000, 4, false)
+        assertTrue("dense-band mode should remove most synthesis work", bounded * 3 < full)
+
+        val danza = File(pep, "Danza Kuduro")
+        val orders = danza.listFiles { f -> f.extension.equals("pdf", true) && !f.name.contains("score", true) }.orEmpty().mapNotNull { pdf ->
+            val score = T5Data.readingOf(pdf)?.let(T5Data::load) ?: return@mapNotNull null
+            val rest = score.measures.filter { it.bars > 1 }
+            val played = PlayOrder.unrolled(score).measures
+            println("DANZA ${pdf.name}: measures=${score.measures.size} played=${played.size}; multirests=" +
+                rest.joinToString { m -> "${m.number}x${m.bars} played=${played.count { it === m || it == m }} start=${m.repeatStart} end=${m.repeatEnd} ending=${m.ending}" })
+            pdf.name to (score to played)
+        }
+        assumeTrue("no Danza readings here", orders.isNotEmpty())
     }
 }

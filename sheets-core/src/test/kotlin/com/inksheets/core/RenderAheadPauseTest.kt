@@ -8,6 +8,19 @@ import java.util.concurrent.TimeUnit
 import com.inksheets.core.omr.*
 
 class RenderAheadPauseTest {
+    @Test fun `lower rate band audio is streamed at device rate without changing duration`() {
+        var sample = 0
+        val adapted = AudioRateAdapter(1_000, 2_000) { block ->
+            block.indices.forEach { block[it] = (sample++).toFloat() }
+        }
+        val out = FloatArray(8)
+        adapted.fill(out)
+        assertArrayEquals(floatArrayOf(0f,.5f,1f,1.5f,2f,2.5f,3f,3.5f),out,.0001f)
+        val next = FloatArray(8)
+        adapted.fill(next)
+        assertArrayEquals(floatArrayOf(4f,4.5f,5f,5.5f,6f,6.5f,7f,7.5f),next,.0001f)
+    }
+
     @Test fun `reports queued audio and underruns`() {
         val ahead=RenderAhead(1000,200,20) { samples -> samples.fill(.25f) }
         ahead.start(prefillMs=80)

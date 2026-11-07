@@ -312,13 +312,14 @@ private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: c
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         )
-        val names = song.parts.map { partName(it) }
+        val names = remember(song.parts) { song.parts.map { partName(it) } }
+        val duplicateNames = remember(names) { names.groupingBy { it }.eachCount() }
         var query by remember { mutableStateOf("") }
         ListSearch(song.parts.size, query, { query = it }, "Find a part", Modifier.padding(horizontal = 8.dp))
         song.parts.forEachIndexed { i, p ->
             if (!matches(query, names[i], p.file.substringAfterLast('/'))) return@forEachIndexed
             // Two parts for one instrument are told apart by their file.
-            val name = if (names.count { it == names[i] } > 1) names[i] + " - " + p.file.substringAfterLast('/').substringBeforeLast('.') else names[i]
+            val name = if ((duplicateNames[names[i]] ?: 0) > 1) names[i] + " - " + p.file.substringAfterLast('/').substringBeforeLast('.') else names[i]
             DropdownMenuItem(
                 text = { Text(name, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
                 leadingIcon = { if (p.id == shown?.id) Icon(Icons.Default.Check, null) },

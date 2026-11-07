@@ -1193,8 +1193,11 @@ class EnsemblePlayer(
     val barProgress: Float get() {
         val at = starts.indexOfLast { it <= synth.position }
         if (at < 0) return 0f
-        val end = starts.getOrNull(at + 1) ?: length
-        return ((synth.position - starts[at]).toDouble() / (end - starts[at]).coerceAtLeast(1)).toFloat().coerceIn(0f, 1f)
+        // A printed multi-measure rest is one visible box. Its cursor must cross that box once,
+        // not reset at every hidden canonical bar and look as if the rest is looping.
+        val start = starts[spanFirst[at]]
+        val end = starts.getOrNull(spanEnd[at]) ?: length
+        return ((synth.position - start).toDouble() / (end - start).coerceAtLeast(1)).toFloat().coerceIn(0f, 1f)
     }
     /** One part: its notes, how far it is written above where it sounds, how it sounds. */
     class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch,
@@ -1208,6 +1211,8 @@ class EnsemblePlayer(
 
     private val starts: LongArray
     private val numbers: IntArray
+    private val spanFirst: IntArray
+    private val spanEnd: IntArray
     private var length: Long
     /** The tempo now: changed while playing by [setTempo]. */
     @Volatile var tempo: Double = bpm
@@ -1237,10 +1242,14 @@ class EnsemblePlayer(
         // The timeline: every bar of the part played from, in playing order (a rest of many bars
         // as that many bars), each as long as it is played.
         val numbers = ArrayList<Int>(); val lengths = ArrayList<Double>(); val mineBars = ArrayList<Measure?>()
+        val spanFirst = ArrayList<Int>(); val spanEnd = ArrayList<Int>()
         for (mm in order) for (k in 0 until mm.bars) {
+            val first = numbers.size - k
             numbers += mm.number + k
             lengths += if (mm.bars > 1) mm.time.quarters else mm.playedQuarters
             mineBars += if (mm.bars > 1) null else mm
+            spanFirst += first
+            spanEnd += first + mm.bars
         }
         val len = lengths.toDoubleArray()
         fun along(v: Voice): List<Measure?> = EnsembleBarAlignment.align(mine, order, v.score)
@@ -1265,6 +1274,8 @@ class EnsemblePlayer(
         tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
         starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }
         this.numbers = numbers.toIntArray()
+        this.spanFirst = spanFirst.toIntArray()
+        this.spanEnd = spanEnd.toIntArray()
         length = (map.seconds(lead.totalQ) * synth.sampleRate).toLong()
         synth.add(tones)
     }

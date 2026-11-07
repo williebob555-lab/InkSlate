@@ -24,6 +24,7 @@ internal object Sound {
     fun play(state: SheetsState, who: String, ahead: Boolean = false,
              /** A denser ensemble gets a deeper producer queue without changing the device API. */
              aheadMs: Int = 600, prefillMs: Int = 250,
+             producerPriority: Int = Thread.NORM_PRIORITY,
              fill: (FloatArray) -> Unit): Boolean {
         val o = state.platform.audioOut ?: return false
         paused.remove(who)
@@ -32,7 +33,7 @@ internal object Sound {
             // Render on a high-priority producer. Starting the device only after a short prefill is
             // important: an empty queue made the first expensive ensemble block an immediate xrun.
             val block = if (o.sampleRate >= 88_200) 960 else 480
-            val made = com.inksheets.core.RenderAhead(o.sampleRate, aheadMs.coerceIn(160, 1_200), block, fill)
+            val made = com.inksheets.core.RenderAhead(o.sampleRate, aheadMs.coerceIn(160, 1_200), block, producerPriority, fill)
             // Prime quietly on the producer. Sleeping here blocked the UI for 500-1000 ms when
             // Play was pressed; read() emits silence without consuming until the queue is ready.
             made.start(prefillMs = prefillMs.coerceIn(40, aheadMs - 20), waitForPrefill = false)

@@ -1757,7 +1757,16 @@ internal object ScoreTools {
                 else "No other read music in this song to play"
                 return@readBand
             }
-            val rate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
+            val outputRate = Sound.rate(s).takeIf { it > 0 } ?: run { said = "No sound output here"; return@readBand }
+            // Full pep/concert-band folders commonly contain 15-25 parts. At 48 kHz the tablet
+            // measured 7-11 ms of synthesis for each 10 ms block, leaving no reserve at all.
+            // Choose the cost before playback starts; lowering upper bandwidth is much less
+            // destructive than repeatedly starving the speaker and emitting pops and silence.
+            val rate = when {
+                voices.size >= 13 -> minOf(outputRate, 16_000)
+                voices.size >= 7 -> minOf(outputRate, 24_000)
+                else -> outputRate
+            }
             // As for this part alone (see play): a passage chosen straight through, else from a bar on, repeats and all.
             fun local(number: Int): Int = when {
                 mine.measures.any { number >= it.number && number < it.number + it.bars } -> number
@@ -1777,7 +1786,8 @@ internal object ScoreTools {
                 // Twelve partials retain the instrument's family and brightness while bounding
                 // the per-sample cost of a whole band. Health monitoring can step lower only if
                 // this device still cannot render a 10 ms block with UI headroom.
-                harmonicLimit=12
+                harmonicLimit=if(voices.size >= 7) 4 else 12
+                roomEnabled=voices.size < 7
             }, mine, voices, range.first, range.last, SharedMetronome.bpm, guide = guide, order = order, click = takeClick(s))
             said = "The band: ${voices.size} parts"
             playbackProgress = 0f
@@ -1786,13 +1796,19 @@ internal object ScoreTools {
             syncTool()
             fun cursor()=com.inksheets.core.omr.PlaybackCursor(p.bar,p.barProgress,p.tempo,finished=p.finished)
             val history=com.inksheets.core.omr.PlaybackHistory(cursor())
+            val adapted = if (rate == outputRate) null else com.inksheets.core.AudioRateAdapter(rate, outputRate) { p.fill(it) }
+            var madeOutputFrames = 0L
+            s.platform.warn("PERF band mode ${voices.size + if(guide != null) 1 else 0} parts, ${rate}Hz synthesis" +
+                if(rate < outputRate) " -> ${outputRate}Hz output, 4 harmonics, dry" else "")
             pageFollow = PlaybackPageFollow(s.pageShown.first)
             pageFollowSuspended = false
             playbackUnderruns = 0; playbackBufferedMs = 0
-            Sound.play(s, WHO, ahead = true, aheadMs = 1_200, prefillMs = 500) { buf ->
-                val at=p.synth.position;val before=cursor()
-                p.fill(buf)
-                history.record(at,p.synth.position,before,cursor())
+            Sound.play(s, WHO, ahead = true, aheadMs = 1_200, prefillMs = 700,
+                producerPriority = Thread.NORM_PRIORITY + 1) { buf ->
+                val at=madeOutputFrames;val before=cursor()
+                if(adapted == null) p.fill(buf) else adapted.fill(buf)
+                madeOutputFrames += buf.size
+                history.record(at,madeOutputFrames,before,cursor())
             }
             var lastBar = -1
             watcher = java.util.Timer("band-play", true).apply {

@@ -120,7 +120,8 @@ import com.inkslate.core.Tool
 
 /** Whole-page music never needs more pixels across than the screen's shorter side can show. */
 internal fun musicRenderWidthPx(screenWidthPx:Float,screenHeightPx:Float):Int =
-    (minOf(screenWidthPx,screenHeightPx)*1.05f).toInt().coerceIn(720,1600)
+    (if(screenWidthPx > screenHeightPx) screenHeightPx * .78f else screenWidthPx)
+        .toInt().coerceIn(720,1400)
 
 /** Page rasters share the heap with recognition, decoded scores, audio and temporary turn shots. */
 internal fun musicBitmapBudgetBytes(maxHeap: Long): Long =

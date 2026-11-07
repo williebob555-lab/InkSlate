@@ -44,7 +44,12 @@ internal object Transcriber {
     private fun backgroundAllowed(): Boolean {
         val s = backgroundState ?: return false
         val now = System.currentTimeMillis()
-        val occupied = s.homeInFront || !s.platform.inForeground || !s.platform.backgroundReadingAllowed || com.inkslate.core.RenderGate.displayBusy() ||
+        val displayBusy = com.inkslate.core.RenderGate.displayBusy()
+        // A turn is often followed by another a second or two later. Starting a full recognition
+        // page in that gap makes the next turn fight its allocations and native PDF work. Require
+        // a real idle stretch after any display/input activity before automatic work resumes.
+        if (displayBusy) activityUntil = maxOf(activityUntil, now + 8_000L)
+        val occupied = s.homeInFront || !s.platform.inForeground || !s.platform.backgroundReadingAllowed || displayBusy ||
             Recording.playing || Recording.loading || SelfRecorder.recording || SharedMetronome.running || Listener.active ||
             ScoreTools.playing != null || Click.counting > 0
         if (occupied) deeperAfter = maxOf(deeperAfter, now + 15_000L)
@@ -114,10 +119,11 @@ internal object Transcriber {
         val songs = state.library?.songs.orEmpty().toList()
         queue.submit("background:plan:$token", ReadingQueue.LIBRARY) { control ->
             val ordered = buildList {
-                current?.let { song ->
-                    song.parts.sortedBy { part -> state.partFile(song, part)?.absolutePath != state.currentPath }
-                        .forEach { p -> state.partFile(song, p)?.let { add(it to ReadingQueue.CURRENT_PIECE) } }
-                }
+                // Only the part actually in front is current-piece work. Treating every PDF in a
+                // 20-part UBand folder as urgent made opening or switching one part immediately
+                // launch recognition across the whole arrangement. Whole-band Play explicitly
+                // requests the selected parts when they are needed.
+                state.currentPath?.let(::File)?.takeIf { it.isFile }?.let { add(it to ReadingQueue.CURRENT_PIECE) }
                 songs.forEach { song -> song.parts.forEach { p -> state.partFile(song, p)?.let { add(it to ReadingQueue.LIBRARY) } } }
             }.distinctBy { it.first.absolutePath }
             data class AuditPlan(val file: File, val current: Boolean, val priority: Int)

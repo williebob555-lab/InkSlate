@@ -17,6 +17,7 @@ class RenderAhead(
     val sampleRate: Int,
     private val aheadMs: Int = 200,
     private val block: Int = 480,
+    private val producerPriority: Int = Thread.NORM_PRIORITY,
     private val fill: (FloatArray) -> Unit
 ) {
     private val capacity = (((sampleRate.toLong() * aheadMs / 1000).toInt() + block - 1) / block).coerceAtLeast(2) * block
@@ -71,10 +72,10 @@ class RenderAhead(
                     val at = (written % capacity).toInt()
                     System.arraycopy(buf, 0, ring, at, block)   // capacity is a whole number of blocks
                     written += block
-                    // A deep queue means this producer does not need to monopolise a core. Give
-                    // input/render threads a scheduling point after each block, especially on
-                    // small tablets synthesising an entire band.
-                    Thread.yield()
+                    // Give the UI a scheduling point only once the speaker has a useful reserve.
+                    // Yielding after every block while the queue was nearly empty made a dense
+                    // band polite but inaudible: it never got a chance to catch up.
+                    if (bufferedMs >= minOf(300, aheadMs / 2)) Thread.yield()
                 } else {
                     try { Thread.sleep(1) } catch (_: InterruptedException) { return@Thread }
                 }
@@ -84,7 +85,7 @@ class RenderAhead(
             // The device AudioTrack thread remains urgent; this producer has 0.6-1.2 seconds in
             // hand and must not outrank the UI. MAX_PRIORITY made tempo and transport buttons
             // wait behind continuous ensemble synthesis.
-            priority = Thread.NORM_PRIORITY
+            priority = producerPriority.coerceIn(Thread.MIN_PRIORITY, Thread.MAX_PRIORITY)
             start()
         }
         if (waitForPrefill) {

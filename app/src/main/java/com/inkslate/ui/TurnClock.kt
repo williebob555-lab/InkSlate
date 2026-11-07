@@ -12,6 +12,7 @@ object TurnClock {
 
     /** A turn to [title] has begun. */
     fun start(title: String?) {
+        ensureStallSampler()
         startedAt = android.os.SystemClock.uptimeMillis()
         watchUntil = startedAt + WATCH_MS
         to = title
@@ -30,6 +31,47 @@ object TurnClock {
     @Volatile private var stalls = 0
     private var lastFrameNs = 0L
     private var watching = false
+
+    /**
+     * Choreographer tells us that a frame was late only after the main thread is moving again.
+     * This sampler catches its stack while it is actually stuck, so the next field report names
+     * the blocking code instead of leaving another timing guess. One ping may be outstanding;
+     * it cannot build a queue behind a blocked main thread.
+     */
+    private val pingPending = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var mainBeat = 0L
+    @Volatile private var samplerStarted = false
+    @Volatile private var lastStackReport = 0L
+
+    @Synchronized
+    private fun ensureStallSampler() {
+        if (samplerStarted) return
+        samplerStarted = true
+        val main = android.os.Looper.getMainLooper()
+        val handler = android.os.Handler(main)
+        mainBeat = android.os.SystemClock.uptimeMillis()
+        Thread({
+            while (true) {
+                if (android.os.SystemClock.uptimeMillis() < watchUntil && pingPending.compareAndSet(false, true)) {
+                    handler.post {
+                        mainBeat = android.os.SystemClock.uptimeMillis()
+                        pingPending.set(false)
+                    }
+                }
+                try { Thread.sleep(50) } catch (_: InterruptedException) { return@Thread }
+                val now = android.os.SystemClock.uptimeMillis()
+                val lag = now - mainBeat
+                if (now < watchUntil && pingPending.get() && lag >= 150 && now - lastStackReport >= 1_000) {
+                    lastStackReport = now
+                    val useful = main.thread.stackTrace
+                        .filterNot { it.className.startsWith("java.lang.Thread") }
+                        .take(10)
+                        .joinToString(" <- ") { "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }
+                    EventLog.warn("stall", "Main thread blocked at least ${lag}ms: $useful")
+                }
+            }
+        }, "main-stall-sampler").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
+    }
 
     /**
      * For a few seconds after a turn, every frame that took far longer than it should is said in

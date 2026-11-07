@@ -203,6 +203,10 @@ class DocumentRepo(private val context: Context) {
 
     private val prefs = SavePrefs(context)
     private val deviceTag = DeviceId.get(context)
+    /** Unchanged PDFs proved to contain no InkSlate payload or annotation. PDFBox otherwise parses
+     * the same plain music file on every part/song switch; on the field tablet one repeat parse
+     * of Cowboys took 7.8 seconds despite the page itself rendering in 15 ms. */
+    private val plainDocuments = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     /**
      * The handwriting this app last put inside each document, by digest.
@@ -261,6 +265,7 @@ class DocumentRepo(private val context: Context) {
         // pages by a previous overwrite.
         // Whether this file is still byte for byte what this app last wrote.
         val ourOwnOutput = PristineStore.savedPageState(context, file) != null
+        val fingerprint = PageSources.fingerprint(file)
         val inspected = when {
             !InkEmbedder.supports(file) -> InkEmbedder.Inspection(null, false)
             // Nothing to learn from reading it. The payload inside was written from the working
@@ -268,7 +273,12 @@ class DocumentRepo(private val context: Context) {
             // app storage instead, and the document is not parsed at all. That is a PDF load and
             // an inflate removed from every open of a document this device last saved.
             ourOwnOutput -> InkEmbedder.Inspection(null, bakedVisible = true)
-            else -> InkEmbedder.inspect(file)
+            plainDocuments[file.absolutePath] == fingerprint -> InkEmbedder.Inspection(null, false, annotatedPages = emptySet())
+            else -> InkEmbedder.inspect(file).also { found ->
+                if (found.ink == null && !found.bakedVisible && found.annotatedPages?.isEmpty() == true)
+                    plainDocuments[file.absolutePath] = fingerprint
+                else plainDocuments.remove(file.absolutePath)
+            }
         }
         // What the file arrived carrying. Anything different later came from somewhere else.
         inspected.inkStamp?.let { lastEmbedded[file.absolutePath] = it }
