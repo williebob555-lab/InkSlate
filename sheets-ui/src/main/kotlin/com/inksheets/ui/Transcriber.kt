@@ -85,6 +85,7 @@ internal object Transcriber {
         synchronized(drawn) { drawn.clear() }
         synchronized(known) { known.clear() }
         synchronized(hotKnown) { hotKnown.clear() }
+        synchronized(hotEdits) { hotEdits.clear() }
         synchronized(looksKnown) { looksKnown.clear() }
         synchronized(specialistsKnown) { specialistsKnown.clear() }
     }
@@ -367,11 +368,34 @@ internal object Transcriber {
      */
     internal fun idOf(file: File): String = synchronized(ids) {
         ids.getOrPut("first|${file.absolutePath}|${file.length()}|${file.lastModified()}") {
-            val bytes = runCatching { file.readBytes() }.getOrNull() ?: return@getOrPut wholeIdOf(file)
-            val end = if (file.extension.equals("pdf", ignoreCase = true)) firstRevisionEnd(bytes) else bytes.size
             val crc = java.util.zip.CRC32()
-            crc.update(bytes, 0, end)
-            "${java.lang.Long.toHexString(end.toLong())}-${java.lang.Long.toHexString(crc.value)}"
+            if (!file.extension.equals("pdf", ignoreCase = true)) return@getOrPut wholeIdOf(file)
+            // Do not allocate the whole PDF merely to find its first revision. Concert-band parts
+            // can be tens or hundreds of MB; the former readBytes() both stalled storage and made
+            // an otherwise small metadata lookup capable of exhausting Android's heap.
+            runCatching {
+                file.inputStream().buffered().use { input ->
+                    val mark = "%%EOF".toByteArray()
+                    val tail = ByteArray(mark.size)
+                    var count = 0L
+                    var found = false
+                    while (!found) {
+                        val b = input.read()
+                        if (b < 0) break
+                        crc.update(b); tail[(count % tail.size).toInt()] = b.toByte(); count++
+                        if (count >= mark.size) {
+                            found = mark.indices.all { j -> tail[((count - mark.size + j) % tail.size).toInt()] == mark[j] }
+                        }
+                    }
+                    if (found) while (true) {
+                        input.mark(1)
+                        val b = input.read()
+                        if (b != '\r'.code && b != '\n'.code) { if (b >= 0) input.reset(); break }
+                        crc.update(b); count++
+                    }
+                    "${java.lang.Long.toHexString(count)}-${java.lang.Long.toHexString(crc.value)}"
+                }
+            }.getOrElse { wholeIdOf(file) }
         }
     }
 
@@ -405,6 +429,19 @@ internal object Transcriber {
      * an empty string when it was cleared.
      */
     internal fun keptEdit(state: SheetsState, file: File, kind: String): String? {
+        synchronized(hotEdits) {
+            hotEdits[file.absolutePath]?.let { return it[kind] }
+        }
+        val value = loadEdit(state, file, kind)
+        publishEdit(file, kind, value)
+        return value
+    }
+
+    /** The UI's correction lookup: RAM only. Storage and PDF identity work belongs to preload. */
+    internal fun knownEdit(file: File, kind: String): String? =
+        synchronized(hotEdits) { hotEdits[file.absolutePath]?.get(kind) }
+
+    private fun loadEdit(state: SheetsState, file: File, kind: String): String? {
         // In a folder of their own for the file, whatever reader read it: a better reader reads the
         // music again, but what the player put right is theirs and stays. (Kept a while beside the
         // reading itself: looked for there too.)
@@ -413,6 +450,57 @@ internal object Transcriber {
             return runCatching { newest.readText() }.getOrNull()
         }
         return null
+    }
+
+    private val editKinds = listOf(
+        "sheets_numbers", "sheets_rests", "sheets_sig", "sheets_wrong", "sheets_fixed",
+        "sheets_carried", "sheets_structure", "sheets_clean", "sheets_clean_view", "sheets_clean_masks"
+    )
+    private val hotEdits = LinkedHashMap<String, MutableMap<String, String?>>(4, .75f, true)
+    private val pendingEdits = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private fun trimHotEdits(keep: String) {
+        fun bytes() = hotEdits.values.sumOf { edits -> edits.values.sumOf { (it?.length ?: 0) * 2L } }
+        // Paint masks can be much larger than the other correction strings. Keep the part in
+        // front even when it alone exceeds the budget, but never retain several such payloads.
+        while (hotEdits.size > 4 || (hotEdits.size > 1 && bytes() > 6L * 1024 * 1024)) {
+            val old = hotEdits.keys.firstOrNull { it != keep } ?: break
+            hotEdits.remove(old)
+        }
+    }
+
+    private fun publishEdit(file: File, kind: String, value: String?) = synchronized(hotEdits) {
+        hotEdits.getOrPut(file.absolutePath) { hashMapOf() }[kind] = value
+        trimHotEdits(file.absolutePath)
+    }
+
+    /** Load all small correction sidecars in one worker pass, publishing one bounded RAM view. */
+    internal fun loadEdits(state: SheetsState, file: File): Map<String, String?> {
+        val loaded = editKinds.associateWith<String, String?> { null }.toMutableMap()
+        val found = HashSet<String>()
+        // Enumerate each directory once. On Android/Syncthing-backed storage listFiles itself can
+        // be expensive; doing it once per correction kind multiplied the cost by ten.
+        for (dir in listOf(editsFolder(state, file), File(folder(state, file), "edits"))) {
+            val files = dir.listFiles().orEmpty()
+            for (kind in editKinds) {
+                if (kind in found) continue // the new reader-independent folder has precedence
+                val newest = files.asSequence().filter { it.name.startsWith("$kind-") && it.name.endsWith(".txt") }
+                    .maxByOrNull { it.lastModified() } ?: continue
+                loaded[kind] = runCatching { newest.readText() }.getOrNull()
+                found += kind
+            }
+        }
+        synchronized(hotEdits) {
+            // A correction made while this load was in flight wins over the older disk snapshot.
+            val current = hotEdits[file.absolutePath]
+            val merged = loaded.toMutableMap()
+            current.orEmpty().forEach { (kind, value) ->
+                if ("${file.absolutePath}|$kind" in pendingEdits) merged[kind] = value
+            }
+            hotEdits[file.absolutePath] = merged
+            trimHotEdits(file.absolutePath)
+            return hotEdits[file.absolutePath]!!.toMap()
+        }
     }
 
     /** Where what the player put right in [file]'s reading is kept: by the file's music alone, not the reader. */
@@ -424,9 +512,20 @@ internal object Transcriber {
 
     /** Keep [value] as what the player put right of [kind] in [file]'s reading (null: none). */
     internal fun keepEdit(state: SheetsState, file: File, kind: String, value: String?) {
-        val dir = editsFolder(state, file).apply { mkdirs() }
-        val me = state.platform.deviceId.map { if (it.isLetterOrDigit() || it == '-') it else '_' }.joinToString("")
-        runCatching { File(dir, "$kind-$me.txt").writeText(value.orEmpty()) }
+        // The button takes effect now; hashing a large PDF and touching synced storage do not run
+        // in its click handler. A single writer preserves the order of rapid successive edits.
+        publishEdit(file, kind, value)
+        val pendingKey = "${file.absolutePath}|$kind"
+        pendingEdits += pendingKey
+        editWriter.execute {
+            val dir = editsFolder(state, file).apply { mkdirs() }
+            val me = state.platform.deviceId.map { if (it.isLetterOrDigit() || it == '-') it else '_' }.joinToString("")
+            val wrote = runCatching { File(dir, "$kind-$me.txt").writeText(value.orEmpty()) }.isSuccess
+            synchronized(hotEdits) {
+                val current = hotEdits[file.absolutePath]
+                if (wrote && (current == null || current[kind] == value)) pendingEdits -= pendingKey
+            }
+        }
     }
 
     private fun pageFile(dir: File, page: Int) = File(dir, "p${page + 1}.json")
@@ -514,24 +613,39 @@ internal object Transcriber {
     private val cacheLoader = java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
         Thread(r, "reading-cache").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
     }
+    private val editWriter = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "reading-edits").apply { isDaemon = true; priority = Thread.NORM_PRIORITY }
+    }
 
     /** Load a displayed score from disk without ever making the caller wait on storage. */
     fun preload(state: SheetsState, file: File, onDone: (Score?) -> Unit = {}) {
-        synchronized(hotKnown) {
-            if (hotKnown.containsKey(file.absolutePath)) {
-                val score = hotKnown[file.absolutePath]
-                state.platform.onMain { onDone(score) }
-                return
+        val scoreReady = synchronized(hotKnown) { hotKnown.containsKey(file.absolutePath) }
+        val editsReady = synchronized(hotEdits) { hotEdits.containsKey(file.absolutePath) }
+        if (scoreReady && editsReady) {
+            val score = synchronized(hotKnown) { hotKnown[file.absolutePath] }
+            state.platform.onMain { onDone(score) }
+            // A synced device may have replaced a correction since this part was last in front.
+            // Refresh on storage, but never make reopening the already-hot part wait for it.
+            val before = synchronized(hotEdits) { hotEdits[file.absolutePath]?.toMap() }
+            cacheLoader.execute {
+                val after = loadEdits(state, file)
+                if (after != before) state.platform.onMain { ScoreTools.editsLoaded(file.absolutePath) }
             }
+            return
         }
         cacheLoader.execute {
             val began = System.currentTimeMillis()
-            val score = loadCached(state, file, refresh = true)
+            val score = if (scoreReady) synchronized(hotKnown) { hotKnown[file.absolutePath] }
+                else loadCached(state, file, refresh = true)
+            if (!editsReady) loadEdits(state, file)
             val elapsed = System.currentTimeMillis() - began
             val message = "PERF score cache ${file.name}: ${elapsed}ms off UI, ${score?.measures?.size ?: 0} bars"
             if (elapsed >= 500) state.platform.warn(message) else state.platform.log(message)
             publish(file, score)
-            state.platform.onMain { onDone(score) }
+            state.platform.onMain {
+                ScoreTools.editsLoaded(file.absolutePath)
+                onDone(score)
+            }
         }
     }
 

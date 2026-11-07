@@ -169,4 +169,28 @@ class BackgroundReadingTest {
             assertFalse(state.readMusicOpen)
         } finally { platform.release.countDown(); Transcriber.stopBackground(state) }
     }
+
+    @Test fun `displayed corrections are served from bounded memory after one worker load`() {
+        val root = tmp.newFolder()
+        val part = document(root, "concert-band-part.pdf")
+        val state = SheetsState(Stand(root, mapOf(part.name to 1)))
+        val value = "{\"19\":[]}"
+        Transcriber.keepEdit(state, part, "sheets_fixed", value)
+
+        val until = System.currentTimeMillis() + 5_000
+        while (System.currentTimeMillis() < until && root.walkTopDown().none { it.isFile && it.name.startsWith("sheets_fixed-") }) {
+            Thread.sleep(10)
+        }
+        assertTrue(root.walkTopDown().any { it.isFile && it.name.startsWith("sheets_fixed-") })
+
+        Transcriber.trimMemory(state)
+        assertNull("UI lookup never falls through to storage", Transcriber.knownEdit(part, "sheets_fixed"))
+        Transcriber.loadEdits(state, part)
+        assertEquals(value, Transcriber.knownEdit(part, "sheets_fixed"))
+
+        // Once published, even an unavailable backing file cannot make a frame or button wait.
+        val away = File(root, "temporarily-away.pdf")
+        assertTrue(part.renameTo(away))
+        assertEquals(value, Transcriber.knownEdit(part, "sheets_fixed"))
+    }
 }

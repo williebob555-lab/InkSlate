@@ -4,6 +4,38 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **The printed PDF is now the first opening result.** InkSheets opens and rasterises a bounded
+  1,024-pixel whole-page preview before it parses embedded handwriting or walks the PDF's
+  annotations. That bitmap is shown during the remaining load and handed directly to the live
+  page cache instead of being rendered twice. On every later turn, a new page gets one frame of
+  original sheet music before handwriting and music-reading overlays are added, so an overlay can
+  no longer hold the printed page blank.
+- **Large UBand parts no longer search correction storage from the UI thread.** The build 325
+  trace caught `ScoreTools.carryIn/fixesOf` spending 24.7 seconds enumerating edit folders and a
+  second path spending 19.5 seconds rereading a whole PDF to find its correction identity.
+  Corrections are now loaded once on a low-priority worker into a bounded RAM snapshot; page
+  drawing, Fix, Clean and cross-part checks consult RAM only. Writes take effect in RAM
+  immediately and are serialized to synced storage off the button thread.
+- **PDF identity uses constant memory.** Finding the first PDF revision now streams through a
+  small buffer instead of `readBytes()`-allocating the entire concert-band part. Correction
+  snapshots retain at most four documents and evict older large paint-mask payloads above a 6 MB
+  shared budget, preserving the current part without recreating the build 318 memory pressure.
+- **The remaining PDF renderer locks are off the UI thread.** Page-count checks use the immutable
+  count captured at open, imported-ink page dimensions run on I/O, and the page manager reuses
+  already measured dimensions. Diagnostic timestamps and file appends also moved off the UI;
+  the former five-second cold `TimeZone/SimpleDateFormat` initialization cannot block a turn.
+- **Full-band playback has static headroom and stronger low brass.** A fixed pitched-section energy
+  budget replaces continuous reliance on the final limiter. Tuba/euphonium/baritone receive 1.5×
+  relative weight, trombones 1.35× and other bass voices 1.18× without increasing total band
+  energy; percussion's separate transient budget is reduced again. Diagnostics now report section
+  gains and warn when the limiter still runs on 60% or more of blocks.
+- **Validation:** Android compilation and memory-budget tests, 20-part headroom/percussion tests,
+  correction-cache/constant-identity tests and the isolated CPU-saturation render-ahead test pass.
+  The broad run covered 459 tests with one skipped and one render-ahead timing failure while
+  Gradle was concurrently compiling; that same stress test passed when run alone.
+
+## 1.2.2-test.325 — score-cache stalls and percussion balance
+
 - **Page turns no longer wait on score-cache storage.** The build 324 stall stacks found a
   2.9-second directory enumeration and 172 ms score-JSON decode running from `ScoreTools` on the
   main thread. Screen code now performs a memory-only lookup while two low-priority workers load

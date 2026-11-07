@@ -44,7 +44,7 @@ object CleanMasks {
         // every bar; still pick up edits from another device while this score remains open.
         if (data.loaded && (data.preview != null || now - data.checkedAt < 250_000_000L)) return data
         data.checkedAt = now
-        val saved = Transcriber.keptEdit(state, File(path), KIND)
+        val saved = Transcriber.knownEdit(File(path), KIND)
         if (!data.loaded || data.saved != saved) {
             data.pages.clear()
             data.pages.putAll(decode(saved))
@@ -53,6 +53,11 @@ object CleanMasks {
             data.undo.clear() // A synced edit must not be undone with this device's stale history.
         }
         return data
+    }
+
+    /** Synced mask data arrived on the correction-cache worker. */
+    internal fun invalidate(path: String) {
+        states.values.forEach { it.remove(path) }
     }
 
     /** Returned polygons must be multiplied by the reading-to-page scale by the renderer. */

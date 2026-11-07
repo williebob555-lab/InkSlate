@@ -80,7 +80,7 @@ internal object ScoreTools {
     private data class CleanView(val visible: Boolean=false,val masksOnly: Boolean=false)
     private val cleanViews=java.util.WeakHashMap<SheetsState,MutableMap<String,CleanView>>()
     private fun cleanView(s: SheetsState,path: String): CleanView = cleanViews.getOrPut(s) { hashMapOf() }.getOrPut(path) {
-        when(Transcriber.keptEdit(s,File(path),"sheets_clean_view")) {
+        when(Transcriber.knownEdit(File(path),"sheets_clean_view")) {
             "hidden_all" -> CleanView(false,false)
             "hidden_masks" -> CleanView(false,true)
             "masks" -> CleanView(true,true)
@@ -189,7 +189,7 @@ internal object ScoreTools {
      */
     private fun kept(key: String, path: String): String? {
         val s = state ?: return null
-        Transcriber.keptEdit(s, File(path), key.substringBefore(':'))?.let { return it.ifEmpty { null } }
+        Transcriber.knownEdit(File(path), key.substringBefore(':'))?.let { return it.ifEmpty { null } }
         return s.platform.pref(key)
     }
 
@@ -198,6 +198,16 @@ internal object ScoreTools {
         Transcriber.keepEdit(s, File(path), key.substringBefore(':'), value)
         // The library has it now: the device's own copy would only bring a cleared one back.
         if (s.platform.pref(key) != null) s.platform.setPref(key, null)
+    }
+
+    /** A worker published this part's synced corrections. Drop any empty values the first frame
+     * may have memoized while storage was still loading; the next frame rebuilds from RAM only. */
+    internal fun editsLoaded(path: String) {
+        numbers.remove(path); rests.remove(path); sigs.remove(path); wrong.remove(path)
+        fixes.remove(path); carried.remove(path); cleaned.remove(path); carryChecked.remove(path)
+        state?.let { cleanViews[it]?.remove(path) }
+        CleanMasks.invalidate(path)
+        changed()
     }
 
     /** A part's reading with its bars numbered, rests counted and wrong bars marked - but no bar fixed, by hand or carried over. */
@@ -1768,6 +1778,14 @@ internal object ScoreTools {
         pool.shutdown()
     }
 
+    /** Relative section balance; total ensemble energy is still held to one headroom budget. */
+    private fun bandBalance(instrument: String?): Float = when (instrument) {
+        "tuba", "sousaphone", "baritone-tc", "baritone-bc", "euphonium-tc", "euphonium", "euphonium-bc" -> 1.5f
+        "trombone", "bass-trombone" -> 1.35f
+        "bari-sax", "bass-clarinet", "bassoon", "string-bass", "bass-guitar" -> 1.18f
+        else -> 1f
+    }
+
     /** The band - every other part read - from the bars chosen or the page in front, without this part. */
     fun playBand(s: SheetsState, from: Int? = null) {
         stop(s)
@@ -1791,7 +1809,9 @@ internal object ScoreTools {
                 val percussionName = listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" ")
                 val drums = com.inksheets.core.omr.DrumKind.of(id, percussionName)
                 val sounding = com.inksheets.core.omr.DrumKind.pitchedInstrument(id, percussionName) ?: id
-                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr, SampledInstruments.patchFor(s, sounding), drums)
+                val balance = bandBalance(sounding)
+                com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr,
+                    SampledInstruments.patchFor(s, sounding), drums, balance)
             }
             if (voices.isEmpty()) {
                 said = if(otherParts(s).any { (p,_) -> p.id !in prepared })
@@ -1822,7 +1842,9 @@ internal object ScoreTools {
             val order = if (sel == null) com.inksheets.core.omr.PlayOrder.from(mine, first) else null
             // This part too, where asked: to hear the whole, or to hear how it fits.
             val (myId, myTranspose) = instrumentOf(s)
-            val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose, SampledInstruments.patchFor(s, soundAs ?: myId)) to 1f else null
+            val mySound = soundAs ?: myId
+            val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose,
+                SampledInstruments.patchFor(s, mySound), balance = bandBalance(mySound)) to 1f else null
             val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate).apply {
                 clickSound=Click.sound(s)
                 // Twelve partials retain the instrument's family and brightness while bounding
@@ -1841,10 +1863,12 @@ internal object ScoreTools {
             val adapted = if (rate == outputRate) null else com.inksheets.core.AudioRateAdapter(rate, outputRate) { p.fill(it) }
             var madeOutputFrames = 0L
             s.platform.warn("PERF band mode ${voices.size + if(guide != null) 1 else 0} parts, ${rate}Hz synthesis" +
-                if(rate < outputRate) " -> ${outputRate}Hz output, 4 harmonics, dry" else "")
+                (if(rate < outputRate) " -> ${outputRate}Hz output, 4 harmonics, dry" else "") +
+                ", pitched gain ${"%.3f".format(p.pitchedGain)}, percussion ${"%.3f".format(p.percussionGain)}")
             pageFollow = PlaybackPageFollow(s.pageShown.first)
             pageFollowSuspended = false
             playbackUnderruns = 0; playbackBufferedMs = 0
+            limiterReported = false
             Sound.play(s, WHO, ahead = true, aheadMs = 1_200, prefillMs = 700,
                 producerPriority = Thread.NORM_PRIORITY + 1) { buf ->
                 val at=madeOutputFrames;val before=cursor()
@@ -1884,6 +1908,7 @@ internal object ScoreTools {
     }
 
     private var ensemble: com.inksheets.core.omr.EnsemblePlayer? = null
+    private var limiterReported = false
 
     /** The band played with this part in it as well (the whole piece), or without it (to play along). Remembered. */
     var bandWithMe by mutableStateOf(false)
@@ -2035,6 +2060,14 @@ internal object ScoreTools {
             if (health.lastFillMs >= 7f) band.synth.reduceRealtimeCost()?.let { detail ->
                 state?.platform?.warn(
                     "PERF band synthesis ${"%.1f".format(health.lastFillMs)}ms/10ms; reduced to $detail"
+                )
+            }
+            val blocks = band.synth.renderedBlocks
+            if (!limiterReported && blocks >= 200 && band.synth.limitedBlocks * 100 >= blocks * 60) {
+                limiterReported = true
+                state?.platform?.warn(
+                    "PERF band limiter active ${band.synth.limitedBlocks * 100 / blocks}% of blocks; " +
+                        "input peak ${"%.2f".format(band.synth.lastInputPeak)}"
                 )
             }
         }

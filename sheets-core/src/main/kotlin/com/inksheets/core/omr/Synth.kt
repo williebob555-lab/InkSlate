@@ -570,6 +570,13 @@ class Synth(val sampleRate: Int) {
     private var mix = FloatArray(0)
     /** The level the whole is turned down to now (1: as it is). */
     private var level = 1f
+    /** Field diagnostics: whether the mix is leaning continuously on the safety limiter. */
+    @Volatile var renderedBlocks: Long = 0
+        private set
+    @Volatile var limitedBlocks: Long = 0
+        private set
+    @Volatile var lastInputPeak: Float = 0f
+        private set
 
     /**
      * The next [buf].size samples, added into [buf] - levelled: where many voices together would
@@ -585,9 +592,12 @@ class Synth(val sampleRate: Int) {
         if (roomEnabled) room.process(mix)
         var peak = 0f
         for (v in mix) peak = max(peak, kotlin.math.abs(v))
+        renderedBlocks++
+        lastInputPeak = peak
         // Headroom: the loudest sample at nine tenths of full scale at most. Turned down over the
         // block when it would go over; back up towards as it is over about a second.
         val want = if (peak * level > 0.9f) 0.9f / peak else 1f
+        if (want < 0.999f) limitedBlocks++
         val to = if (want < level) want else level + (want - level) * min(1f, n / sampleRate.toFloat())
         // The change of level is spread over a few milliseconds at most (a long block is no excuse for a slow one).
         val ramp = min(n, sampleRate / 200)
@@ -1202,7 +1212,9 @@ class EnsemblePlayer(
     /** One part: its notes, how far it is written above where it sounds, how it sounds. */
     class Voice(val score: Score, val transpose: Int, val patch: Synth.Patch,
                 /** Drums: the drums each note is (see [DrumKind]), in place of its pitches. */
-                val drums: DrumKind? = null)
+                val drums: DrumKind? = null,
+                /** Section balance before the shared headroom budget (for example low brass). */
+                val balance: Float = 1f)
 
     @Volatile var bar: Int = from
         private set
@@ -1219,6 +1231,10 @@ class EnsemblePlayer(
         private set
     /** Tempo whose pending tones/timeline have been retimed; owned by the render thread. */
     private var appliedTempo: Double = bpm
+    var pitchedGain: Float = 0f
+        private set
+    var percussionGain: Float = 0f
+        private set
 
     /** Publish the newest requested tempo; the render thread performs the expensive retime. */
     fun setTempo(to: Double) {
@@ -1264,21 +1280,27 @@ class EnsemblePlayer(
         // down the pitched band merely by being present.
         val means = plans.map { p -> p.notes.flatMap { it.keys.toList() }.takeIf { it.isNotEmpty() }?.average() }
         val pitched = others.indices.filter { others[it].drums == null && means[it] != null }
-        val top = pitched.maxByOrNull { means[it]!! - others[it].transpose }
-        val bottom = pitched.minByOrNull { means[it]!! - others[it].transpose }
-        val pitchedBase = 0.95f / kotlin.math.sqrt(pitched.size.coerceAtLeast(1).toFloat())
+        // Give the section a fixed energy budget rather than relying on the limiter to turn down
+        // every tutti. Per-instrument balance is included in the divisor, so lifting low brass
+        // changes the balance without silently increasing the band's total peak budget.
+        val balanceEnergy = pitched.sumOf { i ->
+            val b = others[i].balance.coerceIn(0.25f, 2f).toDouble(); b * b
+        }.coerceAtLeast(1.0)
+        val pitchedBase = 0.68f / kotlin.math.sqrt(balanceEnergy).toFloat()
         val drumCount = others.count { it.drums != null }
         // DrumVoice has a much higher crest factor than a sustained wind (the same RMS produces a
         // far larger instantaneous peak), so its numerical base is intentionally much lower.
-        val drumBase = 0.03f / kotlin.math.sqrt(drumCount.coerceAtLeast(1).toFloat())
+        val drumBase = 0.02f / kotlin.math.sqrt(drumCount.coerceAtLeast(1).toFloat())
+        pitchedGain = pitchedBase
+        percussionGain = drumBase
         val tones = ArrayList<Synth.Tone>()
         for ((i, v) in others.withIndex()) {
-            val weight = when (i) { top -> 1.2f; bottom -> 1.05f; else -> 0.88f }
-            val gain = if (v.drums != null) drumBase else pitchedBase * weight
+            val gain = if (v.drums != null) drumBase else pitchedBase * v.balance.coerceIn(0.25f, 2f)
             tones += Interpretation.tones(plans[i], map, synth.sampleRate, v.transpose, v.patch, 0L, gain, v.drums)
         }
         // Your own part as well, where wanted - at the loudness asked for.
-        guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose, v.patch, 0L, pitchedBase * g, v.drums) }
+        guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose,
+            v.patch, 0L, pitchedBase * g * v.balance.coerceIn(0.25f, 2f), v.drums) }
         synth.clickEnabled=click
         tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
         starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }

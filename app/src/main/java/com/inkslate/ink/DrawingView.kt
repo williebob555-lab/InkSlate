@@ -1719,6 +1719,7 @@ class DrawingView @JvmOverloads constructor(
         slot.let {
             if (slot.bitmap !== bitmap) slot.bitmap?.recycle()
             slot.bitmap = bitmap
+            slot.bitmapPresented = false
             // Looking for the margins reads the picture, on the main thread: only when cropping.
             if (bitmap != null && slot.cropRect == null && cropMargins) {
                 slot.cropRect = runCatching {
@@ -2851,10 +2852,18 @@ class DrawingView @JvmOverloads constructor(
                 slot.bitmap?.takeIf { !it.isRecycled }
                     ?.let { canvas.drawBitmap(it, null, pageRect, bitmapPaint) }
             }
+            // The printed sheet always gets a frame of its own before annotations, recognition
+            // colours or other overlays. Besides making the priority visible, this prevents a
+            // slow overlay build from holding a newly turned page blank.
+            val enhancementsReady = slot.bitmapPresented
+            if (slot.bitmap != null && !slot.bitmapPresented) {
+                slot.bitmapPresented = true
+                postInvalidateOnAnimation()
+            }
             // The edge belongs to the whole surface, so on a canvas it goes round the canvas.
             canvas.drawRect(canvasRect ?: pageRect, pageEdge)
             // The music tools' marks: over the print, under the ink (InkSheets).
-            musicPath?.let { path ->
+            musicPath?.takeIf { enhancementsReady }?.let { path ->
                 val overlayStarted = System.nanoTime()
                 com.inkslate.core.Perform.pageMarks?.invoke(path, slot.index, slot.width, slot.height)
                     ?.let { drawPageMarks(canvas, it, slot.width, slot.height) }
@@ -2880,7 +2889,7 @@ class DrawingView @JvmOverloads constructor(
                 viewportDoc.right - slot.originX + slot.cropLeft,
                 viewportDoc.bottom - slot.originY + slot.cropTop
             )
-            val onPage = strokesByPage[slot.index].orEmpty()
+            val onPage = if (enhancementsReady) strokesByPage[slot.index].orEmpty() else emptyList()
             for (st in onPage) {
                 if (st.isHighlighter && visible(st, localViewport)) {
                     StrokeRasteriser.draw(canvas, st); drawnCount++

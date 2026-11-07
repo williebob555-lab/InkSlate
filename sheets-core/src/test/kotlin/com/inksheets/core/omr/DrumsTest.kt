@@ -89,4 +89,30 @@ class DrumsTest {
         assertTrue("percussion remains below output ceiling", drums.maxOf { abs(it) } < .98f)
         assertTrue("a drum strike begins continuously", abs(drums[0]) < 1e-6f)
     }
+
+    @Test
+    fun `concert band mix keeps static headroom instead of living on limiter`() {
+        val rate = 16_000
+        val notes = List(4) { i -> Note(listOf(i % 7), listOf(Pitch(i % 7, 4)), Duration(4), i * 20f) }
+        val bar = Measure(1, 0, 0, Box(0, 0, 120, 40), 10f, Clef.TREBLE, Key(0), TimeSig(4, 4), notes)
+        val score = Score(listOf(bar), 1, listOf(1000))
+        val voices = List(20) { i ->
+            val low = i % 4 == 0
+            EnsemblePlayer.Voice(score, i % 12, if (low) Synth.LOW_BRASS else Synth.BRASS,
+                balance = if (low) 1.5f else 1f)
+        }
+        val synth = Synth(rate)
+        val player = EnsemblePlayer(synth, score, voices, 1, 1, 120.0)
+        val block = FloatArray(160)
+        var peak = 0f
+        repeat(300) {
+            block.fill(0f); player.fill(block)
+            peak = maxOf(peak, block.maxOf { abs(it) })
+        }
+
+        assertTrue("static pitched gain ${player.pitchedGain} leaves section headroom", player.pitchedGain < .18f)
+        assertTrue("limiter duty ${synth.limitedBlocks}/${synth.renderedBlocks}",
+            synth.limitedBlocks * 100 < synth.renderedBlocks * 60)
+        assertTrue("soft output ceiling $peak", peak < .98f)
+    }
 }

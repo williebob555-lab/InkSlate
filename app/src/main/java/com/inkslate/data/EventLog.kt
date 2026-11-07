@@ -2,10 +2,10 @@ package com.inkslate.data
 
 import android.content.Context
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.ArrayDeque
-import java.util.Date
-import java.util.Locale
+import java.util.TimeZone
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * A rolling log of what the app actually did.
@@ -28,7 +28,7 @@ object EventLog {
         val message: String
     ) {
         fun format(): String {
-            val t = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timeMs))
+            val t = formatTime(timeMs)
             return "$t  ${level.name.padEnd(5)} [$tag] $message"
         }
     }
@@ -37,11 +37,33 @@ object EventLog {
     private const val FILE_NAME = "events.log"
 
     private val entries = ArrayDeque<Entry>()
-    private var appContext: Context? = null
+    @Volatile private var appContext: Context? = null
+    @Volatile private var utcOffsetMs = 0L
+    private val pendingLines = ArrayDeque<String>()
+    private val flushPending = AtomicBoolean(false)
+    private val disk = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "event-log").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+    }
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        // Android's first default-time-zone construction has taken several seconds on field
+        // devices. Warm it away from the UI; formatting itself is arithmetic after this.
+        Thread({
+            val now = System.currentTimeMillis()
+            utcOffsetMs = runCatching { TimeZone.getDefault().getOffset(now).toLong() }.getOrDefault(0L)
+        }, "event-clock").apply { isDaemon = true; priority = Thread.MIN_PRIORITY; start() }
         info("app", "InkSlate started")
+    }
+
+    private fun formatTime(timeMs: Long): String {
+        val day = 24L * 60 * 60 * 1000
+        val local = ((timeMs + utcOffsetMs) % day + day) % day
+        val h = local / 3_600_000
+        val m = local / 60_000 % 60
+        val s = local / 1_000 % 60
+        fun two(n: Long) = if (n < 10) "0$n" else n.toString()
+        return "${two(h)}:${two(m)}:${two(s)}"
     }
 
     fun info(tag: String, message: String) = add(Level.INFO, tag, message)
@@ -53,13 +75,37 @@ object EventLog {
         val e = Entry(System.currentTimeMillis(), level, tag, message)
         entries.addFirst(e)
         while (entries.size > MAX_ENTRIES) entries.removeLast()
-        // Appending is best-effort: diagnostics must never be the reason something fails.
-        runCatching {
-            val dir = CrashLog.logDir(appContext ?: return@runCatching) ?: return@runCatching
-            dir.mkdirs()
-            val f = File(dir, FILE_NAME)
-            if (f.length() > 512 * 1024) f.writeText("")   // keep the file bounded
-            f.appendText(e.format() + "\n")
+        synchronized(pendingLines) {
+            if (pendingLines.size >= MAX_ENTRIES) pendingLines.removeFirst()
+            pendingLines.addLast(e.format())
+        }
+        scheduleFlush()
+    }
+
+    private fun scheduleFlush() {
+        if (!flushPending.compareAndSet(false, true)) return
+        disk.execute {
+            try {
+                while (true) {
+                    val batch = synchronized(pendingLines) {
+                        if (pendingLines.isEmpty()) emptyList() else buildList {
+                            while (pendingLines.isNotEmpty()) add(pendingLines.removeFirst())
+                        }
+                    }
+                    if (batch.isEmpty()) break
+                    // Appending is best-effort: diagnostics must never stall or fail the app.
+                    runCatching {
+                        val dir = CrashLog.logDir(appContext ?: return@runCatching) ?: return@runCatching
+                        dir.mkdirs()
+                        val f = File(dir, FILE_NAME)
+                        if (f.length() > 512 * 1024) f.writeText("")
+                        f.appendText(batch.joinToString("\n", postfix = "\n"))
+                    }
+                }
+            } finally {
+                flushPending.set(false)
+                if (synchronized(pendingLines) { pendingLines.isNotEmpty() }) scheduleFlush()
+            }
         }
     }
 
@@ -73,6 +119,7 @@ object EventLog {
     @Synchronized
     fun clear() {
         entries.clear()
+        synchronized(pendingLines) { pendingLines.clear() }
         runCatching {
             CrashLog.logDir(appContext ?: return@runCatching)?.let { File(it, FILE_NAME).delete() }
         }

@@ -6,6 +6,7 @@ import com.inkslate.ink.Stroke
 import com.inkslate.pdf.InkExporter
 import com.inkslate.pdf.CanvasPaper
 import com.inkslate.pdf.PageArrangement
+import com.inkslate.pdf.PageDim
 import com.inkslate.pdf.PageSource
 import com.inkslate.pdf.PristineStore
 import com.inkslate.pdf.PlannedPage
@@ -260,18 +261,40 @@ class DocumentRepo(private val context: Context) {
 
     // ---- opening -------------------------------------------------------------
 
-    fun open(file: File): OpenDocument? {
+    fun open(
+        file: File,
+        previewPage: Int = 0,
+        previewWidthPx: Int = 0,
+        onPreview: ((android.graphics.Bitmap, PageDim, Int) -> Unit)? = null
+    ): OpenDocument? {
         val started = System.currentTimeMillis()
         InkExporter.init(context)
         var readAt = started
         var sourceAt = started
 
-        // Read the document once, before anything else, and get both answers out of it: the
-        // handwriting stored inside, and whether any of it has already been painted onto the
-        // pages by a previous overwrite.
         // Whether this file is still byte for byte what this app last wrote.
         val ourOwnOutput = PristineStore.savedPageState(context, file) != null
         val fingerprint = PageSources.fingerprint(file)
+
+        // Open and rasterise the printed page before parsing handwriting or walking every PDF
+        // annotation. Large concert-band files have spent seconds in that metadata pass. The
+        // player should already be looking at the music while it happens.
+        val wantsPreview = onPreview != null && previewWidthPx > 0
+        val earlySource = if (wantsPreview) PageSources.open(file, context, strokesBakedIn = ourOwnOutput) else null
+        if (wantsPreview && earlySource == null) {
+            EventLog.error("open", "Unsupported or unreadable: ${file.name}")
+            return null
+        }
+        fun sendPreview(from: PageSource) {
+            if (onPreview == null || previewWidthPx <= 0) return
+            val p = previewPage.coerceIn(0, maxOf(0, from.pageCount - 1))
+            runCatching {
+                val dim = from.pageDim(p)
+                from.renderPage(p, previewWidthPx)?.let { onPreview(it, dim, p) }
+            }
+        }
+        earlySource?.let(::sendPreview)
+        val previewAt = System.currentTimeMillis()
         val inspected = when {
             !InkEmbedder.supports(file) -> InkEmbedder.Inspection(null, false)
             // Nothing to learn from reading it. The payload inside was written from the working
@@ -290,12 +313,27 @@ class DocumentRepo(private val context: Context) {
         inspected.inkStamp?.let { lastEmbedded[file.absolutePath] = it }
 
         readAt = System.currentTimeMillis()
-        val source = PageSources.open(file, context, strokesBakedIn = inspected.bakedVisible)
-        sourceAt = System.currentTimeMillis()
+        // A file written by another InkSlate device may carry painted annotations even though it
+        // is not in this device's pristine store. The preview is already safely detached as a
+        // bitmap; replace the live renderer with its clean source before editable ink appears.
+        val source = when {
+            earlySource == null -> PageSources.open(file, context, strokesBakedIn = inspected.bakedVisible)
+            inspected.bakedVisible && !ourOwnOutput -> {
+                earlySource.close()
+                PageSources.open(file, context, strokesBakedIn = true)
+            }
+            else -> earlySource
+        }
         if (source == null) {
-            EventLog.error("open", "Unsupported or unreadable: ${file.name}")
+            EventLog.error("open", "Could not prepare pages for ${file.name}")
             return null
         }
+        if (inspected.bakedVisible && !ourOwnOutput && earlySource != null) {
+            // Replace the early raw preview (which may itself contain painted annotations) with
+            // the clean printed page before the editable annotation layer is installed.
+            sendPreview(source)
+        }
+        sourceAt = System.currentTimeMillis()
 
         val sidecar = File(InkDocument.sidecarPathFor(file.absolutePath))
         val conflictsBefore = findConflictFiles(sidecar)
@@ -336,7 +374,7 @@ class DocumentRepo(private val context: Context) {
                 "${ink.deleted.size} tombstone(s)), " +
                 (if (inspected.bakedVisible) "strokes baked into the pages, " else "") +
                 "${System.currentTimeMillis() - started}ms " +
-                "[read ${readAt - started}ms, pages ${sourceAt - readAt}ms, " +
+                "[preview ${previewAt - started}ms, annotations ${readAt - previewAt}ms, pages ${sourceAt - readAt}ms, " +
                 "ink ${System.currentTimeMillis() - sourceAt}ms]"
         )
         val opened = OpenDocument(

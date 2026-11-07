@@ -23,6 +23,8 @@ typealias PageLayout = com.inkslate.core.PageLayout
  */
 class PageSlot(val index: Int, val width: Float, val height: Float) {
     var bitmap: Bitmap? = null
+    /** At least one frame has shown the printed page by itself. */
+    var bitmapPresented: Boolean = false
     var originX: Float = 0f
     var originY: Float = 0f
 

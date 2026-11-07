@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.Image
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -62,7 +63,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -162,6 +165,9 @@ fun EditorScreen(
     // two. Everything here that asks which page this is means the view last touched.
     var page: Int by host::activePage
     var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var previewDim by remember { mutableStateOf<PageDim?>(null) }
+    var previewPage by remember { mutableStateOf(0) }
+    var openGeneration by remember { mutableStateOf(0L) }
     var pageDims by remember { mutableStateOf<List<PageDim?>>(emptyList()) }
     var renderFailed by remember { mutableStateOf(false) }
     // The file opened with fewer pages than it is meant to have - none, for a damaged one.
@@ -355,6 +361,7 @@ fun EditorScreen(
     // ---- load ----------------------------------------------------------------
 
     LaunchedEffect(file.absolutePath, reloadNonce) {
+        val generation = ++openGeneration
         // Everything cached about the old page tree has to go, or a rearranged document is drawn
         // with the previous document's page rasters. Clearing `doc` first is what stops the
         // render loop reaching a source that is about to be closed underneath it.
@@ -364,6 +371,7 @@ fun EditorScreen(
             strokesLoaded = false
             positionRestored = true          // a reopen keeps the page it is on, not the saved one
             pageBitmap = null
+            previewDim = null
             pageDims = emptyList()
             // Deliberately *not* clearing the view's strokes here. It reads as tidying up, but
             // an empty view is indistinguishable from a document with nothing in it, and
@@ -371,7 +379,20 @@ fun EditorScreen(
             withContext(Dispatchers.IO) { runCatching { previous.close() } }
         }
         val openStarted = android.os.SystemClock.elapsedRealtime()
-        val opened = withContext(Dispatchers.IO) { repo.open(file) }
+        val opened = withContext(Dispatchers.IO) {
+            // A page-sized preview is the first contract. Fine zoom detail remains demand-rendered
+            // by DrawingView, so opening should not allocate pixels the whole-page view cannot use.
+            repo.open(file, page, minOf(renderWidthPx, 1024)) { bitmap, dim, p ->
+                scope.launch {
+                    if (openGeneration == generation && doc == null) {
+                        pageBitmap = bitmap
+                        previewDim = dim
+                        previewPage = p
+                        if (focused) com.inkslate.ui.TurnClock.shown("printed page preview")
+                    } else bitmap.takeIf { !it.isRecycled }?.recycle()
+                }
+            }
+        }
         val openMs = android.os.SystemClock.elapsedRealtime() - openStarted
         RenderStats.recordDocumentOpen(openMs)
         EventLog.info(
@@ -569,7 +590,7 @@ fun EditorScreen(
         // Show something immediately. Measuring a thousand pages means a thousand openPage calls,
         // and making the document wait on all of them before anything appears is the wrong
         // trade: assume the first page's geometry, then correct it in the background.
-        val first = withContext(Dispatchers.IO) {
+        val first = previewDim ?: withContext(Dispatchers.IO) {
             runCatching { d.source.pageDim(0) }.getOrNull()
         } ?: PageDim(612f, 792f)
         pageDims = List(d.pageCount) { first }
@@ -611,6 +632,10 @@ fun EditorScreen(
                     pageDims.map { (it ?: PageDim(612f, 792f)).let { p -> p.width to p.height } },
                     resetView = true
                 )
+                pageBitmap?.takeIf { !it.isRecycled }?.let { preview ->
+                    view.setPageBitmap(previewPage.coerceIn(0, d.pageCount - 1), preview)
+                    pageBitmap = null
+                }
 
                 // Put the camera back, now that there is something to put it back onto. The camera
                 // restores zoom and scroll together and knows nothing about pages, which is what
@@ -673,13 +698,6 @@ fun EditorScreen(
                         }
                         for (index in orderedPages) {
                             if (index !in 0 until d.pageCount) continue
-                            if (d.source.kind == "pdf" && index >= d.source.pageCount) {
-                                // Not a rendering failure: the file has no such page. Said once, not
-                                // retried and logged every time the page comes into view.
-                                if (!damaged) EventLog.error("render", "${d.file.name} opened with ${d.source.pageCount} pages - the file is damaged")
-                                damaged = true
-                                continue
-                            }
                             if (view.hasBitmap(index)) continue
 
                             val renderStarted = android.os.SystemClock.elapsedRealtime()
@@ -971,9 +989,12 @@ fun EditorScreen(
         val d = doc ?: return@LaunchedEffect
         if (!strokesLoaded || restructuring) return@LaunchedEffect
         syncPage()
-        com.inkslate.core.Perform.withImported(d.ink, file.absolutePath) { p ->
-            runCatching { d.source.pageDim(p) }.getOrNull()?.let { it.width to it.height }
-        }?.let {
+        val imported = withContext(Dispatchers.IO) {
+            com.inkslate.core.Perform.withImported(d.ink, file.absolutePath) { p ->
+                runCatching { d.source.pageDim(p) }.getOrNull()?.let { it.width to it.height }
+            }
+        }
+        imported?.let {
             EventLog.info("open", "${file.name}: brought in markings from another app")
             takeIn(it)
         }
@@ -2136,9 +2157,14 @@ fun EditorScreen(
         Box(Modifier.fillMaxSize()) {
             when {
                 loadError != null -> LoadFailure(loadError!!, onClose)
-                doc == null -> Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                doc == null -> pageBitmap?.let { preview ->
+                    Image(
+                        bitmap = preview.asImageBitmap(),
+                        contentDescription = "Printed sheet music",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Fit
+                    )
+                } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
                 else -> AndroidView(
                     factory = { ctx ->
                         DrawingView(ctx).also { view ->
@@ -2552,7 +2578,7 @@ fun EditorScreen(
 
     if (pagesOpen) {
         doc?.let { d ->
-            val dim = remember(d) { d.source.pageDim(0) }
+            val dim = pageDims.firstOrNull() ?: PageDim(612f, 792f)
             PagesSheet(
                 pageCount = d.pageCount,
                 currentPage = page,
@@ -2561,7 +2587,7 @@ fun EditorScreen(
                 defaultPageWidth = dim.width,
                 defaultPageHeight = dim.height,
                 pageSizeAt = { index ->
-                    val d2 = d.source.pageDim(index)
+                    val d2 = pageDims.getOrNull(index) ?: dim
                     d2.width to d2.height
                 },
                 thumbnailFor = { index ->
