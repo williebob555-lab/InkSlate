@@ -228,6 +228,8 @@ fun DocumentCanvas(
         }
     }
 
+    val regions = remember(byPage) { byPage.mapValues { (_, marks) -> com.inkslate.core.StrokeRegions(marks) } }
+
     // The shapes belong to this document and nothing else; holding them past it is just memory.
     DisposableEffect(source) { onDispose { InkGeometry.clear() } }
 
@@ -815,6 +817,7 @@ fun DocumentCanvas(
                                 tileAlpha = rasters[slot.index]?.shown(fadeNow) ?: 1f,
                                 overview = overviews[slot.index],
                                 strokes = byPage[slot.index].orEmpty(),
+                                visibleStrokes = regions[slot.index]?.query(onScreen).orEmpty(),
                                 selection = selection,
                                 live = if (livePage == slot.index) live else emptyList(),
                                 pending = pending?.takeIf { it.pageIndex == slot.index },
@@ -1060,6 +1063,7 @@ private fun DrawScope.drawPage(
     tileAlpha: Float = 1f,
     /** This page's marks, already ordered - see the caller. */
     strokes: List<Stroke>,
+    visibleStrokes: List<Stroke>,
     selection: Set<String>,
     live: List<com.inkslate.core.InkPoint>,
     pending: Stroke?,
@@ -1129,19 +1133,7 @@ private fun DrawScope.drawPage(
         // meant filtering and sorting every mark in the document on every frame, and a frame
         // happens for every point of the mark being drawn.
         val inkAt = System.nanoTime()
-        for (s in strokes) {
-            // Marks outside the window are skipped rather than handed to a clip that would have
-            // to walk their geometry to discover the same thing. This is what stops the cost of a
-            // frame growing with the size of the document rather than with what is on screen.
-            if (s.kind != Stroke.Kind.TEXT && visibleInPage != null) {
-                val b = InkGeometry.bounds(s)
-                val pad = s.baseWidth + 2f
-                val off = b.right + pad < visibleInPage.left ||
-                    b.left - pad > visibleInPage.right ||
-                    b.bottom + pad < visibleInPage.top ||
-                    b.top - pad > visibleInPage.bottom
-                if (off) continue
-            }
+        for (s in visibleStrokes) {
             when (s.kind) {
                 Stroke.Kind.TEXT -> drawTextStroke(s, textMeasurer)
                 Stroke.Kind.IMAGE -> drawImageStroke(s, images)

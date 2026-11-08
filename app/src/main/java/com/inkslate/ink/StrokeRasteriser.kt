@@ -58,7 +58,7 @@ object StrokeRasteriser {
     }
 
     /** Cached bounds, for viewport culling and hit tests on the drawing hot path. */
-    fun boundsOf(s: Stroke): RectF = geometryOf(s).bounds
+    fun boundsOf(s: Stroke): RectF = s.bounds()
 
     fun clearCache() = geometryCache.evictAll()
 

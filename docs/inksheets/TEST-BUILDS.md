@@ -4,6 +4,8 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Dense annotations:** Android and desktop now use location chunks and recent-view lookups before requesting stroke geometry. Off-screen visibility checks no longer evict expensive shapes. Cache capacity is unchanged. This targets the threshold found in PHYS161 Exam Review; fully zoomed-out canvas performance still needs device measurement.
+
 - **The music workspace has a new score-first layout.** Pen, Erase, Undo, Redo, bookmarks and the
   full drawing palette now live in an **Annotate** category beside Timing, Recording, Score and
   Devices instead of permanently consuming a bottom row. The current song/setlist position, page

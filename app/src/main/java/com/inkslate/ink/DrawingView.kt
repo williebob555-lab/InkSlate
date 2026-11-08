@@ -222,6 +222,7 @@ class DrawingView @JvmOverloads constructor(
      */
     private var pageIndexDirty = true
     private val strokesByPage = HashMap<Int, MutableList<Stroke>>()
+    private val strokeRegions = HashMap<Int, com.inkslate.core.StrokeRegions>()
 
     /** The model's version this view's page index was built from. */
     private var indexedVersion = -1L
@@ -233,6 +234,8 @@ class DrawingView @JvmOverloads constructor(
         for (st in strokes) {
             strokesByPage.getOrPut(st.pageIndex) { ArrayList() }.add(st)
         }
+        strokeRegions.clear()
+        strokesByPage.forEach { (page, marks) -> strokeRegions[page] = com.inkslate.core.StrokeRegions(marks) }
         pageIndexDirty = false
     }
     private val undoStack: ArrayList<Op> get() = model.undoStack
@@ -2889,14 +2892,14 @@ class DrawingView @JvmOverloads constructor(
                 viewportDoc.right - slot.originX + slot.cropLeft,
                 viewportDoc.bottom - slot.originY + slot.cropTop
             )
-            val onPage = if (enhancementsReady) strokesByPage[slot.index].orEmpty() else emptyList()
+            val onPage = if (enhancementsReady) strokeRegions[slot.index]?.query(com.inkslate.core.Box(localViewport.left, localViewport.top, localViewport.right, localViewport.bottom)).orEmpty() else emptyList()
             for (st in onPage) {
-                if (st.isHighlighter && visible(st, localViewport)) {
+                if (st.isHighlighter) {
                     StrokeRasteriser.draw(canvas, st); drawnCount++
                 }
             }
             for (st in onPage) {
-                if (!st.isHighlighter && visible(st, localViewport)) {
+                if (!st.isHighlighter) {
                     StrokeRasteriser.draw(canvas, st); drawnCount++
                 }
             }
