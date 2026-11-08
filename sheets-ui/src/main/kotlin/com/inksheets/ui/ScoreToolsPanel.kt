@@ -49,6 +49,7 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     var printingFor by remember { mutableStateOf(false) }
     var ensembleMidiOpen by remember { mutableStateOf(false) }
     var bandPartsOpen by remember { mutableStateOf(false) }
+    var bandMixerOpen by remember { mutableStateOf(false) }
     var stageOpen by remember { mutableStateOf(false) }
     var bar by remember { mutableStateOf("") }
 
@@ -129,6 +130,9 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                     ScoreAction("Band instruments", "${ScoreTools.selectedBandPartIds(state).size} selected", Icons.Default.QueueMusic,
                         enabled = ready && ScoreTools.bandCandidates(state).isNotEmpty(), action = { bandPartsOpen = true },
                         popup = { if (bandPartsOpen) BandPartsDialog(state) { bandPartsOpen = false } }),
+                    ScoreAction("Band mixer", "Balance each instrument", Icons.Default.Tune,
+                        enabled = ready && ScoreTools.bandCandidates(state).isNotEmpty(), action = { bandMixerOpen = true },
+                        popup = { if (bandMixerOpen) BandMixerDialog(state) { bandMixerOpen = false } }),
                     ScoreAction("Include my part", if (ScoreTools.bandWithMe) "Your part plays with the band" else "Leave your part for you to play", Icons.Default.Person,
                         enabled = ready && ScoreTools.band, selected = ScoreTools.bandWithMe,
                         action = { ScoreTools.chooseBandWithMe(state, !ScoreTools.bandWithMe) }),
@@ -149,7 +153,10 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                             Listener.offBars = emptyList(); ScoreTools.marksMoved(); Listener.start(state, practice = true)
                         } })
                 ), accent = Color(0xFF2C8A6B))
-                ScoreTools.bandReading?.let { Text("Reading $it", style = MaterialTheme.typography.bodySmall) }
+                ScoreTools.bandReading?.let {
+                    Text("${if (it.phase == ScoreTools.BandReadPhase.CHECKING) "Checking" else "Reading"} ${it.done} of ${it.total} band parts",
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 if (Listener.offBars.isNotEmpty()) {
                     Text("Bars that sounded off", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                     @OptIn(ExperimentalLayoutApi::class)
@@ -259,6 +266,40 @@ private fun BandPartsDialog(state: SheetsState, onClose: () -> Unit) {
                         })
                         Text(com.inksheets.core.Instruments.partName(part), Modifier.padding(start = 8.dp))
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BandMixerDialog(state: SheetsState, onClose: () -> Unit) {
+    val parts = remember(state.current?.id, state.currentPath, ScoreTools.bandPartIds) { ScoreTools.bandMixerParts(state) }
+    var levels by remember(parts) { mutableStateOf(parts.associate { it.id to ScoreTools.bandMix(state, it.id) }) }
+    fun commit(part: com.inksheets.core.Part) {
+        ScoreTools.setBandMix(state, part.id, levels[part.id] ?: 1f)
+        ScoreTools.applyBandMix(state)
+    }
+    SheetDialog("Band mixer", onDismiss = onClose, wide = true, buttons = {
+        TextButton(onClick = {
+            ScoreTools.resetBandMix(state)
+            levels = parts.associate { it.id to 1f }
+            ScoreTools.applyBandMix(state)
+        }) { Text("Reset") }
+        TextButton(onClick = onClose) { Text("Done") }
+    }) {
+        Column(Modifier.fillMaxWidth().heightIn(max = 520.dp).verticalScroll(rememberScrollState())) {
+            Text("The tuned section balance is 100%. Adjustments are saved for this song and take effect immediately during band playback.",
+                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
+            parts.forEach { part ->
+                val level = levels[part.id] ?: 1f
+                Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(ScoreTools.bandPartName(part), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("${(level * 100).toInt()}%", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(value = level, onValueChange = { levels = levels + (part.id to it) },
+                        onValueChangeFinished = { commit(part) }, valueRange = 0f..2f, steps = 19)
                 }
             }
         }

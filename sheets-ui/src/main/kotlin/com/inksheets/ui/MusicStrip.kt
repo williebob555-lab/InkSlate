@@ -71,14 +71,13 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     // Folded with the action strip (a tap in the middle of the page, its corner button) and back
     // with it: the two strips go together. The tools stay as they were, only out of sight.
     val open = ScoreTools.open && !state.stripCollapsed
-    var wasOpen by remember { mutableStateOf(open) }
     LaunchedEffect(open) {
         state.platform.setMusicLane(open)
-        // Opening tools must not throw away the exact passage the player zoomed and panned to.
-        // Closing them returns to the performance view, fitted to the page.
-        if (wasOpen && !open) Perform.recentre?.invoke()
-        wasOpen = open
+        // A menu changes chrome, not the reader's camera. The player's exact page, pan and zoom
+        // survive both opening and dismissing it; only closing the document/tab starts a fresh
+        // view the next time that document is opened.
     }
+    BandReadDialogs(state)
     androidx.compose.runtime.SideEffect { if (!open) Overlays.musicOut = 0.dp }
     // The player's own instruments, loading in the background before anything is played.
     LaunchedEffect(state.root) { if (state.readMusic) SampledInstruments.ensure(state) }
@@ -88,6 +87,7 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     val score = remember(state.currentPath, Transcriber.shown, Transcriber.busy) { ScoreTools.scoreHere(state) }
     var goingTo by remember { mutableStateOf(false) }
     var more by remember { mutableStateOf(false) }
+    var mixing by remember { mutableStateOf(false) }
     var sounds by remember { mutableStateOf(false) }
     var speeding by remember { mutableStateOf(false) }
     var printingFor by remember { mutableStateOf(false) }
@@ -202,7 +202,10 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable { ScoreTools.chooseBandWithMe(state, !ScoreTools.bandWithMe) }.padding(2.dp)
                     )
-                    ScoreTools.bandReading?.let { Text("Reading $it", style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center) }
+                    ScoreTools.bandReading?.let { progress ->
+                        Text("${if (progress.phase == ScoreTools.BandReadPhase.CHECKING) "Checking" else "Reading"} ${progress.done} of ${progress.total}",
+                            style = MaterialTheme.typography.labelSmall, fontSize = 9.sp, textAlign = TextAlign.Center)
+                    }
                     StripButton(Icons.Default.Repeat, "Loop", "Play round and round", btn, named, lit = ScoreTools.loop) { ScoreTools.loop = !ScoreTools.loop }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         StripButton(Icons.Default.FastForward, "Speed up", "Each time round a little faster, up to the tempo", btn, named, lit = ScoreTools.ramp && ScoreTools.loop) {
@@ -241,6 +244,10 @@ fun BoxScope.MusicStrip(state: SheetsState) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         StripButton(Icons.Default.MoreVert, "More", "Save as MIDI, the notes read", btn, named) { more = true }
                         DropdownMenu(more, onDismissRequest = { more = false }) {
+                            if (ScoreTools.bandCandidates(state).isNotEmpty()) DropdownMenuItem(text = { Text("Band mixer...") }, onClick = {
+                                more = false
+                                mixing = true
+                            })
                             DropdownMenuItem(text = { Text(if (ScoreTools.cues) "Hide cue notes" else "Cue notes before each entry") }, onClick = {
                                 more = false
                                 ScoreTools.showCues(state, !ScoreTools.cues)
@@ -286,6 +293,41 @@ fun BoxScope.MusicStrip(state: SheetsState) {
     }
     if (goingTo) GoToBar(state) { goingTo = false }
     if (printingFor && file != null && score != null) PrintFor(state, file, score) { printingFor = false }
+    if (mixing) BandMixerDialog(state) { mixing = false }
+}
+
+@Composable
+private fun BandReadDialogs(state: SheetsState) {
+    val prompt = ScoreTools.bandReadPrompt
+    val progress = ScoreTools.bandReading
+    if (prompt != null) {
+        AlertDialog(
+            onDismissRequest = { ScoreTools.cancelBandRead() },
+            title = { Text("Read the missing band parts?") },
+            text = { Text("${prompt.missingParts} selected ${if (prompt.missingParts == 1) "part has" else "parts have"} not been fully read. Band playback cannot start until ${if (prompt.missingParts == 1) "it is" else "they are"} ready.") },
+            dismissButton = { TextButton(onClick = { ScoreTools.cancelBandRead() }) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = { ScoreTools.confirmBandRead(state) }) { Text("Read ${prompt.missingParts} ${if (prompt.missingParts == 1) "part" else "parts"}") } }
+        )
+    } else if (progress != null) {
+        val checking = progress.phase == ScoreTools.BandReadPhase.CHECKING
+        AlertDialog(
+            onDismissRequest = { ScoreTools.cancelBandRead() },
+            title = { Text(if (checking) "Checking band parts" else "Reading band parts") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("${progress.done} of ${progress.total} parts ${if (checking) "checked" else "ready"}")
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { if (progress.total == 0) 0f else progress.done.toFloat() / progress.total },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (!checking) Text("Each completed part is kept, even if you stop.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { ScoreTools.cancelBandRead() }) { Text(if (checking) "Cancel" else "Stop reading") }
+            }
+        )
+    }
 }
 
 /** The speed-up settings: from what share of the tempo, and how much faster each time round. */

@@ -94,6 +94,9 @@ class MusicShelfRedesignTest {
         state.stripCollapsed = false
         state.readMusic = true
         state.listenTurns = true
+        // This test audits the bottom-shelf arrangement specifically. Auto is allowed to choose
+        // the studio rail in short landscape windows and has its own coverage elsewhere.
+        state.shelf.chooseView(com.inksheets.ui.MusicDockView.SHELF)
         return state to platform
     }
 
@@ -105,6 +108,9 @@ class MusicShelfRedesignTest {
                 waitForIdle()
                 assertTrue("$name: shelf not measured", platform.shelfHeight > 0f)
                 assertTrue("$name: shelf uses ${platform.shelfHeight} of $height", platform.shelfHeight <= height * .42f)
+                runOnIdle { state.expandMusicCategory(ShelfWidget.ANNOTATION) }
+                waitForIdle()
+                runOnIdle { assertEquals(ShelfWidget.ANNOTATION,state.expandedMusicCategory) }
                 onNodeWithContentDescription("Undo").assertIsDisplayed()
                 val problems = UiAudit.check(this, name, "music-shelf-redesign", width, height)
                 assertTrue("$name: ${problems.joinToString()}", problems.isEmpty())
@@ -123,7 +129,7 @@ class MusicShelfRedesignTest {
             runDesktopComposeUiTest(width = 1280, height = 800) {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
                 waitForIdle()
-                onAllNodesWithContentDescription("Arrange music shelf").onFirst().performClick()
+                onAllNodesWithContentDescription("Arrange tabs").onFirst().performClick()
                 waitForIdle()
                 onNodeWithContentDescription("Move Timing later").performScrollTo().performClick()
                 runOnIdle { assertEquals(ShelfWidget.RECORDING, state.shelf.order.first()) }
@@ -137,14 +143,15 @@ class MusicShelfRedesignTest {
                 waitForIdle()
                 onNodeWithContentDescription("Pause or resume active recording").assertIsDisplayed()
                 onNodeWithContentDescription("Stop recording playback").assertIsDisplayed()
-                onNodeWithContentDescription("Undo").assertIsDisplayed()
+                // Hiding every category intentionally hides Annotate too; live transport remains
+                // independently reachable while the user can restore the tabs from settings.
                 assertTrue(platform.shelfHeight > 0)
                 runOnIdle { state.stripCollapsed = true }
                 waitForIdle()
                 onNodeWithContentDescription("Stop recording playback").assertIsDisplayed()
                 assertTrue("Active playback keeps its stop control when the shelf is folded", platform.shelfHeight > 0)
                 onNodeWithContentDescription("Show buttons").performClick()
-                onNodeWithContentDescription("Arrange music shelf").performClick()
+                onNodeWithContentDescription("Arrange tabs").performClick()
                 onNodeWithText("Reset").performClick()
                 runOnIdle { assertTrue(state.shelf.hidden.isEmpty()) }
             }

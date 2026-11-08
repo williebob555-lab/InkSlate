@@ -288,8 +288,8 @@ class Synth(val sampleRate: Int) {
         /** The euphonium toward the dark, lyrical end. */
         val LOW_BRASS_DARK = euphonium(0.0)
         /** Trombone: a cylindrical bore, brighter than the euphonium. */
-        val TROMBONE = Patch(FloatArray(1), 0.045, 0.13, 0.88f, 0.12, vibratoHz = 4.8, vibratoCents = 4.0, bloom = 0.5f, gain = 0.23f, breath = 0.005f,
-            spectral = true, slopeSoft = 0.52, slopeLoud = 0.1, formantHz = 500.0, formantGain = 1.9, scoop = 12.0, brass = true,
+        val TROMBONE = Patch(FloatArray(1), 0.045, 0.13, 0.88f, 0.12, vibratoHz = 4.8, vibratoCents = 4.0, bloom = 0.5f, gain = 0.23f, breath = 0.004f,
+            spectral = true, slopeSoft = 0.62, slopeLoud = 0.16, formantHz = 620.0, formantGain = 1.3, scoop = 9.0, brass = true,
             cutoffSoft = 1200.0, cutoffLoud = 4200.0, vibDelay = 0.45, slur = Slur.LIP)
         val HORN = Patch(FloatArray(1), 0.06, 0.12, 0.9f, 0.15, vibratoHz = 4.2, vibratoCents = 2.5, bloom = 0.35f, gain = 0.22f, breath = 0.006f,
             spectral = true, slopeSoft = 0.7, slopeLoud = 0.2, formantHz = 340.0, formantGain = 1.8, scoop = 10.0, brass = true,
@@ -1284,23 +1284,27 @@ class EnsemblePlayer(
         // every tutti. Per-instrument balance is included in the divisor, so lifting low brass
         // changes the balance without silently increasing the band's total peak budget.
         val balanceEnergy = pitched.sumOf { i ->
-            val b = others[i].balance.coerceIn(0.25f, 2f).toDouble(); b * b
+            val b = others[i].balance.coerceIn(0f, 6f).toDouble(); b * b
         }.coerceAtLeast(1.0)
         val pitchedBase = 0.68f / kotlin.math.sqrt(balanceEnergy).toFloat()
-        val drumCount = others.count { it.drums != null }
+        val drums = others.indices.filter { others[it].drums != null }
+        val drumEnergy = drums.sumOf { i ->
+            val b = others[i].balance.coerceIn(0f, 6f).toDouble(); b * b
+        }.coerceAtLeast(1.0)
         // DrumVoice has a much higher crest factor than a sustained wind (the same RMS produces a
         // far larger instantaneous peak), so its numerical base is intentionally much lower.
-        val drumBase = 0.02f / kotlin.math.sqrt(drumCount.coerceAtLeast(1).toFloat())
+        val drumBase = 0.02f / kotlin.math.sqrt(drumEnergy).toFloat()
         pitchedGain = pitchedBase
         percussionGain = drumBase
         val tones = ArrayList<Synth.Tone>()
         for ((i, v) in others.withIndex()) {
-            val gain = if (v.drums != null) drumBase else pitchedBase * v.balance.coerceIn(0.25f, 2f)
+            val gain = if (v.drums != null) drumBase * v.balance.coerceIn(0f, 6f)
+                else pitchedBase * v.balance.coerceIn(0f, 6f)
             tones += Interpretation.tones(plans[i], map, synth.sampleRate, v.transpose, v.patch, 0L, gain, v.drums)
         }
         // Your own part as well, where wanted - at the loudness asked for.
         guide?.let { (v, g) -> if (g > 0f) tones += Interpretation.tones(lead, map, synth.sampleRate, v.transpose,
-            v.patch, 0L, pitchedBase * g * v.balance.coerceIn(0.25f, 2f), v.drums) }
+            v.patch, 0L, pitchedBase * g * v.balance.coerceIn(0f, 6f), v.drums) }
         synth.clickEnabled=click
         tones += Performance.clicks(mineBars, lead.barQ, map, synth.sampleRate)
         starts = LongArray(numbers.size) { (map.seconds(lead.barQ[it]) * synth.sampleRate).toLong() }

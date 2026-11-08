@@ -406,14 +406,12 @@ class RemoteControl(private val state: SheetsState) {
             RemoteButton.AUDIO_SPEED_SET -> Recording.player?.let { p -> c.value?.let { p.speed = (it / 100).coerceIn(0.5, 1.25) } }
             RemoteButton.STRIP -> {
                 state.stripCollapsed = !state.stripCollapsed
-                if (state.stripCollapsed) Perform.recentre?.invoke()
             }
             RemoteButton.TOOLS -> {
                 val shown = !Perform.on(PerformAction.FULLSCREEN)
                 if (shown) {
                     Perform.run(PerformAction.FULLSCREEN)
                     state.stripCollapsed = true
-                    Perform.recentre?.invoke()
                 } else {
                     state.stripCollapsed = false
                     Perform.run(PerformAction.FULLSCREEN)

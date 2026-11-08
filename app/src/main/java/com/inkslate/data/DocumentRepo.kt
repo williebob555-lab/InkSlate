@@ -43,6 +43,8 @@ class OpenDocument(
     /** True when the source file changed since the annotations were last saved against it. */
     val sourceChanged: Boolean = false
 ) {
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /**
      * A page source cannot change shape while it is open.  Keep the count captured by the I/O
      * thread that constructed this document instead of asking PdfRenderer again from Compose.
@@ -180,9 +182,21 @@ class OpenDocument(
         }
 
     fun close() {
+        if (!closed.compareAndSet(false, true)) return
         source.close()
         // The parsed copy is held for as long as the document is open, and no longer.
         com.inkslate.pdf.PdfEditSession.release(file)
+    }
+
+    /** PdfRenderer destruction may block for hundreds of milliseconds; composition disposal must not. */
+    fun closeLater() {
+        closer.execute { runCatching { close() } }
+    }
+
+    companion object {
+        private val closer = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread(task, "pdf-close").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+        }
     }
 }
 

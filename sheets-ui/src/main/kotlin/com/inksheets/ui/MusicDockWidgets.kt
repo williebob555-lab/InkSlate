@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -21,6 +23,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.inkslate.core.Perform
+import com.inkslate.core.PerformAction
 import com.inksheets.core.ConnectionStatus
 import com.inksheets.core.Metronome
 import java.io.File
@@ -31,6 +34,7 @@ internal fun widgetColor(widget: ShelfWidget) = when(widget) {
     ShelfWidget.TIMING -> Color(0xFFB46D26)
     ShelfWidget.RECORDING -> Color(0xFF337EC9)
     ShelfWidget.SCORE -> Color(0xFF8B62BA)
+    ShelfWidget.ANNOTATION -> Color(0xFFB05271)
     ShelfWidget.DEVICES -> Color(0xFF2C977D)
     ShelfWidget.SESSION -> Color(0xFFC06B46)
 }
@@ -64,7 +68,7 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
             ShelfWidget.SESSION -> SessionWidget(state)
             ShelfWidget.TIMING -> {
                 val taps=remember { mutableStateListOf<Long>() }
-                WidgetHeading(widget,"Timing","Timing settings") { state.metronomeOpen=true }
+                WidgetHeading(widget,"Timing","Timing settings") { state.expandMusicCategory(ShelfWidget.TIMING) }
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     Text("${SharedMetronome.bpm.toInt()}",Modifier.semantics { contentDescription="Metronome settings" }.clickable { state.metronomeOpen=true },fontSize=29.sp,fontWeight=FontWeight.Light)
                     Column(Modifier.weight(1f).padding(start=5.dp)) {
@@ -98,7 +102,7 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                 val track=if(Recording.session)Recording.track else state.current?.audio?.firstOrNull()
                 val loaded=track!=null && Recording.loadedFile==track.file
                 val duration=if(loaded)Recording.player?.durationMs ?:0L else 0L
-                WidgetHeading(widget,if(SelfRecorder.recording)"Recording · ${SelfRecorder.seconds}s" else "Recording","Choose recording") { state.audioOpen=true }
+                WidgetHeading(widget,if(SelfRecorder.recording)"Recording · ${SelfRecorder.seconds}s" else "Recording","Choose recording") { state.expandMusicCategory(ShelfWidget.RECORDING) }
                 Text(track?.label ?: if(track!=null)track.file.substringAfterLast('/')else "No recording paired",style=MaterialTheme.typography.labelSmall,
                     modifier=Modifier.fillMaxWidth().clickable { state.audioOpen=true },maxLines=1,overflow=TextOverflow.Ellipsis)
                 RecordingWaveform(state,track,position,duration,loaded)
@@ -117,7 +121,7 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
             ShelfWidget.SCORE -> {
                 val page=state.pageShown.first
                 val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
-                WidgetHeading(widget,"Page ${page+1} · ${if(read) "READ" else "NOT READ"}","All score tools") { ScoreTools.open=true;state.scorePanelOpen=true }
+                WidgetHeading(widget,"Page ${page+1} · ${if(read) "READ" else "NOT READ"}","All score tools") { ScoreTools.open=true;state.expandMusicCategory(ShelfWidget.SCORE) }
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(maxItemsInEachRow=3) {
                     DockAction(Icons.Default.MusicNote,"Read","Read whole piece",enabled=Transcriber.busy==null &&state.currentPath!=null) { state.currentPath?.let { Transcriber.read(state,File(it)){Perform.marksChanged()} } }
@@ -130,8 +134,22 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                     DockAction(Icons.Default.Repeat,"Loop","Loop selected bars",enabled=read,active=ScoreTools.loop) { ScoreTools.loop=!ScoreTools.loop }
                 }
             }
+            ShelfWidget.ANNOTATION -> {
+                val toolsOut=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
+                WidgetHeading(widget,"Annotations","Annotation tools") { state.expandMusicCategory(ShelfWidget.ANNOTATION) }
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(maxItemsInEachRow=3) {
+                    DockAction(Icons.Default.Edit,"Pen","Pen",active=Perform.on(PerformAction.PEN)) { Perform.run(PerformAction.PEN) }
+                    DockAction(Icons.Default.CleaningServices,"Erase","Eraser",active=Perform.on(PerformAction.ERASER)) { Perform.run(PerformAction.ERASER) }
+                    DockAction(Icons.AutoMirrored.Filled.Undo,"Undo") { Perform.run(PerformAction.UNDO) }
+                    DockAction(Icons.AutoMirrored.Filled.Redo,"Redo") { Perform.run(PerformAction.REDO) }
+                    DockAction(Icons.Default.Construction,if(toolsOut)"Hide" else "Tools","All annotation tools",active=toolsOut) { Perform.run(PerformAction.FULLSCREEN) }
+                    val marked=state.bookmarkHere()!=null
+                    DockAction(if(marked)Icons.Default.Bookmark else Icons.Default.BookmarkBorder,if(marked)"Marked" else "Mark","Bookmark this page",active=marked) { state.toggleBookmark() }
+                }
+            }
             ShelfWidget.DEVICES -> {
-                WidgetHeading(widget,"Connections","Connect device") {state.companionOpen=true}
+                WidgetHeading(widget,"Connections","Connect device") {state.expandMusicCategory(ShelfWidget.DEVICES)}
                 val peers=state.companion.connectedDevices+state.remote.connectedDevices
                 val rows=peers.distinctBy { it.id }.map { Triple(it.name,it.transport+" · "+when(it.status){ConnectionStatus.CONNECTED->"Connected";ConnectionStatus.RECONNECTING->"Reconnecting";else->"Disconnected"},it.status==ConnectionStatus.CONNECTED) }
                 val peripherals=state.controllers.devices.map {Triple(it,"Page controller",true)}+state.watch.watches.map {Triple(it,"Watch",true)}

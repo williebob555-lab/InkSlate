@@ -28,7 +28,9 @@ import com.inkslate.core.Perform
 import com.inkslate.core.PerformAction
 import java.io.File
 
-internal enum class ShelfWidget(val label: String) { TIMING("Timing"), RECORDING("Recording"), SCORE("Score"), DEVICES("Devices"), SESSION("Group") }
+internal enum class ShelfWidget(val label: String) {
+    TIMING("Timing"), RECORDING("Recording"), SCORE("Score"), ANNOTATION("Annotate"), DEVICES("Devices"), SESSION("Group")
+}
 
 /** Device-local layout preferences. A missing/corrupt preference always leaves a usable shelf. */
 internal class MusicShelfPreferences(private val platform: SheetsPlatform) {

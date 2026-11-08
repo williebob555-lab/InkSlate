@@ -111,17 +111,14 @@ class AndroidSheetsPlatform(
     override fun setMusicShelfHeight(dp: Float) {
         if (com.inkslate.ink.DrawingView.musicShelfDp == dp) return
         com.inkslate.ink.DrawingView.musicShelfDp = dp
-        com.inkslate.core.Perform.recentre?.invoke()
     }
     override fun setStudioRailWidth(dp: Float) {
         if (com.inkslate.ink.DrawingView.studioRailDp == dp) return
         com.inkslate.ink.DrawingView.studioRailDp = dp
-        com.inkslate.core.Perform.recentre?.invoke()
     }
     override fun setStudioRailSide(onRight:Boolean) {
         if(com.inkslate.ink.DrawingView.studioRailOnRight==onRight)return
         com.inkslate.ink.DrawingView.studioRailOnRight=onRight
-        com.inkslate.core.Perform.recentre?.invoke()
     }
 
     /** Set from the activities' lifecycle (FlavorSetup): false once none is started - backgrounded, or the screen off. */

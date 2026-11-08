@@ -198,7 +198,7 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
     /**
      * A tap on the middle third of the page. With everything put away it brings up the strip -
      * and near the bottom, the tools as well - leaving the page where it is. With anything up,
-     * it puts it all away and fits the page back to the screen; except that a tap near the bottom
+     * it puts it all away without moving the page; except that a tap near the bottom
      * with only the strip up brings the tools up too.
      */
     fun centreTap(bottom: Boolean): Boolean {
@@ -213,7 +213,6 @@ class SheetsState(val platform: SheetsPlatform, openLater: Boolean = false) {
             toolsShown || !stripCollapsed -> {
                 stripCollapsed = true
                 if (toolsShown) com.inkslate.core.Perform.run(fullscreen)
-                com.inkslate.core.Perform.recentre?.invoke()
             }
             else -> stripCollapsed = false
         }

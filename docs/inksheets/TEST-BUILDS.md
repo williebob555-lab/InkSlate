@@ -4,6 +4,39 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **The music workspace has a new score-first layout.** Pen, Erase, Undo, Redo, bookmarks and the
+  full drawing palette now live in an **Annotate** category beside Timing, Recording, Score and
+  Devices instead of permanently consuming a bottom row. The current song/setlist position, page
+  turns and instrument stay visible in a compact top pill; More, Arrange tabs and Fold float
+  independently at the edge of the workspace. A short landscape phone keeps the compact shelf to
+  142 dp and only expands it while a tool is open, preserving more of the original PDF.
+- **Band playback now asks before reading missing parts.** Play first checks every selected part's
+  saved reading off the interface thread. If any part is incomplete, InkSheets offers exactly two
+  choices: Cancel or Read the missing parts. Checking and reading each have a determinate
+  part-by-part progress dialog and can be stopped; completed parts are retained. Recognition runs
+  one file at a time so a concert-band folder cannot multiply page buffers into a 512 MB heap
+  crash.
+- **Opening and dismissing music menus no longer changes the view.** The action strip, music tools,
+  adaptive bottom shelf, Studio rail, remote controls, Fix and Check no longer invoke Fit when
+  opened, resized or put away. The current page, pan and zoom remain exact. Explicit Fit still
+  fits the page; closing the tab still discards its pan/zoom camera.
+- **Large-song opening avoids a wrong first render and UI-thread PDF destruction.** The remembered
+  or requested page is selected before the first preview is rasterised, eliminating the throwaway
+  page-1 render seen in Cowboys. The preview uses a lightweight native image layer, and
+  `PdfRenderer` destruction runs on an idempotent low-priority close queue instead of blocking
+  Compose disposal for 150+ ms.
+- **Band balance is perceptual, adjustable and still held to fixed headroom.** Piccolo and upper
+  winds are reduced relative to low voices; trombone, euphonium, baritone and tuba receive enough
+  energy to survive masking in a full band; percussion is reduced again. The trombone fallback's
+  narrow nasal resonance is broadened and weakened. Score tools and Playback → More now include a
+  saved per-part 0–200% mixer whose changes apply during playback.
+- **Validation:** the complete InkSheets Android unit and score/audio core suites pass. Twenty
+  focused desktop interaction tests also pass across adaptive layout, exact view preservation,
+  incomplete-band prompt/progress/cancellation, concurrent progress ordering, representative
+  instrument levels, trombone identity and shared-file readiness.
+
+## 1.2.2-test.326 — printed-page priority and UBand stall removal
+
 - **The printed PDF is now the first opening result.** InkSheets opens and rasterises a bounded
   1,024-pixel whole-page preview before it parses embedded handwriting or walks the PDF's
   annotations. That bitmap is shown during the remaining load and handed directly to the live

@@ -83,6 +83,7 @@ internal val LocalMusicCategoryRail=staticCompositionLocalOf{false}
                         ShelfWidget.TIMING -> Icons.Default.Timer
                         ShelfWidget.RECORDING -> Icons.Default.GraphicEq
                         ShelfWidget.SCORE -> Icons.Default.MusicNote
+                        ShelfWidget.ANNOTATION -> Icons.Default.Edit
                         ShelfWidget.DEVICES -> Icons.Default.Devices
                         ShelfWidget.SESSION -> Icons.Default.Groups
                     },null,Modifier.size(15.dp),tint=ink)
@@ -102,7 +103,13 @@ internal val LocalMusicCategoryRail=staticCompositionLocalOf{false}
             TextButton(onClick={state.musicCategoryPage=null},modifier=Modifier.height(28.dp)){Text("Metronome",style=MaterialTheme.typography.labelMedium)}
             TextButton(onClick={state.musicCategoryPage="tuner"},modifier=Modifier.height(28.dp)){Text("Tuner",style=MaterialTheme.typography.labelMedium)}
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        // Most categories register an inline page of their own. Annotate is intentionally a
+        // lightweight direct workspace, so give the base content the same stable test/accessibility
+        // boundary when there is no registered page. The tag moves to the inline page as soon as
+        // one is registered, leaving exactly one content region in either case.
+        Box(Modifier.weight(1f).fillMaxWidth().then(
+            if(host.order.isEmpty()) Modifier.testTag("music-category-content") else Modifier
+        )) {
             CompositionLocalProvider(LocalMusicCategoryContent provides host) {
                 val close={state.expandedMusicCategory=null}
                 when(category) {
@@ -113,6 +120,7 @@ internal val LocalMusicCategoryRail=staticCompositionLocalOf{false}
                         "bar" -> GoToBar(state){state.musicCategoryPage=null}
                         else -> ScoreToolsPanel(state,close)
                     }
+                    ShelfWidget.ANNOTATION -> AnnotationCategory(state)
                     ShelfWidget.DEVICES -> if(state.musicCategoryPage=="controllers")SheetDialog("Pedals & watch",onDismiss={state.musicCategoryPage=null}) {
                         Column(Modifier.verticalScroll(rememberScrollState())){ControllerSettings(state);WatchSettings(state)}
                     }else TogetherCategory(state,close)

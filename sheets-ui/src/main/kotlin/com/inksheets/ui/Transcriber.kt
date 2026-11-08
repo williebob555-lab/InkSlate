@@ -793,10 +793,10 @@ internal object Transcriber {
      * Read [file] whole, off the screen's thread, saying nothing on the screen - several at once
      * (the band's parts before the band plays). Kept like any reading.
      */
-    fun readQuietly(state: SheetsState, file: File): Score? = try {
+    fun readQuietly(state: SheetsState, file: File, mayContinue: () -> Boolean = { true }): Score? = try {
         if (queue.isWorkerThread()) readNow(state, file, null, quiet = true)
         else queue.submit("quiet:${file.absolutePath}", ReadingQueue.REQUESTED_QUIET) { work ->
-            try { readNow(state, file, null, quiet = true, mayContinue = { !work.shouldYield() }) }
+            try { readNow(state, file, null, quiet = true, mayContinue = { mayContinue() && !work.shouldYield() }) }
             catch (error: OutOfMemoryError) { memoryFailure(state, file, "Requested reading", error) }
         }.get()
     } catch (error: OutOfMemoryError) {

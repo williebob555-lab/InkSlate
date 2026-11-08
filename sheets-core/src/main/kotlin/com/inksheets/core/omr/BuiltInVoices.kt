@@ -9,9 +9,9 @@ internal object BuiltInVoices {
             oddBelow=odd,breath=breath,chiff=breath*.8f,vibratoHz=vibrato,
             vibratoCents=if(vibrato==0.0)0.0 else 5.0,gain=gain,
             slur=if(odd>0)Synth.Slur.CLARINET else Synth.Slur.OBOE)
-    private fun brass(formant:Double,soft:Double,loud:Double,attack:Double,cutoff:Double,gain:Float=.23f)=
+    private fun brass(formant:Double,soft:Double,loud:Double,attack:Double,cutoff:Double,gain:Float=.23f,formantGain:Double=1.55)=
         Synth.Patch(FloatArray(1),attack,.12,.9f,.13,spectral=true,brass=true,
-            slopeSoft=soft,slopeLoud=loud,formantHz=formant,formantGain=2.0,
+            slopeSoft=soft,slopeLoud=loud,formantHz=formant,formantGain=formantGain,
             cutoffSoft=cutoff*.35,cutoffLoud=cutoff,bloom=.45f,gain=gain,
             breath=.004f,scoop=7.0,vibratoHz=4.5,vibratoCents=3.0,vibDelay=.45)
     private fun bowed(slope:Double,body:Double,attack:Double,release:Double)=
@@ -34,9 +34,9 @@ internal object BuiltInVoices {
     val piccolo=Synth.Patch(FloatArray(1),.025,.06,.94f,.065,spectral=true,
         slopeSoft=2.9,slopeLoud=1.9,formantHz=2400.0,formantGain=1.5,
         breath=.018f,chiff=.025f,gain=.20f,vibratoHz=5.8,vibratoCents=5.0,slur=Synth.Slur.FLUTE)
-    val tuba=brass(240.0,.85,.25,.075,1900.0,.26f)
-    val baritone=brass(600.0,.60,.16,.045,3500.0)
-    val bassTrombone=brass(350.0,.48,.10,.050,3900.0,.25f)
+    val tuba=brass(280.0,.90,.28,.075,1900.0,.26f,1.3)
+    val baritone=brass(520.0,.68,.20,.045,3300.0,.23f,1.3)
+    val bassTrombone=brass(320.0,.85,.28,.055,2800.0,.25f,1.15)
     val mellophone=brass(650.0,.65,.18,.040,3300.0)
     val violin=bowed(.85,.15,.045,.095)
     val viola=bowed(1.05,.65,.065,.12)

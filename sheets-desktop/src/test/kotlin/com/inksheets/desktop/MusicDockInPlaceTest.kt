@@ -122,7 +122,9 @@ class MusicDockInPlaceTest {
                 val compactRail=p.rail
                 shot("${c.name}-compact")
                 onNodeWithContentDescription("Timing settings").performClick()
-                for(category in listOf(ShelfWidget.TIMING,ShelfWidget.RECORDING,ShelfWidget.SCORE,ShelfWidget.DEVICES)) {
+                waitForIdle()
+                runOnIdle { assertEquals(ShelfWidget.TIMING,state.expandedMusicCategory) }
+                for(category in listOf(ShelfWidget.TIMING,ShelfWidget.RECORDING,ShelfWidget.SCORE,ShelfWidget.ANNOTATION,ShelfWidget.DEVICES)) {
                     onNodeWithTag("music-category-${category.name}").performScrollTo().assertIsDisplayed().performClick()
                     waitForIdle()
                     val actual=onNodeWithTag(dockTag).fetchSemanticsNode().boundsInRoot
@@ -140,7 +142,9 @@ class MusicDockInPlaceTest {
                             assertEquals(compactBottom,p.bottom,.01f)
                         } else {
                             assertEquals(0f,p.rail,.01f)
-                            val allowed=if(category==ShelfWidget.SCORE)40f else .01f
+                            // Compact landscape leaves the score more room; opening any tool may
+                            // temporarily reclaim 34dp so its touch targets remain usable.
+                            val allowed=if(category==ShelfWidget.SCORE || c.height<500)48f else .01f
                             assertEquals("${c.name}: replace the shelf footprint",compactBottom,p.bottom,allowed)
                         }
                     }

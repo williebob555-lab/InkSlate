@@ -87,4 +87,30 @@ class BandReadinessTest {
         state.currentPath=File(root,"mine.pdf").absolutePath
         assertEquals(setOf("flute-2"),ScoreTools.selectedBandPartIds(state))
     }
+
+    @Test fun `play asks before reading missing band parts`() {
+        val root=tmp.newFolder("prompt")
+        listOf("mine.pdf","flute.pdf","trombone.pdf").forEach { File(root,it).writeText(it) }
+        val state=SheetsState(Platform(root))
+        val mine=Part(id="mine",file="mine.pdf",instrument="clarinet")
+        val flute=Part(id="flute",file="flute.pdf",instrument="flute")
+        val trombone=Part(id="trombone",file="trombone.pdf",instrument="trombone")
+        state.change { addSong("Prompt",listOf(mine,flute,trombone)) }
+        state.current=state.library!!.songs.first {it.title=="Prompt"}
+        state.currentPath=File(root,"mine.pdf").absolutePath
+        state.pageShown=0 to 1
+        state.homeInFront=false
+        val own=Score(listOf(measure(0)),1,listOf(800))
+        ScoreTools.install(state)
+        ScoreTools.scoreSource={own}
+        ScoreTools.cancelBandRead()
+
+        ScoreTools.playBand(state)
+        val deadline=System.currentTimeMillis()+3000
+        while(ScoreTools.bandReadPrompt==null && System.currentTimeMillis()<deadline) Thread.sleep(10)
+        assertEquals(2,ScoreTools.bandReadPrompt?.missingParts)
+        assertNull(ScoreTools.bandReading)
+        assertNull("No sound starts before the user agrees",ScoreTools.playing)
+        ScoreTools.cancelBandRead()
+    }
 }

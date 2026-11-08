@@ -115,7 +115,7 @@ class RemoteScreensTest {
     }
 
     @Test
-    fun `a tap on the middle opens the strip where the page is, and closes everything back to the fitted page`() {
+    fun `opening and closing music chrome never moves the page`() {
         val state = library(tmp.newFolder("Music"))
         var toolsShown = false
         var recentred = 0
@@ -128,19 +128,19 @@ class RemoteScreensTest {
             // Middle: the strip comes up, the page stays where it is.
             assertTrue(Perform.centreTap!!(false))
             assertFalse(state.stripCollapsed); assertFalse(toolsShown); assertEquals(0, recentred)
-            // Middle again: put away, and the page fitted again.
+            // Middle again: put away, with the exact camera untouched.
             Perform.centreTap!!(false)
-            assertTrue(state.stripCollapsed); assertEquals(1, recentred)
+            assertTrue(state.stripCollapsed); assertEquals(0, recentred)
             // Near the bottom: the strip and the tools, the page still where it is.
             Perform.centreTap!!(true)
-            assertFalse(state.stripCollapsed); assertTrue(toolsShown); assertEquals(1, recentred)
-            // Middle again with both up: both away, and fitted.
+            assertFalse(state.stripCollapsed); assertTrue(toolsShown); assertEquals(0, recentred)
+            // Middle again with both up: both away, still without fitting.
             Perform.centreTap!!(false)
-            assertTrue(state.stripCollapsed); assertFalse(toolsShown); assertEquals(2, recentred)
+            assertTrue(state.stripCollapsed); assertFalse(toolsShown); assertEquals(0, recentred)
             // With only the strip up, near the bottom brings the tools too.
             Perform.centreTap!!(false)
             Perform.centreTap!!(true)
-            assertFalse(state.stripCollapsed); assertTrue(toolsShown); assertEquals(2, recentred)
+            assertFalse(state.stripCollapsed); assertTrue(toolsShown); assertEquals(0, recentred)
             // Home in front: not taken.
             state.homeInFront = true
             assertFalse(Perform.centreTap!!(false))

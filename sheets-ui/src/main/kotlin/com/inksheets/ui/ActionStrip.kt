@@ -175,7 +175,16 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             if(state.readMusic) SampledInstruments.ensure(state)
         }
         androidx.compose.runtime.SideEffect { Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
-        MusicDock(state) { ReaderFooter(state) }
+        MusicDock(state) { ReaderSettingsButtons(state) }
+        if(!state.stripCollapsed && !ScoreTools.checking && state.expandedMusicCategory==null) {
+            BoxWithConstraints(Modifier.matchParentSize()) {
+                val rail=chooseMusicDock(state.shelf.view,maxWidth.value,maxHeight.value,state.pageAspect,176f)==MusicDockView.STUDIO
+                ReaderNavigationBar(state,Modifier.align(Alignment.TopCenter).padding(
+                    start=if(rail && state.shelf.railSide==StudioRailSide.LEFT)244.dp else 8.dp,
+                    end=if(rail && state.shelf.railSide==StudioRailSide.RIGHT)244.dp else 8.dp,
+                    top=6.dp,bottom=6.dp))
+            }
+        }
         // Fix is a viewer editor, independent of the retired music sidebar.
         BoxWithConstraints(Modifier.matchParentSize()) { BarCheck(state,maxHeight) }
         BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
@@ -218,35 +227,19 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 
 /** An instrument's name for a part, or what the part calls itself. */
 @Composable
-private fun ReaderFooter(state:SheetsState) {
-    var more by remember { mutableStateOf(false) }
+private fun ReaderNavigationBar(state:SheetsState,modifier:Modifier=Modifier) {
+    Surface(shape=RoundedCornerShape(18.dp),tonalElevation=3.dp,shadowElevation=2.dp,
+        color=MaterialTheme.colorScheme.surface.copy(alpha=.94f),modifier=modifier.widthIn(max=900.dp)) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val narrow=maxWidth<600.dp
-        val toolsOut=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
-        @Composable fun Mini(icon:ImageVector,label:String,description:String,active:Boolean=false,width:androidx.compose.ui.unit.Dp=38.dp,action:()->Unit) {
-            Column(Modifier.width(width).height(40.dp).clip(RoundedCornerShape(7.dp))
-                .background(if(active)MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
-                .clickable(onClick=action),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center) {
-                Icon(icon,description,Modifier.size(17.dp))
-                Text(label,fontSize=9.sp,maxLines=1,lineHeight=11.sp)
-            }
-        }
-        val annotations:@Composable RowScope.()->Unit={
-            if(!toolsOut) {
-                Mini(Icons.Default.Edit,"Pen","Pen",Perform.on(PerformAction.PEN)){Perform.run(PerformAction.PEN)}
-                Mini(Icons.Default.CleaningServices,"Erase","Eraser",Perform.on(PerformAction.ERASER)){Perform.run(PerformAction.ERASER)}
-                Mini(Icons.AutoMirrored.Filled.Undo,"Undo","Undo"){Perform.run(PerformAction.UNDO)}
-                Mini(Icons.AutoMirrored.Filled.Redo,"Redo","Redo"){Perform.run(PerformAction.REDO)}
-            }
-            Mini(if(toolsOut)Icons.Default.Close else Icons.Default.Construction,if(toolsOut)"Hide"else"Tools",if(toolsOut)"Hide annotation tools"else"All tools",toolsOut){Perform.run(PerformAction.FULLSCREEN)}
-            val bookmarked=state.bookmarkHere()!=null
-            Mini(if(bookmarked)Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                if(bookmarked)"Marked" else "Mark",
-                if(bookmarked)"Remove bookmark from this page" else "Bookmark this page",
-                bookmarked){state.toggleBookmark()}
-            Mini(Icons.Default.GraphicEq,"Tuner","Tuner",width=48.dp){state.tunerOpen=true}
-        }
         val navigation:@Composable RowScope.()->Unit={
+            Column(Modifier.widthIn(min=110.dp,max=230.dp).padding(horizontal=8.dp)) {
+                Text(state.current?.title ?: "Music",style=MaterialTheme.typography.labelLarge,maxLines=1,
+                    overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                state.playing?.let { (id,index) ->
+                    Text("${state.library?.setlist(id)?.name ?: "Setlist"} · ${index+1}",fontSize=9.sp,maxLines=1,
+                        overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")}
             val (page,count)=state.pageShown
             Column(Modifier.widthIn(min=56.dp,max=150.dp).clickable {Perform.openPages?.invoke()},horizontalAlignment=Alignment.CenterHorizontally) {
@@ -254,9 +247,6 @@ private fun ReaderFooter(state:SheetsState) {
                 if(state.readMusic) {
                     val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
                     Text(if(read)"Read"else"NOT READ",fontSize=9.sp,lineHeight=11.sp,color=if(read)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
-                }
-                state.playing?.let { (id,index) ->
-                    Text("${state.library?.setlist(id)?.name ?: "Setlist"} · ${index+1}",fontSize=9.sp,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                 }
             }
             IconButton(onClick={Perform.run(PerformAction.NEXT_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateNext,"Next page")}
@@ -270,28 +260,26 @@ private fun ReaderFooter(state:SheetsState) {
                 }
             }
         }
-        @Composable fun RowScope.OutsideControls() {
+        Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,content=navigation)
+        }
+    }
+    }
+}
+
+@Composable
+private fun ReaderSettingsButtons(state:SheetsState) {
+    var more by remember { mutableStateOf(false) }
+    Surface(shape=RoundedCornerShape(18.dp),tonalElevation=4.dp,shadowElevation=3.dp,
+        color=MaterialTheme.colorScheme.surface.copy(alpha=.96f)) {
+        Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.padding(horizontal=2.dp)) {
             Box {
-                Mini(Icons.Default.MoreVert,"More","More music actions",more){more=true}
+                IconButton(onClick={more=true},modifier=Modifier.size(36.dp)) {Icon(Icons.Default.MoreVert,"More reader actions")}
                 StripMenu(state,more,listOf(PerformAction.HALF_PAGE_BACK,PerformAction.HALF_PAGE_FORWARD,PerformAction.FIRST_PAGE,PerformAction.LAST_PAGE),
                     {more=false},{state.arrangingShelf=true},{state.partPicker=true},fromDock=true)
             }
-            Mini(Icons.Default.UnfoldLess,"Fold","Hide buttons"){state.stripCollapsed=true;Perform.recentre?.invoke()}
-            VerticalDivider(Modifier.height(28.dp).padding(horizontal=4.dp))
-            Mini(Icons.Default.Tune,"Layout","Arrange music shelf"){state.arrangingShelf=true}
-        }
-        if(narrow) Column(Modifier.fillMaxWidth()) {
-            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),content=annotations)
-            }
-            Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,content=navigation)
-                OutsideControls()
-            }
-        } else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),content=annotations)
-            Row(verticalAlignment=Alignment.CenterVertically,content=navigation)
-            OutsideControls()
+            IconButton(onClick={state.arrangingShelf=true},modifier=Modifier.size(36.dp)) {Icon(Icons.Default.Tune,"Arrange tabs")}
+            IconButton(onClick={state.stripCollapsed=true},modifier=Modifier.size(36.dp)) {Icon(Icons.Default.UnfoldLess,"Fold reader controls")}
         }
     }
 }

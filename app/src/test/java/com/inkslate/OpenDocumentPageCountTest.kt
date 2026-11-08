@@ -14,13 +14,14 @@ class OpenDocumentPageCountTest {
     @Test
     fun `page count is captured once instead of locking the renderer during turns`() {
         var calls = 0
+        var closes = 0
         val source = object : PageSource {
             override val pageCount: Int get() { calls++; return 40 }
             override val kind = "pdf"
             override fun pageDim(index: Int) = PageDim(612f, 792f)
             override fun renderPage(index: Int, targetWidthPx: Int): Bitmap? = null
             override fun renderRegion(index: Int, region: RectF, targetWidthPx: Int): Bitmap? = null
-            override fun close() = Unit
+            override fun close() { closes++ }
         }
         val ink = InkDocument.create("method.pdf", "pdf", 40, 1L, "fingerprint")
         val document = OpenDocument(File("method.pdf"), source, ink, "test")
@@ -28,5 +29,8 @@ class OpenDocumentPageCountTest {
         assertEquals(1, calls)
         repeat(20) { assertEquals(40, document.pageCount) }
         assertEquals("turn-time reads must not return to PageSource", 1, calls)
+        document.close()
+        document.close()
+        assertEquals("renderer destruction is idempotent when disposal races replacement", 1, closes)
     }
 }

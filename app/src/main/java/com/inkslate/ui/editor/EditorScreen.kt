@@ -63,9 +63,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -378,11 +376,31 @@ fun EditorScreen(
             // everything downstream that writes the view back treats it as the truth.
             withContext(Dispatchers.IO) { runCatching { previous.close() } }
         }
+
+        // Decide where this open is going before rasterising its preview. Previously every song
+        // previewed page 1 and only afterwards loaded the remembered page. A part left on page 4
+        // therefore showed a quick, wrong preview, threw it away, and made the player wait for a
+        // second full render of page 4. That is the 571 ms render in the Cowboys field trace.
+        // SharedPreferences is memory-backed; doing this here costs no document I/O.
+        if (previous == null && tools.rememberView) {
+            readingPosition.load(file.absolutePath)?.let { saved ->
+                if (!com.inkslate.AppFlavor.musicView) saved.layout?.let { if (it != layout) layout = it }
+                pendingCamera = if (com.inkslate.AppFlavor.musicView) null else saved.camera
+                pendingPage = saved.page
+            }
+        }
+        // A page explicitly requested by a setlist/companion wins over remembered position and
+        // must also be the page whose pixels are made first.
+        com.inkslate.core.Perform.takePage(file.absolutePath)?.let { asked ->
+            pendingCamera = null
+            pendingPage = asked
+        }
+        val firstPage = pendingPage.takeIf { it >= 0 } ?: page
         val openStarted = android.os.SystemClock.elapsedRealtime()
         val opened = withContext(Dispatchers.IO) {
             // A page-sized preview is the first contract. Fine zoom detail remains demand-rendered
             // by DrawingView, so opening should not allocate pixels the whole-page view cannot use.
-            repo.open(file, page, minOf(renderWidthPx, 1024)) { bitmap, dim, p ->
+            repo.open(file, firstPage, minOf(renderWidthPx, 1024)) { bitmap, dim, p ->
                 scope.launch {
                     if (openGeneration == generation && doc == null) {
                         pageBitmap = bitmap
@@ -414,16 +432,6 @@ fun EditorScreen(
             externalChange = false
             fileRepo.noteOpened(file)
 
-            // Only on a genuine open. A reload after the pages were rearranged keeps whatever is
-            // on screen, because the saved position describes a document that no longer exists.
-            if (previous == null && tools.rememberView) {
-                readingPosition.load(file.absolutePath)?.let { saved ->
-                    if (!com.inkslate.AppFlavor.musicView) saved.layout?.let { if (it != layout) layout = it }
-                    if (com.inkslate.AppFlavor.musicView) pendingCamera = null
-                    pendingCamera = saved.camera
-                    pendingPage = saved.page
-                }
-            }
             conflictNotice = when {
                 // Music: merged quietly, and said only in the event log - a pop-up on opening a
                 // part mid-rehearsal is in the way, and there is nothing to decide.
@@ -571,13 +579,15 @@ fun EditorScreen(
         onDispose { if (focused) hostView.keepScreenOn = false }
     }
 
-    DisposableEffect(doc) {
-        // Capture the value now. Reading `doc` inside onDispose would read it at dispose time,
-        // and this effect is disposed the instant `doc` changes from null to the loaded
-        // document - closing the very document that just opened, so every later render returns
-        // nothing and the page shows blank.
-        val opened = doc
-        onDispose { opened?.close() }
+    DisposableEffect(Unit) {
+        // Document replacements are closed explicitly in the load coroutine above. This effect
+        // exists only for the editor itself leaving composition. PdfRenderer.close can spend
+        // hundreds of milliseconds in PdfProcessor.ensurePdfDestroyed, so never run it from
+        // Compose disposal on the UI thread.
+        onDispose {
+            val opened = doc
+            opened?.closeLater()
+        }
     }
 
     // ---- render the current page --------------------------------------------
@@ -645,10 +655,6 @@ fun EditorScreen(
                     positionRestored = true
                     // A page asked for from outside - a band-pack part, another tablet - wins
                     // over the remembered view.
-                    com.inkslate.core.Perform.takePage(d.file.absolutePath)?.let { asked ->
-                        pendingCamera = null
-                        pendingPage = asked
-                    }
                     val restored = pendingCamera?.let { view.restoreCamera(it) } == true
                     if (!restored && pendingPage in 1 until d.pageCount) view.goToPage(pendingPage)
                     if (restored || pendingPage > 0) {
@@ -2158,11 +2164,20 @@ fun EditorScreen(
             when {
                 loadError != null -> LoadFailure(loadError!!, onClose)
                 doc == null -> pageBitmap?.let { preview ->
-                    Image(
-                        bitmap = preview.asImageBitmap(),
-                        contentDescription = "Printed sheet music",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit
+                    // A plain platform ImageView avoids constructing and clipping a temporary
+                    // Compose graphics layer for the preview. The field trace caught 152-241 ms
+                    // in GraphicsLayer/ContentScale while that layer existed for barely one
+                    // frame before the real DrawingView replaced it.
+                    AndroidView(
+                        factory = { ctx -> android.widget.ImageView(ctx).apply {
+                            setBackgroundColor(android.graphics.Color.WHITE)
+                            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                            importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                            contentDescription = "Printed sheet music"
+                        } },
+                        update = { it.setImageBitmap(preview) },
+                        onRelease = { it.setImageDrawable(null) },
+                        modifier = Modifier.fillMaxSize()
                     )
                 } ?: Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
                 else -> AndroidView(

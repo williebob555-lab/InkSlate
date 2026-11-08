@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
 
 /** One bounded workspace: the dock chooses the arrangement which leaves the fitted score larger. */
 @Composable
-internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope.() -> Unit) {
+internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> Unit) {
     val density=LocalDensity.current
     val panels=remember(state){ReaderPanels.forState(state)}
     LaunchedEffect(state.root,state.currentPath,state.version,state.readMusic,state.backgroundReading,state.homeInFront,ScoreTools.checking) {
@@ -77,6 +77,9 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
         val footerAllowance=if(viewportWidth<600.dp)88.dp else 48.dp
         val contentLimit=(viewportHeight-footerAllowance-128.dp-(if(showLiveStatus)48.dp else 0.dp)).coerceAtLeast(96.dp)
         val workspaceHeight=minOf(when {
+            // A landscape phone should still be mostly music. The category strip and every
+            // primary action fit this height, while the body itself remains scrollable.
+            category==null && viewportHeight<500.dp -> 142.dp
             category==ShelfWidget.SCORE -> 208.dp
             category==null && active && viewportHeight<700.dp -> 142.dp
             else -> 176.dp
@@ -160,16 +163,17 @@ internal fun BoxScope.MusicDock(state: SheetsState, footer: @Composable RowScope
                 }
                 if(expanded && !rail && categoryCompact && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
                 if(showLiveStatus) MusicLiveStatus(state,position)
-                if(expanded) {
-                    HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
-                    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,content=footer)
-                } else Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                if(!expanded) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     IconButton(onClick={state.stripCollapsed=false}) {Icon(Icons.Default.UnfoldMore,"Show buttons")}
                     Text(state.edgeNotice ?: "Page ${state.pageShown.first+1} of ${state.pageShown.second}",Modifier.weight(1f),style=MaterialTheme.typography.labelSmall)
                 }
             }
         }
         if(!visible && !ScoreTools.checking && !state.homeInFront) IconButton(onClick={state.stripCollapsed=false},modifier=Modifier.align(Alignment.BottomEnd)) {Icon(Icons.Default.UnfoldMore,"Show buttons")}
+        if(expanded && visible) Box(Modifier.align(when {
+            rail && railRight -> Alignment.BottomStart
+            else -> Alignment.BottomEnd
+        }).padding(start=6.dp,end=6.dp,bottom=state.shelfHeight.dp+6.dp)) { settings() }
     }
     if(state.arrangingShelf) DockWorkspaceEditor(state) {state.arrangingShelf=false}
     if(state.scorePanelOpen && (state.homeInFront || ScoreTools.checking)) ScoreToolsPanel(state) {state.scorePanelOpen=false}

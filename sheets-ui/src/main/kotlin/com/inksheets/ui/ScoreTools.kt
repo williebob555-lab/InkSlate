@@ -510,13 +510,12 @@ internal object ScoreTools {
 
     private const val K_GO_ON = "sheets_fix_goes_on"
 
-    /** Back to playing: Fix and Check put away, the tools and the strips folded, the page fitted. */
+    /** Back to playing: Fix and Check put away, the tools and strips folded, the view untouched. */
     fun putAway(s: SheetsState) {
         if (checking) endCheck()
         if (tool == Tool.CHECK) choose(Tool.CHECK)
         close(s)
         s.stripCollapsed = true
-        Perform.recentre?.invoke()
     }
 
     fun close(s: SheetsState) {
@@ -1640,9 +1639,17 @@ internal object ScoreTools {
     /** Play the other parts, not this one. */
     var band by mutableStateOf(false)
 
-    /** Reading the band's parts: "3 of 11" - null when not. */
-    var bandReading by mutableStateOf<String?>(null)
+    enum class BandReadPhase { CHECKING, READING }
+    data class BandReadProgress(val done: Int, val total: Int, val phase: BandReadPhase)
+    data class BandReadPrompt(val missingParts: Int, val from: Int?)
+
+    /** Checking or reading the band's parts, with determinate part-level progress. */
+    var bandReading by mutableStateOf<BandReadProgress?>(null)
         private set
+    var bandReadPrompt by mutableStateOf<BandReadPrompt?>(null)
+        private set
+    private var bandReadGeneration = 0L
+    private var bandReadPool: java.util.concurrent.ExecutorService? = null
 
     /** The song's other playable parts that have files of their own here: (part, file). */
     private fun availableOtherParts(s: SheetsState): List<Pair<com.inksheets.core.Part, File>> {
@@ -1721,15 +1728,15 @@ internal object ScoreTools {
     internal fun readBandLater(s: SheetsState): Boolean {
         val ready = if (preparedBandSong == s.current?.id) preparedBandScores else emptyMap()
         val todo = otherParts(s).any { (p,_) -> p.id !in ready }
-        if (todo && bandReading == null) readBand(s) {}
+        if (todo && bandReading == null) readBand(s, allowReading = true) {}
         return todo
     }
 
     /**
-     * Read whichever of the band's parts are not read yet - several at once where the device has
-     * the cores for it - then [then]. How many are done is said as they finish.
+     * Check or read whichever of the band's parts are not ready, then [then]. Recognition is
+     * deliberately sequential for bounded memory; how many parts are done is said as they finish.
      */
-    private fun readBand(s: SheetsState, then: (Map<String, Score>) -> Unit) {
+    private fun readBand(s: SheetsState, allowReading: Boolean, then: (Map<String, Score>) -> Unit) {
         val songId = s.current?.id
         val parts = otherParts(s)
         val already = if (preparedBandSong == songId) preparedBandScores else emptyMap()
@@ -1739,67 +1746,127 @@ internal object ScoreTools {
         // A shared band pack is opened once.  All directory walking, score JSON decoding and any
         // requested recognition happen on these low-priority workers, never in a click handler.
         val todo = missing.groupBy { it.second.absolutePath }.values.map { it.first().second }
-        val total = todo.size
-        val done = java.util.concurrent.atomic.AtomicInteger(0)
+        val total = missing.size
+        val doneFiles = java.util.concurrent.atomic.AtomicInteger(0)
+        val doneParts = java.util.concurrent.atomic.AtomicInteger(0)
         val wholes = java.util.concurrent.ConcurrentHashMap<String, Score>()
+        // Android's main queue serializes these publications, but test/desktop platforms may run
+        // onMain inline from several workers. Keep the final clear/prompt indivisible so a late
+        // partial update can never resurrect the progress dialog over the confirmation prompt.
+        val publishLock = Any()
         val began = System.currentTimeMillis()
-        bandReading = "0 of $total"
-        // Each reading already shares the reader's own threads; two or three parts side by side
-        // keeps every core busy without starving the sound.
-        val side = if (com.inksheets.core.omr.Workers.roomy) 3 else 1
+        val generation = ++bandReadGeneration
+        bandReadPool?.shutdownNow()
+        bandReading = BandReadProgress(0, total, if (allowReading) BandReadPhase.READING else BandReadPhase.CHECKING)
+        // Recognition itself already uses the reader's worker pool and large page buffers. Read
+        // one file at a time so a concert-band folder cannot multiply those buffers into another
+        // 512 MB heap crash. Cache-only checks are small and may overlap.
+        val side = if (allowReading) 1 else minOf(3, todo.size)
         val pool = java.util.concurrent.Executors.newFixedThreadPool(minOf(side, todo.size)) { r -> Thread(r, "read-band").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+        bandReadPool = pool
         for (f in todo) pool.execute {
             val sharing = parts.filter { it.second.absolutePath == f.absolutePath }
             val cached = Transcriber.loadCached(s, f, refresh = true)
             val whole = cached?.takeIf { score -> sharing.all { (part, _) -> bandPartReady(score, part) } }
-                ?: Transcriber.readQuietly(s, f)
+                ?: if (allowReading && generation == bandReadGeneration)
+                    Transcriber.readQuietly(s, f) { generation == bandReadGeneration && !Thread.currentThread().isInterrupted }
+                else null
             if (whole != null) wholes[f.absolutePath] = whole
-            val n = done.incrementAndGet()
+            val n = doneParts.addAndGet(sharing.count { (part, _) -> part.id !in already })
+            val files = doneFiles.incrementAndGet()
             s.platform.onMain {
-                bandReading = if (n >= total) null else "$n of $total"
-                if (n >= total) {
-                    val prepared = already.toMutableMap()
-                    parts.forEach { (part, file) ->
-                        wholes[file.absolutePath]?.takeIf { bandPartReady(it, part) }
-                            ?.let { Transcriber.partOf(it, part).first }
-                            ?.takeIf { it.measures.isNotEmpty() }
-                            ?.let { prepared[part.id] = it }
+                synchronized(publishLock) {
+                    if (generation != bandReadGeneration) return@onMain
+                    if (files < todo.size) {
+                        // Workers can finish together and their main-thread publications may arrive
+                        // out of order. Never let an older partial update resurrect progress after
+                        // the final update has already opened the confirmation prompt.
+                        val current = bandReading
+                        if (current != null && n > current.done) bandReading = BandReadProgress(n.coerceAtMost(total), total,
+                            if (allowReading) BandReadPhase.READING else BandReadPhase.CHECKING)
+                    } else {
+                        bandReading = null
+                        bandReadPool = null
+                        val prepared = already.toMutableMap()
+                        parts.forEach { (part, file) ->
+                            wholes[file.absolutePath]?.takeIf { bandPartReady(it, part) }
+                                ?.let { Transcriber.partOf(it, part).first }
+                                ?.takeIf { it.measures.isNotEmpty() }
+                                ?.let { prepared[part.id] = it }
+                        }
+                        if (s.current?.id == songId) {
+                            preparedBandSong = songId
+                            preparedBandScores = prepared
+                        }
+                        s.platform.log("PERF band preparation: ${todo.size} file(s), ${prepared.size} part(s), " +
+                            "${System.currentTimeMillis() - began}ms off UI")
+                        then(prepared)
                     }
-                    if (s.current?.id == songId) {
-                        preparedBandSong = songId
-                        preparedBandScores = prepared
-                    }
-                    s.platform.log("PERF band preparation: ${total} file(s), ${prepared.size} part(s), " +
-                        "${System.currentTimeMillis() - began}ms off UI")
-                    then(prepared)
                 }
             }
         }
         pool.shutdown()
     }
 
-    /** Relative section balance; total ensemble energy is still held to one headroom budget. */
-    private fun bandBalance(instrument: String?): Float = when (instrument) {
-        "tuba", "sousaphone", "baritone-tc", "baritone-bc", "euphonium-tc", "euphonium", "euphonium-bc" -> 1.5f
-        "trombone", "bass-trombone" -> 1.35f
-        "bari-sax", "bass-clarinet", "bassoon", "string-bass", "bass-guitar" -> 1.18f
-        else -> 1f
+    fun confirmBandRead(s: SheetsState) {
+        val request = bandReadPrompt ?: return
+        bandReadPrompt = null
+        playBand(s, request.from, allowReading = true)
+    }
+
+    fun cancelBandRead() {
+        bandReadPrompt = null
+        bandReading = null
+        bandReadGeneration++
+        bandReadPool?.shutdownNow()
+        bandReadPool = null
+        playRequest++
+    }
+
+    private fun bandMixKey(s: SheetsState, partId: String) = "sheets_band_mix_${s.current?.id}_$partId"
+    fun bandMix(s: SheetsState, partId: String): Float =
+        s.platform.pref(bandMixKey(s, partId))?.toFloatOrNull()?.coerceIn(0f, 2f) ?: 1f
+    fun setBandMix(s: SheetsState, partId: String, level: Float) {
+        val value = level.coerceIn(0f, 2f)
+        s.platform.setPref(bandMixKey(s, partId), if (kotlin.math.abs(value - 1f) < .005f) null else value.toString())
+    }
+    fun resetBandMix(s: SheetsState) {
+        (otherParts(s).map { it.first } + listOfNotNull(s.partShown())).forEach { s.platform.setPref(bandMixKey(s, it.id), null) }
+    }
+    internal fun bandMixerParts(s: SheetsState): List<com.inksheets.core.Part> =
+        (otherParts(s).map { it.first } + listOfNotNull(s.partShown())).distinctBy { it.id }
+    internal fun bandPartName(part: com.inksheets.core.Part): String = com.inksheets.core.Instruments.partName(part)
+
+    /** Relative section and user balance; total ensemble energy is still held to one headroom budget. */
+    private fun bandBalance(s: SheetsState, instrument: String?, partId: String): Float =
+        com.inksheets.core.omr.EnsembleBalance.default(instrument) * bandMix(s, partId)
+
+    /** Apply a mixer change at the current bar. Prepared readings make this a short restart. */
+    fun applyBandMix(s: SheetsState) {
+        val at = barNow() ?: return
+        if (bandMode && (ensemble != null || playing != null)) playBand(s, at, allowReading = true)
     }
 
     /** The band - every other part read - from the bars chosen or the page in front, without this part. */
-    fun playBand(s: SheetsState, from: Int? = null) {
+    fun playBand(s: SheetsState, from: Int? = null, allowReading: Boolean = false) {
         stop(s)
         leaveCheck()
+        bandReadPrompt = null
         val path = s.currentPath ?: return
         val request = ++playRequest
         val whole = scoreOf(path) ?: run { said = "Read the music first"; return }
         // This part's own bars, numbered as the band's are - and back again for showing.
         val (mine, offset) = Transcriber.partOf(whole, s.partShown())
         bandMode = true
-        readBand(s) { prepared ->
+        readBand(s, allowReading) { prepared ->
             // Reading several missing parts can outlive the song that asked for them. Never let
             // its completion resurrect playback over Home or over the next song.
             if (request != playRequest || s.currentPath != path || s.homeInFront) return@readBand
+            val missingParts = otherParts(s).count { (part, _) -> part.id !in prepared }
+            if (missingParts > 0 && !allowReading) {
+                bandReadPrompt = BandReadPrompt(missingParts, from)
+                return@readBand
+            }
             val voices = otherParts(s).mapNotNull { (p, f) ->
                 // A part in a band pack: its own pages of the pack's reading.
                 val sc = prepared[p.id] ?: return@mapNotNull null
@@ -1809,7 +1876,7 @@ internal object ScoreTools {
                 val percussionName = listOfNotNull(p.label, p.instrument, f.nameWithoutExtension).joinToString(" ")
                 val drums = com.inksheets.core.omr.DrumKind.of(id, percussionName)
                 val sounding = com.inksheets.core.omr.DrumKind.pitchedInstrument(id, percussionName) ?: id
-                val balance = bandBalance(sounding)
+                val balance = bandBalance(s, sounding, p.id)
                 com.inksheets.core.omr.EnsemblePlayer.Voice(sc, if (drums != null) 0 else tr,
                     SampledInstruments.patchFor(s, sounding), drums, balance)
             }
@@ -1844,7 +1911,7 @@ internal object ScoreTools {
             val (myId, myTranspose) = instrumentOf(s)
             val mySound = soundAs ?: myId
             val guide = if (bandWithMe) com.inksheets.core.omr.EnsemblePlayer.Voice(mine, myTranspose,
-                SampledInstruments.patchFor(s, mySound), balance = bandBalance(mySound)) to 1f else null
+                SampledInstruments.patchFor(s, mySound), balance = bandBalance(s, mySound, s.partShown()?.id ?: "mine")) to 1f else null
             val p = com.inksheets.core.omr.EnsemblePlayer(Synth(rate).apply {
                 clickSound=Click.sound(s)
                 // Twelve partials retain the instrument's family and brightness while bounding
@@ -1936,7 +2003,7 @@ internal object ScoreTools {
         cues = on
         if (!on) { changed(); return }
         val path = s.currentPath ?: return
-        readBand(s) {
+        readBand(s, allowReading = true) {
             cueCache[path] = cuesFor(s, path)
             said = if (cueCache[path].isNullOrEmpty()) "No long rests to cue here" else null
             changed()
@@ -2012,6 +2079,7 @@ internal object ScoreTools {
 
     /** Leave a song or return Home: cancel both active sound and a band still being prepared. */
     fun leaveSong(s: SheetsState) {
+        cancelBandRead()
         val active = playing != null || paused != null || player != null || ensemble != null
         if (active) stop(s) else playRequest++
     }
