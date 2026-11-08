@@ -22,7 +22,7 @@ import kotlin.math.min
  * implementation is the point: three subtly different renderers is how "it looked different when
  * I exported it" bugs get made.
  */
-object StrokeRasteriser {
+open class StrokeRenderer(private val retainGeometry: Boolean = true) {
 
     /**
      * Cached geometry per stroke.
@@ -48,6 +48,7 @@ object StrokeRasteriser {
     }
 
     private fun geometryOf(s: Stroke): Geometry {
+        if (!retainGeometry) return Geometry(if (s.usesOutlineRender) s.toOutlinePath() else s.toPath(), RectF())
         val key = keyOf(s)
         geometryCache.get(key)?.let { RenderStats.cacheHits++; return it }
         RenderStats.cacheMisses++
@@ -300,3 +301,5 @@ object StrokeRasteriser {
         }
     }
 }
+
+object StrokeRasteriser : StrokeRenderer()

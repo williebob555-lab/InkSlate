@@ -222,6 +222,9 @@ class DrawingView @JvmOverloads constructor(
      */
     private var pageIndexDirty = true
     private val strokesByPage = HashMap<Int, MutableList<Stroke>>()
+    private var renderedInk: RenderedInk? = null
+    private var inkFocusX = 0f
+    private var inkFocusY = 0f
     private val strokeRegions = HashMap<Int, com.inkslate.core.StrokeRegions>()
 
     /** The model's version this view's page index was built from. */
@@ -2893,16 +2896,23 @@ class DrawingView @JvmOverloads constructor(
                 viewportDoc.bottom - slot.originY + slot.cropTop
             )
             val onPage = if (enhancementsReady) strokeRegions[slot.index]?.query(com.inkslate.core.Box(localViewport.left, localViewport.top, localViewport.right, localViewport.bottom)).orEmpty() else emptyList()
-            for (st in onPage) {
-                if (st.isHighlighter) {
-                    StrokeRasteriser.draw(canvas, st); drawnCount++
+            val focus = floatArrayOf(inkFocusX, inkFocusY)
+            viewToPage.mapPoints(focus)
+            val regionIndex = strokeRegions[slot.index]
+            val cached = enhancementsReady && regionIndex != null &&
+                strokesByPage[slot.index].orEmpty().size >= 80 && currentScale() <= 1.25f && run {
+                    val tiles = renderedInk ?: RenderedInk({ callback -> post { callback() } }, { postInvalidateOnAnimation() }).also { renderedInk = it }
+                    val wholeView = Box(
+                        fullViewportDoc.left - slot.originX + slot.cropLeft,
+                        fullViewportDoc.top - slot.originY + slot.cropTop,
+                        fullViewportDoc.right - slot.originX + slot.cropLeft,
+                        fullViewportDoc.bottom - slot.originY + slot.cropTop)
+                    tiles.draw(canvas, slot.index, wholeView, currentScale(), regionIndex,
+                        pageFilter.filter, focus[0] - slot.originX + slot.cropLeft,
+                        focus[1] - slot.originY + slot.cropTop, gesturing || !scroller.isFinished)
                 }
-            }
-            for (st in onPage) {
-                if (!st.isHighlighter) {
-                    StrokeRasteriser.draw(canvas, st); drawnCount++
-                }
-            }
+            if (!cached) StrokeRasteriser.drawAll(canvas, onPage)
+            drawnCount += onPage.size
             live?.let { pts ->
                 if (pts.isNotEmpty() && livePage == slot.index) {
                     StrokeRasteriser.drawLive(canvas, liveStroke(pts))
@@ -3167,6 +3177,7 @@ class DrawingView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        inkFocusX = event.x; inkFocusY = event.y
         if(event.actionMasked==MotionEvent.ACTION_DOWN || event.actionMasked==MotionEvent.ACTION_MOVE)com.inkslate.core.RenderGate.touch(1800)
         val action = event.actionMasked
 
@@ -3921,6 +3932,7 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        renderedInk?.close(); renderedInk = null
         model.detach(this)
         marksStop?.invoke(); marksStop = null
         stopFling()
@@ -3945,6 +3957,7 @@ class DrawingView @JvmOverloads constructor(
     }
 
     override fun onHoverEvent(event: MotionEvent): Boolean {
+        inkFocusX = event.x; inkFocusY = event.y
         if (event.actionMasked == MotionEvent.ACTION_HOVER_EXIT) clearTransientIndicators()
         armIndicatorWatchdog()
         return super.onHoverEvent(event)
@@ -4275,7 +4288,9 @@ class DrawingView @JvmOverloads constructor(
      */
     private fun eraseAlong(pagePoints: List<Float>) {
         if (pagePoints.size < 2) return
-        val candidates = strokesOnPage(livePage)
+        rebuildPageIndex()
+        val swath = swathBounds(pagePoints, liveEraser)
+        val candidates = strokeRegions[livePage]?.query(Box(swath.left, swath.top, swath.right, swath.bottom)).orEmpty()
         if (candidates.isEmpty()) return
 
         var hits: HashSet<String>? = null
@@ -4286,7 +4301,6 @@ class DrawingView @JvmOverloads constructor(
         // turns "is this stroke anywhere near the eraser" from one test per interpolated step
         // into one test per stroke, which matters because a fast swipe interpolates hundreds of
         // steps and a marked-up page has hundreds of strokes.
-        val swath = swathBounds(pagePoints, liveEraser)
         val swathPath = if (partial) compactPath(pagePoints) else null
 
         for (s in candidates) {

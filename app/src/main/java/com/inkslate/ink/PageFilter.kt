@@ -15,4 +15,9 @@ import android.graphics.ColorMatrixColorFilter
 typealias PageFilter = com.inkslate.core.ReadingMode
 
 val PageFilter.filter: ColorFilter?
-    get() = matrix?.let { ColorMatrixColorFilter(ColorMatrix(it)) }
+    get() = readingFilters[this]
+
+// Reading modes are immutable. Stable filter identities also let rendered ink survive frames.
+private val readingFilters by lazy {
+    PageFilter.entries.associateWith { mode -> mode.matrix?.let { ColorMatrixColorFilter(ColorMatrix(it)) } }
+}

@@ -10,7 +10,7 @@ class StrokeRegions(strokes: List<Stroke>, private val cellSize: Float = 256f) {
     private val oversized = ArrayList<Int>()
     // Pen samples normally reuse the same viewport. Retain a few recent views for quick jumps.
     private val views = object : LinkedHashMap<Box, List<Stroke>>(8, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Box, List<Stroke>>) = size > 8
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Box, List<Stroke>>) = size > 128
     }
 
     init {
