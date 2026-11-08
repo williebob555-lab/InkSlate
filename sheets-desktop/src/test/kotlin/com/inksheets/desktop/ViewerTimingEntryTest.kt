@@ -68,15 +68,14 @@ class ViewerTimingEntryTest {
         Perform.isOn=null
     }
 
-    @Test fun `labelled footer Tuner opens the tuner from the viewer in both phone orientations`() {
+    @Test fun `Timing category Tuner opens the tuner from the viewer in both phone orientations`() {
         for((name,width,height) in listOf(Triple("portrait",360,640),Triple("landscape",640,360))) {
             val (state,_)=setup("tuner-$name")
             try {
                 runDesktopComposeUiTest(width=width,height=height) {
                     setContent{MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
-                    // The Timing widget also has a tuner icon. Require the labelled footer control.
-                    onNode(hasContentDescription("Tuner") and hasText("Tuner"))
-                        .assertIsDisplayed().performClick()
+                    onNodeWithContentDescription("Timing settings").assertIsDisplayed().performClick()
+                    onNodeWithText("Tuner").assertIsDisplayed().performClick()
                     runOnIdle {
                         assertEquals(ShelfWidget.TIMING,state.expandedMusicCategory)
                         assertEquals("tuner",state.musicCategoryPage)

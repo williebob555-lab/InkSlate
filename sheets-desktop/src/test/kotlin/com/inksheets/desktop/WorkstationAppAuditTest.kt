@@ -65,7 +65,8 @@ class WorkstationAppAuditTest {
                 settle(35)
                 assertEquals("$size: PDF opened",3,sheets().pageShown.second)
                 val s=sheets()
-                assertTrue("$size: renderer reserves shelf", AppFlavor.musicShelfDp>0)
+                assertTrue("$size: renderer reserves shelf or Studio rail",
+                    AppFlavor.musicShelfDp>0 || AppFlavor.studioRailDp>0)
                 assertTrue("$size: music area remains",AppFlavor.musicShelfDp<h*.42)
                 val issues=UiAudit.check(this,size,"workstation-real-score",w,h,allowedTruncations=setOf(pdf.name))
                 assertTrue("$size: $issues",issues.isEmpty())
@@ -87,7 +88,8 @@ class WorkstationAppAuditTest {
                     onNodeWithContentDescription("Return to music workspace").performClick()
                     settle()
                     assertTrue("$size: one tap restores music workspace", Perform.on(PerformAction.FULLSCREEN))
-                    assertTrue("$size: full shelf restored", AppFlavor.musicShelfDp > 40f)
+                    assertTrue("$size: full music controls restored",
+                        AppFlavor.musicShelfDp > 40f || AppFlavor.studioRailDp > 0f)
                 }
                 runOnIdle { if (!Perform.on(PerformAction.FULLSCREEN)) Perform.run(PerformAction.FULLSCREEN) }
                 settle()

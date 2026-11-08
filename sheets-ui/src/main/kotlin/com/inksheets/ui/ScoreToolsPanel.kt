@@ -308,8 +308,8 @@ internal fun BandMixerDialog(state: SheetsState, onClose: () -> Unit) {
 
 @Composable
 private fun ScoreSection(title: String, icon: ImageVector, accent: Color, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(icon, null, Modifier.size(19.dp), tint = accent)
             Text(title, style = MaterialTheme.typography.titleSmall, color = accent)
             HorizontalDivider(Modifier.weight(1f), color = accent.copy(alpha = .2f))
@@ -332,7 +332,7 @@ private fun ScoreActionGrid(actions: List<ScoreAction>, accent: Color = Material
         }
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             actions.chunked(columns).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     row.forEach { action -> Box(Modifier.weight(1f)) {
                         ScoreActionRow(action, accent)
                         action.popup?.invoke()

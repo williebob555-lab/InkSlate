@@ -61,7 +61,10 @@ class ViewerCleanEntryTest {
             try {
                 runDesktopComposeUiTest(width=width,height=height) {
                     setContent {MaterialTheme {Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
-                    onNodeWithText("Score",substring=false).performClick()
+                    // On a phone shelf, Score can begin beyond the compact horizontal viewport.
+                    // Its visible category tab scrolls the shelf to the correct workspace first.
+                    onNode(hasText("Score") and hasClickAction()).performClick()
+                    waitForIdle()
                     onNodeWithContentDescription("Clean view").assertIsNotSelected().performClick().assertIsSelected()
                     runOnIdle {assertEquals(Color.White,raster(ScoreTools.marks(file.absolutePath,0,800f,800f).orEmpty())[150,55])}
                     onNodeWithContentDescription("Clean view").performClick().assertIsNotSelected()

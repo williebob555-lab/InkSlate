@@ -42,7 +42,7 @@ class BookmarkRemovalTest {
         override fun onMain(block:()->Unit)=block()
     }
 
-    @Test fun `reader footer bookmarks the page directly without opening an editor`() {
+    @Test fun `Annotate category bookmarks the page directly without opening an editor`() {
         val root=tmp.newFolder("reader")
         val file=File(root,"nocturne.pdf").apply {writeText("fixture")}
         val state=SheetsState(Platform(root))
@@ -52,6 +52,7 @@ class BookmarkRemovalTest {
         state.homeInFront=false;state.stripCollapsed=false
         runDesktopComposeUiTest(width=900,height=700) {
             setContent {MaterialTheme {Box(Modifier.fillMaxSize()) {ActionStrip(state)}}}
+            onNodeWithContentDescription("Annotation tools").performClick()
             onNodeWithContentDescription("Bookmark this page").performClick()
             runOnIdle {assertTrue(state.library!!.song(song.id)!!.bookmarks.single().page==2)}
             onNodeWithContentDescription("Remove bookmark from this page").performClick()

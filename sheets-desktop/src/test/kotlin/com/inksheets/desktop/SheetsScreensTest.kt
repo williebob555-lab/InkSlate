@@ -259,7 +259,11 @@ class SheetsScreensTest {
                 }
             }
             waitForIdle()
-            for (action in listOf("Previous page", "Undo", "All tools", "More music actions", "Arrange music shelf")) {
+            for (action in listOf("Previous page", "More reader actions", "Arrange tabs")) {
+                onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
+            }
+            onNode(androidx.compose.ui.test.hasContentDescription("Annotation tools")).performClick()
+            for (action in listOf("Undo", "Open the full annotation toolbar")) {
                 onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
             }
             shoot("action-strip-short", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())

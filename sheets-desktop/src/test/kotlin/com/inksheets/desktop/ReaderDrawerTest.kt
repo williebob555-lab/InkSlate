@@ -28,6 +28,7 @@ class ReaderDrawerTest {
     }
     private class Platform(override val startFolder: File) : SheetsPlatform {
         val prefs = mutableMapOf("sheets_library" to startFolder.absolutePath)
+        var railWidth = 0f
         override val deviceId = "drawer-test"
         override val deviceName = "Test stand"
         override val localFolder = File(startFolder, ".local")
@@ -38,6 +39,7 @@ class ReaderDrawerTest {
         override fun onMain(block: () -> Unit) = block()
         override fun pageText(file: File, page: Int): String? = null
         override fun openPart(song: Song, part: Part, file: File) {}
+        override fun setStudioRailWidth(dp: Float) { railWidth = dp }
     }
     private fun setup(name: String): SheetsState {
         val root = tmp.newFolder(name)
@@ -62,7 +64,8 @@ class ReaderDrawerTest {
                 runOnIdle {
                     assertEquals("$name: recordings replace the category bar", ShelfWidget.RECORDING, state.expandedMusicCategory)
                     assertFalse("$name: no separate popup drawer", ReaderPanels.open)
-                    assertTrue("$name: category bar reserves score space", state.shelfHeight > 0f)
+                    assertTrue("$name: category bar reserves score space", state.shelfHeight > 0f ||
+                        (state.platform as Platform).railWidth > 0f)
                     assertTrue("$name: score retains usable height", state.shelfHeight < height * .75f)
                 }
                 onNodeWithContentDescription("Compact categories").assertIsDisplayed()
