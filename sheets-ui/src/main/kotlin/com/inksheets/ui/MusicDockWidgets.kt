@@ -97,8 +97,6 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
             ShelfWidget.PARTS -> {
                 WidgetHeading(widget,"Instrument / part","Choose instrument or part") {state.expandMusicCategory(ShelfWidget.PARTS)}
                 PartSwitcher(state,Modifier.fillMaxWidth())
-                Text("Song PDF · library instrument is separate",fontSize=9.sp,lineHeight=10.sp,
-                    color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1,overflow=TextOverflow.Ellipsis)
             }
             ShelfWidget.PLAYBACK -> {
                 var mixer by remember {mutableStateOf(false)}

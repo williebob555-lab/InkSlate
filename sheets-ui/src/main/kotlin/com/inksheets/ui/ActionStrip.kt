@@ -226,17 +226,18 @@ private fun ReaderDockControls(state:SheetsState) {
     var more by remember { mutableStateOf(false) }
     Surface(color=MaterialTheme.colorScheme.surfaceContainerLow) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val narrow=maxWidth<260.dp
         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-        androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(),maxItemsInEachRow=if(maxWidth<360.dp)2 else 4) {
+        androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(),maxItemsInEachRow=4) {
             Box {
                 TextButton(onClick={more=true},modifier=Modifier.semantics{contentDescription="More reader actions"},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=6.dp)) {
-                    Icon(Icons.Default.Settings, null, Modifier.size(15.dp)); Text("Reader options",fontSize=10.sp,modifier=Modifier.padding(start=4.dp))
+                    Icon(Icons.Default.Settings, null, Modifier.size(15.dp)); Text(if(narrow)"Options" else "Reader options",fontSize=10.sp,modifier=Modifier.padding(start=4.dp))
                 }
                 StripMenu(state,more,listOf(PerformAction.HALF_PAGE_BACK,PerformAction.HALF_PAGE_FORWARD,PerformAction.FIRST_PAGE,PerformAction.LAST_PAGE),
                     {more=false},{state.arrangingShelf=true},{state.partPicker=true},fromDock=true)
             }
             TextButton(onClick={state.arrangingShelf=true},modifier=Modifier.semantics{contentDescription="Arrange tabs"},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=6.dp)) {
-                Icon(Icons.Default.ViewWeek,null,Modifier.size(15.dp)); Text("Tab layout",fontSize=10.sp,modifier=Modifier.padding(start=4.dp))
+                Icon(Icons.Default.ViewWeek,null,Modifier.size(15.dp)); Text(if(narrow)"Tabs" else "Tab layout",fontSize=10.sp,modifier=Modifier.padding(start=4.dp))
             }
             IconButton(onClick={state.stripCollapsed=true},modifier=Modifier.size(44.dp)) {Icon(Icons.Default.UnfoldLess,"Fold reader controls")}
         }
