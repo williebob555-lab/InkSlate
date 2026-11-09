@@ -12,6 +12,8 @@ import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Check
@@ -20,11 +22,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.horizontalScroll
@@ -175,16 +180,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             if(state.readMusic) SampledInstruments.ensure(state)
         }
         androidx.compose.runtime.SideEffect { Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
-        MusicDock(state) { ReaderSettingsButtons(state) }
-        if(!state.stripCollapsed && !ScoreTools.checking && state.expandedMusicCategory==null) {
-            BoxWithConstraints(Modifier.matchParentSize()) {
-                val rail=chooseMusicDock(state.shelf.view,maxWidth.value,maxHeight.value,state.pageAspect,176f)==MusicDockView.STUDIO
-                ReaderNavigationBar(state,Modifier.align(Alignment.TopCenter).padding(
-                    start=if(rail && state.shelf.railSide==StudioRailSide.LEFT)244.dp else 8.dp,
-                    end=if(rail && state.shelf.railSide==StudioRailSide.RIGHT)244.dp else 8.dp,
-                    top=6.dp,bottom=6.dp))
-            }
-        }
+        MusicDock(state) { ReaderDockControls(state) }
         // Fix is a viewer editor, independent of the retired music sidebar.
         BoxWithConstraints(Modifier.matchParentSize()) { BarCheck(state,maxHeight) }
         BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
@@ -225,74 +221,54 @@ fun BoxScope.ActionStrip(state: SheetsState) {
     }
 }
 
-/** An instrument's name for a part, or what the part calls itself. */
 @Composable
-private fun ReaderNavigationBar(state:SheetsState,modifier:Modifier=Modifier) {
-    Surface(shape=RoundedCornerShape(18.dp),tonalElevation=3.dp,shadowElevation=2.dp,
-        color=MaterialTheme.colorScheme.surface.copy(alpha=.94f),modifier=modifier.widthIn(max=900.dp)) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val navigation:@Composable RowScope.()->Unit={
-            Column(Modifier.widthIn(min=110.dp,max=230.dp).padding(horizontal=8.dp)) {
-                Text(state.current?.title ?: "Music",style=MaterialTheme.typography.labelLarge,maxLines=1,
-                    overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                state.playing?.let { (id,index) ->
-                    Text("${state.library?.setlist(id)?.name ?: "Setlist"} · ${index+1}",fontSize=9.sp,maxLines=1,
-                        overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")}
-            val (page,count)=state.pageShown
-            Column(Modifier.widthIn(min=56.dp,max=150.dp).clickable {Perform.openPages?.invoke()},horizontalAlignment=Alignment.CenterHorizontally) {
-                Text(state.edgeNotice ?: "${page+1} / $count",style=MaterialTheme.typography.labelLarge,maxLines=1)
-                if(state.readMusic) {
-                    val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
-                    Text(if(read)"Read"else"NOT READ",fontSize=9.sp,lineHeight=11.sp,color=if(read)MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary)
-                }
-            }
-            IconButton(onClick={Perform.run(PerformAction.NEXT_PAGE)},modifier=Modifier.size(36.dp)){Icon(Icons.AutoMirrored.Filled.NavigateNext,"Next page")}
-            state.current?.let {song ->
-                Box {
-                    TextButton(onClick={state.partPicker=!state.partPicker},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=6.dp),modifier=Modifier.widthIn(max=140.dp)) {
-                        Icon(Icons.Default.SwapHoriz,null,Modifier.size(16.dp))
-                        Text(state.partShown()?.let(::partName) ?: "Part",modifier=Modifier.padding(start=4.dp),fontSize=10.sp,maxLines=2)
-                    }
-                    PartMenu(state,song,state.partShown(),state.partPicker){state.partPicker=false}
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth().heightIn(min=40.dp),verticalAlignment=Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,content=navigation)
-        }
-    }
-    }
-}
-
-@Composable
-private fun ReaderSettingsButtons(state:SheetsState) {
+private fun ReaderDockControls(state:SheetsState) {
     var more by remember { mutableStateOf(false) }
-    Surface(shape=RoundedCornerShape(18.dp),tonalElevation=4.dp,shadowElevation=3.dp,
-        color=MaterialTheme.colorScheme.surface.copy(alpha=.96f)) {
-        Row(verticalAlignment=Alignment.CenterVertically,modifier=Modifier.padding(horizontal=2.dp)) {
+    Surface(color=MaterialTheme.colorScheme.surfaceContainerLow) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(),maxItemsInEachRow=if(maxWidth<360.dp)2 else 4) {
             Box {
-                IconButton(onClick={more=true},modifier=Modifier.size(36.dp)) {Icon(Icons.Default.MoreVert,"More reader actions")}
+                TextButton(onClick={more=true},modifier=Modifier.semantics{contentDescription="More reader actions"},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=6.dp)) {
+                    Icon(Icons.Default.Settings, null, Modifier.size(15.dp)); Text("Reader options",fontSize=10.sp,modifier=Modifier.padding(start=4.dp))
+                }
                 StripMenu(state,more,listOf(PerformAction.HALF_PAGE_BACK,PerformAction.HALF_PAGE_FORWARD,PerformAction.FIRST_PAGE,PerformAction.LAST_PAGE),
                     {more=false},{state.arrangingShelf=true},{state.partPicker=true},fromDock=true)
             }
-            IconButton(onClick={state.arrangingShelf=true},modifier=Modifier.size(36.dp)) {Icon(Icons.Default.Tune,"Arrange tabs")}
-            IconButton(onClick={state.stripCollapsed=true},modifier=Modifier.size(36.dp)) {Icon(Icons.Default.UnfoldLess,"Fold reader controls")}
+            TextButton(onClick={state.arrangingShelf=true},modifier=Modifier.semantics{contentDescription="Arrange tabs"},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=6.dp)) {
+                Icon(Icons.Default.ViewWeek,null,Modifier.size(15.dp)); Text("Tab layout",fontSize=10.sp,modifier=Modifier.padding(start=4.dp))
+            }
+            IconButton(onClick={state.stripCollapsed=true},modifier=Modifier.size(44.dp)) {Icon(Icons.Default.UnfoldLess,"Fold reader controls")}
+        }
         }
     }
 }
 
-private fun partName(p: com.inksheets.core.Part): String =
+internal fun partName(p: com.inksheets.core.Part): String =
     com.inksheets.core.Instruments.partName(p)
+
+@Composable
+internal fun PartSwitcher(state:SheetsState,modifier:Modifier=Modifier) {
+    val song=state.current ?: return
+    Box(modifier) {
+        TextButton(onClick={state.partPicker=!state.partPicker},contentPadding=androidx.compose.foundation.layout.PaddingValues(horizontal=8.dp)) {
+            Icon(Icons.Default.SwapHoriz,null,Modifier.size(17.dp))
+            Column(Modifier.padding(start=6.dp)) {
+                Text("Instrument / part",fontSize=9.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(state.partShown()?.let(::partName) ?: "Choose part",style=MaterialTheme.typography.labelMedium,maxLines=1,
+                    overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+        }
+        PartMenu(state,song,state.partShown(),state.partPicker){state.partPicker=false}
+    }
+}
 
 /**
  * Switch part, two ways: for this song only (every other song keeps its part), or for every song
  * - the instrument this device plays.
  */
 @Composable
-private fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: com.inksheets.core.Part?, open: Boolean, onDismiss: () -> Unit) {
+internal fun PartMenu(state: SheetsState, song: com.inksheets.core.Song, shown: com.inksheets.core.Part?, open: Boolean, onDismiss: () -> Unit) {
     DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
         Text(
             "This song only",

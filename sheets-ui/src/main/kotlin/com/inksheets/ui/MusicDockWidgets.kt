@@ -2,12 +2,15 @@ package com.inksheets.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.NavigateBefore
+import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,6 +21,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -31,6 +35,9 @@ import java.io.File
 internal val LocalDockDense = compositionLocalOf { false }
 
 internal fun widgetColor(widget: ShelfWidget) = when(widget) {
+    ShelfWidget.PAGES -> Color(0xFF4576A8)
+    ShelfWidget.PARTS -> Color(0xFF6F6FAF)
+    ShelfWidget.PLAYBACK -> Color(0xFF2C8A6B)
     ShelfWidget.TIMING -> Color(0xFFB46D26)
     ShelfWidget.RECORDING -> Color(0xFF337EC9)
     ShelfWidget.SCORE -> Color(0xFF8B62BA)
@@ -66,19 +73,79 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
     Column(Modifier.fillMaxSize().background(widgetColor(widget).copy(alpha=.065f)).padding(horizontal=10.dp,vertical=if(LocalDockDense.current)4.dp else 5.dp)) {
         when(widget) {
             ShelfWidget.SESSION -> SessionWidget(state)
+            ShelfWidget.PAGES -> {
+                val (page,count)=state.pageShown
+                WidgetHeading(widget,state.current?.title ?: "Pages","Page navigation") {state.expandMusicCategory(ShelfWidget.PAGES)}
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.SpaceBetween) {
+                    IconButton(onClick={Perform.run(PerformAction.PREVIOUS_PAGE)},modifier=Modifier.size(36.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateBefore,"Previous page")
+                    }
+                    Column(Modifier.clickable {Perform.openPages?.invoke()},horizontalAlignment=Alignment.CenterHorizontally) {
+                        Text(state.edgeNotice ?: "${page+1} / $count",style=MaterialTheme.typography.titleMedium)
+                        Text("Open page list",fontSize=9.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick={Perform.run(PerformAction.NEXT_PAGE)},modifier=Modifier.size(36.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.NavigateNext,"Next page")
+                    }
+                }
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceEvenly) {
+                    DockAction(Icons.Default.FirstPage,"First") {Perform.run(PerformAction.FIRST_PAGE)}
+                    DockAction(Icons.Default.GridView,"All pages") {Perform.openPages?.invoke()}
+                    DockAction(Icons.Default.LastPage,"Last") {Perform.run(PerformAction.LAST_PAGE)}
+                }
+            }
+            ShelfWidget.PARTS -> {
+                WidgetHeading(widget,"Instrument / part","Choose instrument or part") {state.expandMusicCategory(ShelfWidget.PARTS)}
+                PartSwitcher(state,Modifier.fillMaxWidth())
+                Text("Changes the PDF shown for this song. Your all-song instrument stays separate.",fontSize=9.sp,
+                    color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=2,overflow=TextOverflow.Ellipsis)
+            }
+            ShelfWidget.PLAYBACK -> {
+                var mixer by remember {mutableStateOf(false)}
+                val ready=ScoreTools.scoreHere(state)?.hasRead(state.pageShown.first)==true
+                val playing=ScoreTools.playing!=null
+                WidgetHeading(widget,if(playing)"Playback running" else "Playback","Playback controls") {state.expandMusicCategory(ShelfWidget.PLAYBACK)}
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(maxItemsInEachRow=3) {
+                    DockAction(if(playing)Icons.Default.Stop else Icons.Default.PlayArrow,if(playing)"Stop" else "Play",enabled=ready||playing,active=playing) {
+                        if(playing)ScoreTools.stop(state)else ScoreTools.playSelected(state)
+                    }
+                    DockAction(Icons.Default.Groups,"Band",enabled=ready,active=ScoreTools.band) {ScoreTools.toggleBand(state)}
+                    DockAction(Icons.Default.Tune,"Mixer",enabled=ready) {mixer=true}
+                    DockAction(Icons.Default.Repeat,"Loop",enabled=ready,active=ScoreTools.loop) {ScoreTools.loop=!ScoreTools.loop}
+                    DockAction(Icons.Default.Speed,"Tempo",enabled=ready) {state.expandMusicCategory(ShelfWidget.PLAYBACK)}
+                    DockAction(Icons.Default.QueueMusic,"Parts",enabled=ready) {state.expandMusicCategory(ShelfWidget.PLAYBACK)}
+                }
+                if(mixer)BandMixerDialog(state){mixer=false}
+            }
             ShelfWidget.TIMING -> {
                 val taps=remember { mutableStateListOf<Long>() }
-                WidgetHeading(widget,"Timing","Timing settings") { state.expandMusicCategory(ShelfWidget.TIMING) }
+                WidgetHeading(widget,"Metronome & tuner","Timing settings") { state.expandMusicCategory(ShelfWidget.TIMING) }
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
-                    Text("${SharedMetronome.bpm.toInt()}",Modifier.semantics { contentDescription="Metronome settings" }.clickable { state.metronomeOpen=true },fontSize=29.sp,fontWeight=FontWeight.Light)
+                    Text("${SharedMetronome.bpm.toInt()}",Modifier
+                        .semantics { contentDescription="Tempo ${SharedMetronome.bpm.toInt()} BPM. Drag left or right for coarse adjustment; up or down for fine adjustment" }
+                        .pointerInput(Unit) {
+                            var coarseRemainder=0f
+                            var fineRemainder=0f
+                            detectDragGestures(onDragEnd={coarseRemainder=0f;fineRemainder=0f},onDragCancel={coarseRemainder=0f;fineRemainder=0f}) {change,amount ->
+                                change.consume()
+                                coarseRemainder+=amount.x
+                                fineRemainder-=amount.y
+                                val coarse=(coarseRemainder/18f).toInt()
+                                val fine=(fineRemainder/12f).toInt()
+                                if(coarse!=0) {ScoreTools.nudgeTempo(state,coarse*5);coarseRemainder-=coarse*18f}
+                                if(fine!=0) {ScoreTools.nudgeTempo(state,fine);fineRemainder-=fine*12f}
+                            }
+                        }.clickable { state.metronomeOpen=true },fontSize=29.sp,fontWeight=FontWeight.Light)
                     Column(Modifier.weight(1f).padding(start=5.dp)) {
-                        Text("BPM",fontSize=9.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${SharedMetronome.engine?.settings?.beatsPerBar ?: 4} / 4",fontSize=10.sp)
+                        Text("BPM",fontSize=9.sp,lineHeight=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("↔ ±5 · ↕ ±1",fontSize=8.sp,lineHeight=9.sp,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("${SharedMetronome.engine?.settings?.beatsPerBar ?: 4} / 4",fontSize=10.sp,lineHeight=11.sp)
                     }
                     FilledTonalIconButton(onClick={ Click.toggle(state) },modifier=Modifier.size(34.dp)) {
                         Icon(if(SharedMetronome.running)Icons.Default.Pause else Icons.Default.PlayArrow,"Start or pause metronome",Modifier.size(20.dp))
                     }
-                    IconButton(onClick={state.tunerOpen=!state.tunerOpen},modifier=Modifier.size(30.dp)) { Icon(Icons.Default.GraphicEq,"Tuner",Modifier.size(18.dp)) }
+                    DockAction(Icons.Default.GraphicEq,"Tuner","Open tuner") {state.tunerOpen=!state.tunerOpen}
                 }
                 Row(Modifier.fillMaxWidth().height(13.dp),horizontalArrangement=Arrangement.spacedBy(7.dp),verticalAlignment=Alignment.CenterVertically) {
                     repeat((SharedMetronome.engine?.settings?.beatsPerBar ?: 4).coerceIn(1,12)) { beat ->
@@ -121,14 +188,12 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
             ShelfWidget.SCORE -> {
                 val page=state.pageShown.first
                 val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
-                WidgetHeading(widget,"Page ${page+1} · ${if(read) "READ" else "NOT READ"}","All score tools") { ScoreTools.open=true;state.expandMusicCategory(ShelfWidget.SCORE) }
+                WidgetHeading(widget,"Reading · Page ${page+1} · ${if(read) "READ" else "NOT READ"}","All score tools") { ScoreTools.open=true;state.expandMusicCategory(ShelfWidget.SCORE) }
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(maxItemsInEachRow=3) {
                     DockAction(Icons.Default.MusicNote,"Read","Read whole piece",enabled=Transcriber.busy==null &&state.currentPath!=null) { state.currentPath?.let { Transcriber.read(state,File(it)){Perform.marksChanged()} } }
                     DockAction(Icons.Default.Spellcheck,"Review","Review recognized notes",enabled=read,active=ScoreTools.colours) { ScoreTools.open=true;ScoreTools.toggleCheck(state) }
                     DockAction(Icons.Default.AutoFixHigh,"Clean","Clean view",enabled=read,active=ScoreTools.cleanEnabled(state)) { ScoreTools.toggleClean(state) }
-                    DockAction(Icons.Default.PlayArrow,"Play","Play notes",enabled=read,active=ScoreTools.playing!=null) { if(ScoreTools.playing!=null)ScoreTools.stop(state)else ScoreTools.playSelected(state) }
-                    DockAction(Icons.Default.Groups,"Band","Play other parts",enabled=read,active=ScoreTools.band) { ScoreTools.toggleBand(state) }
                     DockAction(Icons.Default.Tag,"Bar","Go to bar",enabled=read,onClick=goToBar)
                     DockAction(Icons.Default.Brush,"Mask","Clean mask brush",enabled=read,active=ScoreTools.maskBrushEnabled) { ScoreTools.toggleMaskBrush(state) }
                     DockAction(Icons.Default.Repeat,"Loop","Loop selected bars",enabled=read,active=ScoreTools.loop) { ScoreTools.loop=!ScoreTools.loop }

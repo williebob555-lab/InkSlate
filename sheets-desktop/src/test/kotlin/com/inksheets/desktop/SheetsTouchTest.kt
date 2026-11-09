@@ -11,6 +11,7 @@ import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performMouseInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inkslate.desktop.AppFlavor
 import com.inkslate.desktop.AppRoot
@@ -117,7 +118,9 @@ class SheetsTouchTest {
             assertTrue("and another brings them back", shown("Tuner"))
 
             // A button pressed by a finger: the metronome's panel opens, and closes again.
-            tapNode(onAllNodes(androidx.compose.ui.test.hasContentDescription("Metronome settings"), useUnmergedTree = true).onFirst())
+            val timing=onAllNodes(androidx.compose.ui.test.hasContentDescription("Timing settings"), useUnmergedTree = true).onFirst()
+            timing.performScrollTo()
+            tapNode(timing)
             shot("metronome")
             println("after tapping Metronome: page ${page()}")
             // Close the inline category explicitly; its settings launcher is not a toggle.

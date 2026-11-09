@@ -11,11 +11,13 @@ import androidx.compose.ui.graphics.toAwtImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -35,6 +37,7 @@ import com.inksheets.ui.ActionStrip
 import com.inksheets.ui.AudioOut
 import com.inksheets.ui.Microphone
 import com.inksheets.ui.ScoreTools
+import com.inksheets.ui.ShelfWidget
 import com.inksheets.ui.SheetsPlatform
 import com.inksheets.ui.SheetsState
 import org.junit.Assert.assertTrue
@@ -86,26 +89,27 @@ class MusicStripShots {
                 runDesktopComposeUiTest(width = w, height = h) {
                     setContent { MaterialTheme { Box(Modifier.fillMaxSize().background(Color(0xFFF4F1EA))) { ActionStrip(state) } } }
                     waitForIdle()
-                    runOnIdle { ScoreTools.open = true; ScoreTools.select(3..5) }
+                    runOnIdle { ScoreTools.open = true; ScoreTools.select(3..5); state.expandMusicCategory(ShelfWidget.PLAYBACK) }
                     waitForIdle()
-                    for (d in listOf("Play notes", "Play other parts", "Go to bar", "Review recognized notes")) {
-                        val target = onNode(hasContentDescription(d))
-                        target.performScrollTo().assertIsDisplayed().assertIsEnabled()
+                    for (tool in listOf("Play", "Tempo ramp", "Playback sound", "Band accompaniment", "Band mixer")) {
+                        val target = onNodeWithTag("score-action-$tool")
+                        target.performScrollTo().assertIsDisplayed()
                         val node = target.fetchSemanticsNode()
                         val b = node.boundsInRoot
-                        assertTrue("$name: $d on screen", b.top >= 0f && b.bottom <= h.toFloat() && b.left >= 0f && b.right <= w.toFloat())
+                        assertTrue("$name: $tool on screen", b.top >= 0f && b.bottom <= h.toFloat() && b.left >= 0f && b.right <= w.toFloat())
                     }
-                    onAllNodes(hasContentDescription("All score tools")).onLast().performScrollTo().performClick()
+                    onNode(hasText("Switch tab") or hasContentDescription("Switch tab")).performClick()
+                    onNodeWithTag("music-category-SCORE").performClick()
                     onNodeWithText("Score tools").assertIsDisplayed()
-                    onNodeWithText("Done").assertIsDisplayed()
-                    for (tool in listOf("Select bars", "Tempo ramp", "Playback sound", "Cue notes", "Save MIDI", "Clean PDF", "PDF for another instrument")) {
+                    onNodeWithContentDescription("Close full tools").assertIsDisplayed()
+                    for (tool in listOf("Select bars", "Cue notes", "Save MIDI", "Clean PDF", "PDF for another instrument")) {
                         onNodeWithTag("score-action-$tool").performScrollTo().assertIsDisplayed()
                     }
                     if (shots != null) {
                         File(shots).mkdirs()
                         ImageIO.write(onAllNodes(isRoot()).onLast().captureToImage().toAwtImage(), "png", File(shots, "music-strip-$name.png"))
                     }
-                    onNodeWithText("Done").performClick()
+                    onNodeWithContentDescription("Close full tools").performClick()
                     runOnIdle { ScoreTools.close(state) }
                 }
             }

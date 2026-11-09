@@ -29,11 +29,24 @@ import com.inkslate.core.PerformAction
 import java.io.File
 
 internal enum class ShelfWidget(val label: String) {
-    TIMING("Timing"), RECORDING("Recording"), SCORE("Score"), ANNOTATION("Annotate"), DEVICES("Devices"), SESSION("Group")
+    PAGES("Pages"), PARTS("Part"), PLAYBACK("Playback"), SCORE("Reading"), ANNOTATION("Annotate"),
+    TIMING("Tempo & tuner"), RECORDING("Recording"), DEVICES("Connections"), SESSION("Group")
 }
 
 /** Device-local layout preferences. A missing/corrupt preference always leaves a usable shelf. */
 internal class MusicShelfPreferences(private val platform: SheetsPlatform) {
+    var portraitHeight by mutableFloatStateOf(platform.pref("sheets_dock_portrait_height")?.toFloatOrNull()?.coerceIn(132f,420f) ?: 174f)
+        private set
+    fun resizePortrait(by:Float) {
+        portraitHeight=(portraitHeight+by).coerceIn(132f,420f)
+        platform.setPref("sheets_dock_portrait_height",portraitHeight.toInt().toString())
+    }
+    var landscapeWidth by mutableFloatStateOf(platform.pref("sheets_dock_landscape_width")?.toFloatOrNull()?.coerceIn(220f,480f) ?: 236f)
+        private set
+    fun resizeLandscape(by:Float) {
+        landscapeWidth=(landscapeWidth+by).coerceIn(220f,480f)
+        platform.setPref("sheets_dock_landscape_width",landscapeWidth.toInt().toString())
+    }
     var railSide by mutableStateOf(StudioRailSide.entries.firstOrNull{it.name==platform.pref("sheets_dock_side")} ?: StudioRailSide.LEFT)
         private set
     fun chooseRailSide(side:StudioRailSide){railSide=side;platform.setPref("sheets_dock_side",side.name)}
@@ -56,6 +69,16 @@ internal class MusicShelfPreferences(private val platform: SheetsPlatform) {
     }
     fun reset() { order = ShelfWidget.entries.toList(); hidden = emptySet(); platform.setPref("sheets_shelf_order", null); platform.setPref("sheets_shelf_hidden", null) }
     companion object {
-        fun decode(raw: String?): List<ShelfWidget> = (raw.orEmpty().split(',').mapNotNull { v -> ShelfWidget.entries.firstOrNull { it.name == v } } + ShelfWidget.entries).distinct()
+        fun decode(raw: String?): List<ShelfWidget> {
+            val saved=raw.orEmpty().split(',').mapNotNull { v -> ShelfWidget.entries.firstOrNull { it.name == v } }
+            val migrated=(saved+ShelfWidget.entries).distinct()
+            // Pages and Playback did not exist in older layouts. Put the new primary tasks first
+            // once, while retaining every deliberate ordering choice for the existing tabs.
+            return if(raw!=null && ShelfWidget.PAGES !in saved)
+                listOf(ShelfWidget.PAGES,ShelfWidget.PARTS,ShelfWidget.PLAYBACK)+migrated.filterNot {
+                    it==ShelfWidget.PAGES || it==ShelfWidget.PARTS || it==ShelfWidget.PLAYBACK
+                }
+            else migrated
+        }
     }
 }

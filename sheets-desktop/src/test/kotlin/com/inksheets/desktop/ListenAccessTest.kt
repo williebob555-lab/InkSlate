@@ -8,6 +8,9 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inksheets.core.AudioTrack
 import com.inksheets.core.Part
@@ -61,7 +64,10 @@ class ListenAccessTest {
             runDesktopComposeUiTest(width = width, height = height) {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
                 waitForIdle()
-                onNodeWithContentDescription("Listen and turn the pages").assertIsDisplayed()
+                val timingTabs=onAllNodesWithContentDescription("Tempo & tuner quick tab").fetchSemanticsNodes()
+                if(timingTabs.isNotEmpty())onNodeWithContentDescription("Tempo & tuner quick tab").performScrollTo().performClick()
+                waitForIdle()
+                onNodeWithContentDescription("Listen and turn the pages").performScrollTo().assertIsDisplayed()
             }
         }
     }

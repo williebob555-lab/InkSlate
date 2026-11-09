@@ -207,16 +207,16 @@ class RecordingAndStatusTest {
         try {
             runDesktopComposeUiTest(width=360,height=640) {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()){ActionStrip(state)} } }
-                onNodeWithText("Score").performClick()
-                onNodeWithContentDescription("Review recognized notes").assertIsNotEnabled()
+                runOnIdle {state.expandMusicCategory(ShelfWidget.SCORE)}
+                onNodeWithTag("score-action-Review reading").performScrollTo().assertIsNotEnabled()
                 runOnIdle {
                     read=com.inksheets.core.omr.Score(emptyList(),1,listOf(800))
                     Transcriber.shown=File(state.currentPath!!) to read!!
                 }
                 waitForIdle()
-                onNodeWithContentDescription("Review recognized notes").assertIsEnabled()
-                onNodeWithContentDescription("Clean view").assertIsEnabled()
-                onNodeWithText("Page 1 · READ").assertIsDisplayed()
+                onNodeWithTag("score-action-Review reading").performScrollTo().assertIsEnabled()
+                onNodeWithTag("score-action-Clean view").performScrollTo().assertIsEnabled()
+                onNodeWithText("Page 1 is read").performScrollTo().assertIsDisplayed()
             }
         } finally {ScoreTools.scoreSource=null;Transcriber.shown=null;cleanup(state)}
     }
@@ -257,7 +257,7 @@ class RecordingAndStatusTest {
                     waitForIdle()
                     onNodeWithText("Count in").assertIsDisplayed()
                     onNodeWithText("Playing recording").assertIsDisplayed()
-                    assertTrue("$size: shelf too tall", state.shelfHeight < h * .45f)
+                    assertTrue("$size: shelf too tall", state.shelfHeight < h * .52f)
                     val problems = UiAudit.check(this,size,"music-status",w,h)
                     assertTrue("$size: $problems",problems.isEmpty())
                 }

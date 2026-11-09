@@ -6,12 +6,25 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 - **Dense annotations:** Android and desktop now use location chunks and recent-view lookups before requesting stroke geometry. Off-screen visibility checks no longer evict expensive shapes. Cache capacity is unchanged. This targets the threshold found in PHYS161 Exam Review; fully zoomed-out canvas performance still needs device measurement.
 
-- **The music workspace has a new score-first layout.** Pen, Erase, Undo, Redo, bookmarks and the
-  full drawing palette now live in an **Annotate** category beside Timing, Recording, Score and
-  Devices instead of permanently consuming a bottom row. The current song/setlist position, page
-  turns and instrument stay visible in a compact top pill; More, Arrange tabs and Fold float
-  independently at the edge of the workspace. A short landscape phone keeps the compact shelf to
-  142 dp and only expands it while a tool is open, preserving more of the original PDF.
+- **The reader workspace is now organized by task instead of by whichever controls existed first.**
+  The peer tabs are Pages, Part, Playback, Reading, Annotate, Tempo & tuner, Recording and
+  Connections. Pages owns page navigation and the page list; Part clearly separates the displayed
+  PDF part from the all-song instrument; Playback owns transport, live tempo, loop, band-part
+  selection and the mixer; Reading groups Recognition separately from Cleaned score & mask.
+  The old floating page/part island and ambiguous corner buttons are gone.
+- **Quick tabs and full tools are distinct layouts.** Compact tabs use full-size scrollable touch
+  targets and retain the selected rightmost tab in portrait. A full-tools workspace has a 48 dp
+  back target, a labeled Switch tab menu and its own close button instead of squeezing every tab
+  into a tiny horizontal strip. Reader options and Tab layout sit below the tab workspace, outside
+  every tab, and remain recoverable even if all tabs are hidden.
+- **The dock is resizable and remembers the device's choice.** Its visible boundary drags vertically
+  in portrait and horizontally in Studio/landscape. Pulling decisively toward closed dismisses the
+  dock and explicitly resets the viewport; ordinary Fold preserves pan and zoom. The stored height
+  and width are bounded so the original PDF always retains usable space.
+- **Tempo is directly adjustable.** Dragging BPM left/right makes coarse five-BPM changes; dragging
+  up/down makes fine one-BPM changes. Playback also has explicit −5, −1, +1 and +5 controls, while
+  the Timing tab identifies both the metronome and tuner instead of hiding an unexplained tuner
+  icon inside the metronome.
 - **Band playback now asks before reading missing parts.** Play first checks every selected part's
   saved reading off the interface thread. If any part is incomplete, InkSheets offers exactly two
   choices: Cancel or Read the missing parts. Checking and reading each have a determinate
@@ -32,10 +45,12 @@ Newest first. These notes describe changes made, not confirmation that every rep
   energy to survive masking in a full band; percussion is reduced again. The trombone fallback's
   narrow nasal resonance is broadened and weakened. Score tools and Playback → More now include a
   saved per-part 0–200% mixer whose changes apply during playback.
-- **Validation:** the complete InkSheets Android unit and score/audio core suites pass. Twenty
-  focused desktop interaction tests also pass across adaptive layout, exact view preservation,
-  incomplete-band prompt/progress/cancellation, concurrent progress ordering, representative
-  instrument levels, trombone identity and shared-file readiness.
+- **Validation:** the complete core, score/audio core, InkSlate Android, InkSheets Android,
+  desktop and InkSheets desktop gate passes. The desktop run completed 284 tests with 69
+  machine-library fixtures skipped; focused layout coverage includes both phone orientations,
+  tablets, laptops, shelf/Studio modes, resize persistence, immediate rightmost-tab selection,
+  exact view preservation and the pull-to-close reset gesture. The redesign adds no page or image
+  cache and keeps the existing bounded reading and rendering memory limits.
 
 ## 1.2.2-test.326 — printed-page priority and UBand stall removal
 

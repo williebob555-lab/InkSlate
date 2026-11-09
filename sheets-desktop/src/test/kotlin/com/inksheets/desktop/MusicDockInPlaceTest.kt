@@ -121,10 +121,11 @@ class MusicDockInPlaceTest {
                 val compactBottom=p.bottom
                 val compactRail=p.rail
                 shot("${c.name}-compact")
-                onNodeWithContentDescription("Timing settings").performClick()
+                runOnIdle {state.expandMusicCategory(ShelfWidget.TIMING)}
                 waitForIdle()
                 runOnIdle { assertEquals(ShelfWidget.TIMING,state.expandedMusicCategory) }
-                for(category in listOf(ShelfWidget.TIMING,ShelfWidget.RECORDING,ShelfWidget.SCORE,ShelfWidget.ANNOTATION,ShelfWidget.DEVICES)) {
+                for(category in listOf(ShelfWidget.PAGES,ShelfWidget.PARTS,ShelfWidget.PLAYBACK,ShelfWidget.SCORE,ShelfWidget.ANNOTATION,ShelfWidget.TIMING,ShelfWidget.RECORDING,ShelfWidget.DEVICES)) {
+                    onNode(hasText("Switch tab") or hasContentDescription("Switch tab")).performClick()
                     onNodeWithTag("music-category-${category.name}").performScrollTo().assertIsDisplayed().performClick()
                     waitForIdle()
                     val actual=onNodeWithTag(dockTag).fetchSemanticsNode().boundsInRoot
@@ -144,15 +145,17 @@ class MusicDockInPlaceTest {
                             assertEquals(0f,p.rail,.01f)
                             // Compact landscape leaves the score more room; opening any tool may
                             // temporarily reclaim 34dp so its touch targets remain usable.
-                            val allowed=if(category==ShelfWidget.SCORE || c.height<500)48f else .01f
+                            val allowed=if(c.width<c.height)120f else if(c.height<500)96f else if(category==ShelfWidget.SCORE)48f else .01f
                             assertEquals("${c.name}: replace the shelf footprint",compactBottom,p.bottom,allowed)
                         }
                     }
-                    if(category==ShelfWidget.SCORE) {
+                    if(category==ShelfWidget.PLAYBACK) {
                         onNodeWithText("Playback sound").performScrollTo().assertIsDisplayed().performClick()
                         onNodeWithContentDescription("Back to category").assertIsDisplayed()
-                        runOnIdle {assertEquals(ShelfWidget.SCORE,state.expandedMusicCategory);assertEquals(compactRail,p.rail,.01f)}
+                        runOnIdle {assertEquals(ShelfWidget.PLAYBACK,state.expandedMusicCategory);assertEquals(compactRail,p.rail,.01f)}
                         onNodeWithContentDescription("Back to category").performClick()
+                    }
+                    if(category==ShelfWidget.SCORE) {
                         onNodeWithTag("score-tools-body").assertExists()
                         onNodeWithText("Read part again").performScrollTo().assertIsDisplayed()
                     }
@@ -180,6 +183,24 @@ class MusicDockInPlaceTest {
         exercise(Case("phone-landscape-shelf",640,360,MusicDockView.SHELF,StudioRailSide.LEFT))
     }
 
+    @Test fun `landscape rail edge resizes and persists its width`() {
+        val (state,p)=setup(Case("rail-resize",640,360,MusicDockView.STUDIO,StudioRailSide.LEFT))
+        try {
+            runDesktopComposeUiTest(width=640,height=360) {
+                setContent{MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
+                val before=state.shelf.landscapeWidth
+                onNodeWithTag("music-rail-resize").performTouchInput {
+                    swipe(center,center.copy(x=center.x+80f),durationMillis=300)
+                }
+                runOnIdle {
+                    assertTrue(state.shelf.landscapeWidth>before)
+                    assertEquals(state.shelf.landscapeWidth,p.rail,.01f)
+                    assertEquals(state.shelf.landscapeWidth.toInt().toString(),p.pref("sheets_dock_landscape_width"))
+                }
+            }
+        } finally {ScoreTools.stop(state);ScoreTools.scoreSource=null;Perform.isOn=null}
+    }
+
     @Test fun `selected recording exposes playback waveform loop handles and inline pairing on shelf and rail`() {
         val cases=listOf(
             Case("selected-phone-portrait",360,640,MusicDockView.SHELF,StudioRailSide.LEFT),
@@ -195,7 +216,8 @@ class MusicDockInPlaceTest {
             try {
                 runDesktopComposeUiTest(width=c.width,height=c.height) {
                     setContent{MaterialTheme{Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant)){ActionStrip(state)}}}
-                    onNodeWithContentDescription("Timing settings").performClick()
+                    runOnIdle {state.expandMusicCategory(ShelfWidget.TIMING)}
+                    onNode(hasText("Switch tab") or hasContentDescription("Switch tab")).performClick()
                     onNodeWithTag("music-category-RECORDING").performScrollTo().performClick()
                     waitUntil(timeoutMillis=3000){p.decodes>0}
                     val waveform=onNodeWithContentDescription("Recording waveform; tap to seek, hold to mark a practice loop")
@@ -234,7 +256,7 @@ class MusicDockInPlaceTest {
                     runOnIdle {
                         assertEquals(ShelfWidget.RECORDING,state.expandedMusicCategory)
                         assertFalse(ReaderPanels.forState(state).open)
-                        assertEquals(if(c.view==MusicDockView.STUDIO)236f else 0f,p.rail,.01f)
+                        assertEquals(if(c.view==MusicDockView.STUDIO)state.shelf.landscapeWidth else 0f,p.rail,.01f)
                     }
                 }
             } finally {

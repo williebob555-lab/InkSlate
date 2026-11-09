@@ -74,6 +74,8 @@ class ViewerTimingEntryTest {
             try {
                 runDesktopComposeUiTest(width=width,height=height) {
                     setContent{MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
+                    onNodeWithText("Tempo & tuner").performClick()
+                    waitForIdle()
                     onNodeWithContentDescription("Timing settings").assertIsDisplayed().performClick()
                     onNodeWithText("Tuner").assertIsDisplayed().performClick()
                     runOnIdle {
@@ -100,6 +102,8 @@ class ViewerTimingEntryTest {
             try {
                 runDesktopComposeUiTest(width=width,height=height) {
                     setContent{MaterialTheme{Box(Modifier.fillMaxSize()){ActionStrip(state)}}}
+                    onNodeWithText("Tempo & tuner").performClick()
+                    waitForIdle()
                     onNodeWithContentDescription("Timing settings").assertIsDisplayed().performClick()
                     runOnIdle {assertEquals(ShelfWidget.TIMING,state.expandedMusicCategory)}
                     for(sound in listOf(ClickSound.TONE,ClickSound.WOODBLOCK,ClickSound.RIM,ClickSound.SOFT)) {
@@ -112,6 +116,8 @@ class ViewerTimingEntryTest {
                     onNodeWithContentDescription("Preview metronome sound").performScrollTo().assertIsDisplayed().assertIsEnabled()
                     onNodeWithText("Metronome during score playback").performScrollTo().assertIsDisplayed()
                     onNodeWithContentDescription("Compact categories").performClick()
+                    onNodeWithText("Tempo & tuner").performClick()
+                    waitForIdle()
                     onNodeWithContentDescription("Timing settings").assertIsDisplayed().performClick()
                     onNodeWithText(ClickSound.SOFT.label).performScrollTo().assertIsDisplayed().assertIsSelected()
                     runOnIdle {

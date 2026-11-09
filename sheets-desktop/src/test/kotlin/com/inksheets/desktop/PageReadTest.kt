@@ -7,6 +7,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -20,6 +21,7 @@ import com.inkslate.desktop.NavigationHooks
 import com.inkslate.desktop.Shortcuts
 import com.inkslate.desktop.SimulatedTouch
 import com.inksheets.ui.ScoreTools
+import com.inksheets.ui.ShelfWidget
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -87,7 +89,7 @@ class PageReadTest {
             // To the third page, by taps at the right edge.
             repeat(2) { tapAt(Offset(1600 * 0.93f, 500f)) }
             assertEquals("on the third page", 2, sheets().pageShown.first)
-            runOnIdle { ScoreTools.open = true; sheets().scorePanelOpen = true }
+            runOnIdle { ScoreTools.open = true; sheets().scorePanelOpen = true; sheets().expandMusicCategory(ShelfWidget.SCORE) }
             repeat(10) { settle() }
             shot("strip-unread")
             assertTrue("the whole part offered", shown("Read whole part"))
@@ -101,12 +103,12 @@ class PageReadTest {
             assertTrue("the requested third page is read alongside any background pages", one.hasRead(2))
             assertTrue("the requested page has bars", one.measures.any { it.page == 2 })
             assertTrue("the directory reports the page read", shown("Page 3 is read"))
-            onNodeWithText("Done").performClick()
+            onNodeWithContentDescription("Close full tools").performClick()
 
             // On to the fourth: not read, so offered; read, it carries on from the third.
             tapAt(Offset(1600 * 0.93f, 500f))
             assertEquals("on the fourth page", 3, sheets().pageShown.first)
-            runOnIdle { sheets().scorePanelOpen = true }
+            runOnIdle { sheets().scorePanelOpen = true; sheets().expandMusicCategory(ShelfWidget.SCORE) }
             settle(20)
             shot("page-4-offered")
             assertTrue("the next page offered", shown("Read page 4"))

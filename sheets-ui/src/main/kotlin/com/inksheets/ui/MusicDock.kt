@@ -3,6 +3,7 @@ package com.inksheets.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,8 +14,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.Perform
 import com.inkslate.core.PerformAction
@@ -25,6 +30,11 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> Unit) {
     val density=LocalDensity.current
+    val dockScope=rememberCoroutineScope()
+    fun closeAndReset() {
+        state.expandedMusicCategory=null;state.musicCategoryPage=null;state.stripCollapsed=true
+        dockScope.launch {delay(32);Perform.recentre?.invoke()}
+    }
     val panels=remember(state){ReaderPanels.forState(state)}
     LaunchedEffect(state.root,state.currentPath,state.version,state.readMusic,state.backgroundReading,state.homeInFront,ScoreTools.checking) {
         while(!state.homeInFront && state.readMusic && state.backgroundReading && !ScoreTools.checking) {
@@ -60,6 +70,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
     BoxWithConstraints(Modifier.matchParentSize()) {
         val viewportWidth=maxWidth
         val viewportHeight=maxHeight
+        val portrait=viewportHeight>=viewportWidth
         val annotation=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
         val essentials=annotation && maxHeight<340.dp
         val category=state.expandedMusicCategory
@@ -77,6 +88,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
         val footerAllowance=if(viewportWidth<600.dp)88.dp else 48.dp
         val contentLimit=(viewportHeight-footerAllowance-128.dp-(if(showLiveStatus)48.dp else 0.dp)).coerceAtLeast(96.dp)
         val workspaceHeight=minOf(when {
+            portrait -> (if(category!=null)maxOf(state.shelf.portraitHeight,232f) else state.shelf.portraitHeight).dp
             // A landscape phone should still be mostly music. The category strip and every
             // primary action fit this height, while the body itself remains scrollable.
             category==null && viewportHeight<500.dp -> 142.dp
@@ -87,38 +99,78 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
         val categoryCompact=category==null
         val controllers={state.expandMusicCategory(ShelfWidget.DEVICES,"controllers")}
         val goTo={state.expandMusicCategory(ShelfWidget.SCORE,"bar")}
-        LaunchedEffect(visible,bottom,rail,railRight,panels.height) {
+        val railWidth=state.shelf.landscapeWidth.dp
+        LaunchedEffect(visible,bottom,rail,railRight,panels.height,state.shelf.landscapeWidth) {
             panels.base=bottom
             val height=if(visible)bottom+panels.height else 0f
             state.shelfHeight=height;Overlays.bottomOut=height.dp
             state.platform.setMusicShelfHeight(height)
-            Overlays.studioOut=if(rail)236.dp else 0.dp
+            Overlays.studioOut=if(rail)railWidth else 0.dp
             Overlays.studioOnRight=railRight
             state.platform.setStudioRailSide(railRight)
-            state.platform.setStudioRailWidth(if(rail)236f else 0f)
+            state.platform.setStudioRailWidth(if(rail)state.shelf.landscapeWidth else 0f)
         }
-        if(rail) Surface(tonalElevation=2.dp,modifier=Modifier.align(if(railRight)Alignment.TopEnd else Alignment.TopStart).width(236.dp)
+        if(rail) Box(modifier=Modifier.align(if(railRight)Alignment.TopEnd else Alignment.TopStart).width(railWidth)
             .testTag("music-dock-rail")
             .fillMaxHeight().padding(bottom=bottom.dp)) {
-            if(category!=null) CompositionLocalProvider(LocalMusicCategoryRail provides true) {
-                MusicCategoryBar(state,position)
-            } else Column {
-                if(state.companion.leading || state.companion.following!=null) SessionQuickActions(state,quick=true)
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                widgets.forEach { widget ->
-                    Box(Modifier.fillMaxWidth().height(132.dp)) { MusicDockWidget(state,widget,position,controllers,goTo) }
-                    HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f))
-                }
+            Surface(tonalElevation=2.dp,modifier=Modifier.fillMaxSize()) {
+                Column {
+                    if(expanded) Row(Modifier.fillMaxWidth().height(44.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
+                        .testTag("music-rail-resize").semantics {contentDescription="Resize dock; pull closed to reset view"}
+                        .pointerInput(railRight) {
+                            var pull=0f
+                            detectDragGestures(onDragStart={pull=0f},onDragEnd={if(pull < -72f*density.density)closeAndReset()}) {change,amount ->
+                                change.consume();val by=if(railRight)-amount.x else amount.x;pull+=by
+                                state.shelf.resizeLandscape(by/density.density)
+                            }
+                        }.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Icon(Icons.Default.DragHandle,null,Modifier.size(20.dp))
+                        Text("Resize · pull to reset",Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelSmall,maxLines=1)
+                    }
+                    Box(Modifier.weight(1f)) {
+                        if(category!=null) CompositionLocalProvider(LocalMusicCategoryRail provides true) {
+                            MusicCategoryBar(state,position)
+                        } else Column {
+                            if(state.companion.leading || state.companion.following!=null) SessionQuickActions(state,quick=true)
+                            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                                widgets.forEach { widget ->
+                                    Box(Modifier.fillMaxWidth().height(132.dp)) { MusicDockWidget(state,widget,position,controllers,goTo) }
+                                    HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f))
+                                }
+                            }
+                        }
+                    }
+                    if(expanded) {HorizontalDivider();settings()}
                 }
             }
+            Box(Modifier.align(if(railRight)Alignment.CenterStart else Alignment.CenterEnd).width(12.dp).fillMaxHeight()
+                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha=.35f))
+                .pointerInput(railRight) {detectDragGestures {change,amount ->
+                    change.consume();state.shelf.resizeLandscape((if(railRight)-amount.x else amount.x)/density.density)
+                }})
         }
         if(visible) Surface(tonalElevation=3.dp,shadowElevation=2.dp,modifier=Modifier.align(Alignment.BottomStart).fillMaxWidth()
             .onSizeChanged { bottom=with(density){it.height.toDp().value} }) {
             Column {
+                if(portrait && expanded && !rail) {
+                    Row(Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
+                        .testTag("music-dock-resize").semantics {contentDescription="Resize dock; pull down to close and reset view"}
+                        .pointerInput(Unit) {
+                            var pull=0f
+                            detectDragGestures(onDragStart={pull=0f},onDragEnd={if(pull < -72f*density.density)closeAndReset()}) {change,amount ->
+                                change.consume();val by=-amount.y;pull+=by;state.shelf.resizePortrait(by/density.density)
+                            }
+                        }.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Box(Modifier.width(48.dp).height(3.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.55f),MaterialTheme.shapes.small))
+                        Text("Resize · pull down to reset",Modifier.padding(start=10.dp),style=MaterialTheme.typography.labelSmall,maxLines=1)
+                    }
+                }
                 PlaybackProblem(state)
                 if(category!=null && !rail) Box(Modifier.fillMaxWidth().height(workspaceHeight).testTag("music-dock-shelf")) {
                     CompositionLocalProvider(LocalMusicCategoryRail provides false) {MusicCategoryBar(state,position)}
                 }
+                if(category!=null && !rail && expanded) {HorizontalDivider(thickness=2.dp);settings()}
                 if(Recording.loading) Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(15.dp),strokeWidth=2.dp)
                     Text("Opening recording…",Modifier.weight(1f).padding(start=8.dp),style=MaterialTheme.typography.labelSmall)
@@ -134,24 +186,38 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
                 }
                 val shelfScroll=rememberScrollState()
                 val scope=rememberCoroutineScope()
+                var selectedWidget by remember(widgets) {mutableStateOf(widgets.firstOrNull())}
+                var selectingWidget by remember {mutableStateOf(false)}
                 val cellWidth=if(viewportWidth>=1000.dp)maxOf(236.dp,viewportWidth/widgets.size.coerceAtLeast(1))else 236.dp
                 val tabs=widgets.size>1 && viewportWidth<cellWidth*widgets.size
+                LaunchedEffect(shelfScroll.isScrollInProgress) {
+                    if(!shelfScroll.isScrollInProgress && !selectingWidget && shelfScroll.maxValue>0 && widgets.isNotEmpty()) {
+                        val index=(shelfScroll.value.toFloat()/shelfScroll.maxValue*(widgets.lastIndex)).toInt().coerceIn(widgets.indices)
+                        selectedWidget=widgets[index]
+                    }
+                }
                 // The compact and expanded shelf occupy the same reserved workspace. Tabs make
                 // horizontally offscreen categories reachable without guessing a swipe.
                 if(!rail && widgets.isNotEmpty()) Column(Modifier.fillMaxWidth().height(workspaceHeight).testTag("music-dock-shelf")) {
-                if(tabs) Row(Modifier.fillMaxWidth().height(26.dp),verticalAlignment=Alignment.CenterVertically) {
+                if(tabs) Row(Modifier.fillMaxWidth().height(44.dp).horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically) {
                     val stride=with(density){(cellWidth+1.dp).toPx()}
-                    val nearest=widgets.indices.minByOrNull { kotlin.math.abs(shelfScroll.value-(stride*it).coerceAtMost(shelfScroll.maxValue.toFloat())) }
                     widgets.forEachIndexed { index,widget ->
                         val offset=stride*index
-                        val selected=index==nearest
-                        Text(widget.label,Modifier.weight(1f).fillMaxHeight()
+                        val selected=widget==selectedWidget
+                        Text(widget.label,Modifier.widthIn(min=84.dp).fillMaxHeight()
+                            .semantics {this.selected=selected;contentDescription="${widget.label} quick tab"}
                             .background(if(selected)widgetColor(widget).copy(alpha=.13f)else androidx.compose.ui.graphics.Color.Transparent)
-                            .clickable {scope.launch{shelfScroll.animateScrollTo(offset.toInt())}}.padding(top=5.dp),
+                            .clickable {scope.launch{
+                                selectingWidget=true;selectedWidget=widget
+                                // A tab is a direct navigation command: move its workspace in the
+                                // same turn so the highlight can never outrun the controls.
+                                shelfScroll.scrollTo(offset.toInt().coerceAtMost(shelfScroll.maxValue))
+                                selectedWidget=widget;selectingWidget=false
+                            }}.padding(top=13.dp),
                             textAlign=androidx.compose.ui.text.style.TextAlign.Center,color=widgetColor(widget),style=MaterialTheme.typography.labelSmall)
                     }
                 }
-                val widgetHeight=workspaceHeight-(if(tabs)26.dp else 0.dp)
+                val widgetHeight=workspaceHeight-(if(tabs)44.dp else 0.dp)
                 Row(Modifier.fillMaxWidth().horizontalScroll(shelfScroll)) {
                     widgets.forEach { widget ->
                         Box(Modifier.width(cellWidth).height(widgetHeight)) {
@@ -161,6 +227,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
                     }
                 }
                 }
+                if(!rail && expanded && categoryCompact) {HorizontalDivider(thickness=2.dp);settings()}
                 if(expanded && !rail && categoryCompact && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
                 if(showLiveStatus) MusicLiveStatus(state,position)
                 if(!expanded) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
@@ -170,10 +237,6 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
             }
         }
         if(!visible && !ScoreTools.checking && !state.homeInFront) IconButton(onClick={state.stripCollapsed=false},modifier=Modifier.align(Alignment.BottomEnd)) {Icon(Icons.Default.UnfoldMore,"Show buttons")}
-        if(expanded && visible) Box(Modifier.align(when {
-            rail && railRight -> Alignment.BottomStart
-            else -> Alignment.BottomEnd
-        }).padding(start=6.dp,end=6.dp,bottom=state.shelfHeight.dp+6.dp)) { settings() }
     }
     if(state.arrangingShelf) DockWorkspaceEditor(state) {state.arrangingShelf=false}
     if(state.scorePanelOpen && (state.homeInFront || ScoreTools.checking)) ScoreToolsPanel(state) {state.scorePanelOpen=false}
@@ -209,7 +272,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
                 Text(Recording.interruption ?: if(Recording.playing)"Playing recording"else"Recording paused",style=MaterialTheme.typography.labelMedium)
                 Text("${dockClock(position)} / ${dockClock(Recording.player?.durationMs ?:0)}",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            IconButton(onClick={Recording.skip(-5.0)}) {Icon(Icons.Default.FastRewind,"Recording back five seconds",Modifier.size(18.dp))}
+            IconButton(onClick={Recording.skip(-5.0)},modifier=Modifier.testTag("recording-live-back")) {Icon(Icons.Default.FastRewind,"Recording back five seconds",Modifier.size(18.dp))}
             IconButton(onClick={Recording.skip(5.0)}) {Icon(Icons.Default.FastForward,"Recording forward five seconds",Modifier.size(18.dp))}
             IconButton(onClick={Recording.end(state)}) {Icon(Icons.Default.Stop,"Stop recording playback",Modifier.size(18.dp))}
             PlayAlong.hint?.let {TextButton(onClick={PlayAlong.toggle(state)}) {Text(it,style=MaterialTheme.typography.labelSmall)}}

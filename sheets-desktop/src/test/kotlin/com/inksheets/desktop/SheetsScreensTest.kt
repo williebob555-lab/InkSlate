@@ -13,6 +13,7 @@ import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -219,7 +220,7 @@ class SheetsScreensTest {
                 waitForIdle()
                 assertTrue(player.playing)
                 shoot("playback-column", onAllNodes(isRoot()).onFirst().captureToImage().toAwtImage())
-                onAllNodes(androidx.compose.ui.test.hasContentDescription("Recording back five seconds")).onFirst().performClick()
+                onNodeWithTag("recording-live-back").performClick()
                 assertEquals(55_000L, player.positionMs)
                 onNode(androidx.compose.ui.test.hasContentDescription("Recording forward five seconds")).performClick()
                 onNode(androidx.compose.ui.test.hasContentDescription("Recording forward five seconds")).performClick()
@@ -262,7 +263,8 @@ class SheetsScreensTest {
             for (action in listOf("Previous page", "More reader actions", "Arrange tabs")) {
                 onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
             }
-            onNode(androidx.compose.ui.test.hasContentDescription("Annotation tools")).performClick()
+            runOnIdle {state.expandMusicCategory(com.inksheets.ui.ShelfWidget.ANNOTATION)}
+            waitForIdle()
             for (action in listOf("Undo", "Open the full annotation toolbar")) {
                 onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
             }

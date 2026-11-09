@@ -21,7 +21,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.core.Perform
 import java.io.File
 
-private data class ScoreAction(
+internal data class ScoreAction(
     val title: String,
     val detail: String,
     val icon: ImageVector,
@@ -44,14 +44,9 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     val ready = score?.hasRead(here) == true
     val available = score != null && score.measures.isNotEmpty()
     val older = remember(file, Transcriber.shown, busy) { file?.let { Transcriber.olderPages(state, it) }.orEmpty() }
-    var sounds by remember { mutableStateOf(false) }
-    var speeding by remember { mutableStateOf(false) }
     var printingFor by remember { mutableStateOf(false) }
     var ensembleMidiOpen by remember { mutableStateOf(false) }
-    var bandPartsOpen by remember { mutableStateOf(false) }
-    var bandMixerOpen by remember { mutableStateOf(false) }
     var stageOpen by remember { mutableStateOf(false) }
-    var bar by remember { mutableStateOf("") }
 
     fun usePage(action: () -> Unit) {
         ScoreTools.open = true
@@ -61,16 +56,8 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     fun read(pages: Set<Int>? = null, again: Boolean = false) {
         if (file != null) Transcriber.read(state, file, again = again, pages = pages) { Perform.marksChanged() }
     }
-    fun go(play: Boolean) {
-        val number = bar.toIntOrNull() ?: return
-        if (ScoreTools.goTo(state, number)) usePage {
-            if (play) {
-                if (ScoreTools.bandMode || ScoreTools.band) ScoreTools.playBand(state, number) else ScoreTools.play(state, number)
-            }
-        }
-    }
     SheetDialog(title = "Score tools", wide = true, onDismiss = onClose,
-        buttons = { TextButton(onClick = onClose) { Text("Done") } }) {
+        buttons = if(inline)null else {{ TextButton(onClick = onClose) { Text("Done") } }}) {
         Column(Modifier.verticalScroll(rememberScrollState()).testTag("score-tools-body"), verticalArrangement = Arrangement.spacedBy(if(inline)6.dp else 12.dp)) {
             val statusColor = when { busy != null -> MaterialTheme.colorScheme.primary; ready -> Color(0xFF2C8A6B); else -> MaterialTheme.colorScheme.tertiary }
             Surface(color = statusColor.copy(alpha = .09f), shape = RoundedCornerShape(10.dp)) {
@@ -92,7 +79,7 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                     }
                 }
             }
-            ScoreSection("Read & review", Icons.Default.Spellcheck, MaterialTheme.colorScheme.primary) {
+            ScoreSection("Recognition", Icons.Default.MenuBook, MaterialTheme.colorScheme.primary) {
                 ScoreActionGrid(listOf(
                     ScoreAction("Read whole part", "Every page in this file", Icons.Default.MenuBook,
                         enabled = file != null && busy == null, action = { read() }),
@@ -100,7 +87,13 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                         enabled = file != null && busy == null, action = { read(setOf(here)) }),
                     ScoreAction("Review reading", "Colour confidence; tap a bar to correct it", Icons.Default.Spellcheck,
                         enabled = ready && busy == null, selected = ScoreTools.colours,
-                        action = { usePage { ScoreTools.toggleCheck(state) } }),
+                        action = { usePage { ScoreTools.toggleCheck(state) } })
+                ))
+                if (older.isNotEmpty()) Text("${older.size} pages have an older reading" + if (here in older) ", including this page." else ".",
+                    color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
+            }
+            ScoreSection("Cleaned score & mask", Icons.Default.AutoFixHigh, Color(0xFF3B7F72)) {
+                ScoreActionGrid(listOf(
                     ScoreAction("Clean view", "Show or hide the cleaned notation", Icons.Default.AutoFixHigh,
                         enabled = ready, selected = ScoreTools.cleanEnabled(state), action = { ScoreTools.toggleClean(state) }),
                     ScoreAction("Clean whole part", "Redraw every read bar, including outside your brush mask", Icons.Default.AutoAwesome,
@@ -114,62 +107,6 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
                 ))
                 ScoreTools.selection?.let { selection ->
                     TextButton(onClick = { ScoreTools.clearSelection() }) { Text("Clear selection ${selection.first}–${selection.last}") }
-                }
-                if (older.isNotEmpty()) Text("${older.size} pages have an older reading" + if (here in older) ", including this page." else ".",
-                    color = MaterialTheme.colorScheme.tertiary, style = MaterialTheme.typography.bodySmall)
-            }
-            ScoreSection("Practice", Icons.Default.PlayArrow, Color(0xFF2C8A6B)) {
-                val playing = ScoreTools.playing != null
-                val listening = Listener.active
-                ScoreActionGrid(listOf(
-                    ScoreAction(if (playing) "Stop playback" else "Play", "Selected bars, or from this page", if (playing) Icons.Default.Stop else Icons.Default.PlayArrow,
-                        enabled = ready || playing, selected = playing,
-                        action = { if (playing) ScoreTools.stop(state) else usePage { ScoreTools.playSelected(state) } }),
-                    ScoreAction("Band accompaniment", "Other parts play alongside you", Icons.Default.Groups,
-                        enabled = ready, selected = ScoreTools.band, action = { ScoreTools.toggleBand(state) }),
-                    ScoreAction("Band instruments", "${ScoreTools.selectedBandPartIds(state).size} selected", Icons.Default.QueueMusic,
-                        enabled = ready && ScoreTools.bandCandidates(state).isNotEmpty(), action = { bandPartsOpen = true },
-                        popup = { if (bandPartsOpen) BandPartsDialog(state) { bandPartsOpen = false } }),
-                    ScoreAction("Band mixer", "Balance each instrument", Icons.Default.Tune,
-                        enabled = ready && ScoreTools.bandCandidates(state).isNotEmpty(), action = { bandMixerOpen = true },
-                        popup = { if (bandMixerOpen) BandMixerDialog(state) { bandMixerOpen = false } }),
-                    ScoreAction("Include my part", if (ScoreTools.bandWithMe) "Your part plays with the band" else "Leave your part for you to play", Icons.Default.Person,
-                        enabled = ready && ScoreTools.band, selected = ScoreTools.bandWithMe,
-                        action = { ScoreTools.chooseBandWithMe(state, !ScoreTools.bandWithMe) }),
-                    ScoreAction("Loop", "Repeat the chosen passage", Icons.Default.Repeat,
-                        enabled = ready, selected = ScoreTools.loop, action = { ScoreTools.loop = !ScoreTools.loop }),
-                    ScoreAction("Tempo ramp", "${ScoreTools.rampFrom}% start · +${ScoreTools.rampStep} BPM each loop", Icons.Default.FastForward,
-                        enabled = ready, selected = ScoreTools.ramp && ScoreTools.loop, action = { speeding = true },
-                        popup = { SpeedUpMenu(speeding) { speeding = false } }),
-                    ScoreAction("Playback sound", ScoreTools.soundAs?.removePrefix(SampledInstruments.PICKED) ?: "The part's own instrument", Icons.Default.LibraryMusic,
-                        enabled = available, selected = ScoreTools.soundAs != null, action = { sounds = true },
-                        popup = { SoundMenu(state, sounds) { sounds = false } }),
-                    ScoreAction("Follow my playing", "Turn pages by listening to your instrument", Icons.Default.Hearing,
-                        enabled = ready && state.listenTurns, selected = listening && !Listener.practising,
-                        action = { if (listening && !Listener.practising) Listener.stop(state) else usePage { Listener.start(state) } }),
-                    ScoreAction("Check my playing", if (state.listenTurns) "Follow along and mark bars that sound off" else "Enable listening page turns in Settings", Icons.Default.FactCheck,
-                        enabled = ready && state.listenTurns, selected = listening && Listener.practising,
-                        action = { if (listening && Listener.practising) Listener.stop(state) else usePage {
-                            Listener.offBars = emptyList(); ScoreTools.marksMoved(); Listener.start(state, practice = true)
-                        } })
-                ), accent = Color(0xFF2C8A6B))
-                ScoreTools.bandReading?.let {
-                    Text("${if (it.phase == ScoreTools.BandReadPhase.CHECKING) "Checking" else "Reading"} ${it.done} of ${it.total} band parts",
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                if (Listener.offBars.isNotEmpty()) {
-                    Text("Bars that sounded off", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
-                    @OptIn(ExperimentalLayoutApi::class)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Listener.offBars.forEach { number -> AssistChip(onClick = { usePage { ScoreTools.goTo(state, number) } }, label = { Text("Bar $number") }) }
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(bar, { bar = it.filter(Char::isDigit).take(5) }, label = { Text("Go to bar") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.weight(1f).testTag("score-go-bar"), enabled = available)
-                    TextButton(enabled = available && bar.toIntOrNull() != null, onClick = { go(false) }) { Text("Go") }
-                    TextButton(enabled = available && bar.toIntOrNull() != null, onClick = { go(true) }) { Text("Play") }
                 }
             }
             ScoreSection("Arrange & export", Icons.Default.IosShare, MaterialTheme.colorScheme.tertiary) {
@@ -215,6 +152,96 @@ internal fun ScoreToolsPanel(state: SheetsState, onClose: () -> Unit) {
     if(printingFor && file!=null && score!=null) PrintFor(state,file,score){printingFor=false}
 }
 
+/** Playback is a first-class reader workspace. Reading/cleanup stays in [ScoreToolsPanel]. */
+@Composable
+internal fun PlaybackCategory(state:SheetsState,onClose:()->Unit) {
+    val inline=LocalMusicCategoryContent.current!=null
+    val here=state.pageShown.first
+    val score=remember(state.currentPath,Transcriber.shown,Transcriber.busy){ScoreTools.scoreHere(state)}
+    val ready=score?.hasRead(here)==true
+    val available=score?.measures?.isNotEmpty()==true
+    var sounds by remember {mutableStateOf(false)}
+    var speeding by remember {mutableStateOf(false)}
+    var bandPartsOpen by remember {mutableStateOf(false)}
+    var bandMixerOpen by remember {mutableStateOf(false)}
+    var bar by remember {mutableStateOf("")}
+
+    fun returnToMusic(action:()->Unit) {action();onClose()}
+    fun go(play:Boolean) {
+        val number=bar.toIntOrNull() ?: return
+        if(ScoreTools.goTo(state,number))returnToMusic {
+            if(play) {
+                if(ScoreTools.bandMode || ScoreTools.band)ScoreTools.playBand(state,number)
+                else ScoreTools.play(state,number)
+            }
+        }
+    }
+    SheetDialog("Playback",wide=true,onDismiss=onClose,buttons=if(inline)null else {{TextButton(onClick=onClose){Text("Done")}}}) {
+        Column(Modifier.verticalScroll(rememberScrollState()).testTag("playback-tools-body"),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Surface(color=widgetColor(ShelfWidget.PLAYBACK).copy(alpha=.09f),shape=RoundedCornerShape(10.dp)) {
+                Row(Modifier.fillMaxWidth().padding(8.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Icon(if(ScoreTools.playing!=null)Icons.Default.PlayCircle else Icons.Default.QueueMusic,null,tint=widgetColor(ShelfWidget.PLAYBACK))
+                    Column(Modifier.weight(1f)) {
+                        Text(if(ScoreTools.playing!=null)"Playing at ${SharedMetronome.bpm.toInt()} BPM" else "Playback uses the selected Part tab",
+                            style=MaterialTheme.typography.labelMedium)
+                        Text(if(ready)"Page ${here+1} is ready" else "Read this page before starting playback",
+                            style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text("${SharedMetronome.bpm.toInt()} BPM",style=MaterialTheme.typography.titleSmall,color=widgetColor(ShelfWidget.PLAYBACK))
+                }
+            }
+            ScoreSection("Transport & tempo",Icons.Default.PlayArrow,widgetColor(ShelfWidget.PLAYBACK)) {
+                val playing=ScoreTools.playing!=null
+                ScoreActionGrid(listOf(
+                    ScoreAction(if(playing)"Stop playback" else "Play","Selected bars, or from this page",if(playing)Icons.Default.Stop else Icons.Default.PlayArrow,
+                        enabled=ready||playing,selected=playing,action={if(playing)ScoreTools.stop(state)else returnToMusic{ScoreTools.playSelected(state)}}),
+                    ScoreAction("Loop","Repeat the chosen passage",Icons.Default.Repeat,
+                        enabled=ready,selected=ScoreTools.loop,action={ScoreTools.loop=!ScoreTools.loop}),
+                    ScoreAction("Tempo ramp","${ScoreTools.rampFrom}% start · +${ScoreTools.rampStep} BPM each loop",Icons.Default.FastForward,
+                        enabled=ready,selected=ScoreTools.ramp&&ScoreTools.loop,action={speeding=true},
+                        popup={SpeedUpMenu(speeding){speeding=false}}),
+                    ScoreAction("Playback sound",ScoreTools.soundAs?.removePrefix(SampledInstruments.PICKED) ?: "The part's own instrument",Icons.Default.LibraryMusic,
+                        enabled=available,selected=ScoreTools.soundAs!=null,action={sounds=true},
+                        popup={SoundMenu(state,sounds){sounds=false}})
+                ),accent=widgetColor(ShelfWidget.PLAYBACK))
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick={ScoreTools.nudgeTempo(state,-5)}){Text("−5")}
+                    TextButton(onClick={ScoreTools.nudgeTempo(state,-1)}){Text("−1")}
+                    Text("${SharedMetronome.bpm.toInt()} BPM",Modifier.weight(1f),style=MaterialTheme.typography.titleSmall)
+                    TextButton(onClick={ScoreTools.nudgeTempo(state,1)}){Text("+1")}
+                    TextButton(onClick={ScoreTools.nudgeTempo(state,5)}){Text("+5")}
+                }
+            }
+            ScoreSection("Band",Icons.Default.Groups,Color(0xFF4B769E)) {
+                ScoreActionGrid(listOf(
+                    ScoreAction("Band accompaniment","Play the other selected parts",Icons.Default.Groups,
+                        enabled=ready,selected=ScoreTools.band,action={ScoreTools.toggleBand(state)}),
+                    ScoreAction("Band instruments","${ScoreTools.selectedBandPartIds(state).size} selected",Icons.Default.QueueMusic,
+                        enabled=ready&&ScoreTools.bandCandidates(state).isNotEmpty(),action={bandPartsOpen=true},
+                        popup={if(bandPartsOpen)BandPartsDialog(state){bandPartsOpen=false}}),
+                    ScoreAction("Band mixer","Balance every instrument",Icons.Default.Tune,
+                        enabled=ready&&ScoreTools.bandCandidates(state).isNotEmpty(),action={bandMixerOpen=true},
+                        popup={if(bandMixerOpen)BandMixerDialog(state){bandMixerOpen=false}}),
+                    ScoreAction("Include my part",if(ScoreTools.bandWithMe)"Your part plays with the band" else "Leave your part for you to play",Icons.Default.Person,
+                        enabled=ready&&ScoreTools.band,selected=ScoreTools.bandWithMe,action={ScoreTools.chooseBandWithMe(state,!ScoreTools.bandWithMe)})
+                ),accent=Color(0xFF4B769E))
+                ScoreTools.bandReading?.let {progress ->
+                    Text("${if(progress.phase==ScoreTools.BandReadPhase.CHECKING)"Checking"else"Reading"} ${progress.done} of ${progress.total} band parts",
+                        style=MaterialTheme.typography.bodySmall)
+                }
+            }
+            ScoreSection("Navigate playback",Icons.Default.Tag,widgetColor(ShelfWidget.PLAYBACK)) {
+                Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(bar,{bar=it.filter(Char::isDigit).take(5)},label={Text("Go to bar")},singleLine=true,
+                        keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),modifier=Modifier.weight(1f),enabled=available)
+                    TextButton(enabled=available&&bar.toIntOrNull()!=null,onClick={go(false)}){Text("Go")}
+                    TextButton(enabled=available&&bar.toIntOrNull()!=null,onClick={go(true)}){Text("Play")}
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun StageEditorForSong(state: SheetsState, onClose: () -> Unit, onMessage: (String) -> Unit) {
     val song = state.current ?: return
@@ -243,7 +270,7 @@ private fun StageEditorForSong(state: SheetsState, onClose: () -> Unit, onMessag
 }
 
 @Composable
-private fun BandPartsDialog(state: SheetsState, onClose: () -> Unit) {
+internal fun BandPartsDialog(state: SheetsState, onClose: () -> Unit) {
     val candidates = remember(state.current?.id, state.currentPath) { ScoreTools.bandCandidates(state) }
     var selected by remember(candidates) { mutableStateOf(ScoreTools.selectedBandPartIds(state)) }
     SheetDialog("Band instruments", onDismiss = onClose, buttons = {
@@ -307,7 +334,7 @@ internal fun BandMixerDialog(state: SheetsState, onClose: () -> Unit) {
 }
 
 @Composable
-private fun ScoreSection(title: String, icon: ImageVector, accent: Color, content: @Composable ColumnScope.() -> Unit) {
+internal fun ScoreSection(title: String, icon: ImageVector, accent: Color, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(icon, null, Modifier.size(19.dp), tint = accent)
@@ -319,7 +346,7 @@ private fun ScoreSection(title: String, icon: ImageVector, accent: Color, conten
 }
 
 @Composable
-private fun ScoreActionGrid(actions: List<ScoreAction>, accent: Color = MaterialTheme.colorScheme.primary) {
+internal fun ScoreActionGrid(actions: List<ScoreAction>, accent: Color = MaterialTheme.colorScheme.primary) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         // A 640dp phone in landscape has about 584dp inside the dialog. Two columns there
         // keep useful tools visible rather than spending the whole viewport on two read rows.
@@ -327,6 +354,7 @@ private fun ScoreActionGrid(actions: List<ScoreAction>, accent: Color = Material
         val columns = when {
             inline && !LocalMusicCategoryRail.current && maxWidth>=720.dp -> 4
             inline && !LocalMusicCategoryRail.current && maxWidth>=300.dp -> 2
+            inline && LocalMusicCategoryRail.current && maxWidth>=360.dp -> 2
             maxWidth>=520.dp -> 2
             else -> 1
         }

@@ -9,12 +9,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inksheets.core.AudioTrack
 import com.inksheets.core.Part
@@ -107,7 +112,8 @@ class MusicShelfRedesignTest {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize().background(Color(0xFFF1EEE6))) { ActionStrip(state) } } }
                 waitForIdle()
                 assertTrue("$name: shelf not measured", platform.shelfHeight > 0f)
-                assertTrue("$name: shelf uses ${platform.shelfHeight} of $height", platform.shelfHeight <= height * .42f)
+                val maxShare=if(width>height).56f else .42f
+                assertTrue("$name: shelf uses ${platform.shelfHeight} of $height", platform.shelfHeight <= height * maxShare)
                 runOnIdle { state.expandMusicCategory(ShelfWidget.ANNOTATION) }
                 waitForIdle()
                 runOnIdle { assertEquals(ShelfWidget.ANNOTATION,state.expandedMusicCategory) }
@@ -131,10 +137,10 @@ class MusicShelfRedesignTest {
                 waitForIdle()
                 onAllNodesWithContentDescription("Arrange tabs").onFirst().performClick()
                 waitForIdle()
-                onNodeWithContentDescription("Move Timing later").performScrollTo().performClick()
-                runOnIdle { assertEquals(ShelfWidget.RECORDING, state.shelf.order.first()) }
+                onNodeWithContentDescription("Move Pages later").performScrollTo().performClick()
+                runOnIdle { assertEquals(ShelfWidget.PARTS, state.shelf.order.first()) }
                 onNodeWithText("Reset").performClick()
-                runOnIdle { assertEquals(ShelfWidget.TIMING, state.shelf.order.first()) }
+                runOnIdle { assertEquals(ShelfWidget.PAGES, state.shelf.order.first()) }
                 onNodeWithText("Done").performClick()
                 runOnIdle {
                     ShelfWidget.entries.forEach { state.shelf.show(it, false) }
@@ -151,7 +157,8 @@ class MusicShelfRedesignTest {
                 onNodeWithContentDescription("Stop recording playback").assertIsDisplayed()
                 assertTrue("Active playback keeps its stop control when the shelf is folded", platform.shelfHeight > 0)
                 onNodeWithContentDescription("Show buttons").performClick()
-                onNodeWithContentDescription("Arrange tabs").performClick()
+                waitForIdle()
+                onNodeWithText("Tab layout").performClick()
                 onNodeWithText("Reset").performClick()
                 runOnIdle { assertTrue(state.shelf.hidden.isEmpty()) }
             }
@@ -167,10 +174,11 @@ class MusicShelfRedesignTest {
         val (state,_)=setup("phone-shortcuts")
         runDesktopComposeUiTest(width=360,height=640) {
             setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
-            onNodeWithText("Devices").performClick()
+            onNodeWithContentDescription("Connections quick tab").performScrollTo().performClick()
             waitForIdle()
+            onNodeWithContentDescription("Connections quick tab").assertIsSelected()
             onNodeWithContentDescription("Remote").assertIsDisplayed()
-            onNodeWithText("Score").performClick()
+            onNodeWithText("Reading").performClick()
             waitForIdle()
             onNodeWithContentDescription("All score tools").performClick()
             waitForIdle()
@@ -179,5 +187,28 @@ class MusicShelfRedesignTest {
             runOnIdle { assertEquals(ShelfWidget.SCORE,state.expandedMusicCategory) }
             assertTrue(!state.arrangingShelf)
         }
+    }
+
+    @Test fun `portrait dock boundary resizes and a decisive pull closes and resets`() {
+        val (state,platform)=setup("portrait-resize")
+        var resets=0
+        com.inkslate.core.Perform.recentre={resets++}
+        try {
+            runDesktopComposeUiTest(width=360,height=640) {
+                setContent {MaterialTheme {Box(Modifier.fillMaxSize()) {ActionStrip(state)}}}
+                val before=state.shelf.portraitHeight
+                onNodeWithTag("music-dock-resize").performTouchInput {
+                    swipe(center,center.copy(y=center.y-90f),durationMillis=300)
+                }
+                runOnIdle {
+                    assertTrue(state.shelf.portraitHeight>before)
+                    assertEquals(state.shelf.portraitHeight.toInt().toString(),platform.pref("sheets_dock_portrait_height"))
+                }
+                onNodeWithTag("music-dock-resize").performTouchInput {
+                    swipe(center,center.copy(y=center.y+110f),durationMillis=300)
+                }
+                waitUntil {state.stripCollapsed && resets==1}
+            }
+        } finally {com.inkslate.core.Perform.recentre=null}
     }
 }
