@@ -137,7 +137,7 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                         }.clickable { state.metronomeOpen=true },fontSize=29.sp,fontWeight=FontWeight.Light)
                     Column(Modifier.weight(1f).padding(start=5.dp)) {
                         Text("BPM",fontSize=9.sp,lineHeight=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("↔ ±5 · ↕ ±1",fontSize=8.sp,lineHeight=9.sp,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("↔ 5 · ↕ 1",fontSize=8.sp,lineHeight=9.sp,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("${SharedMetronome.engine?.settings?.beatsPerBar ?: 4} / 4",fontSize=10.sp,lineHeight=11.sp)
                     }
                     FilledTonalIconButton(onClick={ Click.toggle(state) },modifier=Modifier.size(34.dp)) {
@@ -186,7 +186,12 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
             ShelfWidget.SCORE -> {
                 val page=state.pageShown.first
                 val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
-                WidgetHeading(widget,"Reading · Page ${page+1} · ${if(read) "READ" else "NOT READ"}","All score tools") { ScoreTools.open=true;state.expandMusicCategory(ShelfWidget.SCORE) }
+                val readingStatus=if(LocalDockDense.current) {
+                    "Page ${page+1} · ${if(read) "Read" else "Unread"}"
+                } else {
+                    "Reading · Page ${page+1} · ${if(read) "READ" else "NOT READ"}"
+                }
+                WidgetHeading(widget,readingStatus,"All score tools") { ScoreTools.open=true;state.expandMusicCategory(ShelfWidget.SCORE) }
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(maxItemsInEachRow=3) {
                     DockAction(Icons.Default.MusicNote,"Read","Read whole piece",enabled=Transcriber.busy==null &&state.currentPath!=null) { state.currentPath?.let { Transcriber.read(state,File(it)){Perform.marksChanged()} } }
