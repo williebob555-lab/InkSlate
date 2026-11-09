@@ -186,11 +186,7 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
             ShelfWidget.SCORE -> {
                 val page=state.pageShown.first
                 val read=ScoreTools.scoreHere(state)?.hasRead(page)==true
-                val readingStatus=if(LocalDockDense.current) {
-                    "Page ${page+1} · ${if(read) "Read" else "Unread"}"
-                } else {
-                    "Reading · Page ${page+1} · ${if(read) "READ" else "NOT READ"}"
-                }
+                val readingStatus="Page ${page+1} · ${if(read) "Read" else "Unread"}"
                 WidgetHeading(widget,readingStatus,"All score tools") { ScoreTools.open=true;state.expandMusicCategory(ShelfWidget.SCORE) }
                 @OptIn(ExperimentalLayoutApi::class)
                 FlowRow(maxItemsInEachRow=3) {

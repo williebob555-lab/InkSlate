@@ -74,7 +74,7 @@ internal val LocalMusicCategoryRail=staticCompositionLocalOf{false}
             IconButton(onClick=::back,modifier=Modifier.size(48.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack,if(state.musicCategoryPage==null && host.order.size<=1)"Compact categories"else"Back to category")
             }
-            Text(if(LocalMusicCategoryRail.current)category.label else "Full tools · ${category.label}",Modifier.weight(1f),
+            Text(category.label,Modifier.weight(1f),
                 style=MaterialTheme.typography.titleSmall,color=widgetColor(category),maxLines=1)
             Box {
                 if(LocalMusicCategoryRail.current) IconButton(onClick={switcher=true},modifier=Modifier.size(48.dp)) {
