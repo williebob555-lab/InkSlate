@@ -126,7 +126,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
                             }
                         }.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
                         Icon(Icons.Default.DragHandle,null,Modifier.size(20.dp))
-                        Text("Resize · pull to reset",Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelSmall,maxLines=1)
+                        Text("Resize",Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelSmall,maxLines=1)
                     }
                     Box(Modifier.weight(1f)) {
                         if(category!=null) CompositionLocalProvider(LocalMusicCategoryRail provides true) {

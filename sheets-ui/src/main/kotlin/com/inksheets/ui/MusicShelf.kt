@@ -35,7 +35,7 @@ internal enum class ShelfWidget(val label: String) {
 
 /** Device-local layout preferences. A missing/corrupt preference always leaves a usable shelf. */
 internal class MusicShelfPreferences(private val platform: SheetsPlatform) {
-    var portraitHeight by mutableFloatStateOf(platform.pref("sheets_dock_portrait_height")?.toFloatOrNull()?.coerceIn(132f,420f) ?: 174f)
+    var portraitHeight by mutableFloatStateOf(platform.pref("sheets_dock_portrait_height")?.toFloatOrNull()?.coerceIn(132f,420f) ?: 160f)
         private set
     fun resizePortrait(by:Float) {
         portraitHeight=(portraitHeight+by).coerceIn(132f,420f)
