@@ -39,9 +39,12 @@ Newest first. These notes describe changes made, not confirmation that every rep
 - **Arrange tabs no longer wastes scroll space on static chrome.** Its title, Reset and Done move
   with the workspace content instead of permanently covering part of the list.
 - **Compact stylus quick actions are available in both InkSlate and InkSheets.** Settings → Stylus
-  can assign the first barrel button to a 164 dp wheel at the pen tip. The same five slots provide
-  Pen, Highlighter, Eraser, Colour and Size; Colour reuses those slots for swatches, and dragging
-  Size outward/inward changes width without a slider. The wheel disappears after the choice.
+  can assign the first barrel button to a 164 dp wheel at the pen tip. Its default ring provides
+  Pen, Highlighter, Eraser, one-shot Select, Undo, Colour and Size; Settings can swap actions,
+  including Redo, without allowing the ring to grow past seven. Colour reuses the ring for
+  swatches, and dragging Size outward/inward changes width without a slider. One-shot Select
+  returns to the previous tool after moving, editing, deleting or cancelling the selection. The
+  wheel disappears after the choice.
   Pen and highlighter now retain independent colours, widths and opacity.
 - **Optional scribble-to-erase is guarded against accidental deletion.** A gesture must reverse
   direction repeatedly, traverse the same span several times and actually cross existing ink

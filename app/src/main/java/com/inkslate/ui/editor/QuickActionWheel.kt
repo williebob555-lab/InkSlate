@@ -18,6 +18,9 @@ import androidx.compose.material.icons.filled.Gesture
 import androidx.compose.material.icons.filled.LineWeight
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +61,9 @@ import kotlin.math.sin
 fun QuickActionWheel(
     state: ToolState,
     anchor: Offset,
+    onSelectOnce: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
     onChanged: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -95,7 +101,7 @@ fun QuickActionWheel(
                 }
                 if (colors) {
                     palette.forEachIndexed { index, value ->
-                        WheelSlot(index) {
+                        WheelSlot(index, palette.size) {
                             ColorDot(Color(value)) {
                                 state.edit { c ->
                                     if (c.tool == Tool.ERASER) c.tool = Tool.DRAW
@@ -107,50 +113,57 @@ fun QuickActionWheel(
                         }
                     }
                 } else {
-                    WheelSlot(0) {
-                        WheelIcon(Icons.Default.Gesture, "Pen") {
-                            state.edit { c ->
-                                if (c.brush == BrushType.HIGHLIGHTER) c.toggleHighlighter()
-                                c.tool = Tool.DRAW
-                            }
-                            onChanged(); onDismiss()
-                        }
-                    }
-                    WheelSlot(1) {
-                        WheelIcon(Icons.Default.BorderColor, "Highlighter") {
-                            state.edit { c ->
-                                if (c.brush != BrushType.HIGHLIGHTER) c.toggleHighlighter()
-                                c.tool = Tool.DRAW
-                            }
-                            onChanged(); onDismiss()
-                        }
-                    }
-                    WheelSlot(2) {
-                        WheelIcon(Icons.Default.Remove, "Eraser") {
-                            state.edit { it.tool = Tool.ERASER }
-                            onChanged(); onDismiss()
-                        }
-                    }
-                    WheelSlot(3) {
-                        WheelIcon(Icons.Default.Palette, "Colours") { colors = true }
-                    }
-                    WheelSlot(4) {
-                        SizeSlot(
-                            value = shownWidth,
-                            onValue = { value ->
-                                shownWidth = value
-                                if (state.active.tool == Tool.ERASER) state.active.eraserRadius = value
-                                else state.active.strokeWidth = value
-                                onChanged()
-                            },
-                            onFinished = {
-                                state.edit { c ->
-                                    if (c.tool == Tool.ERASER) c.eraserRadius = shownWidth
-                                    else c.strokeWidth = shownWidth
+                    state.quickWheelActions.forEachIndexed { index, action ->
+                        WheelSlot(index, state.quickWheelActions.size) {
+                            when (action) {
+                                QuickWheelAction.PEN -> WheelIcon(Icons.Default.Gesture, action.label) {
+                                    state.edit { c ->
+                                        if (c.brush == BrushType.HIGHLIGHTER) c.toggleHighlighter()
+                                        c.tool = Tool.DRAW
+                                    }
+                                    onChanged(); onDismiss()
                                 }
-                                onChanged(); onDismiss()
+                                QuickWheelAction.HIGHLIGHTER -> WheelIcon(Icons.Default.BorderColor, action.label) {
+                                    state.edit { c ->
+                                        if (c.brush != BrushType.HIGHLIGHTER) c.toggleHighlighter()
+                                        c.tool = Tool.DRAW
+                                    }
+                                    onChanged(); onDismiss()
+                                }
+                                QuickWheelAction.ERASER -> WheelIcon(Icons.Default.Remove, action.label) {
+                                    state.edit { it.tool = Tool.ERASER }
+                                    onChanged(); onDismiss()
+                                }
+                                QuickWheelAction.SELECT_ONCE -> WheelIcon(Icons.Default.SelectAll, action.label) {
+                                    onSelectOnce(); onDismiss()
+                                }
+                                QuickWheelAction.UNDO -> WheelIcon(Icons.AutoMirrored.Filled.Undo, action.label) {
+                                    onUndo(); onDismiss()
+                                }
+                                QuickWheelAction.REDO -> WheelIcon(Icons.AutoMirrored.Filled.Redo, action.label) {
+                                    onRedo(); onDismiss()
+                                }
+                                QuickWheelAction.COLOR -> WheelIcon(Icons.Default.Palette, action.label) {
+                                    colors = true
+                                }
+                                QuickWheelAction.SIZE -> SizeSlot(
+                                    value = shownWidth,
+                                    onValue = { value ->
+                                        shownWidth = value
+                                        if (state.active.tool == Tool.ERASER) state.active.eraserRadius = value
+                                        else state.active.strokeWidth = value
+                                        onChanged()
+                                    },
+                                    onFinished = {
+                                        state.edit { c ->
+                                            if (c.tool == Tool.ERASER) c.eraserRadius = shownWidth
+                                            else c.strokeWidth = shownWidth
+                                        }
+                                        onChanged(); onDismiss()
+                                    }
+                                )
                             }
-                        )
+                        }
                     }
                 }
 
@@ -166,8 +179,8 @@ fun QuickActionWheel(
 }
 
 @Composable
-private fun BoxScope.WheelSlot(index: Int, content: @Composable () -> Unit) {
-    val angle = Math.toRadians((-90.0 + index * 72.0))
+private fun BoxScope.WheelSlot(index: Int, count: Int, content: @Composable () -> Unit) {
+    val angle = Math.toRadians(-90.0 + index * (360.0 / count.coerceAtLeast(1)))
     val radius = 55.dp
     val item = 44.dp
     val x = 82.dp + radius * cos(angle).toFloat() - item / 2

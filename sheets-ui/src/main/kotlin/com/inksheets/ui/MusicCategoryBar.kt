@@ -25,6 +25,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 
 private typealias CategoryContent = @Composable () -> Unit
@@ -75,7 +76,9 @@ internal val LocalMusicCategoryRail=staticCompositionLocalOf{false}
                 Icon(Icons.AutoMirrored.Filled.ArrowBack,if(state.musicCategoryPage==null && host.order.size<=1)"Compact categories"else"Back to category")
             }
             Text(category.label,Modifier.weight(1f),
-                style=MaterialTheme.typography.titleSmall,color=widgetColor(category),maxLines=1)
+                style=if(LocalMusicCategoryRail.current)MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleSmall,
+                fontSize=if(LocalMusicCategoryRail.current)11.sp else androidx.compose.ui.unit.TextUnit.Unspecified,
+                color=widgetColor(category),maxLines=1)
             Box {
                 if(LocalMusicCategoryRail.current) IconButton(onClick={switcher=true},modifier=Modifier.size(48.dp)) {
                     Icon(Icons.Default.ArrowDropDown,"Switch tab")

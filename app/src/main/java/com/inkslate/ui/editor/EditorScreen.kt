@@ -128,6 +128,12 @@ internal fun musicRenderWidthPx(screenWidthPx:Float,screenHeightPx:Float):Int =
 internal fun musicBitmapBudgetBytes(maxHeap: Long): Long =
     (maxHeap / 16).coerceIn(16L * 1024 * 1024, 48L * 1024 * 1024)
 
+private data class OneShotSelection(
+    val mode: InputMode,
+    val previousTool: Tool,
+    val view: DrawingView
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
@@ -313,6 +319,14 @@ fun EditorScreen(
     val model = remember { com.inkslate.ink.InkModel(StrokeIdGen(DeviceId.get(context))) }
     // The surface of the view last touched. See ActiveSurface.
     val drawingView = remember(host) { com.inkslate.ui.ActiveSurface(host) }
+    var oneShotSelection by remember { mutableStateOf<OneShotSelection?>(null) }
+    fun finishOneShotSelection() {
+        val session = oneShotSelection ?: return
+        oneShotSelection = null
+        tools.editMode(session.mode) { it.tool = session.previousTool }
+        tools.applyTo(session.view)
+        drawingView.value?.takeIf { it !== session.view }?.let(tools::applyTo)
+    }
     // Focus mode hides the system bars, which belong to the whole screen - so it is the
     // workspace's, like the bars above and below the pages that it also puts away.
     val immersive = host.immersive
@@ -2000,6 +2014,8 @@ fun EditorScreen(
                     actions = ToolBarActions(
                         onChanged = {
                             val before = drawingView.value?.tool
+                            // Choosing a toolbar tool deliberately supersedes temporary Select.
+                            oneShotSelection = null
                             // A ruler turned on from here is laid on this document.
                             if (tools.rulerVisible) tools.rulerOwner = host
                             tools.applyTo(drawingView.value)
@@ -2016,15 +2032,19 @@ fun EditorScreen(
                         onRestyleSelection = { color, width ->
                             drawingView.value?.restyleSelection(newColor = color, newWidth = width)
                             dirty = true; undoTick++
+                            finishOneShotSelection()
                         },
                         onDeleteSelection = {
                             drawingView.value?.deleteSelection(); dirty = true; undoTick++
+                            finishOneShotSelection()
                         },
                         onDuplicateSelection = {
                             drawingView.value?.duplicateSelection(); dirty = true; undoTick++
+                            finishOneShotSelection()
                         },
                         onCopySelection = {
                             val n = drawingView.value?.copySelection() ?: 0
+                            finishOneShotSelection()
                             scope.launch {
                                 snackbar.showSnackbar("Copied $n object${if (n == 1) "" else "s"}")
                             }
@@ -2032,11 +2052,15 @@ fun EditorScreen(
                         onCutSelection = {
                             val n = drawingView.value?.cutSelection() ?: 0
                             dirty = true; undoTick++
+                            finishOneShotSelection()
                             scope.launch {
                                 snackbar.showSnackbar("Cut $n object${if (n == 1) "" else "s"}")
                             }
                         },
-                        onClearSelection = { drawingView.value?.clearSelection() },
+                        onClearSelection = {
+                            drawingView.value?.clearSelection()
+                            finishOneShotSelection()
+                        },
                         onPaste = {
                             val n = drawingView.value?.paste() ?: 0
                             if (n > 0) { dirty = true; undoTick++ }
@@ -2301,6 +2325,9 @@ fun EditorScreen(
                                 }
                                 if (armedItem != null) symbolPlaced = true
                             }
+                            view.onSelectionActionFinished = {
+                                if (oneShotSelection?.view === view) finishOneShotSelection()
+                            }
                             view.onStampSized = { kind, width ->
                                 tools.editStampShelf {
                                     it.withOptions(kind, it.optionsFor(kind).copy(size = width))
@@ -2371,7 +2398,26 @@ fun EditorScreen(
                 QuickActionWheel(
                     state = tools,
                     anchor = anchor,
-                    onChanged = { tools.applyTo(slot.view) },
+                    onSelectOnce = {
+                        val view = slot.view ?: return@QuickActionWheel
+                        val mode = tools.activeMode
+                        val previous = tools.configFor(mode).tool.takeUnless { it == Tool.SELECT } ?: Tool.DRAW
+                        oneShotSelection = OneShotSelection(mode, previous, view)
+                        tools.editMode(mode) { it.tool = Tool.SELECT }
+                        tools.applyTo(view)
+                    },
+                    onUndo = {
+                        slot.view?.undo(); dirty = true; undoTick++
+                        finishOneShotSelection()
+                    },
+                    onRedo = {
+                        slot.view?.redo(); dirty = true; undoTick++
+                        finishOneShotSelection()
+                    },
+                    onChanged = {
+                        tools.applyTo(slot.view)
+                        if (tools.active.tool != Tool.SELECT) oneShotSelection = null
+                    },
                     onDismiss = { quickWheel = null }
                 )
             }

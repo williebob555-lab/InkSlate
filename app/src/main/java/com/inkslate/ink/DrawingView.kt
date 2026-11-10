@@ -972,6 +972,8 @@ class DrawingView @JvmOverloads constructor(
     var onContentChanged: (() -> Unit)? = null
     var onTransformChanged: (() -> Unit)? = null
     var onSelectionChanged: ((Int) -> Unit)? = null
+    /** A selected object was moved/resized/rotated once; temporary Select may now be put away. */
+    var onSelectionActionFinished: (() -> Unit)? = null
 
     /** A link was tapped - on text given one, or one already in the PDF. Opens it. */
     var onLinkTapped: ((String) -> Unit)? = null
@@ -4685,6 +4687,8 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun endSelectGesture(cancelled: Boolean) {
+        var completedAction = cancelled && grab != Grab.MARQUEE && grab != Grab.NONE &&
+            selectionAtGrab.isNotEmpty()
         when (grab) {
             Grab.MARQUEE -> {
                 marquee?.let { r ->
@@ -4719,6 +4723,7 @@ class DrawingView @JvmOverloads constructor(
                         contentMoved()
                     }
                     if (moved) {
+                        completedAction = true
                         pushOp(Op(after, selectionAtGrab))
                         onContentChanged?.invoke()
                         if (resized && kind != null) {
@@ -4732,6 +4737,7 @@ class DrawingView @JvmOverloads constructor(
         }
         grab = Grab.NONE
         selectionAtGrab = emptyList()
+        if (completedAction) onSelectionActionFinished?.invoke()
     }
 
     private fun handleAt(vx: Float, vy: Float): Grab {

@@ -139,7 +139,6 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                         }.clickable { state.metronomeOpen=true },fontSize=29.sp,fontWeight=FontWeight.Light)
                     Column(Modifier.weight(1f).padding(start=5.dp)) {
                         Text("BPM",fontSize=9.sp,lineHeight=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("↔ 5 · ↕ 1",fontSize=8.sp,lineHeight=9.sp,maxLines=1,color=MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("${SharedMetronome.engine?.settings?.beatsPerBar ?: 4} / 4",fontSize=10.sp,lineHeight=11.sp)
                     }
                     FilledTonalIconButton(onClick={ Click.toggle(state) },modifier=Modifier.size(34.dp)) {

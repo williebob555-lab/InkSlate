@@ -33,6 +33,23 @@ import com.inkslate.core.ToolConfig
  */
 typealias Preset = com.inkslate.core.PenPreset
 
+/** Actions that may occupy the compact stylus wheel. The centre close button is not a slot. */
+enum class QuickWheelAction(val label: String) {
+    PEN("Pen"),
+    HIGHLIGHTER("Highlighter"),
+    ERASER("Eraser"),
+    SELECT_ONCE("Select once"),
+    UNDO("Undo"),
+    COLOR("Colour"),
+    SIZE("Size"),
+    REDO("Redo");
+
+    companion object {
+        const val MAX_ACTIONS = 7
+        val DEFAULTS = entries.filter { it != REDO }
+    }
+}
+
 fun Preset.toJson(): JSONObject = JSONObject().apply {
     put("brush", brush.name); put("color", color)
     put("width", width.toDouble()); put("opacity", opacity.toDouble())
@@ -104,6 +121,9 @@ class ToolState(private val context: Context) {
     var snapHighlighterToText by mutableStateOf(true)
     /** The first barrel button opens the compact wheel at the pen tip. */
     var quickActionWheel by mutableStateOf(false)
+    /** Kept in a fixed, learnable order; Settings chooses which actions occupy the ring. */
+    var quickWheelActions by mutableStateOf(QuickWheelAction.DEFAULTS)
+        private set
     /** A deliberate back-and-forth scratch removes the ink it crosses. */
     var scribbleErase by mutableStateOf(false)
     var cropMargins by mutableStateOf(false)
@@ -294,6 +314,27 @@ class ToolState(private val context: Context) {
     /** Mutate the active profile and let the UI know. */
     fun edit(block: (ToolConfig) -> Unit) {
         block(active)
+        revision++
+        persist()
+    }
+
+    /** Mutate a particular input profile, used when a temporary tool must restore its owner. */
+    fun editMode(mode: InputMode, block: (ToolConfig) -> Unit) {
+        block(configFor(mode))
+        revision++
+        persist()
+    }
+
+    fun setQuickWheelAction(action: QuickWheelAction, enabled: Boolean) {
+        val selected = quickWheelActions.toMutableSet()
+        if (enabled) {
+            if (selected.size >= QuickWheelAction.MAX_ACTIONS) return
+            selected += action
+        } else {
+            if (selected.size <= 1) return
+            selected -= action
+        }
+        quickWheelActions = QuickWheelAction.entries.filter { it in selected }
         revision++
         persist()
     }
@@ -503,6 +544,7 @@ class ToolState(private val context: Context) {
             .putBoolean(K_LASSO, lassoSelect)
             .putBoolean(K_SNAP_TEXT, snapHighlighterToText)
             .putBoolean(K_QUICK_WHEEL, quickActionWheel)
+            .putString(K_QUICK_WHEEL_ACTIONS, quickWheelActions.joinToString(",") { it.name })
             .putBoolean(K_SCRIBBLE_ERASE, scribbleErase)
             .putBoolean(K_CROP, cropMargins)
             .putBoolean(K_FLING, flingEnabled)
@@ -536,6 +578,13 @@ class ToolState(private val context: Context) {
         lassoSelect = sp.getBoolean(K_LASSO, false)
         snapHighlighterToText = sp.getBoolean(K_SNAP_TEXT, true)
         quickActionWheel = sp.getBoolean(K_QUICK_WHEEL, false)
+        quickWheelActions = sp.getString(K_QUICK_WHEEL_ACTIONS, null)
+            ?.split(',')
+            ?.mapNotNull { name -> runCatching { QuickWheelAction.valueOf(name) }.getOrNull() }
+            ?.distinct()
+            ?.take(QuickWheelAction.MAX_ACTIONS)
+            ?.ifEmpty { null }
+            ?: QuickWheelAction.DEFAULTS
         scribbleErase = sp.getBoolean(K_SCRIBBLE_ERASE, false)
         cropMargins = sp.getBoolean(K_CROP, false)
         flingEnabled = sp.getBoolean(K_FLING, true)
@@ -582,6 +631,7 @@ class ToolState(private val context: Context) {
         private const val K_LASSO = "lasso"
         private const val K_SNAP_TEXT = "snap_text"
         private const val K_QUICK_WHEEL = "quick_action_wheel"
+        private const val K_QUICK_WHEEL_ACTIONS = "quick_action_wheel_actions"
         private const val K_SCRIBBLE_ERASE = "scribble_erase"
         private const val K_CROP = "crop_margins"
         private const val K_FLING = "fling"

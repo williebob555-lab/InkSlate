@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +29,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -44,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.StylusButtonAction
+import com.inkslate.ui.editor.QuickWheelAction
 import com.inkslate.data.CopyLocation
 import com.inkslate.data.CopyNaming
 import com.inkslate.data.AppPeers
@@ -251,9 +254,30 @@ fun SettingsScreen(onBack: () -> Unit) {
             SwitchRow(
                 title = "Pen button quick actions",
                 subtitle = "Press the first barrel button to open a small wheel at the pen tip " +
-                    "for pen, highlighter, eraser, colour and size.",
+                    "for your most-used tools.",
                 checked = tools.quickActionWheel
             ) { tools.quickActionWheel = it; tools.persistNow() }
+
+            Text(
+                "Quick action wheel · choose up to ${QuickWheelAction.MAX_ACTIONS}",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp)
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) {
+                QuickWheelAction.entries.forEach { action ->
+                    val selected = action in tools.quickWheelActions
+                    FilterChip(
+                        selected = selected,
+                        enabled = selected || tools.quickWheelActions.size < QuickWheelAction.MAX_ACTIONS,
+                        onClick = { tools.setQuickWheelAction(action, !selected) },
+                        label = { Text(action.label) }
+                    )
+                }
+            }
 
             SwitchRow(
                 title = "Scribble to erase",
