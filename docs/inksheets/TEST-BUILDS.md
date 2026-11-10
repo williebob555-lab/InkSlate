@@ -47,7 +47,7 @@ Newest first. These notes describe changes made, not confirmation that every rep
   wheel disappears after the choice.
   Pen and highlighter now retain independent colours, widths and opacity.
 - **Optional scribble-to-erase is guarded against accidental deletion.** A gesture must reverse
-  direction repeatedly, traverse the same span several times and actually cross existing ink
+  direction four times, traverse the same span several times and actually cross existing ink
   before it is treated as erasing. An uncertain scratch in empty space remains ordinary ink.
 - **InkSlate library navigation is more direct.** Folders can be pinned from their menu and appear
   in the Pinned row on Home. Pressing + while a document is open starts the file browser in that

@@ -17,6 +17,17 @@ class ScribbleEraseTest {
         assertTrue(ScribbleErase.isScribble(points))
     }
 
+    @Test fun `a quick five pass scratch is enough`() {
+        val points = buildList {
+            repeat(5) { pass ->
+                val from = if (pass % 2 == 0) 0 else 24
+                val to = if (pass % 2 == 0) 24 else 0
+                repeat(4) { step -> add(InkPoint(from + (to - from) * step / 3f, pass.toFloat(), 2f)) }
+            }
+        }
+        assertTrue(ScribbleErase.isScribble(points))
+    }
+
     @Test fun `writing and a straight line are not scribbles`() {
         val line = (0..30).map { InkPoint(it.toFloat(), it * .2f, 2f) }
         val curve = (0..30).map { InkPoint(it.toFloat(), (it % 6).toFloat(), 2f) }

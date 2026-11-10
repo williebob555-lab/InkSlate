@@ -14,7 +14,9 @@ import kotlin.math.max
  */
 object ScribbleErase {
     fun isScribble(points: List<InkPoint>): Boolean {
-        if (points.size < 16) return false
+        // Four quick crossings from a fast pen are enough; requiring sixteen samples made the
+        // result depend too much on the tablet's reporting rate.
+        if (points.size < 14) return false
         var minX = Float.MAX_VALUE
         var minY = Float.MAX_VALUE
         var maxX = -Float.MAX_VALUE
@@ -28,7 +30,7 @@ object ScribbleErase {
         }
         val horizontal = maxX - minX >= maxY - minY
         val span = max(maxX - minX, maxY - minY)
-        if (span < 10f || length < span * 4.5f) return false
+        if (span < 10f || length < span * 4f) return false
 
         // Ignore tiny digitiser tremors. Only a change that travelled a visible share of the
         // gesture span counts as turning back across it.
@@ -45,6 +47,6 @@ object ScribbleErase {
             lastDirection = direction
             anchor = value
         }
-        return reversals >= 5
+        return reversals >= 4
     }
 }
