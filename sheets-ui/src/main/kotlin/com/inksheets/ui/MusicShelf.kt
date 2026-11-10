@@ -30,7 +30,8 @@ import java.io.File
 
 internal enum class ShelfWidget(val label: String) {
     PAGES("Pages"), PARTS("Part"), PLAYBACK("Playback"), SCORE("Reading"), ANNOTATION("Annotate"),
-    TIMING("Tempo & tuner"), RECORDING("Recording"), DEVICES("Connections"), SESSION("Group")
+    TIMING("Tempo & tuner"), RECORDING("Recording"), DEVICES("Connections"), SESSION("Group"),
+    SETTINGS("Settings")
 }
 
 /** Device-local layout preferences. A missing/corrupt preference always leaves a usable shelf. */
@@ -55,15 +56,18 @@ internal class MusicShelfPreferences(private val platform: SheetsPlatform) {
     fun chooseView(value: MusicDockView) { view=value;platform.setPref("sheets_dock_view",value.name) }
     var order by mutableStateOf(decode(platform.pref("sheets_shelf_order")))
         private set
-    var hidden by mutableStateOf(platform.pref("sheets_shelf_hidden").orEmpty().split(',').mapNotNull { value -> ShelfWidget.entries.firstOrNull { it.name == value } }.toSet())
+    var hidden by mutableStateOf(platform.pref("sheets_shelf_hidden").orEmpty().split(',').mapNotNull { value -> ShelfWidget.entries.firstOrNull { it.name == value } }.filterNot { it==ShelfWidget.SETTINGS }.toSet())
         private set
     fun move(widget: ShelfWidget, by: Int) {
+        if(widget==ShelfWidget.SETTINGS)return
         val next = order.toMutableList(); val i = next.indexOf(widget); val to = (i + by).coerceIn(0, next.lastIndex)
         if (i == to) return
         next.add(to, next.removeAt(i)); order = next
-        platform.setPref("sheets_shelf_order", next.joinToString(",") { it.name })
+        order=order.filterNot{it==ShelfWidget.SETTINGS}+ShelfWidget.SETTINGS
+        platform.setPref("sheets_shelf_order", order.joinToString(",") { it.name })
     }
     fun show(widget: ShelfWidget, on: Boolean) {
+        if(widget==ShelfWidget.SETTINGS)return
         hidden = if (on) hidden - widget else hidden + widget
         platform.setPref("sheets_shelf_hidden", hidden.joinToString(",") { it.name })
     }
@@ -71,7 +75,7 @@ internal class MusicShelfPreferences(private val platform: SheetsPlatform) {
     companion object {
         fun decode(raw: String?): List<ShelfWidget> {
             val saved=raw.orEmpty().split(',').mapNotNull { v -> ShelfWidget.entries.firstOrNull { it.name == v } }
-            val migrated=(saved+ShelfWidget.entries).distinct()
+            val migrated=(saved+ShelfWidget.entries).distinct().filterNot { it==ShelfWidget.SETTINGS }+ShelfWidget.SETTINGS
             // Pages and Playback did not exist in older layouts. Put the new primary tasks first
             // once, while retaining every deliberate ordering choice for the existing tabs.
             return if(raw!=null && ShelfWidget.PAGES !in saved)

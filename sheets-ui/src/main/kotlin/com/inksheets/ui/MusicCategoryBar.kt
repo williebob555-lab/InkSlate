@@ -131,6 +131,7 @@ internal val LocalMusicCategoryRail=staticCompositionLocalOf{false}
                         Column(Modifier.verticalScroll(rememberScrollState())){ControllerSettings(state);WatchSettings(state)}
                     }else TogetherCategory(state,close)
                     ShelfWidget.SESSION -> if(state.musicCategoryPage=="message")SendNoteDialog(state){state.musicCategoryPage=null}else TogetherCategory(state,close)
+                    ShelfWidget.SETTINGS -> ReaderDockControls(state)
                 }
                 host.order.toList().forEachIndexed { index,id -> host.pages[id]?.let { page ->
                     val top=id==host.order.lastOrNull()
@@ -167,4 +168,5 @@ private fun categoryIcon(item:ShelfWidget)=when(item) {
     ShelfWidget.ANNOTATION -> Icons.Default.Edit
     ShelfWidget.DEVICES -> Icons.Default.Devices
     ShelfWidget.SESSION -> Icons.Default.Groups
+    ShelfWidget.SETTINGS -> Icons.Default.Settings
 }

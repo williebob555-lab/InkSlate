@@ -435,7 +435,14 @@ fun AppRoot(shortcuts: Shortcuts, navigation: NavigationHooks) {
                         tabs.add(to, tabs.removeAt(from))
                         AppFlavor.onTabsMoved?.invoke(tabs.filter { !it.closeRequested.value }.map { it.file })
                     },
-                    onNewTab = { homeShown = true; screen = Screen.Home },
+                    onNewTab = {
+                        homeShown = true
+                        // Open beside the active InkSlate document. The music flavour's + action
+                        // still belongs to its own Home/setlist workflow.
+                        screen = if (AppFlavor.home == null) {
+                            Screen.Browser(focusedTab?.file?.parentFile?.takeIf { it.isDirectory }?.absolutePath)
+                        } else Screen.Home
+                    },
                     onLeaveFullscreen = if (immersive && !homeShown) {
                         { immersive = false }
                     } else null

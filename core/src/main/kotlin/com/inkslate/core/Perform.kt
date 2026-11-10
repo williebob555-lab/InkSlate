@@ -185,6 +185,10 @@ object Perform {
     @Volatile
     var recentre: (() -> Unit)? = null
 
+    /** True only while the document still matches the app's fitted, unpanned viewport. */
+    @Volatile
+    var viewportIsDefault: (() -> Boolean)? = null
+
     /**
      * A finger tap on the middle third of a page whose sides turn it (InkSheets): brings the
      * buttons over the page up, or puts them away. [bottom] when the tap was near the bottom -

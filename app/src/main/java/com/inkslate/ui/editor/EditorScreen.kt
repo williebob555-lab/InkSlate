@@ -1706,6 +1706,7 @@ fun EditorScreen(
             }
         }
         com.inkslate.core.Perform.recentre = { drawingView.value?.fitToScreen() }
+        com.inkslate.core.Perform.viewportIsDefault = { drawingView.value?.isAtFittedView() == true }
         com.inkslate.core.Perform.document = { action ->
             val view = drawingView.value
             val count = view?.pageCount ?: 0
@@ -2111,6 +2112,7 @@ fun EditorScreen(
     }
 
     val pane: @Composable (com.inkslate.ui.DocView, Boolean) -> Unit = { slot, inFocus ->
+        var quickWheel by remember(slot) { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
         // A stamp in hand belongs to the pane being worked in. Leaving it puts the item down in
         // the pane left behind, and arriving picks it up again in this one - so the tray, which is
         // the workspace's, keeps meaning the same thing wherever the pen goes next.
@@ -2223,6 +2225,9 @@ fun EditorScreen(
                                     }
                                     else -> Unit          // held actions are handled in the view
                                 }
+                            }
+                            view.onQuickActionWheelRequested = { x, y ->
+                                quickWheel = androidx.compose.ui.geometry.Offset(x, y)
                             }
                             view.onDetailNeeded = { detailPage, rect, widthPx ->
                                 scope.launch {
@@ -2359,6 +2364,15 @@ fun EditorScreen(
                         view.pageCrops = doc?.ink?.pageCrops.orEmpty()
                     },
                     modifier = Modifier.fillMaxSize()
+                )
+            }
+
+            if (inFocus) quickWheel?.let { anchor ->
+                QuickActionWheel(
+                    state = tools,
+                    anchor = anchor,
+                    onChanged = { tools.applyTo(slot.view) },
+                    onDismiss = { quickWheel = null }
                 )
             }
 

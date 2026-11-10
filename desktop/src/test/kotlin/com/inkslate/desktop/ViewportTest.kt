@@ -25,6 +25,18 @@ class ViewportTest {
         }
     }
 
+    @Test fun `fitted camera is distinguished from a manual pan or zoom`() {
+        val page=Box(0f,0f,612f,792f)
+        val vp=Viewport().apply{viewSize=androidx.compose.ui.geometry.Size(1280f,800f);content=page}
+        vp.fitClear(page,8f,0f,bottomLane=132f,studioLane=236f)
+        assertTrue(vp.isFitClear(page,8f,0f,bottomLane=132f,studioLane=236f))
+        vp.panBy(-40f,0f,freely=true)
+        assertFalse(vp.isFitClear(page,8f,0f,bottomLane=132f,studioLane=236f))
+        vp.fitClear(page,8f,0f,bottomLane=132f,studioLane=236f)
+        vp.zoomBy(1.2f,vp.centreOfView())
+        assertFalse(vp.isFitClear(page,8f,0f,bottomLane=132f,studioLane=236f))
+    }
+
     @Test
     fun `music shelf and either annotation side leave every page wholly clear`() {
         for ((width, height) in listOf(360f to 640f, 640f to 360f, 800f to 1280f, 1280f to 800f)) {

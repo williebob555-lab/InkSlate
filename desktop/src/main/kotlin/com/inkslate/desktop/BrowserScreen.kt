@@ -562,7 +562,7 @@ private fun EntryActionsSheet(
         text = {
             Column {
                 DropdownMenuItem(
-                    text = { Text(if (pinned) "Unpin" else "Pin to top") },
+                    text = { Text(if (pinned) "Unpin from Home" else "Pin to Home") },
                     onClick = onTogglePin
                 )
                 DropdownMenuItem(text = { Text("Rename") }, onClick = onRename)

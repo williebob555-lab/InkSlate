@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.inksheets.core.Part
@@ -260,7 +261,12 @@ class SheetsScreensTest {
                 }
             }
             waitForIdle()
-            for (action in listOf("Previous page", "More reader actions", "Arrange tabs")) {
+            onNode(androidx.compose.ui.test.hasContentDescription("Previous page")).assertIsDisplayedFully(1000f, 420f)
+            // Reader options moved out of permanent chrome and into the neutral, always-last
+            // Settings tab. They must remain reachable and fully visible on the short screen.
+            onNode(androidx.compose.ui.test.hasContentDescription("Reader settings")).performScrollTo().performClick()
+            waitForIdle()
+            for (action in listOf("More reader actions", "Arrange tabs")) {
                 onNode(androidx.compose.ui.test.hasContentDescription(action)).assertIsDisplayedFully(1000f, 420f)
             }
             runOnIdle {state.expandMusicCategory(com.inksheets.ui.ShelfWidget.ANNOTATION)}

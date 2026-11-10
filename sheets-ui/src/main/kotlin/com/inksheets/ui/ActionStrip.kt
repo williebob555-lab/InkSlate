@@ -180,7 +180,7 @@ fun BoxScope.ActionStrip(state: SheetsState) {
             if(state.readMusic) SampledInstruments.ensure(state)
         }
         androidx.compose.runtime.SideEffect { Overlays.actionOut=0.dp;Overlays.musicOut=0.dp }
-        MusicDock(state) { ReaderDockControls(state) }
+        MusicDock(state)
         // Fix is a viewer editor, independent of the retired music sidebar.
         BoxWithConstraints(Modifier.matchParentSize()) { BarCheck(state,maxHeight) }
         BackToLeader(state,Modifier.align(Alignment.TopCenter).padding(top=8.dp))
@@ -222,9 +222,9 @@ fun BoxScope.ActionStrip(state: SheetsState) {
 }
 
 @Composable
-private fun ReaderDockControls(state:SheetsState) {
+internal fun ReaderDockControls(state:SheetsState) {
     var more by remember { mutableStateOf(false) }
-    Surface(color=MaterialTheme.colorScheme.surfaceContainerLow) {
+    Surface(color=MaterialTheme.colorScheme.surface) {
         BoxWithConstraints(Modifier.fillMaxWidth()) {
         val narrow=maxWidth<260.dp
         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)

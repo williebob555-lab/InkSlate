@@ -54,8 +54,7 @@ import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -454,13 +453,13 @@ fun LibraryHome(
                                 scope.launch {
                                     withContext(Dispatchers.IO) {
                                         val items = selected.map(::File)
-                                        // Star them all, unless they all are: then unstar them all.
+                                        // Pin them all, unless they all are: then unpin them all.
                                         val all = items.all { backend.isPinned(it) }
                                         items.filter { backend.isPinned(it) == all }.forEach { backend.togglePin(it) }
                                     }
                                     selected = emptySet(); refresh()
                                 }
-                            }) { Icon(Icons.Default.Star, "Star") }
+                            }) { Icon(Icons.Default.PushPin, "Pin to Home") }
                             IconButton(onClick = { remove(selected.map(::File)) }) {
                                 Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
                             }
@@ -534,10 +533,10 @@ fun LibraryHome(
                             item { EmptyLibrary(onBrowse) }
                         }
 
-                        // ---- starred and recent, at the top only, and not while searching ----
+                        // ---- pinned and recent, at the top only, and not while searching ----
                         if (atTop && !searching) {
                             if (starred.isNotEmpty()) {
-                                item { SectionHeader("Starred") }
+                                item { SectionHeader("Pinned") }
                                 item {
                                     ScrollingRow(starred, key = { it.absolutePath }) { f ->
                                         if (f.isDirectory) {
@@ -1050,7 +1049,7 @@ private fun FolderTile(
                     Icon(Icons.Default.FolderOpen, null, Modifier.align(Alignment.Center).size(40.dp), tint = MaterialTheme.colorScheme.primary)
                 }
                 if (starred) {
-                    Icon(Icons.Default.Star, null, Modifier.align(Alignment.TopEnd).size(15.dp), tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.PushPin, "Pinned to Home", Modifier.align(Alignment.TopEnd).size(15.dp), tint = MaterialTheme.colorScheme.primary)
                 }
                 if (selected) {
                     Icon(Icons.Default.CheckCircle, null, Modifier.align(Alignment.TopStart).size(18.dp), tint = MaterialTheme.colorScheme.primary)
@@ -1091,7 +1090,7 @@ private fun DocumentCard(
             ) {
                 Thumb(file, backend)
                 if (starred) {
-                    Icon(Icons.Default.Star, null, Modifier.align(Alignment.TopEnd).padding(5.dp).size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    Icon(Icons.Default.PushPin, "Pinned to Home", Modifier.align(Alignment.TopEnd).padding(5.dp).size(14.dp), tint = MaterialTheme.colorScheme.primary)
                 }
                 if (selected) {
                     Icon(Icons.Default.CheckCircle, null, Modifier.align(Alignment.TopStart).padding(5.dp).size(18.dp), tint = MaterialTheme.colorScheme.primary)
@@ -1338,7 +1337,7 @@ private fun ItemActions(
         if (elsewhere && target.parentFile != null) row(Icons.Default.Folder, "Show in folder", onShowInFolder)
         if (fromRecent) row(Icons.Default.Clear, "Remove from Recent", onRemoveRecent)
         row(Icons.Default.CheckCircle, "Select", onSelect)
-        row(if (starred) Icons.Default.Star else Icons.Default.StarBorder, if (starred) "Remove star" else "Star", onToggleStar)
+        row(Icons.Default.PushPin, if (starred) "Unpin from Home" else "Pin to Home", onToggleStar)
         if (!isRoot) row(Icons.AutoMirrored.Filled.DriveFileMove, "Move to...", onMove)
         if (target.isDirectory) {
             row(Icons.Default.CreateNewFolder, "New folder inside", onNewFolder)

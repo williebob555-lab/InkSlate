@@ -15,12 +15,13 @@ Newest first. These notes describe changes made, not confirmation that every rep
 - **Quick tabs and full tools are distinct layouts.** Compact tabs use full-size scrollable touch
   targets and retain the selected rightmost tab in portrait. A full-tools workspace has a 48 dp
   back target, a labeled Switch tab menu and its own close button instead of squeezing every tab
-  into a tiny horizontal strip. Reader options and Tab layout sit below the tab workspace, outside
-  every tab, and remain recoverable even if all tabs are hidden.
-- **The dock is resizable and remembers the device's choice.** Its visible boundary drags vertically
-  in portrait and horizontally in Studio/landscape. Pulling decisively toward closed dismisses the
-  dock and explicitly resets the viewport; ordinary Fold preserves pan and zoom. The stored height
-  and width are bounded so the original PDF always retains usable space.
+  into a tiny horizontal strip. Reader options and Tab layout now live in a neutral Settings tab,
+  which is always last and cannot be hidden; there is no permanent settings stamp outside the tabs.
+- **The dock is resizable without spending a toolbar row on resizing.** The labeled Resize bar is
+  gone. A 12 dp inner-edge grip drags vertically in portrait and horizontally in Studio/landscape;
+  its 48 dp interaction target remains easy to catch. Landscape tabs grow to use spare height.
+  Pulling decisively toward closed dismisses the dock and explicitly resets the viewport; ordinary
+  Fold preserves pan and zoom. The stored height and width are bounded so the PDF retains space.
 - **Tempo is directly adjustable.** Dragging BPM left/right makes coarse five-BPM changes; dragging
   up/down makes fine one-BPM changes. Playback also has explicit −5, −1, +1 and +5 controls, while
   the Timing tab identifies both the metronome and tuner instead of hiding an unexplained tuner
@@ -31,10 +32,23 @@ Newest first. These notes describe changes made, not confirmation that every rep
   part-by-part progress dialog and can be stopped; completed parts are retained. Recognition runs
   one file at a time so a concert-band folder cannot multiply page buffers into a 512 MB heap
   crash.
-- **Opening and dismissing music menus no longer changes the view.** The action strip, music tools,
-  adaptive bottom shelf, Studio rail, remote controls, Fix and Check no longer invoke Fit when
-  opened, resized or put away. The current page, pan and zoom remain exact. Explicit Fit still
-  fits the page; closing the tab still discards its pan/zoom camera.
+- **Dock opening respects both default fit and a deliberate camera.** If the PDF is still at its
+  default pan/zoom, opening the dock refits the printed page into the remaining viewport and closing
+  restores the default fit. Once the user pans or zooms, opening, resizing and folding the dock
+  preserve that camera exactly. Closing the tab still discards its camera.
+- **Arrange tabs no longer wastes scroll space on static chrome.** Its title, Reset and Done move
+  with the workspace content instead of permanently covering part of the list.
+- **Compact stylus quick actions are available in both InkSlate and InkSheets.** Settings → Stylus
+  can assign the first barrel button to a 164 dp wheel at the pen tip. The same five slots provide
+  Pen, Highlighter, Eraser, Colour and Size; Colour reuses those slots for swatches, and dragging
+  Size outward/inward changes width without a slider. The wheel disappears after the choice.
+  Pen and highlighter now retain independent colours, widths and opacity.
+- **Optional scribble-to-erase is guarded against accidental deletion.** A gesture must reverse
+  direction repeatedly, traverse the same span several times and actually cross existing ink
+  before it is treated as erasing. An uncertain scratch in empty space remains ordinary ink.
+- **InkSlate library navigation is more direct.** Folders can be pinned from their menu and appear
+  in the Pinned row on Home. Pressing + while a document is open starts the file browser in that
+  active document's folder instead of returning to the generic Home menu.
 - **Large-song opening avoids a wrong first render and UI-thread PDF destruction.** The remembered
   or requested page is selected before the first preview is rasterised, eliminating the throwaway
   page-1 render seen in Cowboys. The preview uses a lightweight native image layer, and

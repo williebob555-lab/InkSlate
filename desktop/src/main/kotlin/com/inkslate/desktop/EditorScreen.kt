@@ -1524,6 +1524,13 @@ fun EditorScreen(
             }
         }
         com.inkslate.core.Perform.recentre = { goToPage(page) }
+        com.inkslate.core.Perform.viewportIsDefault = {
+            paperBox(page)?.let { box ->
+                viewport.isFitClear(box,8f,AppFlavor.stripLaneDp*density,AppFlavor.stripOnLeft,
+                    AppFlavor.musicLaneDp*density,AppFlavor.musicShelfDp*density,
+                    AppFlavor.studioRailDp*density,AppFlavor.studioRailOnRight)
+            } ?: false
+        }
         com.inkslate.core.Perform.document = { action ->
             val count = source?.pageCount ?: 0
             when (action) {

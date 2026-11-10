@@ -30,7 +30,7 @@ import com.inkslate.core.ToolConfig
 class ToolState {
 
     val pen = ToolConfig()
-    val touch = ToolConfig(brush = BrushType.HIGHLIGHTER, strokeWidth = 15f, tool = Tool.DRAW)
+    val touch = ToolConfig(brush = BrushType.HIGHLIGHTER, color = 0xFFFDE047.toInt(), strokeWidth = 15f, tool = Tool.DRAW)
 
     /**
      * The two a mouse can choose between, and on Windows the two that get used.
@@ -498,7 +498,9 @@ class ToolState {
                 c.eraserRadius.toString(), c.eraserMode.name, c.smoothing.toString(),
                 c.textSize.toString(), c.opacity.toString(), c.dash.name,
                 c.fillStyle.name, c.dynamics.toString(), c.dynamicWidth.toString(),
-                c.pressureGamma.toString(), c.pressureMin.toString()
+                c.pressureGamma.toString(), c.pressureMin.toString(), c.previousBrush.name,
+                c.previousColor.toString(), c.previousWidth.toString(), c.previousOpacity.toString(),
+                c.highlighterColor.toString(), c.highlighterWidth.toString(), c.highlighterOpacity.toString()
             ).joinToString("|")
         )
     }
@@ -521,6 +523,13 @@ class ToolState {
             c.dynamicWidth = parts.getOrNull(12)?.toBoolean() ?: false
             parts.getOrNull(13)?.toFloatOrNull()?.let { c.pressureGamma = it }
             parts.getOrNull(14)?.toFloatOrNull()?.let { c.pressureMin = it }
+            parts.getOrNull(15)?.let { c.previousBrush = BrushType.valueOf(it) }
+            parts.getOrNull(16)?.toIntOrNull()?.let { c.previousColor = it }
+            parts.getOrNull(17)?.toFloatOrNull()?.let { c.previousWidth = it }
+            parts.getOrNull(18)?.toFloatOrNull()?.let { c.previousOpacity = it }
+            parts.getOrNull(19)?.toIntOrNull()?.let { c.highlighterColor = it }
+            parts.getOrNull(20)?.toFloatOrNull()?.let { c.highlighterWidth = it }
+            parts.getOrNull(21)?.toFloatOrNull()?.let { c.highlighterOpacity = it }
         }
         // A tool that cannot be resumed sensibly. Landing in a half-finished capture because that
         // is how the last session ended is a poor way to open a page.

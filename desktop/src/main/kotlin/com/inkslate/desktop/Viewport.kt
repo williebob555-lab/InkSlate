@@ -178,6 +178,17 @@ class Viewport {
         offset = Offset(box.centerX - w / (2f * s) - leftLane / s, box.centerY - h / (2f * s))
     }
 
+    /** Whether this camera is still exactly the fitted view for the current tool lanes. */
+    fun isFitClear(box: Box, padding: Float, lane: Float, laneOnLeft: Boolean = false, otherLane: Float = 0f, bottomLane: Float = 0f, studioLane: Float = 0f, studioOnRight:Boolean=false): Boolean {
+        val expected=Viewport().also { probe ->
+            probe.viewSize=viewSize
+            probe.content=content
+            probe.fitClear(box,padding,lane,laneOnLeft,otherLane,bottomLane,studioLane,studioOnRight)
+        }
+        val pointTolerance=.75f/scale.coerceAtLeast(.001f)
+        return abs(scale-expected.scale)<.001f && abs(offset.x-expected.offset.x)<pointTolerance && abs(offset.y-expected.offset.y)<pointTolerance
+    }
+
     /** Fit the width of [box], leaving the top where it is - how a page is usually read. */
     fun fitWidth(box: Box, padding: Float = 24f) {
         if (viewSize.width <= 0f || box.width <= 0f) return

@@ -102,6 +102,10 @@ class ToolState(private val context: Context) {
     /** Select by drawing a ring round things rather than by boxing them. */
     var lassoSelect by mutableStateOf(false)
     var snapHighlighterToText by mutableStateOf(true)
+    /** The first barrel button opens the compact wheel at the pen tip. */
+    var quickActionWheel by mutableStateOf(false)
+    /** A deliberate back-and-forth scratch removes the ink it crosses. */
+    var scribbleErase by mutableStateOf(false)
     var cropMargins by mutableStateOf(false)
     var rulerVisible by mutableStateOf(false)
 
@@ -350,10 +354,11 @@ class ToolState(private val context: Context) {
         view.snapShapes = snapShapes
         view.lassoSelect = lassoSelect
         view.snapHighlighterToText = snapHighlighterToText
+        view.scribbleErase = scribbleErase
         view.cropMargins = cropMargins
         // Not the ruler: that is shown only on the document it lies on, which is the workspace's
         // to decide - see rulerOwner.
-        view.stylusButton = stylusButton
+        view.stylusButton = if (quickActionWheel) StylusButtonAction.QUICK_WHEEL else stylusButton
         view.flingEnabled = flingEnabled
         view.flingScale = flingScale
         view.newTableRows = tableRows
@@ -443,6 +448,10 @@ class ToolState(private val context: Context) {
         put("smoothing", c.smoothing.toDouble()); put("prevBrush", c.previousBrush.name)
         put("gamma", c.pressureGamma.toDouble()); put("pmin", c.pressureMin.toDouble())
         put("dynamics", c.dynamics.toDouble())
+        put("penColor", c.previousColor); put("penWidth", c.previousWidth.toDouble())
+        put("penOpacity", c.previousOpacity.toDouble())
+        put("highlightColor", c.highlighterColor); put("highlightWidth", c.highlighterWidth.toDouble())
+        put("highlightOpacity", c.highlighterOpacity.toDouble())
         put("dynamicWidth", c.dynamicWidth)
     }
 
@@ -463,6 +472,12 @@ class ToolState(private val context: Context) {
         into.pressureGamma = o.optDouble("gamma", into.pressureGamma.toDouble()).toFloat()
         into.pressureMin = o.optDouble("pmin", into.pressureMin.toDouble()).toFloat()
         into.dynamics = o.optDouble("dynamics", into.dynamics.toDouble()).toFloat()
+        into.previousColor = o.optInt("penColor", into.previousColor)
+        into.previousWidth = o.optDouble("penWidth", into.previousWidth.toDouble()).toFloat()
+        into.previousOpacity = o.optDouble("penOpacity", into.previousOpacity.toDouble()).toFloat()
+        into.highlighterColor = o.optInt("highlightColor", into.highlighterColor)
+        into.highlighterWidth = o.optDouble("highlightWidth", into.highlighterWidth.toDouble()).toFloat()
+        into.highlighterOpacity = o.optDouble("highlightOpacity", into.highlighterOpacity.toDouble()).toFloat()
         into.dynamicWidth = o.optBoolean("dynamicWidth", into.dynamicWidth)
         // never restore into a mode where the pointer appears to do nothing
         if (into.tool == Tool.SELECT) into.tool = Tool.DRAW
@@ -487,6 +502,8 @@ class ToolState(private val context: Context) {
             .putBoolean(K_SNAP, snapShapes)
             .putBoolean(K_LASSO, lassoSelect)
             .putBoolean(K_SNAP_TEXT, snapHighlighterToText)
+            .putBoolean(K_QUICK_WHEEL, quickActionWheel)
+            .putBoolean(K_SCRIBBLE_ERASE, scribbleErase)
             .putBoolean(K_CROP, cropMargins)
             .putBoolean(K_FLING, flingEnabled)
             .putBoolean(K_REMEMBER_VIEW, rememberView)
@@ -518,6 +535,8 @@ class ToolState(private val context: Context) {
         snapShapes = sp.getBoolean(K_SNAP, false)
         lassoSelect = sp.getBoolean(K_LASSO, false)
         snapHighlighterToText = sp.getBoolean(K_SNAP_TEXT, true)
+        quickActionWheel = sp.getBoolean(K_QUICK_WHEEL, false)
+        scribbleErase = sp.getBoolean(K_SCRIBBLE_ERASE, false)
         cropMargins = sp.getBoolean(K_CROP, false)
         flingEnabled = sp.getBoolean(K_FLING, true)
         rememberView = sp.getBoolean(K_REMEMBER_VIEW, true)
@@ -562,6 +581,8 @@ class ToolState(private val context: Context) {
         private const val K_SNAP = "snap"
         private const val K_LASSO = "lasso"
         private const val K_SNAP_TEXT = "snap_text"
+        private const val K_QUICK_WHEEL = "quick_action_wheel"
+        private const val K_SCRIBBLE_ERASE = "scribble_erase"
         private const val K_CROP = "crop_margins"
         private const val K_FLING = "fling"
         private const val K_REMEMBER_VIEW = "remember_view"

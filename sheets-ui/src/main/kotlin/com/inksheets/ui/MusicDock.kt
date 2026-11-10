@@ -28,7 +28,7 @@ import kotlinx.coroutines.launch
 
 /** One bounded workspace: the dock chooses the arrangement which leaves the fitted score larger. */
 @Composable
-internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> Unit) {
+internal fun BoxScope.MusicDock(state: SheetsState) {
     val density=LocalDensity.current
     val dockScope=rememberCoroutineScope()
     fun closeAndReset() {
@@ -74,7 +74,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
         val annotation=Perform.isOn!=null && !Perform.on(PerformAction.FULLSCREEN)
         val essentials=annotation && maxHeight<340.dp
         val category=state.expandedMusicCategory
-        val configuredWidgets=state.shelf.order.filter { it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }
+        val configuredWidgets=state.shelf.order.filter { it!=ShelfWidget.SETTINGS && it !in state.shelf.hidden && (it!=ShelfWidget.SCORE ||state.readMusic) && (it!=ShelfWidget.SESSION || state.companion.leading || state.companion.following!=null) }+ShelfWidget.SETTINGS
         val workspace=expanded && !essentials && !panels.open && !SelfRecorder.recording &&
             (category!=null || (!issue && configuredWidgets.isNotEmpty()))
         val widgets=if(workspace && category==null && !issue)configuredWidgets else emptyList()
@@ -100,77 +100,81 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
         val controllers={state.expandMusicCategory(ShelfWidget.DEVICES,"controllers")}
         val goTo={state.expandMusicCategory(ShelfWidget.SCORE,"bar")}
         val railWidth=state.shelf.landscapeWidth.dp
+        var appliedInsets by remember(state) {mutableStateOf<List<Any>?>(null)}
         LaunchedEffect(visible,bottom,rail,railRight,panels.height,state.shelf.landscapeWidth) {
             panels.base=bottom
             val height=if(visible)bottom+panels.height else 0f
+            val nextInsets=listOf(height,if(rail)state.shelf.landscapeWidth else 0f,railRight)
+            val keepDefault=appliedInsets!=nextInsets && Perform.viewportIsDefault?.invoke()==true
             state.shelfHeight=height;Overlays.bottomOut=height.dp
             state.platform.setMusicShelfHeight(height)
             Overlays.studioOut=if(rail)railWidth else 0.dp
             Overlays.studioOnRight=railRight
             state.platform.setStudioRailSide(railRight)
             state.platform.setStudioRailWidth(if(rail)state.shelf.landscapeWidth else 0f)
+            appliedInsets=nextInsets
+            if(keepDefault)Perform.recentre?.invoke()
         }
         if(rail) Box(modifier=Modifier.align(if(railRight)Alignment.TopEnd else Alignment.TopStart).width(railWidth)
             .testTag("music-dock-rail")
             .fillMaxHeight().padding(bottom=bottom.dp)) {
-            Surface(tonalElevation=2.dp,modifier=Modifier.fillMaxSize()) {
+            Surface(tonalElevation=2.dp,modifier=Modifier.fillMaxSize().padding(
+                start=if(railRight)12.dp else 0.dp,end=if(railRight)0.dp else 12.dp)) {
                 Column {
-                    if(expanded) Row(Modifier.fillMaxWidth().height(44.dp)
-                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha=.4f))
-                        .testTag("music-rail-resize").semantics {contentDescription="Resize dock; pull closed to reset view"}
-                        .pointerInput(railRight) {
-                            var pull=0f
-                            detectDragGestures(onDragStart={pull=0f},onDragEnd={if(pull < -72f*density.density)closeAndReset()}) {change,amount ->
-                                change.consume();val by=if(railRight)-amount.x else amount.x;pull+=by
-                                state.shelf.resizeLandscape(by/density.density)
-                            }
-                        }.padding(horizontal=10.dp),verticalAlignment=Alignment.CenterVertically) {
-                        Icon(Icons.Default.DragHandle,null,Modifier.size(20.dp))
-                        Text("Resize",Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelSmall,maxLines=1)
-                    }
                     Box(Modifier.weight(1f)) {
                         if(category!=null) CompositionLocalProvider(LocalMusicCategoryRail provides true) {
                             MusicCategoryBar(state,position)
                         } else Column {
                             if(state.companion.leading || state.companion.following!=null) SessionQuickActions(state,quick=true)
-                            Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-                                widgets.forEach { widget ->
-                                    Box(Modifier.fillMaxWidth().height(132.dp)) { MusicDockWidget(state,widget,position,controllers,goTo) }
-                                    HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f))
+                            BoxWithConstraints(Modifier.weight(1f)) {
+                                val cellHeight=maxOf(132.dp,maxHeight/widgets.size.coerceAtLeast(1))
+                                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                                    widgets.forEach { widget ->
+                                        Box(Modifier.fillMaxWidth().height(cellHeight)) { MusicDockWidget(state,widget,position,controllers,goTo) }
+                                        HorizontalDivider(color=MaterialTheme.colorScheme.outlineVariant.copy(alpha=.45f))
+                                    }
                                 }
                             }
                         }
                     }
-                    if(expanded) {HorizontalDivider();settings()}
                 }
             }
             Box(Modifier.align(if(railRight)Alignment.CenterStart else Alignment.CenterEnd).width(12.dp).fillMaxHeight()
-                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha=.35f))
-                .pointerInput(railRight) {detectDragGestures {change,amount ->
-                    change.consume();state.shelf.resizeLandscape((if(railRight)-amount.x else amount.x)/density.density)
-                }})
+                .testTag("music-rail-resize")
+                .pointerInput(railRight) {
+                    var pull=0f
+                    detectDragGestures(onDragStart={pull=0f},onDragEnd={if(pull < -72f*density.density)closeAndReset()}) {change,amount ->
+                        change.consume();val by=if(railRight)-amount.x else amount.x;pull+=by
+                        state.shelf.resizeLandscape(by/density.density)
+                    }
+                }) {
+                Box(Modifier.align(Alignment.Center).fillMaxWidth().height(48.dp)
+                    .semantics {contentDescription="Resize dock; pull closed to reset view"}) {
+                Box(Modifier.align(Alignment.Center).width(3.dp).fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.42f),MaterialTheme.shapes.small))
+                }
+            }
         }
         if(visible) Surface(tonalElevation=3.dp,shadowElevation=2.dp,modifier=Modifier.align(Alignment.BottomStart).fillMaxWidth()
             .onSizeChanged { bottom=with(density){it.height.toDp().value} }) {
             Column {
                 if(portrait && expanded && !rail) {
-                    Row(Modifier.fillMaxWidth().height(44.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha=.5f))
+                    Box(Modifier.fillMaxWidth().height(12.dp)
                         .testTag("music-dock-resize").semantics {contentDescription="Resize dock; pull down to close and reset view"}
                         .pointerInput(Unit) {
                             var pull=0f
                             detectDragGestures(onDragStart={pull=0f},onDragEnd={if(pull < -72f*density.density)closeAndReset()}) {change,amount ->
                                 change.consume();val by=-amount.y;pull+=by;state.shelf.resizePortrait(by/density.density)
                             }
-                        }.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
-                        Box(Modifier.width(48.dp).height(3.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.55f),MaterialTheme.shapes.small))
-                        Text("Resize · pull down to reset",Modifier.padding(start=10.dp),style=MaterialTheme.typography.labelSmall,maxLines=1)
+                        }) {
+                        Box(Modifier.align(Alignment.Center).width(48.dp).height(3.dp)
+                            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha=.5f),MaterialTheme.shapes.small))
                     }
                 }
                 PlaybackProblem(state)
                 if(category!=null && !rail) Box(Modifier.fillMaxWidth().height(workspaceHeight).testTag("music-dock-shelf")) {
                     CompositionLocalProvider(LocalMusicCategoryRail provides false) {MusicCategoryBar(state,position)}
                 }
-                if(category!=null && !rail && expanded) {HorizontalDivider(thickness=2.dp);settings()}
                 if(Recording.loading) Row(Modifier.padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(15.dp),strokeWidth=2.dp)
                     Text("Opening recording…",Modifier.weight(1f).padding(start=8.dp),style=MaterialTheme.typography.labelSmall)
@@ -206,7 +210,7 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
                         val selected=widget==selectedWidget
                         Text(widget.label,Modifier.widthIn(min=84.dp).fillMaxHeight()
                             .semantics {this.selected=selected;contentDescription="${widget.label} quick tab"}
-                            .background(if(selected)widgetColor(widget).copy(alpha=.13f)else androidx.compose.ui.graphics.Color.Transparent)
+                            .background(if(selected && widget!=ShelfWidget.SETTINGS)widgetColor(widget).copy(alpha=.13f)else MaterialTheme.colorScheme.surface)
                             .clickable {scope.launch{
                                 selectingWidget=true;selectedWidget=widget
                                 // A tab is a direct navigation command: move its workspace in the
@@ -227,7 +231,6 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
                     }
                 }
                 }
-                if(!rail && expanded && categoryCompact) {HorizontalDivider(thickness=2.dp);settings()}
                 if(expanded && !rail && categoryCompact && (state.companion.leading || state.companion.following!=null)) SessionQuickActions(state,quick=true)
                 if(showLiveStatus) MusicLiveStatus(state,position)
                 if(!expanded) Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
@@ -302,8 +305,8 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
 }
 
 @Composable private fun DockWorkspaceEditor(state:SheetsState,close:()->Unit) {
-    SheetDialog("Arrange workspace",onDismiss=close,buttons={TextButton(onClick={state.shelf.reset();state.shelf.chooseView(MusicDockView.AUTO)}) {Text("Reset")};TextButton(onClick=close){Text("Done")}}) {
-        Column(Modifier.verticalScroll(rememberScrollState())) {
+    SheetDialog("Arrange workspace",onDismiss=close,chromeInScroll=true,buttons={TextButton(onClick={state.shelf.reset();state.shelf.chooseView(MusicDockView.AUTO)}) {Text("Reset")};TextButton(onClick=close){Text("Done")}}) {
+        Column {
             Text("View",style=MaterialTheme.typography.titleSmall)
             Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                 MusicDockView.entries.forEach {view ->FilterChip(selected=state.shelf.view==view,onClick={state.shelf.chooseView(view)},label={Text(view.label)})}
@@ -313,14 +316,16 @@ internal fun BoxScope.MusicDock(state: SheetsState, settings: @Composable () -> 
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 StudioRailSide.entries.forEach {side->FilterChip(selected=state.shelf.railSide==side,onClick={state.shelf.chooseRailSide(side)},label={Text(side.label)})}
             }
-            state.shelf.order.forEachIndexed {index,widget ->
+            val editable=state.shelf.order.filterNot {it==ShelfWidget.SETTINGS}
+            editable.forEachIndexed {index,widget ->
                 Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
                     Checkbox(widget !in state.shelf.hidden,{state.shelf.show(widget,it)})
                     Text(widget.label,Modifier.weight(1f),color=widgetColor(widget))
                     IconButton(onClick={state.shelf.move(widget,-1)},enabled=index>0){Icon(Icons.Default.ArrowUpward,"Move ${widget.label} earlier")}
-                    IconButton(onClick={state.shelf.move(widget,1)},enabled=index<state.shelf.order.lastIndex){Icon(Icons.Default.ArrowDownward,"Move ${widget.label} later")}
+                    IconButton(onClick={state.shelf.move(widget,1)},enabled=index<editable.lastIndex){Icon(Icons.Default.ArrowDownward,"Move ${widget.label} later")}
                 }
             }
+            Text("Settings always stays at the end.",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Playback and page controls stay available independently of widget order.",style=MaterialTheme.typography.bodySmall)
         }
     }

@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.background
@@ -914,6 +915,8 @@ internal fun SheetDialog(
      * the page underneath still turns and takes the pen while it is open.
      */
     movable: Boolean = false,
+    /** Put title and actions in the body's scroll instead of reserving permanent chrome. */
+    chromeInScroll: Boolean = false,
     content: @Composable () -> Unit
 ) {
       if(LocalMusicCategoryContent.current!=null) {
@@ -922,7 +925,7 @@ internal fun SheetDialog(
       }
     val reader=LocalReaderPanelState.current
     if(reader!=null && !reader.homeInFront && !ScoreTools.checking && !LocalInsideReaderPanel.current && title !in setOf("Metronome","Tuner")) {
-        ReaderPanel(title,onDismiss,buttons,content)
+        ReaderPanel(title,onDismiss,buttons,chromeInScroll,content)
         return
     }
     if (movable) {
@@ -943,7 +946,16 @@ internal fun SheetDialog(
             // As wide as it wants on a tablet or laptop, and no wider than a phone's screen.
             modifier = Modifier.widthIn(max = if (wide) 880.dp else 440.dp).fillMaxWidth().heightIn(max = maxHeight)
         ) {
-            Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 20.dp)) {
+            if(chromeInScroll) Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(start=20.dp,end=8.dp,top=8.dp,bottom=12.dp)) {
+                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically) {
+                    Text(title,style=MaterialTheme.typography.titleMedium,modifier=Modifier.weight(1f))
+                    IconButton(onClick=onDismiss){Icon(Icons.Default.Close,"Close")}
+                }
+                Box(Modifier.fillMaxWidth().padding(end=12.dp)){content()}
+                Spacer(Modifier.size(6.dp))
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){footer()}
+            } else Column(Modifier.padding(start = 20.dp, end = 8.dp, top = 8.dp, bottom = 20.dp)) {
                 // Like every panel: an X at the top right, and the title swiped down closes it.
                 var pulled by remember { mutableStateOf(0f) }
                 Row(

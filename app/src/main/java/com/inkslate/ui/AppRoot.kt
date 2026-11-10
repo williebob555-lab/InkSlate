@@ -490,7 +490,15 @@ fun AppRoot(
                         onCloseTab = { id -> tabOf(id)?.closeRequested?.value = true },
                         onCloseOthers = ::closeOthers,
                         onCloseAll = ::closeAll,
-                        onNewTab = { homeShown = true; screen = Screen.Home },
+                        onNewTab = {
+                            homeShown = true
+                            // InkSlate's + button is for opening another document, so begin beside
+                            // the document the user is already working in instead of making them
+                            // traverse the library again. InkSheets keeps its purpose-built Home.
+                            screen = if (com.inkslate.AppFlavor.home == null) {
+                                Screen.Browser(focusedTab?.file?.parentFile?.takeIf { it.isDirectory }?.absolutePath)
+                            } else Screen.Home
+                        },
                         onLeaveFullscreen = if (immersive.isFullscreen) {
                             { immersive.set(false) }
                         } else null

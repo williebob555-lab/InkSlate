@@ -135,13 +135,14 @@ class MusicShelfRedesignTest {
             runDesktopComposeUiTest(width = 1280, height = 800) {
                 setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
                 waitForIdle()
-                onAllNodesWithContentDescription("Arrange tabs").onFirst().performClick()
+                onNodeWithContentDescription("Reader settings").performScrollTo().performClick()
+                onNodeWithContentDescription("Arrange tabs").performClick()
                 waitForIdle()
                 onNodeWithContentDescription("Move Pages later").performScrollTo().performClick()
                 runOnIdle { assertEquals(ShelfWidget.PARTS, state.shelf.order.first()) }
-                onNodeWithText("Reset").performClick()
+                onNodeWithText("Reset").performScrollTo().performClick()
                 runOnIdle { assertEquals(ShelfWidget.PAGES, state.shelf.order.first()) }
-                onNodeWithText("Done").performClick()
+                onNodeWithText("Done").performScrollTo().performClick()
                 runOnIdle {
                     ShelfWidget.entries.forEach { state.shelf.show(it, false) }
                     Recording.play(state, state.current!!.audio.first(), state.current)
@@ -158,8 +159,10 @@ class MusicShelfRedesignTest {
                 assertTrue("Active playback keeps its stop control when the shelf is folded", platform.shelfHeight > 0)
                 onNodeWithContentDescription("Show buttons").performClick()
                 waitForIdle()
-                onNodeWithText("Tab layout").performClick()
-                onNodeWithText("Reset").performClick()
+                onNodeWithContentDescription("Reader settings").performScrollTo().performClick()
+                waitForIdle()
+                onNodeWithContentDescription("Arrange tabs").performClick()
+                onNodeWithText("Reset").performScrollTo().performClick()
                 runOnIdle { assertTrue(state.shelf.hidden.isEmpty()) }
             }
         } finally { Recording.end(state); Recording.player = null }
@@ -168,6 +171,7 @@ class MusicShelfRedesignTest {
     @Test fun `corrupt arrangement preference retains each widget once`() {
         assertEquals(ShelfWidget.entries.toSet(), MusicShelfPreferences.decode("SCORE,bogus,SCORE").toSet())
         assertEquals(ShelfWidget.entries.size, MusicShelfPreferences.decode("SCORE,bogus,SCORE").size)
+        assertEquals(ShelfWidget.SETTINGS,MusicShelfPreferences.decode("SCORE,bogus,SCORE").last())
     }
 
     @Test fun `phone widget shortcuts expose distant tools without opening layout settings`() {

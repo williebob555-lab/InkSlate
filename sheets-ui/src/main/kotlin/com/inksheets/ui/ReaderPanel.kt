@@ -2,6 +2,8 @@ package com.inksheets.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
@@ -55,7 +57,7 @@ internal object ReaderPanels {
 
 /** A bounded extension of the viewer's bar, reserving real space in the score viewport. */
 @OptIn(ExperimentalLayoutApi::class)
-@Composable internal fun ReaderPanel(title:String, close:()->Unit, buttons:(@Composable ()->Unit)?, content:@Composable ()->Unit) {
+@Composable internal fun ReaderPanel(title:String, close:()->Unit, buttons:(@Composable ()->Unit)?, chromeInScroll:Boolean=false, content:@Composable ()->Unit) {
     val density=LocalDensity.current
     val owner=LocalReaderPanelState.current
     val stack=remember(owner){ReaderPanels.forState(owner)}
@@ -80,7 +82,14 @@ internal object ReaderPanels {
         Surface(tonalElevation=5.dp,shadowElevation=3.dp,modifier=Modifier.align(Alignment.BottomStart)
             .fillMaxWidth().padding(bottom=stack.base.dp).heightIn(max=limit)
             .onSizeChanged {ReaderPanels.resize(stack,id,with(density){it.height.toDp().value})}) {
-            Column(Modifier.padding(horizontal=12.dp)) {
+            if(chromeInScroll) Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal=12.dp,vertical=4.dp)) {
+                Row(Modifier.fillMaxWidth().height(36.dp),verticalAlignment=Alignment.CenterVertically) {
+                    Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,color=MaterialTheme.colorScheme.primary,maxLines=1,overflow=TextOverflow.Ellipsis)
+                    IconButton(onClick=close,modifier=Modifier.size(32.dp)){Icon(Icons.Default.Close,"Close",Modifier.size(18.dp))}
+                }
+                CompositionLocalProvider(LocalInsideReaderPanel provides true,content=content)
+                buttons?.let {FlowRow(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.End){it()}}
+            } else Column(Modifier.padding(horizontal=12.dp)) {
                 Row(Modifier.fillMaxWidth().height(32.dp),verticalAlignment=Alignment.CenterVertically) {
                     Text(title,Modifier.weight(1f),style=MaterialTheme.typography.titleSmall,color=MaterialTheme.colorScheme.primary,maxLines=1,overflow=TextOverflow.Ellipsis)
                     IconButton(onClick=close,modifier=Modifier.size(30.dp)){Icon(Icons.Default.Close,"Close",Modifier.size(18.dp))}

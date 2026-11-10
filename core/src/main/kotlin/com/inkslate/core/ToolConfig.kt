@@ -50,6 +50,7 @@ enum class StylusButtonAction(val label: String, val detail: String) {
     REDO("Redo", "One step forward per press"),
     NEXT_PRESET("Next pen", "Steps through your saved pens"),
     HIGHLIGHTER("Highlighter", "Switches to the highlighter and back"),
+    QUICK_WHEEL("Quick actions", "Opens the compact pen wheel at the tip"),
     NONE("Nothing", "Ignore the button entirely");
 
     /** True when the action lasts as long as the button is down, rather than firing once. */
@@ -190,6 +191,13 @@ class ToolConfig(
     var dynamics: Float = 1f,
     /** Remembers the brush in use before the highlighter was toggled on. */
     var previousBrush: BrushType = BrushType.BALLPOINT,
+    /** Pen and highlighter are two real tools, not one tool recoloured on every toggle. */
+    var previousColor: Int = if (brush == BrushType.HIGHLIGHTER) 0xFF000000.toInt() else color,
+    var previousWidth: Float = if (brush == BrushType.HIGHLIGHTER) BrushType.BALLPOINT.defaultWidth else strokeWidth,
+    var previousOpacity: Float = if (brush == BrushType.HIGHLIGHTER) 1f else opacity,
+    var highlighterColor: Int = if (brush == BrushType.HIGHLIGHTER) color else 0xFFFDE047.toInt(),
+    var highlighterWidth: Float = if (brush == BrushType.HIGHLIGHTER) strokeWidth else BrushType.HIGHLIGHTER.defaultWidth,
+    var highlighterOpacity: Float = if (brush == BrushType.HIGHLIGHTER) opacity else 1f,
     /**
      * Read [strokeWidth] as a thickness on the glass rather than on the page.
      *
@@ -235,6 +243,12 @@ class ToolConfig(
         pressureMin = other.pressureMin
         dynamics = other.dynamics
         previousBrush = other.previousBrush
+        previousColor = other.previousColor
+        previousWidth = other.previousWidth
+        previousOpacity = other.previousOpacity
+        highlighterColor = other.highlighterColor
+        highlighterWidth = other.highlighterWidth
+        highlighterOpacity = other.highlighterOpacity
         dynamicWidth = other.dynamicWidth
     }
 
@@ -246,17 +260,44 @@ class ToolConfig(
      */
     fun toggleHighlighter() {
         if (brush == BrushType.HIGHLIGHTER) {
+            highlighterColor = color
+            highlighterWidth = strokeWidth
+            highlighterOpacity = opacity
             brush = previousBrush
-            strokeWidth = previousBrush.defaultWidth
+            color = previousColor
+            strokeWidth = previousWidth
+            opacity = previousOpacity
         } else {
             previousBrush = brush
+            previousColor = color
+            previousWidth = strokeWidth
+            previousOpacity = opacity
             brush = BrushType.HIGHLIGHTER
-            strokeWidth = BrushType.HIGHLIGHTER.defaultWidth
+            color = highlighterColor
+            strokeWidth = highlighterWidth
+            opacity = highlighterOpacity
         }
         tool = Tool.DRAW
     }
 
     fun selectBrush(b: BrushType) {
+        if (b == BrushType.HIGHLIGHTER) {
+            if (brush != BrushType.HIGHLIGHTER) toggleHighlighter()
+            tool = Tool.DRAW
+            return
+        }
+        if (brush == BrushType.HIGHLIGHTER) {
+            highlighterColor = color
+            highlighterWidth = strokeWidth
+            highlighterOpacity = opacity
+            brush = b
+            color = previousColor
+            strokeWidth = if (previousBrush == b) previousWidth else b.defaultWidth
+            opacity = previousOpacity
+            previousBrush = b
+            tool = Tool.DRAW
+            return
+        }
         // adopt the brush's natural width unless the user had tuned it by hand
         val wasDefault = kotlin.math.abs(strokeWidth - brush.defaultWidth) < 0.01f
         if (b != BrushType.HIGHLIGHTER) previousBrush = b

@@ -44,6 +44,7 @@ internal fun widgetColor(widget: ShelfWidget) = when(widget) {
     ShelfWidget.ANNOTATION -> Color(0xFFB05271)
     ShelfWidget.DEVICES -> Color(0xFF2C977D)
     ShelfWidget.SESSION -> Color(0xFFC06B46)
+    ShelfWidget.SETTINGS -> Color(0xFF74777D)
 }
 
 @Composable
@@ -70,7 +71,8 @@ private fun WidgetHeading(widget: ShelfWidget, title: String, actionDescription:
 
 @Composable
 internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: Long, controllers: () -> Unit, goToBar: () -> Unit) {
-    Column(Modifier.fillMaxSize().background(widgetColor(widget).copy(alpha=.065f)).padding(horizontal=10.dp,vertical=if(LocalDockDense.current)4.dp else 5.dp)) {
+    val background=if(widget==ShelfWidget.SETTINGS)Color.Transparent else widgetColor(widget).copy(alpha=.065f)
+    Column(Modifier.fillMaxSize().background(background).padding(horizontal=10.dp,vertical=if(LocalDockDense.current)4.dp else 5.dp)) {
         when(widget) {
             ShelfWidget.SESSION -> SessionWidget(state)
             ShelfWidget.PAGES -> {
@@ -225,6 +227,10 @@ internal fun MusicDockWidget(state: SheetsState, widget: ShelfWidget, position: 
                     DockAction(Icons.Default.SettingsInputComponent,"Pedals","Pedals and watch",onClick=controllers)
                     DockAction(Icons.Default.Devices,if(devices.size>2)"+${devices.size-2}" else "Group","Play together") {state.companionOpen=true}
                 }
+            }
+            ShelfWidget.SETTINGS -> {
+                WidgetHeading(widget,"Settings","Reader settings") {state.expandMusicCategory(ShelfWidget.SETTINGS)}
+                ReaderDockControls(state)
             }
         }
     }

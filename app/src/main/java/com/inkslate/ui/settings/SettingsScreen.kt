@@ -248,6 +248,20 @@ fun SettingsScreen(onBack: () -> Unit) {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Stylus")
 
+            SwitchRow(
+                title = "Pen button quick actions",
+                subtitle = "Press the first barrel button to open a small wheel at the pen tip " +
+                    "for pen, highlighter, eraser, colour and size.",
+                checked = tools.quickActionWheel
+            ) { tools.quickActionWheel = it; tools.persistNow() }
+
+            SwitchRow(
+                title = "Scribble to erase",
+                subtitle = "Scratch back and forth over existing ink to remove it. Ordinary " +
+                    "writing is kept unless the gesture is clearly a scribble and crosses ink.",
+                checked = tools.scribbleErase
+            ) { tools.scribbleErase = it; tools.persistNow() }
+
             // The button is configured where it is used rather than here. A setting three
             // screens away from the pen it belongs to is a setting nobody finds, and a button is
             // now a whole pen profile - colour, brush and width included - which is the toolbar's

@@ -33,6 +33,7 @@ import com.inkslate.core.Tool
 import com.inkslate.core.Box
 import com.inkslate.core.EraserMode
 import com.inkslate.core.InkCanvas
+import com.inkslate.core.ScribbleErase
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.InputMode
 import com.inkslate.core.ToolConfig
@@ -535,6 +536,7 @@ class DrawingView @JvmOverloads constructor(
      */
     var textSnapper: ((page: Int, points: List<Pair<Float, Float>>) -> List<RectF>)? = null
     var snapHighlighterToText: Boolean = false
+    var scribbleErase: Boolean = false
 
     // ---- ruler ---------------------------------------------------------------
 
@@ -1015,6 +1017,9 @@ class DrawingView @JvmOverloads constructor(
      */
     var onStylusButtonPressed: ((StylusButtonAction) -> Unit)? = null
 
+    /** Opens the compact wheel at the last reported pen-tip position, in this view's pixels. */
+    var onQuickActionWheelRequested: ((x: Float, y: Float) -> Unit)? = null
+
     /**
      * Raised the first time each pen button reports itself, with 1 or 2.
      *
@@ -1050,13 +1055,20 @@ class DrawingView @JvmOverloads constructor(
         if (index == 2) button2Config else button1Config
 
     /** Edge-detect the buttons, so a one-shot action fires once and not on every sample. */
-    private fun noteStylusButton(index: Int) {
+    private var lastStylusX = 0f
+    private var lastStylusY = 0f
+
+    private fun noteStylusButton(index: Int, x: Float = lastStylusX, y: Float = lastStylusY) {
+        lastStylusX = x
+        lastStylusY = y
         if (index == stylusButtonDown) return
         stylusButtonDown = index
         if (index == 0) return
         onStylusButtonSeen?.invoke(index)
         val action = actionForButton(index)
-        if (!action.isHeld && action != StylusButtonAction.NONE) {
+        if (action == StylusButtonAction.QUICK_WHEEL) {
+            onQuickActionWheelRequested?.invoke(lastStylusX, lastStylusY)
+        } else if (!action.isHeld && action != StylusButtonAction.NONE) {
             onStylusButtonPressed?.invoke(action)
         }
     }
@@ -1075,13 +1087,13 @@ class DrawingView @JvmOverloads constructor(
         }
         when (event.actionMasked) {
             MotionEvent.ACTION_BUTTON_PRESS -> {
-                noteStylusButton(buttonIndexOf(event.buttonState)); return true
+                noteStylusButton(buttonIndexOf(event.buttonState), event.x, event.y); return true
             }
             MotionEvent.ACTION_BUTTON_RELEASE -> {
-                noteStylusButton(buttonIndexOf(event.buttonState)); return true
+                noteStylusButton(buttonIndexOf(event.buttonState), event.x, event.y); return true
             }
             MotionEvent.ACTION_HOVER_MOVE, MotionEvent.ACTION_HOVER_ENTER ->
-                noteStylusButton(buttonIndexOf(event.buttonState))
+                noteStylusButton(buttonIndexOf(event.buttonState), event.x, event.y)
             MotionEvent.ACTION_HOVER_EXIT -> noteStylusButton(0)
         }
         return super.onGenericMotionEvent(event)
@@ -2651,6 +2663,18 @@ class DrawingView @JvmOverloads constructor(
         syncInverse(); invalidate(); onTransformChanged?.invoke(); reportVisiblePages()
     }
 
+    /** True only while the page still matches the current fitted tool lanes. */
+    fun isAtFittedView(): Boolean {
+        if (width == 0 || height == 0 || slots.isEmpty()) return false
+        val expected = Matrix()
+        fitInto(docBounds(), expected)
+        val here = FloatArray(9)
+        val there = FloatArray(9)
+        pageToView.getValues(here)
+        expected.getValues(there)
+        return here.indices.all { i -> kotlin.math.abs(here[i] - there[i]) <= if (i == Matrix.MSCALE_X || i == Matrix.MSCALE_Y) .001f else .75f }
+    }
+
     fun fitWidth() {
         if (width == 0 || height == 0 || slots.isEmpty()) return
         val b = docBounds()
@@ -3292,8 +3316,11 @@ class DrawingView @JvmOverloads constructor(
         // a button is held reports no buttons at all, and reading that as a release then a fresh
         // press would fire a one-shot action twice.
         val heldButton = if (isStylus) buttonIndexOf(event.buttonState) else 0
-        if (isStylus) noteStylusButton(heldButton)
+        if (isStylus) noteStylusButton(heldButton, event.getX(idx), event.getY(idx))
         val buttonAction = actionForButton(heldButton)
+        // The wheel owns the pen until the barrel is released; otherwise touching a wedge would
+        // also leave a dot or begin a stroke underneath the overlay.
+        if (heldButton > 0 && buttonAction == StylusButtonAction.QUICK_WHEEL) return true
         // A held button brings its whole profile with it, so the stroke it draws is that profile's
         // colour, brush and width rather than the current pen's at a different tool.
         heldButtonConfig =
@@ -4236,6 +4263,26 @@ class DrawingView @JvmOverloads constructor(
         // What was drawn is what is kept. Tidying rough shapes into lines and circles was an
         // option once; it rewrote handwriting on its own, and it is gone.
         val finished = s
+
+        // A scratch is only consumed when it actually crosses existing ink. That second check is
+        // important: a fast zig-zag written in empty space remains exactly what the user drew.
+        if (scribbleErase && liveKind == StrokeKind.FREEHAND && !finished.isHighlighter &&
+            ScribbleErase.isScribble(l)
+        ) {
+            erasedThisGesture = ArrayList()
+            addedThisGesture = ArrayList()
+            val path = ArrayList<Float>(l.size * 2)
+            l.forEach { p -> path.add(p.x); path.add(p.y) }
+            val previousReach = liveEraser
+            liveEraser = max(3f, finished.baseWidth * 2.25f)
+            eraseAlong(path)
+            liveEraser = previousReach
+            if (erasedThisGesture.isNotEmpty()) {
+                pushEraseOp()
+                invalidate()
+                return
+            }
+        }
 
         // A highlighter dragged across a line becomes clean bars over the words it crossed.
         // Falls back to the freehand stroke when there is no text layer, which is what a scanned

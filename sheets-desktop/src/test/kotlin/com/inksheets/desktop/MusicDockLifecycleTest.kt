@@ -104,13 +104,13 @@ class MusicDockLifecycleTest {
         runDesktopComposeUiTest(width = 1280, height = 800) {
             setContent { MaterialTheme { Box(Modifier.fillMaxSize()) { ActionStrip(state) } } }
             waitForIdle()
-            onNodeWithText("Reset").performClick()
+            onNodeWithText("Reset").performScrollTo().performClick()
             runOnIdle {
                 assertEquals(MusicDockView.AUTO, state.shelf.view)
                 assertEquals(ShelfWidget.entries.toList(), state.shelf.order)
                 assertTrue(state.shelf.hidden.isEmpty())
             }
-            onNodeWithText("Done").performClick()
+            onNodeWithText("Done").performScrollTo().performClick()
         }
     }
 

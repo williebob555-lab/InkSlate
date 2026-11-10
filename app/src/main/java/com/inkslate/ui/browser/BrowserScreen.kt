@@ -575,7 +575,7 @@ private fun EntryActionsSheet(
         title = { Text(entry.name, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             Column {
-                DropdownMenuItem(text = { Text(if (pinned) "Unpin" else "Pin to top") }, onClick = onTogglePin)
+                DropdownMenuItem(text = { Text(if (pinned) "Unpin from Home" else "Pin to Home") }, onClick = onTogglePin)
                 DropdownMenuItem(text = { Text("Rename") }, onClick = onRename)
                 DropdownMenuItem(text = { Text("Move to...") }, onClick = onMove)
                 DropdownMenuItem(
