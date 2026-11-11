@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -50,6 +52,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -65,6 +68,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -498,8 +502,14 @@ fun EditorScreen(
     LaunchedEffect(doc) {
         val d = doc ?: return@LaunchedEffect
         if (!strokesLoaded) {
-            model.setStrokes(d.allStrokes())
-            strokesLoaded = true
+            // Flattening a large legacy notebook walks every page and can allocate a sizeable
+            // reference list. It has no UI dependency, so doing it on the composition thread is
+            // exactly the kind of invisible preparation that made menus stop scrolling.
+            val loaded = withContext(Dispatchers.Default) { d.allStrokes() }
+            if (doc === d && !strokesLoaded) {
+                model.setStrokes(loaded)
+                strokesLoaded = true
+            }
         }
     }
 
@@ -1768,6 +1778,88 @@ fun EditorScreen(
 
     val linkSummary = com.inkslate.ui.rememberLinkSummary()
 
+    val documentMenu: @Composable () -> Unit = {
+        DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Share...") },
+                onClick = { menuOpen = false; shareDocument() }
+            )
+            DropdownMenuItem(
+                text = { Text("Export...") },
+                onClick = { menuOpen = false; exportOpen = true }
+            )
+            DropdownMenuItem(
+                text = { Text("Checkpoint this version") },
+                onClick = { menuOpen = false; checkpoint() }
+            )
+            DropdownMenuItem(
+                text = { Text("Version history...") },
+                onClick = { menuOpen = false; versionsOpen = true }
+            )
+            DropdownMenuItem(
+                text = { Text("Rules for this file") },
+                onClick = { menuOpen = false; showFileRules = true }
+            )
+            DropdownMenuItem(
+                text = { Text("Measure save speed") },
+                onClick = {
+                    menuOpen = false
+                    syncPage()
+                    benchRunning = true
+                    scope.launch {
+                        val text = withContext(Dispatchers.IO) {
+                            com.inkslate.pdf.SaveBenchmark.run(
+                                context, file, doc!!.ink,
+                                prefs.effectiveFor(file.absolutePath).inkFormat
+                            )
+                        }
+                        benchRunning = false
+                        benchReport = text
+                    }
+                }
+            )
+            PageFilter.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (pageFilter == option) "\u2713  " + option.label
+                            else "      " + option.label
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        pageFilter = option
+                        drawingView.value?.pageFilter = option
+                    }
+                )
+            }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text("Pages...") },
+                onClick = { menuOpen = false; pagesOpen = true }
+            )
+            DropdownMenuItem(
+                text = { Text("Fit page") },
+                onClick = { menuOpen = false; drawingView.value?.fitToScreen() }
+            )
+            DropdownMenuItem(
+                text = { Text("Fit width") },
+                onClick = { menuOpen = false; drawingView.value?.fitWidth() }
+            )
+            DropdownMenuItem(
+                text = { Text("Reset view") },
+                onClick = { menuOpen = false; drawingView.value?.resetView() }
+            )
+            DropdownMenuItem(
+                text = { Text("Clear this page") },
+                onClick = {
+                    menuOpen = false
+                    drawingView.value?.clearPage(); dirty = true
+                }
+            )
+        }
+    }
+
     val topBar: @Composable () -> Unit = {
         // In focus mode the app bar goes too, leaving only the drawing tools.
         if (!immersive.isFullscreen) {
@@ -1846,94 +1938,56 @@ fun EditorScreen(
                         IconButton(onClick = { menuOpen = true }) {
                             Icon(Icons.Default.MoreVert, "More")
                         }
-                        DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Share...") },
-                                onClick = { menuOpen = false; shareDocument() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Export...") },
-                                onClick = { menuOpen = false; exportOpen = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Checkpoint this version") },
-                                onClick = { menuOpen = false; checkpoint() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Version history...") },
-                                onClick = { menuOpen = false; versionsOpen = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Rules for this file") },
-                                onClick = { menuOpen = false; showFileRules = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Measure save speed") },
-                                onClick = {
-                                    menuOpen = false
-                                    syncPage()
-                                    benchRunning = true
-                                    scope.launch {
-                                        val text = withContext(Dispatchers.IO) {
-                                            com.inkslate.pdf.SaveBenchmark.run(
-                                                context, file, doc!!.ink,
-                                                prefs.effectiveFor(file.absolutePath).inkFormat
-                                            )
-                                        }
-                                        benchRunning = false
-                                        benchReport = text
-                                    }
-                                }
-                            )
-                            PageFilter.entries.forEach { option ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            if (pageFilter == option) "\u2713  " + option.label
-                                            else "      " + option.label
-                                        )
-                                    },
-                                    onClick = {
-                                        menuOpen = false
-                                        pageFilter = option
-                                        drawingView.value?.pageFilter = option
-                                    }
-                                )
-                            }
-                            HorizontalDivider()
-                            // Arrangement used to be five loose entries here. It belongs with
-                            // the pages themselves, so it moved into Pages along with adding,
-                            // removing, duplicating and reordering them.
-                            DropdownMenuItem(
-                                text = { Text("Pages...") },
-                                onClick = { menuOpen = false; pagesOpen = true }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Fit page") },
-                                onClick = { menuOpen = false; drawingView.value?.fitToScreen() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Fit width") },
-                                onClick = { menuOpen = false; drawingView.value?.fitWidth() }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Reset view") },
-                                onClick = {
-                                    menuOpen = false
-                                    drawingView.value?.resetView()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Clear this page") },
-                                onClick = {
-                                    menuOpen = false
-                                    drawingView.value?.clearPage(); dirty = true
-                                }
-                            )
-                        }
+                        documentMenu()
                     }
                 }
             )
+        }
+    }
+
+    // InkSlate's document actions share the top edge with the tab island. Only the three actions
+    // that are not already in the drawing toolbar live here; the title is already the selected
+    // tab, and undo/redo are already below. The transparent full-width box positions the island
+    // but does not paint a bar across the page.
+    val compactTopBar: @Composable () -> Unit = {
+        if (!immersive.isFullscreen) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .height(44.dp)
+                    .padding(end = 47.dp)
+                    .zIndex(21f),
+                contentAlignment = Alignment.CenterEnd
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 1.dp,
+                    shadowElevation = 2.dp
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { saveByRule() }, modifier = Modifier.size(40.dp)) {
+                            Icon(
+                                Icons.Default.Save,
+                                "Save into the document",
+                                tint = if (writeState == WriteState.SAVED)
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(onClick = { searchOpen = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Search, "Find in document")
+                        }
+                        Box {
+                            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Default.MoreVert, "Document actions")
+                            }
+                            documentMenu()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2661,7 +2715,7 @@ fun EditorScreen(
     }
 
     androidx.compose.runtime.SideEffect {
-        host.topBar = topBar
+        host.topBar = if (com.inkslate.AppFlavor.musicView) topBar else compactTopBar
         host.bottomBar = bottomBar
         host.pane = pane
     }

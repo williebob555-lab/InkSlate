@@ -96,8 +96,16 @@ data class InkCanvas(
     val paperIsOurs: Boolean
         get() = ownPaper || !background.equals("PLAIN", ignoreCase = true)
 
-    /** Existing app-created whiteboards migrate to the coordinate canvas automatically. */
-    val isUnbounded: Boolean get() = unbounded || ownPaper
+    /**
+     * True only after this canvas has explicitly been created or migrated as unbounded.
+     *
+     * [ownPaper] predates unbounded canvases. Treating every older app-created document as
+     * unbounded while it was opening changed its camera and rendering rules before its saved view
+     * could be restored; very large notebooks then tried to prepare far more ink than the first
+     * frame needed. New whiteboards set [unbounded] in [startingAt]. Older ones stay on their
+     * proven finite-canvas path until an intentional, resumable migration is added.
+     */
+    val isUnbounded: Boolean get() = unbounded
 
     val width: Float get() = right - left
     val height: Float get() = bottom - top

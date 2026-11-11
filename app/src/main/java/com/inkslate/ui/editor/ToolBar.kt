@@ -211,10 +211,14 @@ fun ToolBar(
     val configuration = LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
     val screenWidth = configuration.screenWidthDp.dp
-    val wantedMixerWidth = screenWidth * if (screenWidth > screenHeight) .42f else .48f
     val mixerWidth = if (screenWidth < 600.dp) {
-        (screenWidth * .55f).coerceIn(198.dp, 260.dp)
-    } else wantedMixerWidth.coerceIn(300.dp, 360.dp)
+        (screenWidth * .42f).coerceIn(168.dp, 210.dp)
+    } else {
+        // Height, not width, is what makes the three channels easy to operate with the other
+        // hand. Keep enough room for a fingertip per channel without pushing colours into a
+        // horizontal scroller on ordinary tablets.
+        (screenWidth * .24f).coerceIn(220.dp, 280.dp)
+    }
     Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
         Box(Modifier.fillMaxWidth()) {
             Column(

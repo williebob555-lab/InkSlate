@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Image
@@ -68,6 +69,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.inkslate.ink.DrawingView
@@ -256,8 +258,11 @@ fun TabStrip(
     onCloseOthers: (String) -> Unit,
     onCloseAll: () -> Unit,
     onNewTab: () -> Unit,
-    /** Set while the page has the screen to itself; the tabs stay, and this is the way back out. */
-    onLeaveFullscreen: (() -> Unit)? = null,
+    /** Present while a document is showing; the separate island toggles its fullscreen state. */
+    onToggleFullscreen: (() -> Unit)? = null,
+    fullscreen: Boolean = false,
+    /** Space occupied by the document-action island at the opposite end of the same row. */
+    endReserved: Dp = 0.dp,
     /** Move the document tab at the first index to the second. Home is not in [tabs] and stays put. */
     onMoveTab: (Int, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
@@ -285,8 +290,11 @@ fun TabStrip(
 
     Surface(color = Color.Transparent) {
         BoxWithConstraints(modifier.fillMaxWidth().height(48.dp)) {
-        val reserved = 38.dp + 5.dp + if (onLeaveFullscreen != null) 43.dp else 0.dp
-        val tabIslandMax = (maxWidth - reserved - 8.dp).coerceAtLeast(120.dp)
+        val reserved = 38.dp + 5.dp + endReserved + if (onToggleFullscreen != null) 43.dp else 0.dp
+        // On a narrow portrait screen, document actions outrank showing a whole tab label. The
+        // tab contents scroll inside their island; allowing the island itself to overlap the
+        // actions made both sets of buttons unreliable.
+        val tabIslandMax = (maxWidth - reserved - 8.dp).coerceAtLeast(84.dp)
         Row(
             Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -362,17 +370,21 @@ fun TabStrip(
                 }
             }
             Spacer(Modifier.weight(1f))
-            if (onLeaveFullscreen != null) {
+            if (onToggleFullscreen != null) {
                 Spacer(Modifier.width(5.dp))
                 Surface(
-                    onClick = onLeaveFullscreen,
+                    onClick = onToggleFullscreen,
                     modifier = Modifier.size(38.dp),
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh,
                     shadowElevation = 3.dp
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(Icons.Default.FullscreenExit, "Leave fullscreen", Modifier.size(19.dp))
+                        Icon(
+                            if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                            if (fullscreen) "Leave fullscreen" else "Enter fullscreen",
+                            Modifier.size(19.dp)
+                        )
                     }
                 }
             }

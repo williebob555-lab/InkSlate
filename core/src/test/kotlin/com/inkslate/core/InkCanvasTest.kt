@@ -32,6 +32,13 @@ class InkCanvasTest {
     }
 
     @Test
+    fun `legacy app paper is not silently migrated while opening`() {
+        val legacy = InkCanvas(ownPaper = true, unbounded = false)
+        assertTrue(legacy.paperIsOurs)
+        assertFalse(legacy.isUnbounded)
+    }
+
+    @Test
     fun `unbounded state survives a merge`() {
         val bounded = InkCanvas.startingAt(600f, 800f)
         val unbounded = bounded.copy(unbounded = true)

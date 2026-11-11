@@ -47,7 +47,8 @@ class InkModel(var ids: StrokeIdGen = StrokeIdGen("local")) {
     fun setStrokes(list: List<Stroke>) {
         strokes.clear()
         strokes.addAll(list)
-        ids.seedFrom(list.map { it.id })
+        // Avoid a second full list allocation while a large document is becoming interactive.
+        ids.seedFrom(list.asSequence().map { it.id })
         undoStack.clear()
         redoStack.clear()
         moved(null)

@@ -230,20 +230,136 @@ class DrawingView @JvmOverloads constructor(
     private var inkFocusX = 0f
     private var inkFocusY = 0f
     private val strokeRegions = HashMap<Int, com.inkslate.core.StrokeRegions>()
+    private val regionBuildVersions = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    @Volatile private var fullIndexBuildVersion = -1L
+    private data class FullIndexRequest(val strokes: List<Stroke>, val version: Long)
+    private val pendingFullIndex = java.util.concurrent.atomic.AtomicReference<FullIndexRequest?>(null)
+    private val fullIndexWorkerQueued = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var indexWorkEnabled = false
 
     /** The model's version this view's page index was built from. */
     private var indexedVersion = -1L
 
     private fun rebuildPageIndex() {
         if (!pageIndexDirty && indexedVersion == model.version) return
-        indexedVersion = model.version
+        val version = model.version
+        indexedVersion = version
         strokesByPage.values.forEach { it.clear() }
+        strokeRegions.clear()
+
+        // Opening a heavily annotated notebook must show its paper before preparing navigation
+        // metadata for every mark. Copying references is cheap; grouping and calculating bounds
+        // happen on the one bounded worker below. Until it arrives, the page is deliberately the
+        // original document rather than a frozen interface.
+        if (strokes.size >= ASYNC_FULL_INDEX_STROKES) {
+            requestFullIndex(ArrayList(strokes), version)
+            pageIndexDirty = false
+            return
+        }
+
         for (st in strokes) {
             strokesByPage.getOrPut(st.pageIndex) { ArrayList() }.add(st)
         }
-        strokeRegions.clear()
-        strokesByPage.forEach { (page, marks) -> strokeRegions[page] = com.inkslate.core.StrokeRegions(marks) }
+        strokesByPage.forEach { (page, marks) ->
+            if (marks.size < ASYNC_REGION_STROKES) {
+                strokeRegions[page] = com.inkslate.core.StrokeRegions(marks)
+            } else {
+                requestRegionBuild(page, marks, version)
+            }
+        }
         pageIndexDirty = false
+    }
+
+    private fun requestFullIndex(snapshot: List<Stroke>, version: Long) {
+        fullIndexBuildVersion = version
+        // Replace, do not append. While someone writes quickly, an old queued snapshot has no
+        // value and retaining several large reference arrays is exactly how background work turns
+        // into a heap crash. One worker per view drains only the newest request.
+        pendingFullIndex.set(FullIndexRequest(snapshot, version))
+        queueFullIndexWorker()
+    }
+
+    private fun queueFullIndexWorker() {
+        if (!fullIndexWorkerQueued.compareAndSet(false, true)) return
+        REGION_EXECUTOR.execute {
+            try {
+                while (true) {
+                    val request = pendingFullIndex.getAndSet(null) ?: break
+                    val version = request.version
+                    if (!indexWorkEnabled || fullIndexBuildVersion != version) continue
+                    val started = android.os.SystemClock.elapsedRealtime()
+                    val pages = HashMap<Int, MutableList<Stroke>>()
+                    for (stroke in request.strokes) {
+                        pages.getOrPut(stroke.pageIndex) { ArrayList() }.add(stroke)
+                    }
+                    if (!indexWorkEnabled || fullIndexBuildVersion != version || pendingFullIndex.get() != null) continue
+                    val regions = HashMap<Int, com.inkslate.core.StrokeRegions>()
+                    for ((page, marks) in pages) {
+                        if (!indexWorkEnabled || fullIndexBuildVersion != version || pendingFullIndex.get() != null) break
+                        try {
+                            regions[page] = com.inkslate.core.StrokeRegions(marks) {
+                                !indexWorkEnabled || fullIndexBuildVersion != version ||
+                                    pendingFullIndex.get() != null
+                            }
+                        } catch (_: java.util.concurrent.CancellationException) {
+                            break
+                        }
+                    }
+                    if (!indexWorkEnabled || fullIndexBuildVersion != version || pendingFullIndex.get() != null) continue
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - started
+                    post {
+                        if (fullIndexBuildVersion == version &&
+                            indexedVersion == version && model.version == version
+                        ) {
+                            strokesByPage.clear()
+                            strokesByPage.putAll(pages)
+                            strokeRegions.clear()
+                            strokeRegions.putAll(regions)
+                            fullIndexBuildVersion = -1L
+                            com.inkslate.data.EventLog.info(
+                                "ink",
+                                "Prepared ${request.strokes.size} marks on ${pages.size} page(s) " +
+                                    "off the interface in ${elapsed}ms"
+                            )
+                            postInvalidateOnAnimation()
+                        }
+                    }
+                }
+            } finally {
+                fullIndexWorkerQueued.set(false)
+                // A request can arrive between the final empty read and clearing the flag.
+                if (pendingFullIndex.get() != null) queueFullIndexWorker()
+            }
+        }
+    }
+
+    /**
+     * Builds the expensive spatial lookup after the printed page has had a chance to draw.
+     * Superseded jobs notice the newer model version before doing work, so writing several strokes
+     * quickly cannot leave a queue of obsolete full-document scans behind it.
+     */
+    private fun requestRegionBuild(page: Int, marks: List<Stroke>, version: Long) {
+        regionBuildVersions[page] = version
+        val snapshot = marks.toList()
+        REGION_EXECUTOR.execute {
+            if (!indexWorkEnabled || regionBuildVersions[page] != version) return@execute
+            val built = try {
+                com.inkslate.core.StrokeRegions(snapshot) {
+                    !indexWorkEnabled || regionBuildVersions[page] != version
+                }
+            } catch (_: java.util.concurrent.CancellationException) {
+                return@execute
+            }
+            post {
+                if (indexWorkEnabled && regionBuildVersions[page] == version &&
+                    indexedVersion == version && model.version == version
+                ) {
+                    strokeRegions[page] = built
+                    regionBuildVersions.remove(page, version)
+                    postInvalidateOnAnimation()
+                }
+            }
+        }
     }
     private val undoStack: ArrayList<Op> get() = model.undoStack
     private val redoStack: ArrayList<Op> get() = model.redoStack
@@ -2321,6 +2437,8 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        indexWorkEnabled = true
+        if (strokes.isNotEmpty() && strokeRegions.isEmpty()) pageIndexDirty = true
         model.attach(this)
         marksStop = com.inkslate.core.Perform.onMarksChanged { postInvalidate() }
         // The song turned to: take over what the last one left on screen.
@@ -4456,6 +4574,14 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        // Home, Settings and another tab should not compete with an invisible document. The
+        // index is derived state, so dropping an unfinished request is safe; it is rebuilt after
+        // this view is attached again.
+        indexWorkEnabled = false
+        fullIndexBuildVersion = -1L
+        pendingFullIndex.set(null)
+        regionBuildVersions.clear()
+        pageIndexDirty = true
         renderedInk?.close(); renderedInk = null
         model.detach(this)
         marksStop?.invoke(); marksStop = null
@@ -5707,6 +5833,16 @@ class DrawingView @JvmOverloads constructor(
     }
 
     companion object {
+        /** One deliberately low-priority worker keeps large-document preparation bounded. */
+        private const val ASYNC_FULL_INDEX_STROKES = 600
+        private const val ASYNC_REGION_STROKES = 240
+        private val REGION_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread(task, "ink-spatial-index").apply {
+                priority = Thread.MIN_PRIORITY
+                isDaemon = true
+            }
+        }
+
         private const val FILTER_LEFT = 1
         private const val FILTER_RIGHT = 2
         private const val FILTER_TOP = 3

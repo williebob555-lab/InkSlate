@@ -470,9 +470,21 @@ fun AppRoot(
                 // A remote can ask for Home, as the Home button in the tab row does.
                 androidx.compose.runtime.SideEffect { com.inkslate.core.Perform.showHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true } }
                 Column(
-                    Modifier.weight(1f).fillMaxWidth()
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        // Home and Settings have their own full-width app bars, so they begin
+                        // below the islands. A document does not: its few actions are a second
+                        // island on the same top edge and the page may use the open space.
+                        .then(
+                            if ((homeShown || com.inkslate.AppFlavor.musicView) && tabs.isNotEmpty())
+                                Modifier.statusBarsPadding().padding(top = 48.dp)
+                            else Modifier
+                        )
                 ) {
-                if (focusedTab != null) HostBar(focusedTab.host) { it.topBar }
+                if (!homeShown && focusedTab != null && com.inkslate.AppFlavor.musicView) {
+                    HostBar(focusedTab.host) { it.topBar }
+                }
 
                 Surface(Modifier.weight(1f).fillMaxWidth(), color = MaterialTheme.colorScheme.background) {
                     Box(Modifier.fillMaxSize()) {
@@ -570,7 +582,7 @@ fun AppRoot(
 
                 // In the music view, hidden tools means all of them - the page bar and the paint
                 // tray too - so the page has the whole screen; the Tools button brings them back.
-                if (focusedTab != null && !(com.inkslate.AppFlavor.musicView && immersive.isFullscreen)) {
+                if (!homeShown && focusedTab != null && !(com.inkslate.AppFlavor.musicView && immersive.isFullscreen)) {
                     HostBar(focusedTab.host) { it.bottomBar }
                 }
                 }
@@ -608,10 +620,23 @@ fun AppRoot(
                             Screen.Browser(focusedTab?.file?.parentFile?.takeIf { it.isDirectory }?.absolutePath)
                         } else Screen.Home
                     },
-                    onLeaveFullscreen = if (immersive.isFullscreen) {
-                        { immersive.set(false) }
-                    } else null
+                    onToggleFullscreen = when {
+                        !homeShown -> ({ immersive.toggle() })
+                        immersive.isFullscreen -> ({ immersive.set(false) })
+                        else -> null
+                    },
+                    fullscreen = immersive.isFullscreen,
+                    endReserved = if (!com.inkslate.AppFlavor.musicView && !homeShown &&
+                        !immersive.isFullscreen
+                    ) 126.dp else 0.dp
                 )
+            }
+
+            // InkSlate's Save / Find / document-menu controls are an island on the opposite end
+            // of the same top edge. They are deliberately drawn separately from the tab island:
+            // the transparent space between them belongs to the page and receives page touches.
+            if (!com.inkslate.AppFlavor.musicView && !homeShown && focusedTab != null) {
+                HostBar(focusedTab.host) { it.topBar }
             }
 
             // Every open document, whether or not any of it is on screen. Each keeps its marks,
@@ -625,7 +650,11 @@ fun AppRoot(
                                 file = tab.file,
                                 onClose = { closeTab(tab.id) },
                                 host = tab.host,
-                                focused = tab === focusedTab,
+                                // A document remains open behind Home/Settings, but it is not the
+                                // active workspace there. Besides making Back belong to the menu,
+                                // this stops focused-document work and indicators competing with
+                                // a list the user is trying to scroll.
+                                focused = !homeShown && tab === focusedTab,
                                 closeRequested = tab.closeRequested
                             )
                         } else if (tab.closeRequested.value) {

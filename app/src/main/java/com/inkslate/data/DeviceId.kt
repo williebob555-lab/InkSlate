@@ -57,6 +57,11 @@ class StrokeIdGen(private val deviceTag: String) {
     private val counter = AtomicLong(0)
 
     fun seedFrom(existingIds: Collection<String>) {
+        seedFrom(existingIds.asSequence())
+    }
+
+    /** Sequence form keeps document opening from allocating a second list containing every id. */
+    fun seedFrom(existingIds: Sequence<String>) {
         var maxOwn = 0L
         val prefix = "$deviceTag-"
         for (id in existingIds) {

@@ -2,7 +2,10 @@ package com.inkslate.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
+import java.util.concurrent.CancellationException
 
 class StrokeRegionsTest {
     private fun mark(id: String, x: Float, end: Float = x + 10f) = Stroke(
@@ -32,6 +35,17 @@ class StrokeRegionsTest {
         val moved = original.copy(points = listOf(InkPoint(2000f, 10f, 2f)))
         assertEquals(emptyList<Stroke>(), StrokeRegions(listOf(moved)).query(view))
         assertEquals(emptyList<Stroke>(), StrokeRegions(emptyList()).query(view))
+    }
+
+    @Test fun `superseded dense index stops before retaining the whole document`() {
+        val marks = (0..5000).map { mark("$it", it * 30f) }
+        var checks = 0
+        try {
+            StrokeRegions(marks) { ++checks > 1 }
+            fail("cancelled index should not finish")
+        } catch (_: CancellationException) {
+            assertTrue(checks > 1)
+        }
     }
 }
 

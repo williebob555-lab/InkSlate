@@ -1,11 +1,16 @@
 package com.inkslate.core
 
 import kotlin.math.floor
+import java.util.concurrent.CancellationException
 
 /** Spatial metadata only: querying a region never builds drawing geometry. */
-class StrokeRegions(strokes: List<Stroke>, private val cellSize: Float = 256f) {
+class StrokeRegions(
+    strokes: List<Stroke>,
+    private val cellSize: Float = 256f,
+    private val cancelled: () -> Boolean = { false }
+) {
     private val marks = strokes.toList()
-    private val bounds = marks.map { it.boundsBox().expanded(it.baseWidth + 2f + it.brush.edgeSoftness * 3f) }
+    private val bounds = ArrayList<Box>(marks.size)
     private val cells = HashMap<Pair<Int, Int>, MutableList<Int>>()
     private val oversized = ArrayList<Int>()
     // Pen samples normally reuse the same viewport. Retain a few recent views for quick jumps.
@@ -15,7 +20,12 @@ class StrokeRegions(strokes: List<Stroke>, private val cellSize: Float = 256f) {
 
     init {
         require(cellSize > 0f && cellSize.isFinite())
+        marks.forEachIndexed { index, mark ->
+            if (index and 63 == 0 && cancelled()) throw CancellationException("spatial index superseded")
+            bounds.add(mark.boundsBox().expanded(mark.baseWidth + 2f + mark.brush.edgeSoftness * 3f))
+        }
         bounds.forEachIndexed { i, b ->
+            if (i and 63 == 0 && cancelled()) throw CancellationException("spatial index superseded")
             val x0 = cell(b.left); val x1 = cell(b.right)
             val y0 = cell(b.top); val y1 = cell(b.bottom)
             if (marks[i].kind == Stroke.Kind.TEXT || !finite(b) || (x1.toLong() - x0 + 1) * (y1.toLong() - y0 + 1) !in 1..1024) {
