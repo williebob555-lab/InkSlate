@@ -3,6 +3,7 @@ package com.inkslate.ui.editor
 import com.inkslate.core.Stroke.Kind as StrokeKind
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,7 +24,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +63,10 @@ import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ChevronLeft
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -72,6 +76,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -79,12 +84,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import android.view.MotionEvent
@@ -100,8 +108,10 @@ import com.inkslate.ink.StrokeRasteriser
 import com.inkslate.core.EraserMode
 import com.inkslate.core.Tool
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import com.inkslate.core.InputMode
 import com.inkslate.core.StylusButtonAction
+import com.inkslate.core.AnnotationLayers
 
 /** Everything the toolbar needs to drive, gathered so the signature stays readable. */
 class ToolBarActions(
@@ -110,6 +120,13 @@ class ToolBarActions(
     val onRedo: () -> Unit,
     val canUndo: Boolean,
     val canRedo: Boolean,
+    val page: Int,
+    val pageCount: Int,
+    val pageBookmarked: Boolean,
+    val onPreviousPage: () -> Unit,
+    val onNextPage: () -> Unit,
+    val onOpenPageNavigation: () -> Unit,
+    val onTogglePageBookmark: () -> Unit,
     val onRestyleSelection: (Int?, Float?) -> Unit,
     val onDeleteSelection: () -> Unit,
     val onDuplicateSelection: () -> Unit,
@@ -137,6 +154,9 @@ class ToolBarActions(
     val onSnapRuler: () -> Unit,
     val onRotateRuler: (Float) -> Unit,
     val onResetRuler: () -> Unit,
+    /** Filters currently laid on this page, and the finger-only action that adds/removes one. */
+    val layerFiltersMask: Int,
+    val onToggleLayerFilter: (Int) -> Unit,
     val onPickCustomColour: () -> Unit,
     /** Shows a passing message on the editor's snackbar. */
     val onMessage: (String) -> Unit,
@@ -278,6 +298,10 @@ fun ToolBar(
                 Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (!com.inkslate.AppFlavor.musicView && state.rightHanded && actions.pageCount > 1) {
+                    PageControlIsland(actions)
+                    Spacer(Modifier.width(5.dp))
+                }
                 InputModeToggle(state.activeMode) { held -> actions.onCycleMode(held) }
                 Spacer(Modifier.width(6.dp))
                 // Deduplicated. A colour picked from the palette is also remembered as a recent
@@ -292,19 +316,42 @@ fun ToolBar(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    itemsIndexed(state.presets) { i, p ->
-                        PresetDot(
-                            color = Color(p.color),
-                            width = p.width,
-                            highlighter = p.brush.isHighlighter,
-                            selected = state.activePreset == i,
-                            onClick = { change { state.selectPreset(i) } },
-                            onLongClick = { change { state.savePresetFromCurrent(i) } }
-                        )
-                    }
                     item {
-                        IconButton(onClick = { change { state.addPreset() } }, Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Add, "Save this pen as a preset", Modifier.size(17.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .72f),
+                            shape = RoundedCornerShape(14.dp),
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = .42f)
+                            )
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                state.presets.forEachIndexed { i, p ->
+                                    PresetDot(
+                                        color = Color(p.color),
+                                        width = p.width,
+                                        highlighter = p.brush.isHighlighter,
+                                        selected = state.activePreset == i,
+                                        onClick = { change { state.selectPreset(i) } },
+                                        onLongClick = { change { state.savePresetFromCurrent(i) } }
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { change { state.addPreset() } },
+                                    modifier = Modifier.size(28.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Add,
+                                        "Save this pen as a preset",
+                                        Modifier.size(17.dp),
+                                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
                         }
                     }
                     item {
@@ -336,11 +383,27 @@ fun ToolBar(
                         }
                     }
                 }
+                Spacer(Modifier.width(5.dp))
+                LayerMixerBlock(
+                    state = state,
+                    filterMask = actions.layerFiltersMask,
+                    onVisibility = { layer -> change { state.toggleLayerVisibility(layer) } },
+                    onRecord = { layer -> change { state.toggleLayerRecord(layer) } },
+                    onOpacity = { layer, value ->
+                        change { state.setLayerOpacity(layer, value, save = false) }
+                    },
+                    onOpacityFinished = state::persistNow,
+                    onFilter = actions.onToggleLayerFilter
+                )
+                if (!com.inkslate.AppFlavor.musicView && !state.rightHanded && actions.pageCount > 1) {
+                    Spacer(Modifier.width(5.dp))
+                    PageControlIsland(actions)
+                }
             }
 
-            // ---- size slider, always visible ----
+            // ---- compact size + other-layer visibility, always visible ----
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val isEraser = cfg.tool == Tool.ERASER
@@ -349,46 +412,24 @@ fun ToolBar(
                 // enough down to draw a genuine hairline.
                 val ladder = if (isEraser) ToolState.ERASER_SIZES else ToolState.WIDTHS
                 val current = if (isEraser) cfg.eraserRadius else cfg.strokeWidth
-                val index = ToolState.stopIndex(ladder, current)
                 Text(
                     if (isEraser) "Eraser" else "Size",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(46.dp)
+                    modifier = Modifier.width(40.dp)
                 )
-                IconButton(
-                    onClick = {
+                SizeLadderControl(
+                    value = current,
+                    ladder = ladder,
+                    eraser = isEraser,
+                    modifier = Modifier.weight(.52f).height(32.dp),
+                    onValue = { w ->
                         change {
-                            val v = ladder[(index - 1).coerceAtLeast(0)]
-                            state.edit { if (isEraser) it.eraserRadius = v else it.strokeWidth = v }
-                            state.activePreset = -1
-                        }
-                    },
-                    modifier = Modifier.size(28.dp)
-                ) { Icon(Icons.Default.Remove, "Thinner", Modifier.size(15.dp)) }
-                Slider(
-                    value = index.toFloat(),
-                    onValueChange = { v ->
-                        change {
-                            val w = ladder[v.roundToInt().coerceIn(0, ladder.lastIndex)]
                             state.edit { if (isEraser) it.eraserRadius = w else it.strokeWidth = w }
                             state.activePreset = -1
                         }
-                    },
-                    valueRange = 0f..ladder.lastIndex.toFloat(),
-                    steps = ladder.size - 2,
-                    modifier = Modifier.weight(1f).height(30.dp)
+                    }
                 )
-                IconButton(
-                    onClick = {
-                        change {
-                            val v = ladder[(index + 1).coerceAtMost(ladder.lastIndex)]
-                            state.edit { if (isEraser) it.eraserRadius = v else it.strokeWidth = v }
-                            state.activePreset = -1
-                        }
-                    },
-                    modifier = Modifier.size(28.dp)
-                ) { Icon(Icons.Default.Add, "Thicker", Modifier.size(15.dp)) }
                 RelativeSizePreview(current, ladder, isEraser)
                 // Reads the slider as a thickness on the glass rather than on the page. It lives
                 // here rather than in a settings screen because it changes what the control
@@ -408,7 +449,7 @@ fun ToolBar(
                             }
                         }
                     },
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Icon(
                         Icons.Default.ZoomIn,
@@ -420,6 +461,7 @@ fun ToolBar(
                             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
                     )
                 }
+                Spacer(Modifier.weight(.48f))
             }
 
             // The barrel profile deliberately shows nothing extra here. It is a third pen
@@ -521,7 +563,19 @@ fun ToolBar(
 
             // ---- everything else ----
             AnimatedVisibility(visible = expanded) {
-                Column(Modifier.padding(horizontal = 12.dp).padding(bottom = 6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                Column(
+                    Modifier.weight(1f)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerLow,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
 
                     Label("Brush")
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -615,18 +669,20 @@ fun ToolBar(
                         }
                     }
 
-                    if (!com.inkslate.AppFlavor.musicView) {
-                        Label("Table size")
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Stepper("Rows", state.tableRows) { change { state.tableRows = it } }
-                            Spacer(Modifier.width(12.dp))
-                            Stepper("Cols", state.tableCols) { change { state.tableCols = it } }
-                        }
-                    }
+                }
+
+                Column(
+                    Modifier.weight(1f)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceContainerLow,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
 
                     if (state.rulerVisible && !com.inkslate.AppFlavor.musicView) {
                         Label("Ruler")
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             Chip("Snap to 15\u00B0", false) { actions.onSnapRuler() }
                             Chip("Rotate 15\u00B0", false) { actions.onRotateRuler(15f) }
                             Chip("Rotate 90\u00B0", false) { actions.onRotateRuler(90f) }
@@ -634,46 +690,11 @@ fun ToolBar(
                         }
                     }
 
-                    Label("Reading")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Chip(
-                            if (state.cropMargins) "Crop margins: on" else "Crop margins: off",
-                            state.cropMargins
-                        ) {
-                            change { state.cropMargins = !state.cropMargins; state.persistNow() }
-                        }
-                    }
-
-                    // Music turns a page at a time; there is nothing to fling.
-                    if (!com.inkslate.AppFlavor.musicView) {
-                        Label("Scrolling")
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Chip(
-                                if (state.flingEnabled) "Momentum: on" else "Momentum: off",
-                                state.flingEnabled
-                            ) {
-                                change { state.flingEnabled = !state.flingEnabled; state.persistNow() }
-                            }
-                        }
-                        if (state.flingEnabled) {
-                            SliderRow(
-                                label = "Flick distance",
-                                value = state.flingScale,
-                                range = 0.5f..3.5f,
-                                display = {
-                                    when {
-                                        it < 0.9f -> "Short"
-                                        it < 1.6f -> "Normal"
-                                        it < 2.5f -> "Long"
-                                        else -> "Very long"
-                                    }
-                                }
-                            ) { v -> change { state.flingScale = v; state.persistNow() } }
-                        }
-                    }
-
                     Label("Input")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
                         Chip(
                             if (state.autoSwitchInput) "Auto pen/finger: on" else "Auto pen/finger: off",
                             state.autoSwitchInput
@@ -701,6 +722,7 @@ fun ToolBar(
                             change { state.snapShapes = !state.snapShapes; state.persistNow() }
                         }
                     }
+                }
                 }
             }
         }
@@ -730,6 +752,256 @@ private fun RelativeSizePreview(value: Float, ladder: FloatArray, eraser: Boolea
             radius = size.minDimension * (.08f + .32f * fraction),
             center = center
         )
+    }
+}
+
+/** A finite size ladder whose marks themselves show the thickness available at each position. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun SizeLadderControl(
+    value: Float,
+    ladder: FloatArray,
+    eraser: Boolean,
+    modifier: Modifier = Modifier,
+    onValue: (Float) -> Unit
+) {
+    var trackWidth by remember { mutableFloatStateOf(1f) }
+    val selected = ToolState.stopIndex(ladder, value)
+    val accent = if (eraser) Color(0xFFEF4444) else MaterialTheme.colorScheme.primary
+    val trackColour = MaterialTheme.colorScheme.outlineVariant
+    val markColour = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .48f)
+    fun choose(x: Float) {
+        if (ladder.isEmpty()) return
+        val usable = (trackWidth - 16f).coerceAtLeast(1f)
+        val fraction = ((x - 8f) / usable).coerceIn(0f, 1f)
+        onValue(ladder[(fraction * ladder.lastIndex).roundToInt().coerceIn(0, ladder.lastIndex)])
+    }
+    Canvas(
+        modifier
+            .onSizeChanged { trackWidth = it.width.toFloat() }
+            .pointerInteropFilter { event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                        choose(event.x); true
+                    }
+                    else -> false
+                }
+            }
+            .semantics {
+                contentDescription = (if (eraser) "Eraser" else "Pen") + " size ${"%.2f".format(value)}"
+            }
+    ) {
+        val left = 8f
+        val right = size.width - 8f
+        val y = size.height / 2f
+        drawLine(trackColour, Offset(left, y), Offset(right, y), 2f)
+        val largest = ladder.maxOrNull()?.coerceAtLeast(.01f) ?: 1f
+        ladder.forEachIndexed { index, stop ->
+            val x = if (ladder.size <= 1) size.width / 2f
+            else left + (right - left) * index / ladder.lastIndex
+            val relative = sqrt((stop / largest).coerceIn(0f, 1f))
+            val radius = 1.5f + relative * 4.5f
+            drawCircle(
+                color = if (index == selected) accent else markColour,
+                radius = if (index == selected) radius + 1.8f else radius,
+                center = Offset(x, y)
+            )
+            if (index == selected) {
+                drawCircle(Color.White, radius = (radius - .8f).coerceAtLeast(1f), center = Offset(x, y))
+                drawCircle(accent, radius = (radius - 2f).coerceAtLeast(1f), center = Offset(x, y))
+            }
+        }
+    }
+}
+
+/** Compact page transport; it replaces the full-width navigation bar. */
+@Composable
+private fun PageControlIsland(actions: ToolBarActions) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(14.dp),
+        shadowElevation = 3.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .25f))
+    ) {
+        Row(
+            Modifier.height(34.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = actions.onPreviousPage,
+                enabled = actions.page > 0,
+                modifier = Modifier.size(32.dp)
+            ) { Icon(Icons.Default.ChevronLeft, "Previous page", Modifier.size(18.dp)) }
+            TextButton(
+                onClick = actions.onOpenPageNavigation,
+                modifier = Modifier.height(32.dp),
+                contentPadding = PaddingValues(horizontal = 5.dp)
+            ) {
+                Text("${actions.page + 1}/${actions.pageCount}", style = MaterialTheme.typography.labelMedium)
+            }
+            IconButton(
+                onClick = actions.onTogglePageBookmark,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    if (actions.pageBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    if (actions.pageBookmarked) "Remove bookmark" else "Bookmark page",
+                    Modifier.size(17.dp),
+                    tint = if (actions.pageBookmarked) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(
+                onClick = actions.onNextPage,
+                enabled = actions.page < actions.pageCount - 1,
+                modifier = Modifier.size(32.dp)
+            ) { Icon(Icons.Default.ChevronRight, "Next page", Modifier.size(18.dp)) }
+        }
+    }
+}
+
+/** The layer mixer is visually separate because these are channels, not extra colour swatches. */
+@Composable
+private fun LayerMixerBlock(
+    state: ToolState,
+    filterMask: Int,
+    onVisibility: (Int) -> Unit,
+    onRecord: (Int) -> Unit,
+    onOpacity: (Int, Float) -> Unit,
+    onOpacityFinished: () -> Unit,
+    onFilter: (Int) -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .62f),
+        shape = RoundedCornerShape(13.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .38f))
+    ) {
+        Row(
+            Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            listOf(AnnotationLayers.ONE, AnnotationLayers.TWO, AnnotationLayers.THREE)
+                .forEachIndexed { index, layer ->
+                    LayerChannel(
+                        label = (index + 1).toString(),
+                        layer = layer,
+                        visible = (state.visibleLayerMask and layer) != 0,
+                        armed = (state.recordLayerMask and layer) != 0,
+                        opacity = state.layerOpacities[index],
+                        filterShown = (filterMask and layer) != 0,
+                        onVisibility = { onVisibility(layer) },
+                        onRecord = { onRecord(layer) },
+                        onOpacity = { onOpacity(layer, it) },
+                        onOpacityFinished = onOpacityFinished,
+                        onFilter = { onFilter(layer) }
+                    )
+                }
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun LayerChannel(
+    label: String,
+    layer: Int,
+    visible: Boolean,
+    armed: Boolean,
+    opacity: Float,
+    filterShown: Boolean,
+    onVisibility: () -> Unit,
+    onRecord: () -> Unit,
+    onOpacity: (Float) -> Unit,
+    onOpacityFinished: () -> Unit,
+    onFilter: () -> Unit
+) {
+    val colour = Color(AnnotationLayers.colour(layer))
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(34.dp, 31.dp), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.size(29.dp)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(colour.copy(alpha = if (visible) .24f else .045f))
+                    .border(
+                        if (visible) 2.dp else 1.dp,
+                        colour.copy(alpha = if (visible) 1f else .38f),
+                        RoundedCornerShape(9.dp)
+                    )
+                    .combinedClickable(onClick = onVisibility, onLongClick = onFilter)
+                    .semantics {
+                        contentDescription = "Layer $label ${if (visible) "visible" else "muted"}. " +
+                            "Tap to ${if (visible) "mute" else "show"}; long press for filter."
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label,
+                    color = colour.copy(alpha = if (visible) 1f else .55f),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (filterShown) {
+                    Box(
+                        Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp)
+                            .size(11.dp, 3.dp).clip(CircleShape).background(colour)
+                    )
+                }
+            }
+            Box(
+                Modifier.align(Alignment.TopEnd)
+                    .size(13.dp)
+                    .clip(CircleShape)
+                    .background(if (armed) Color(0xFFEF4444) else MaterialTheme.colorScheme.surface)
+                    .border(1.5.dp, Color(0xFFEF4444), CircleShape)
+                    .clickable(onClick = onRecord)
+                    .semantics {
+                        contentDescription = "Layer $label ${if (armed) "record armed" else "not armed"}"
+                    }
+            )
+        }
+        VerticalLayerFader(opacity, colour, onOpacity, onOpacityFinished)
+    }
+}
+
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+private fun VerticalLayerFader(
+    value: Float,
+    colour: Color,
+    onValue: (Float) -> Unit,
+    onFinished: () -> Unit
+) {
+    var heightPx by remember { mutableFloatStateOf(1f) }
+    fun choose(y: Float) {
+        val usable = (heightPx - 6f).coerceAtLeast(1f)
+        onValue((1f - (y - 3f) / usable).coerceIn(0f, 1f))
+    }
+    val track = MaterialTheme.colorScheme.outline.copy(alpha = .42f)
+    val surface = MaterialTheme.colorScheme.surface
+    Canvas(
+        Modifier.size(24.dp, 34.dp)
+            .onSizeChanged { heightPx = it.height.toFloat() }
+            .pointerInteropFilter { event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                        choose(event.y); true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        choose(event.y); onFinished(); true
+                    }
+                    else -> false
+                }
+            }
+            .semantics { contentDescription = "${(value * 100).roundToInt()} percent opacity" }
+    ) {
+        val x = size.width / 2f
+        val top = 3f
+        val bottom = size.height - 3f
+        val knob = bottom - (bottom - top) * value.coerceIn(0f, 1f)
+        drawLine(track, Offset(x, top), Offset(x, bottom), 3f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawLine(colour, Offset(x, knob), Offset(x, bottom), 4f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawCircle(surface, 5.5f, Offset(x, knob))
+        drawCircle(colour, 3.7f, Offset(x, knob))
     }
 }
 

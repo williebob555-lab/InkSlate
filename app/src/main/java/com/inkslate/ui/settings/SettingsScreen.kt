@@ -2,6 +2,9 @@ package com.inkslate.ui.settings
 
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,11 +44,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.inkslate.core.StylusButtonAction
+import com.inkslate.core.InkPoint
+import com.inkslate.core.ScribbleErase
 import com.inkslate.ui.editor.QuickWheelAction
 import com.inkslate.data.CopyLocation
 import com.inkslate.data.CopyNaming
@@ -85,6 +93,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var viewingCrash by remember { mutableStateOf<String?>(null) }
     var statsTick by remember { mutableStateOf(0) }
     var showAllEvents by remember { mutableStateOf(false) }
+    var calibratingScribble by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
     // Old-style companion files still sitting beside documents, and the tidy-up of them.
@@ -248,6 +257,49 @@ fun SettingsScreen(onBack: () -> Unit) {
                 checked = tools.fullscreenOnHome
             ) { tools.fullscreenOnHome = it; tools.persistNow() }
 
+            ChoiceRow(
+                title = "Dominant hand",
+                subtitle = "Page controls sit on the opposite side so your writing hand does not cover them.",
+                current = if (tools.rightHanded) "Right" else "Left",
+                options = listOf("Right" to true, "Left" to false)
+            ) { tools.rightHanded = it; tools.persistNow() }
+
+            SwitchRow(
+                title = "Crop blank page margins",
+                subtitle = "Fit pages to their visible content instead of retaining blank PDF margins.",
+                checked = tools.cropMargins
+            ) { tools.cropMargins = it; tools.persistNow() }
+
+            if (!musicSettings) {
+                SwitchRow(
+                    title = "Scrolling momentum",
+                    subtitle = "Let a page continue moving after a finger flick.",
+                    checked = tools.flingEnabled
+                ) { tools.flingEnabled = it; tools.persistNow() }
+                if (tools.flingEnabled) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Flick distance", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                when {
+                                    tools.flingScale < .9f -> "Short"
+                                    tools.flingScale < 1.6f -> "Normal"
+                                    tools.flingScale < 2.5f -> "Long"
+                                    else -> "Very long"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Slider(
+                            value = tools.flingScale,
+                            onValueChange = { tools.flingScale = it; tools.persistNow() },
+                            valueRange = .5f..3.5f
+                        )
+                    }
+                }
+            }
+
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Stylus")
 
@@ -285,6 +337,37 @@ fun SettingsScreen(onBack: () -> Unit) {
                     "writing is kept unless the gesture is clearly a scribble and crosses ink.",
                 checked = tools.scribbleErase
             ) { tools.scribbleErase = it; tools.persistNow() }
+
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                val sensitivityLabel = when {
+                    tools.scribbleSensitivity < .2f -> "Very deliberate"
+                    tools.scribbleSensitivity < .45f -> "Deliberate"
+                    tools.scribbleSensitivity < .72f -> "Balanced"
+                    tools.scribbleSensitivity < .94f -> "Quick"
+                    else -> "Extremely sensitive"
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Scribble sensitivity", modifier = Modifier.weight(1f))
+                    Text(
+                        sensitivityLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    TextButton(onClick = { calibratingScribble = true }) { Text("Calibrate") }
+                }
+                Slider(
+                    value = tools.scribbleSensitivity,
+                    onValueChange = tools::updateScribbleSensitivity,
+                    valueRange = 0f..1f,
+                    enabled = tools.scribbleErase
+                )
+                Text(
+                    "Far left requires a long seven-turn scratch. Far right accepts a short " +
+                        "two-turn scratch. Dense shading is protected at every setting.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             // The button is configured where it is used rather than here. A setting three
             // screens away from the pen it belongs to is a setting nobody finds, and a button is
@@ -646,6 +729,101 @@ fun SettingsScreen(onBack: () -> Unit) {
             confirmButton = { TextButton(onClick = { viewingCrash = null }) { Text("Close") } }
         )
     }
+
+    if (calibratingScribble) {
+        ScribbleCalibrationDialog(
+            current = tools.scribbleSensitivity,
+            onApply = {
+                tools.updateScribbleSensitivity(it)
+                tools.scribbleErase = true
+                tools.persistNow()
+                calibratingScribble = false
+            },
+            onDismiss = { calibratingScribble = false }
+        )
+    }
+}
+
+@Composable
+private fun ScribbleCalibrationDialog(
+    current: Float,
+    onApply: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var points by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    var recommendation by remember { mutableStateOf<Float?>(null) }
+    var attempted by remember { mutableStateOf(false) }
+    val guide = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f)
+    val ink = MaterialTheme.colorScheme.primary
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Calibrate scribble erase") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Scratch naturally back and forth across the line, then lift your pen.")
+                Canvas(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 180.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = {
+                                    points = listOf(it)
+                                    recommendation = null
+                                    attempted = false
+                                },
+                                onDragEnd = {
+                                    attempted = true
+                                    recommendation = ScribbleErase.calibratedSensitivity(
+                                        points.map { InkPoint(it.x, it.y, 1f) }
+                                    )
+                                },
+                                onDragCancel = { points = emptyList() }
+                            ) { change, _ ->
+                                change.consume()
+                                points = points + change.position
+                            }
+                        }
+                ) {
+                    drawLine(
+                        guide,
+                        Offset(size.width * .18f, size.height * .5f),
+                        Offset(size.width * .82f, size.height * .5f),
+                        strokeWidth = 5f
+                    )
+                    points.zipWithNext().forEach { (a, b) ->
+                        drawLine(ink, a, b, strokeWidth = 4f)
+                    }
+                }
+                Text(
+                    when {
+                        recommendation != null -> "Recommended: ${scribbleSensitivityLabel(recommendation!!)}"
+                        attempted -> "That was not recognised even at maximum. Try a shorter, tighter back-and-forth scratch."
+                        else -> "Current: ${scribbleSensitivityLabel(current)}"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (attempted && recommendation == null) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = recommendation != null,
+                onClick = { recommendation?.let(onApply) }
+            ) { Text("Use calibration") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private fun scribbleSensitivityLabel(value: Float): String = when {
+    value < .2f -> "Very deliberate"
+    value < .45f -> "Deliberate"
+    value < .72f -> "Balanced"
+    value < .94f -> "Quick"
+    else -> "Extremely sensitive"
 }
 
 /**

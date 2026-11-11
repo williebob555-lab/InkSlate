@@ -357,6 +357,8 @@ data class Stroke(
     /** How big a line's ends are, against the size its weight gives them. */
     val endScale: Float = 1f,
     val pageIndex: Int = 0,
+    /** One or more [AnnotationLayers] bits. Old documents decode into layer 1. */
+    val layerMask: Int = AnnotationLayers.ONE,
     /** Wall-clock millis of the last edit. Last-writer-wins key when two devices merge. */
     val updatedUtc: Long = 0L
 ) {

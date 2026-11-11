@@ -28,6 +28,26 @@ class ScribbleEraseTest {
         assertTrue(ScribbleErase.isScribble(points))
     }
 
+    @Test fun `default recognises a sparse real world four pass scratch`() {
+        val points = listOf(
+            InkPoint(3f, 2f, 2f), InkPoint(19f, 4f, 2f), InkPoint(34f, 7f, 2f),
+            InkPoint(18f, 8f, 2f), InkPoint(2f, 10f, 2f), InkPoint(17f, 12f, 2f),
+            InkPoint(33f, 13f, 2f), InkPoint(16f, 14f, 2f), InkPoint(1f, 15f, 2f)
+        )
+        assertTrue(ScribbleErase.isScribble(points))
+    }
+
+    @Test fun `slider extremes are genuinely different`() {
+        val shortScratch = listOf(
+            InkPoint(0f, 0f, 2f), InkPoint(28f, 2f, 2f),
+            InkPoint(0f, 4f, 2f), InkPoint(28f, 6f, 2f), InkPoint(20f, 7f, 2f)
+        )
+        assertFalse(ScribbleErase.isScribble(shortScratch, 0f))
+        assertTrue(ScribbleErase.isScribble(shortScratch, 1f))
+        val calibrated = ScribbleErase.calibratedSensitivity(shortScratch)
+        assertTrue(calibrated != null && calibrated > .75f)
+    }
+
     @Test fun `writing and a straight line are not scribbles`() {
         val line = (0..30).map { InkPoint(it.toFloat(), it * .2f, 2f) }
         val curve = (0..30).map { InkPoint(it.toFloat(), (it % 6).toFloat(), 2f) }
@@ -45,7 +65,7 @@ class ScribbleEraseTest {
                 }
             }
         }
-        assertFalse(ScribbleErase.isScribble(fill))
+        assertFalse(ScribbleErase.isScribble(fill, 1f))
     }
 
     @Test fun `pen and highlighter remember independent color and width`() {

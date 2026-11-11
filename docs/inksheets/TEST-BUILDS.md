@@ -4,6 +4,29 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Annotations now use a three-channel layer mixer in both apps.** The highlighted mixer keeps
+  visibility, record-arm and opacity separate for Layers 1–3. Every channel can be muted to show
+  only the original PDF; beginning a stroke with nothing armed automatically arms Layer 1. Ink
+  objects store one compact three-bit membership rather than three copies, overlapping reveal
+  filters combine memberships, and old annotations decode as Layer 1. Flattened export opens an
+  independent copy of the mixer and includes only its selected channels at their chosen opacity;
+  editable export retains every layer and its membership.
+- **The stylus wheel no longer traps the pointer in Colour or Size.** Circling around the wheel
+  continuously changes the highlighted tool. Colour occupies only its detached outer radial band,
+  its palette order is fixed for muscle memory, and Size has a longer absolute track with a precise
+  marked position. The active tool still joins the centre, but the connection is now constructed
+  from one aligned rounded radial form instead of an offset wedge.
+- **Scribble erase is usable and calibratable.** The new default accepts a sparse four-pass real
+  scratch, Settings provides a deliberately wide slider (from a long seven-turn scratch to a short
+  two-turn scratch), and Calibrate measures a natural practice scratch and adds a safety margin.
+  Dense fill remains protected even at maximum sensitivity, and erasing still requires crossing
+  existing ink.
+- **Static chrome uses less workspace.** The full-width page row is gone; previous/page/bookmark/
+  next live in a compact island on the side opposite the configured dominant hand. Home and
+  fullscreen are separate islands, while document tabs form a connected top island with rounded
+  lower corners. Pen presets are grouped in a brighter slot, and More is a two-column active-tool
+  inspector rather than a dump for table, crop and scrolling defaults.
+
 - **Dense annotations:** Android and desktop now use location chunks and recent-view lookups before requesting stroke geometry. Off-screen visibility checks no longer evict expensive shapes. Cache capacity is unchanged. This targets the threshold found in PHYS161 Exam Review; fully zoomed-out canvas performance still needs device measurement.
 
 - **The reader workspace is now organized by task instead of by whichever controls existed first.**
@@ -52,10 +75,10 @@ Newest first. These notes describe changes made, not confirmation that every rep
   and gains a bright outline before lift. It opens only when the pen touches down while its barrel
   button is held, never merely from pressing the button in hover.
   Pen and highlighter now retain independent colours, widths and opacity.
-- **Optional scribble-to-erase is guarded against accidental deletion.** A gesture must reverse
-  direction four times, traverse the same span several times and actually cross existing ink
-  before it is treated as erasing. An uncertain scratch in empty space remains ordinary ink, and
-  broad back-and-forth fill strokes are explicitly kept as drawing rather than mistaken for erase.
+- **Optional scribble-to-erase is guarded against accidental deletion.** The calibrated threshold
+  still requires an actual crossing of existing ink. An uncertain scratch in empty space remains
+  ordinary ink, and broad back-and-forth fill strokes are explicitly kept as drawing rather than
+  mistaken for erase.
 - **InkSlate library navigation is more direct.** Folders can be pinned from their menu and appear
   in the Pinned row on Home. Pressing + while a document is open starts the file browser in that
   active document's folder instead of returning to the generic Home menu.

@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -59,8 +58,8 @@ data class QuickWheelGesture(
 )
 
 /**
- * Updates the gesture without committing a tool. Colour and size latch after crossing their slot,
- * so the pen can continue into the separate island without the main ring changing underneath it.
+ * Updates the gesture without committing a tool. Submenus are radial lanes, not latches: circling
+ * the ring always returns to highlighting tools as soon as the pen leaves a submenu's region.
  */
 fun advanceQuickWheelGesture(
     gesture: QuickWheelGesture,
@@ -68,25 +67,42 @@ fun advanceQuickWheelGesture(
     actions: List<QuickWheelAction>,
     current: ToolSnapshot,
     activationRadiusPx: Float,
-    sizeStepPx: Float,
+    sizeTrackStartPx: Float,
+    sizeTrackLengthPx: Float,
     sizeLadder: FloatArray
 ): QuickWheelGesture {
     val moved = gesture.copy(pointer = pointer)
     val distance = gesture.anchor.distanceTo(pointer)
-    val submenu = gesture.submenu ?: quickWheelMainAction(actions, current, gesture.anchor, pointer)
-        ?.takeIf { distance >= activationRadiusPx && (it == QuickWheelAction.COLOR || it == QuickWheelAction.SIZE) }
-    if (submenu == null) return moved
+    val main = quickWheelMainAction(actions, current, gesture.anchor, pointer)
+    val pointerAngle = pointerAngle(gesture.anchor, pointer)
+    val colorAngle = actionAngle(actions, QuickWheelAction.COLOR)
+    val sizeAngle = actionAngle(actions, QuickWheelAction.SIZE)
+    val inColorBand = distance >= activationRadiusPx * 1.65f &&
+        distance <= activationRadiusPx * 3.25f
+    val submenu = when {
+        distance < activationRadiusPx -> null
+        gesture.submenu == QuickWheelAction.COLOR && inColorBand && colorAngle != null &&
+            kotlin.math.abs(angleDifference(pointerAngle, colorAngle)) <= COLOR_ARC_DEGREES + 8f ->
+            QuickWheelAction.COLOR
+        main == QuickWheelAction.COLOR && inColorBand && colorAngle != null &&
+            kotlin.math.abs(angleDifference(pointerAngle, colorAngle)) <= SUBMENU_ENTRY_DEGREES ->
+            QuickWheelAction.COLOR
+        main == QuickWheelAction.SIZE && sizeAngle != null &&
+            kotlin.math.abs(angleDifference(pointerAngle, sizeAngle)) <= SUBMENU_ENTRY_DEGREES ->
+            QuickWheelAction.SIZE
+        else -> null
+    }
+    if (submenu == null) return moved.copy(submenu = null, previewSize = null)
 
-    val origin = if (gesture.submenu == null) distance else gesture.submenuOriginDistance
-    val initial = if (gesture.submenu == null) {
+    val initial = if (gesture.submenu != submenu) {
         if (current.tool == Tool.ERASER) current.eraserRadius else current.strokeWidth
     } else gesture.initialSize
     val preview = if (submenu == QuickWheelAction.SIZE) {
-        quickWheelSize(sizeLadder, initial, origin, distance, sizeStepPx)
+        quickWheelSize(sizeLadder, distance, sizeTrackStartPx, sizeTrackLengthPx)
     } else null
     return moved.copy(
         submenu = submenu,
-        submenuOriginDistance = origin,
+        submenuOriginDistance = sizeTrackStartPx,
         initialSize = initial,
         previewSize = preview
     )
@@ -127,15 +143,13 @@ fun quickWheelColorIndex(
 
 fun quickWheelSize(
     ladder: FloatArray,
-    initial: Float,
-    originDistance: Float,
     distance: Float,
-    stepPx: Float
+    trackStartPx: Float,
+    trackLengthPx: Float
 ): Float {
-    if (ladder.isEmpty()) return initial
-    val start = ToolState.stopIndex(ladder, initial)
-    val steps = ((distance - originDistance) / stepPx.coerceAtLeast(1f)).roundToInt()
-    return ladder[(start + steps).coerceIn(0, ladder.lastIndex)]
+    if (ladder.isEmpty()) return 1f
+    val fraction = ((distance - trackStartPx) / trackLengthPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+    return ladder[(fraction * ladder.lastIndex).roundToInt().coerceIn(0, ladder.lastIndex)]
 }
 
 fun visibleActions(configured: List<QuickWheelAction>, current: ToolSnapshot): List<QuickWheelAction> {
@@ -155,19 +169,12 @@ fun currentAction(current: ToolSnapshot): QuickWheelAction? = when {
     else -> null
 }
 
-fun quickWheelPalette(state: ToolState, current: ToolSnapshot): List<Int> {
-    val alternatives = (
-        state.customColors + listOf(
-            0xFF111827.toInt(), 0xFF2563EB.toInt(), 0xFF7C3AED.toInt(),
-            0xFFDC2626.toInt(), 0xFFF59E0B.toInt(), 0xFF16A34A.toInt(),
-            0xFF0891B2.toInt(), 0xFFFDE047.toInt(), 0xFFFFFFFF.toInt()
-        )
-    ).distinct().filter { it != current.color }.take(MAX_COLOR_CHOICES - 1).toMutableList()
-    // Straight outward from Colour means "keep this colour". The alternatives curve to either
-    // side, so merely entering the island can never unexpectedly repaint the pen.
-    alternatives.add((alternatives.size / 2), current.color)
-    return alternatives
-}
+/** Fixed order gives the curved palette muscle memory regardless of the currently selected ink. */
+fun quickWheelPalette(): List<Int> = listOf(
+    0xFF111827.toInt(), 0xFF2563EB.toInt(), 0xFF7C3AED.toInt(),
+    0xFFDC2626.toInt(), 0xFFF59E0B.toInt(), 0xFF16A34A.toInt(),
+    0xFF0891B2.toInt(), 0xFFFDE047.toInt(), 0xFFFFFFFF.toInt()
+)
 
 /**
  * A compact, transparent radial guide. It never owns pointer input: the drawing view that received
@@ -182,7 +189,7 @@ fun QuickActionWheel(state: ToolState, gesture: QuickWheelGesture) {
         null -> quickWheelMainAction(actions, current, gesture.anchor, gesture.pointer)
         else -> gesture.submenu
     }
-    val palette = quickWheelPalette(state, current)
+    val palette = quickWheelPalette()
     val colorChoice = quickWheelColorIndex(actions, gesture.anchor, gesture.pointer, palette.size)
 
     Box(Modifier.fillMaxSize()) {
@@ -194,7 +201,9 @@ fun QuickActionWheel(state: ToolState, gesture: QuickWheelGesture) {
             val angle = slotAngle(index, actions.size)
             val center = gesture.anchor.radial(angle, radiusPx)
             val selected = action == candidate
-            if (action == active) ActiveToolWedge(gesture.anchor, angle, actionAccent(action, current))
+            if (action == active) ActiveToolConnection(
+                gesture.anchor, center, actionAccent(action, current)
+            )
             ActionIsland(
                 action = action,
                 current = current,
@@ -239,32 +248,15 @@ fun QuickActionWheel(state: ToolState, gesture: QuickWheelGesture) {
     }
 }
 
-private val WedgeShape = GenericShape { size, _ ->
-    moveTo(0f, size.height * .30f)
-    quadraticBezierTo(0f, size.height * .5f, 0f, size.height * .70f)
-    lineTo(size.width - size.height * .48f, size.height)
-    quadraticBezierTo(size.width, size.height, size.width, size.height * .5f)
-    quadraticBezierTo(size.width, 0f, size.width - size.height * .48f, 0f)
-    close()
-}
-
 @Composable
-private fun BoxScope.ActiveToolWedge(anchor: Offset, angle: Float, accent: Color) {
+private fun BoxScope.ActiveToolConnection(anchor: Offset, slot: Offset, accent: Color) {
     val density = LocalDensity.current
-    val lengthPx = with(density) { 69.dp.toPx() }
-    val heightPx = with(density) { 38.dp.toPx() }
-    val center = anchor.radial(angle, with(density) { 25.dp.toPx() })
-    Surface(
-        shape = WedgeShape,
-        color = accent.copy(alpha = .92f),
-        shadowElevation = 5.dp,
-        modifier = Modifier
-            .offset {
-                IntOffset((center.x - lengthPx / 2f).roundToInt(), (center.y - heightPx / 2f).roundToInt())
-            }
-            .size(69.dp, 38.dp)
-            .graphicsLayer { rotationZ = angle }
-    ) {}
+    Canvas(Modifier.fillMaxSize()) {
+        val width = with(density) { 39.dp.toPx() }
+        drawLine(accent.copy(alpha = .94f), anchor, slot, width, cap = StrokeCap.Round)
+        drawCircle(accent.copy(alpha = .94f), width / 2f, anchor)
+        drawCircle(accent.copy(alpha = .94f), width / 2f, slot)
+    }
 }
 
 @Composable
@@ -360,9 +352,9 @@ private fun BoxScope.SizeIsland(
     val density = LocalDensity.current
     val index = actions.indexOf(QuickWheelAction.SIZE).coerceAtLeast(0)
     val angle = slotAngle(index, actions.size)
-    val center = anchor.radial(angle, with(density) { SIZE_RADIUS.toPx() })
-    val widthPx = with(density) { 118.dp.toPx() }
-    val heightPx = with(density) { 42.dp.toPx() }
+    val trackCenter = anchor.radial(angle, with(density) { (SIZE_TRACK_START + SIZE_TRACK_LENGTH / 2).toPx() })
+    val widthPx = with(density) { SIZE_TRACK_LENGTH.toPx() }
+    val heightPx = with(density) { 38.dp.toPx() }
     Surface(
         shape = RoundedCornerShape(50),
         color = Color(0xFF052E2B).copy(alpha = .94f),
@@ -371,21 +363,30 @@ private fun BoxScope.SizeIsland(
         shadowElevation = 6.dp,
         modifier = Modifier
             .offset {
-                IntOffset((center.x - widthPx / 2f).roundToInt(), (center.y - heightPx / 2f).roundToInt())
+                IntOffset((trackCenter.x - widthPx / 2f).roundToInt(), (trackCenter.y - heightPx / 2f).roundToInt())
             }
-            .size(118.dp, 42.dp)
+            .size(SIZE_TRACK_LENGTH, 38.dp)
             .graphicsLayer { rotationZ = angle }
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(92.dp, 30.dp)) {
-                val radii = floatArrayOf(2f, 3.4f, 5.2f, 7.4f, 10f)
-                val chosen = sizeMarkIndex(value, eraser)
-                radii.forEachIndexed { mark, radiusDp ->
+            Canvas(Modifier.size(174.dp, 30.dp)) {
+                val ladder = if (eraser) ToolState.ERASER_SIZES else ToolState.WIDTHS
+                val chosen = ToolState.stopIndex(ladder, value)
+                val left = 5f
+                val right = size.width - 5f
+                drawLine(Color(0xFF5EEAD4).copy(alpha = .55f), Offset(left, center.y), Offset(right, center.y), 2f)
+                val largest = ladder.maxOrNull()?.coerceAtLeast(.01f) ?: 1f
+                ladder.forEachIndexed { mark, stop ->
+                    val x = if (ladder.size <= 1) size.width / 2f
+                    else left + (right - left) * mark / ladder.lastIndex
+                    val relative = kotlin.math.sqrt((stop / largest).coerceIn(0f, 1f))
+                    val radius = 1.6f + relative * 4.2f
                     drawCircle(
-                        color = if (mark == chosen) Color.White else Color(0xFF5EEAD4).copy(alpha = .55f),
-                        radius = with(density) { radiusDp.dp.toPx() },
-                        center = Offset(size.width * (mark + 1) / 6f, size.height / 2f)
+                        color = if (mark == chosen) Color.White else Color(0xFF5EEAD4).copy(alpha = .68f),
+                        radius = if (mark == chosen) radius + 2.2f else radius,
+                        center = Offset(x, center.y)
                     )
+                    if (mark == chosen) drawCircle(Color(0xFF0D9488), radius.coerceAtLeast(1f), Offset(x, center.y))
                 }
             }
         }
@@ -414,14 +415,14 @@ private fun actionAccent(action: QuickWheelAction, current: ToolSnapshot): Color
     QuickWheelAction.SIZE -> Color(0xFF0D9488)
 }
 
-private fun sizeMarkIndex(value: Float, eraser: Boolean): Int {
-    val ladder = if (eraser) ToolState.ERASER_SIZES else ToolState.WIDTHS
-    if (ladder.size <= 1) return 0
-    val index = ToolState.stopIndex(ladder, value)
-    return (index * 4f / ladder.lastIndex).roundToInt().coerceIn(0, 4)
-}
-
 private fun slotAngle(index: Int, count: Int): Float = -90f + index * (360f / count.coerceAtLeast(1))
+
+private fun actionAngle(actions: List<QuickWheelAction>, action: QuickWheelAction): Float? =
+    actions.indexOf(action).takeIf { it >= 0 }?.let { slotAngle(it, actions.size) }
+
+private fun pointerAngle(anchor: Offset, pointer: Offset): Float = normalizedDegrees(
+    Math.toDegrees(atan2((pointer.y - anchor.y).toDouble(), (pointer.x - anchor.x).toDouble())).toFloat()
+)
 
 private fun normalizedDegrees(value: Float): Float {
     var result = value % 360f
@@ -447,9 +448,10 @@ private fun Offset.distanceTo(other: Offset): Float =
     hypot((other.x - x).toDouble(), (other.y - y).toDouble()).toFloat()
 
 private const val COLOR_ARC_DEGREES = 58f
-private const val MAX_COLOR_CHOICES = 9
+private const val SUBMENU_ENTRY_DEGREES = 15f
 private val ACTION_SIZE = 40.dp
 private val MAIN_RADIUS = 54.dp
 private val COLOR_RADIUS = 108.dp
 private val COLOR_DOT = 27.dp
-private val SIZE_RADIUS = 111.dp
+private val SIZE_TRACK_START = 74.dp
+private val SIZE_TRACK_LENGTH = 190.dp

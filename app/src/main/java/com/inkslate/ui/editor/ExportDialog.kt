@@ -15,6 +15,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.inkslate.ui.OptionChip
 import com.inkslate.ui.OptionLabel
 import com.inkslate.ui.OptionWrapRow
+import com.inkslate.core.AnnotationLayers
 
 /** What happens to the file once it has been written. */
 enum class ExportDestination(val label: String, val detail: String) {
@@ -62,7 +64,9 @@ data class ExportRequest(
     val flatten: Boolean,
     val destination: ExportDestination,
     /** Without an extension; the editor appends the right one. */
-    val baseName: String
+    val baseName: String,
+    val visibleLayers: Int = AnnotationLayers.ALL,
+    val layerOpacities: List<Float> = listOf(1f, 1f, 1f)
 )
 
 /**
@@ -81,6 +85,8 @@ fun ExportDialog(
     pageCount: Int,
     currentPage: Int,
     isPdf: Boolean,
+    initialVisibleLayers: Int = AnnotationLayers.ALL,
+    initialLayerOpacities: List<Float> = listOf(1f, 1f, 1f),
     /** Pages already chosen elsewhere - from the page manager's selection - or null. */
     presetPages: List<Int>? = null,
     onDismiss: () -> Unit,
@@ -95,6 +101,10 @@ fun ExportDialog(
     var toText by remember { mutableStateOf(pageCount.toString()) }
     var nameText by remember {
         mutableStateOf(documentName.substringBeforeLast('.', documentName))
+    }
+    var exportLayers by remember { mutableStateOf(AnnotationLayers.mixerMask(initialVisibleLayers)) }
+    var exportOpacities by remember {
+        mutableStateOf(List(3) { initialLayerOpacities.getOrElse(it) { 1f }.coerceIn(0f, 1f) })
     }
 
     val from = fromText.toIntOrNull()
@@ -223,6 +233,44 @@ fun ExportDialog(
                         }
                         Switch(checked = flatten, onCheckedChange = { flatten = it })
                     }
+                    if (flatten) {
+                        OptionLabel("Annotation layers in this copy")
+                        listOf(AnnotationLayers.ONE, AnnotationLayers.TWO, AnnotationLayers.THREE)
+                            .forEachIndexed { index, layer ->
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Switch(
+                                        checked = (exportLayers and layer) != 0,
+                                        onCheckedChange = { shown ->
+                                            exportLayers = if (shown) exportLayers or layer
+                                            else exportLayers and layer.inv()
+                                        }
+                                    )
+                                    Text("Layer ${index + 1}", modifier = Modifier.padding(start = 6.dp))
+                                    Slider(
+                                        value = exportOpacities[index],
+                                        onValueChange = { value ->
+                                            exportOpacities = exportOpacities.toMutableList().also {
+                                                it[index] = value
+                                            }
+                                        },
+                                        enabled = (exportLayers and layer) != 0,
+                                        modifier = Modifier.weight(1f).padding(start = 8.dp)
+                                    )
+                                    Text(
+                                        "${(exportOpacities[index] * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                            }
+                        Text(
+                            "This is a temporary export mix; it does not change the page you are working on.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         },
@@ -235,7 +283,9 @@ fun ExportDialog(
                             pages = pages(),
                             flatten = flatten,
                             destination = destination,
-                            baseName = nameText.trim()
+                            baseName = nameText.trim(),
+                            visibleLayers = exportLayers,
+                            layerOpacities = exportOpacities
                         )
                     )
                 }

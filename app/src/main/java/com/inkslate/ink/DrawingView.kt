@@ -27,12 +27,15 @@ import kotlin.math.sign
 import kotlin.math.sin
 import kotlin.math.hypot
 import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.math.max
 import kotlin.math.min
 import com.inkslate.core.Tool
 import com.inkslate.core.Box
 import com.inkslate.core.EraserMode
 import com.inkslate.core.InkCanvas
+import com.inkslate.core.AnnotationLayers
+import com.inkslate.core.LayerFilter
 import com.inkslate.core.ScribbleErase
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.InputMode
@@ -537,6 +540,71 @@ class DrawingView @JvmOverloads constructor(
     var textSnapper: ((page: Int, points: List<Pair<Float, Float>>) -> List<RectF>)? = null
     var snapHighlighterToText: Boolean = false
     var scribbleErase: Boolean = false
+    var scribbleSensitivity: Float = ScribbleErase.DEFAULT_SENSITIVITY
+
+    // ---- annotation layers ---------------------------------------------------
+
+    /** Mixer channels currently visible. Zero shows the untouched source page. */
+    var visibleLayerMask: Int = AnnotationLayers.ONE
+        set(value) {
+            val next = AnnotationLayers.mixerMask(value)
+            if (field == next) return
+            field = next
+            renderedInk?.close(); renderedInk = null
+            invalidate()
+        }
+
+    /** Channels receiving new ink; zero intentionally falls back to layer one per stroke. */
+    var recordLayerMask: Int = AnnotationLayers.ONE
+        set(value) {
+            val next = AnnotationLayers.mixerMask(value)
+            if (field == next) return
+            field = next
+        }
+
+    /** Three independent mixer faders. */
+    var layerOpacities: FloatArray = floatArrayOf(1f, 1f, 1f)
+        set(value) {
+            val next = FloatArray(3) { value.getOrElse(it) { 1f }.coerceIn(0f, 1f) }
+            if (field.contentEquals(next)) return
+            field = next
+            renderedInk?.close(); renderedInk = null
+            invalidate()
+        }
+
+    private val layerFilters = ArrayList<LayerFilter>(3)
+    private var liveLayerMask = AnnotationLayers.ONE
+    private var filterGrabIndex = -1
+    private var filterGrabHandle = 0
+    private var filterGrabAt = floatArrayOf(0f, 0f)
+    var onLayerFiltersChanged: ((Int) -> Unit)? = null
+    var onLayerOneAutoArmed: (() -> Unit)? = null
+
+    fun layerFiltersMask(page: Int = currentPage): Int = layerFilters
+        .filter { it.pageIndex == page }
+        .fold(0) { mask, filter -> mask or filter.layerMask }
+
+    /** One temporary filter per layer on a page, like laying down or lifting the ruler. */
+    fun toggleLayerFilter(layerMask: Int) {
+        val normalised = AnnotationLayers.normalise(layerMask)
+        val layer = normalised and -normalised
+        val existing = layerFilters.indexOfFirst { it.pageIndex == currentPage && it.layerMask == layer }
+        if (existing >= 0) {
+            layerFilters.removeAt(existing)
+        } else {
+            val w = pageWidthPt * .58f
+            val h = pageHeightPt * .34f
+            val cx = pageWidthPt / 2f
+            val cy = pageHeightPt / 2f
+            layerFilters.add(LayerFilter(currentPage, layer, cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f))
+        }
+        onLayerFiltersChanged?.invoke(layerFiltersMask())
+        renderedInk?.close(); renderedInk = null
+        invalidate()
+    }
+
+    private fun writeLayerMask(page: Int, x: Float, y: Float): Int =
+        AnnotationLayers.writeMask(recordLayerMask, layerFilters, page, x, y)
 
     // ---- ruler ---------------------------------------------------------------
 
@@ -879,6 +947,155 @@ class DrawingView @JvmOverloads constructor(
         val fm = rulerText.fontMetrics
         val baseline = midY - (fm.ascent + fm.descent) / 2f
         canvas.drawText(label, midX - textWidth / 2f, baseline, rulerText)
+    }
+
+    private val filterFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val filterEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val filterLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = Paint.Align.CENTER
+    }
+
+    /** Finger hit testing for filter corners, edges and centre; a stylus always writes through. */
+    private fun beginLayerFilterGesture(vx: Float, vy: Float, isStylus: Boolean): Boolean {
+        if (isStylus) return false
+        toPage(vx, vy)
+        val x = tmpPts[0]
+        val y = tmpPts[1]
+        val tolerance = 18f / currentScale().coerceAtLeast(.25f)
+        for (i in layerFilters.lastIndex downTo 0) {
+            val f = layerFilters[i]
+            if (f.pageIndex != livePage) continue
+            if (x < f.left - tolerance || x > f.right + tolerance ||
+                y < f.top - tolerance || y > f.bottom + tolerance
+            ) continue
+            val left = abs(x - f.left) <= tolerance
+            val right = abs(x - f.right) <= tolerance
+            val top = abs(y - f.top) <= tolerance
+            val bottom = abs(y - f.bottom) <= tolerance
+            val handle = when {
+                left && top -> FILTER_TOP_LEFT
+                right && top -> FILTER_TOP_RIGHT
+                left && bottom -> FILTER_BOTTOM_LEFT
+                right && bottom -> FILTER_BOTTOM_RIGHT
+                left -> FILTER_LEFT
+                right -> FILTER_RIGHT
+                top -> FILTER_TOP
+                bottom -> FILTER_BOTTOM
+                f.contains(x, y) -> FILTER_MOVE
+                else -> 0
+            }
+            if (handle != 0) {
+                filterGrabIndex = i
+                filterGrabHandle = handle
+                filterGrabAt[0] = x
+                filterGrabAt[1] = y
+                invalidate()
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun dragLayerFilter(vx: Float, vy: Float) {
+        val index = filterGrabIndex
+        val old = layerFilters.getOrNull(index) ?: return
+        toPage(vx, vy)
+        val x = tmpPts[0]
+        val y = tmpPts[1]
+        val dx = x - filterGrabAt[0]
+        val dy = y - filterGrabAt[1]
+        val next = if (filterGrabHandle == FILTER_MOVE) {
+            var moved = old.moved(dx, dy)
+            val shiftX = when {
+                moved.left < 0f -> -moved.left
+                moved.right > pageWidthPt -> pageWidthPt - moved.right
+                else -> 0f
+            }
+            val shiftY = when {
+                moved.top < 0f -> -moved.top
+                moved.bottom > pageHeightPt -> pageHeightPt - moved.bottom
+                else -> 0f
+            }
+            moved.moved(shiftX, shiftY)
+        } else {
+            var l = old.left
+            var t = old.top
+            var r = old.right
+            var b = old.bottom
+            when (filterGrabHandle) {
+                FILTER_LEFT, FILTER_TOP_LEFT, FILTER_BOTTOM_LEFT -> l = x
+                FILTER_RIGHT, FILTER_TOP_RIGHT, FILTER_BOTTOM_RIGHT -> r = x
+            }
+            when (filterGrabHandle) {
+                FILTER_TOP, FILTER_TOP_LEFT, FILTER_TOP_RIGHT -> t = y
+                FILTER_BOTTOM, FILTER_BOTTOM_LEFT, FILTER_BOTTOM_RIGHT -> b = y
+            }
+            old.withBounds(
+                l.coerceIn(0f, pageWidthPt), t.coerceIn(0f, pageHeightPt),
+                r.coerceIn(0f, pageWidthPt), b.coerceIn(0f, pageHeightPt)
+            )
+        }
+        layerFilters[index] = next
+        filterGrabAt[0] = x
+        filterGrabAt[1] = y
+        renderedInk?.close(); renderedInk = null
+        invalidate()
+    }
+
+    private fun drawLayerFilters(canvas: Canvas, page: Int) {
+        val filters = layerFilters.filter { it.pageIndex == page }
+        if (filters.isEmpty()) return
+        val scale = currentScale().coerceAtLeast(.25f)
+        fun tint(rect: RectF, mask: Int, alpha: Int) {
+            filterFill.color = AnnotationLayers.colour(mask)
+            filterFill.alpha = alpha
+            canvas.drawRoundRect(rect, 9f / scale, 9f / scale, filterFill)
+        }
+        filters.forEach { tint(RectF(it.left, it.top, it.right, it.bottom), it.layerMask, 14) }
+        // Explicit set colours make overlap meaning stable instead of depending on alpha order.
+        for (a in filters.indices) for (b in a + 1 until filters.size) {
+            val overlap = intersection(filters[a], filters[b]) ?: continue
+            tint(overlap, filters[a].layerMask or filters[b].layerMask, 20)
+        }
+        if (filters.size == 3) {
+            val ab = intersection(filters[0], filters[1])
+            val triple = ab?.let { intersection(it, filters[2]) }
+            if (triple != null) tint(triple, AnnotationLayers.ALL, 24)
+        }
+        filters.forEachIndexed { index, f ->
+            val colour = AnnotationLayers.colour(f.layerMask)
+            filterEdge.color = colour
+            filterEdge.alpha = if (index == filterGrabIndex) 245 else 185
+            filterEdge.strokeWidth = (if (index == filterGrabIndex) 3f else 2f) / scale
+            val rect = RectF(f.left, f.top, f.right, f.bottom)
+            canvas.drawRoundRect(rect, 9f / scale, 9f / scale, filterEdge)
+            val radius = 4.5f / scale
+            listOf(f.left to f.top, f.right to f.top, f.left to f.bottom, f.right to f.bottom)
+                .forEach { (x, y) ->
+                    filterFill.color = colour; filterFill.alpha = 220
+                    canvas.drawCircle(x, y, radius, filterFill)
+                }
+            filterLabel.color = colour
+            filterLabel.alpha = 235
+            filterLabel.textSize = 18f / scale
+            val number = when (f.layerMask) {
+                AnnotationLayers.ONE -> "1"
+                AnnotationLayers.TWO -> "2"
+                else -> "3"
+            }
+            canvas.drawText(number, f.left + 13f / scale, f.top + 20f / scale, filterLabel)
+        }
+    }
+
+    private fun intersection(a: LayerFilter, b: LayerFilter): RectF? = intersection(
+        RectF(a.left, a.top, a.right, a.bottom), b
+    )
+
+    private fun intersection(a: RectF, b: LayerFilter): RectF? {
+        val out = RectF(a)
+        return if (out.intersect(b.left, b.top, b.right, b.bottom)) out else null
     }
 
     /** Rectangles to flash, for showing where a search hit is. Cleared on the next touch. */
@@ -2362,7 +2579,8 @@ class DrawingView @JvmOverloads constructor(
             points = listOf(InkPoint(pageX, pageY, 1f)), text = text, textSize = size,
             bold = bold, italic = italic, font = font, align = align, pageIndex = livePage,
             boxWidth = boxWidth, boxFillColor = boxFillColor, boxBorder = boxBorder,
-            link = link, opacity = opacity, updatedUtc = now()
+            link = link, opacity = opacity,
+            layerMask = writeLayerMask(livePage, pageX, pageY), updatedUtc = now()
         )
         strokes.add(s); pushOp(Op(listOf(s), emptyList()))
         growCanvasForAll(listOf(s)); changed()
@@ -2393,6 +2611,7 @@ class DrawingView @JvmOverloads constructor(
                 InkPoint(rect.right, rect.bottom, 1f)
             ),
             imageId = imageId, pageIndex = page, opacity = 1f,
+            layerMask = writeLayerMask(page, rect.centerX(), rect.centerY()),
             updatedUtc = System.currentTimeMillis()
         )
         strokes.add(s)
@@ -2523,7 +2742,8 @@ class DrawingView @JvmOverloads constructor(
                 InkPoint(c[0] + w / 2f, c[1] + h / 2f, 0f)
             ),
             rows = rows, cols = cols, cells = List(rows * cols) { "" }, pageIndex = livePage,
-            dash = dash, opacity = opacity, textSize = textSize, updatedUtc = now()
+            dash = dash, opacity = opacity, textSize = textSize,
+            layerMask = writeLayerMask(livePage, c[0], c[1]), updatedUtc = now()
         )
         strokes.add(s); pushOp(Op(listOf(s), emptyList()))
         selection.clear(); selection.add(s.id)
@@ -2932,7 +3152,11 @@ class DrawingView @JvmOverloads constructor(
             val focus = floatArrayOf(inkFocusX, inkFocusY)
             viewToPage.mapPoints(focus)
             val regionIndex = strokeRegions[slot.index]
-            val cached = enhancementsReady && regionIndex != null &&
+            val pageFilters = layerFilters.filter { it.pageIndex == slot.index }
+            val layered = pageFilters.isNotEmpty() || visibleLayerMask != AnnotationLayers.ONE ||
+                !layerOpacities.contentEquals(floatArrayOf(1f, 1f, 1f)) ||
+                onPage.any { AnnotationLayers.normalise(it.layerMask) != AnnotationLayers.ONE }
+            val cached = !layered && enhancementsReady && regionIndex != null &&
                 strokesByPage[slot.index].orEmpty().size >= 80 && currentScale() <= 1.25f && run {
                     val tiles = renderedInk ?: RenderedInk({ callback -> post { callback() } }, { postInvalidateOnAnimation() }).also { renderedInk = it }
                     val wholeView = Box(
@@ -2944,13 +3168,17 @@ class DrawingView @JvmOverloads constructor(
                         pageFilter.filter, focus[0] - slot.originX + slot.cropLeft,
                         focus[1] - slot.originY + slot.cropTop, gesturing || !scroller.isFinished)
                 }
-            if (!cached) StrokeRasteriser.drawAll(canvas, onPage)
+            if (!cached) {
+                if (layered) drawLayeredStrokes(canvas, onPage, pageFilters)
+                else StrokeRasteriser.drawAll(canvas, onPage)
+            }
             drawnCount += onPage.size
             live?.let { pts ->
                 if (pts.isNotEmpty() && livePage == slot.index) {
                     StrokeRasteriser.drawLive(canvas, liveStroke(pts))
                 }
             }
+            drawLayerFilters(canvas, slot.index)
             if (highlightPage == slot.index && highlightRects.isNotEmpty()) {
                 fillPaint.reset(); fillPaint.isAntiAlias = true
                 fillPaint.color = Color.argb(90, 255, 196, 0)
@@ -3132,7 +3360,8 @@ class DrawingView @JvmOverloads constructor(
         id = LIVE_ID, kind = liveKind, color = color,
         baseWidth = liveWidth, points = pts, brush = brush, dash = dash,
         fill = fillStyle, fillColor = fillColor, opacity = opacity,
-        rows = newTableRows, cols = newTableCols, pageIndex = livePage
+        rows = newTableRows, cols = newTableCols, pageIndex = livePage,
+        layerMask = liveLayerMask
     )
 
     /**
@@ -3141,6 +3370,54 @@ class DrawingView @JvmOverloads constructor(
      * the file you hand in look identical.
      */
     private fun drawStroke(canvas: Canvas, s: Stroke) = StrokeRasteriser.draw(canvas, s)
+
+    /** Draw the mixer without duplicating the PDF bitmap or drawing multi-layer ink twice. */
+    private fun drawLayeredStrokes(
+        canvas: Canvas,
+        strokes: List<Stroke>,
+        filters: List<LayerFilter>
+    ) {
+        // Partition once per frame. Re-filtering the entire page for every channel and filter made
+        // the mixer cost grow with both annotation count and filter count.
+        val groups = arrayOfNulls<MutableList<Stroke>>(AnnotationLayers.ALL + 1)
+        strokes.forEach { stroke ->
+            val membership = AnnotationLayers.normalise(stroke.layerMask)
+            val group = groups[membership] ?: ArrayList<Stroke>().also { groups[membership] = it }
+            group += stroke
+        }
+        fun opacityFor(membership: Int, target: Int): Float {
+            var value = 0f
+            if ((membership and target and AnnotationLayers.ONE) != 0) value = max(value, layerOpacities[0])
+            if ((membership and target and AnnotationLayers.TWO) != 0) value = max(value, layerOpacities[1])
+            if ((membership and target and AnnotationLayers.THREE) != 0) value = max(value, layerOpacities[2])
+            return value
+        }
+        fun drawTarget(target: Int, clip: (() -> Unit)? = null) {
+            if (target == 0) return
+            for (membership in 1..AnnotationLayers.ALL) {
+                val alpha = opacityFor(membership, target)
+                if (alpha <= .001f) continue
+                val group = groups[membership] ?: continue
+                val clipped = canvas.save()
+                clip?.invoke()
+                val faded = if (alpha < .999f) {
+                    canvas.saveLayerAlpha(null, (alpha * 255f).roundToInt())
+                } else -1
+                StrokeRasteriser.drawAll(canvas, group)
+                if (faded >= 0) canvas.restoreToCount(faded)
+                canvas.restoreToCount(clipped)
+            }
+        }
+
+        drawTarget(visibleLayerMask) {
+            filters.forEach { canvas.clipOutRect(it.left, it.top, it.right, it.bottom) }
+        }
+        filters.forEach { filter ->
+            drawTarget(filter.layerMask) {
+                canvas.clipRect(filter.left, filter.top, filter.right, filter.bottom)
+            }
+        }
+    }
 
 
     /** Selection frame and handles are drawn in view space so they stay a constant size. */
@@ -3469,6 +3746,15 @@ class DrawingView @JvmOverloads constructor(
         lastX = e.x; lastY = e.y
         parent?.requestDisallowInterceptTouchEvent(true)
 
+        toPage(e.x, e.y)
+        if (recordLayerMask == 0) {
+            recordLayerMask = AnnotationLayers.ONE
+            visibleLayerMask = visibleLayerMask or AnnotationLayers.ONE
+            onLayerOneAutoArmed?.invoke()
+        }
+        liveLayerMask = writeLayerMask(livePage, tmpPts[0], tmpPts[1])
+        if (beginLayerFilterGesture(e.x, e.y, isStylus)) return
+
         rulerGrab = rulerHandleAt(e.x, e.y, isStylus)
         if (rulerGrab != 0) {
             toDoc(e.x, e.y)
@@ -3565,6 +3851,11 @@ class DrawingView @JvmOverloads constructor(
 
     private fun onMove(e: MotionEvent, isStylus: Boolean, t: Tool) {
         if (e.getPointerId(0) != drawingPointerId) return
+
+        if (filterGrabIndex >= 0) {
+            dragLayerFilter(e.x, e.y)
+            return
+        }
 
         if (cropTargetId != null) {
             if (cropGrab != 0) {
@@ -3738,7 +4029,7 @@ class DrawingView @JvmOverloads constructor(
 
         val dragged = box.width() > placeSlopPt && box.height() > placeSlopPt
 
-        val built: List<Stroke> = when (item) {
+        val rawBuilt: List<Stroke> = when (item) {
             is Placement.StampItem -> {
                 val aspect = Stamps.aspectFor(item.kind, item.options)
                 // The size it was last used at, or a size that suits the page it is going on.
@@ -3799,6 +4090,8 @@ class DrawingView @JvmOverloads constructor(
             }
         }
 
+        val targetMask = writeLayerMask(livePage, start[0], start[1])
+        val built = rawBuilt.map { it.copy(layerMask = targetMask) }
         if (built.isEmpty()) { invalidate(); return }
         // A picture goes down once. Stamps and symbols stay armed, because a page of them is a
         // series of taps; there is only ever one of a given photograph.
@@ -3838,6 +4131,15 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun onUp(cancelled: Boolean, t: Tool) {
+        if (filterGrabIndex >= 0) {
+            filterGrabIndex = -1
+            filterGrabHandle = 0
+            drawingPointerId = -1
+            drawingIsStylus = false
+            parent?.requestDisallowInterceptTouchEvent(false)
+            invalidate()
+            return
+        }
         if (cropTargetId != null) {
             // The crop is not committed here. It is committed from the toolbar, so the rectangle
             // can be adjusted over several drags before anything is decided.
@@ -3855,7 +4157,9 @@ class DrawingView @JvmOverloads constructor(
             if (!cancelled && item != null && length > placeSlopPt) {
                 val built = Stamps.buildLine(
                     item.kind, d[0], d[1], d[2], d[3], livePage, item.options, ids.next()
-                ) { ids.next() }
+                ) { ids.next() }.map {
+                    it.copy(layerMask = writeLayerMask(livePage, d[0], d[1]))
+                }
                 strokes.addAll(built)
                 growCanvasForAll(built)
                 pushOp(Op(built, emptyList()))
@@ -4088,6 +4392,8 @@ class DrawingView @JvmOverloads constructor(
         placeDown = null
         placementGrab = false
         lineDrag = null
+        filterGrabIndex = -1
+        filterGrabHandle = 0
 
         // An interrupted drag is a different matter. The strokes have already been moved, and
         // clearing the gesture without putting them back would leave the selection somewhere the
@@ -4297,6 +4603,7 @@ class DrawingView @JvmOverloads constructor(
             rows = if (isTable) newTableRows else 0,
             cols = if (isTable) newTableCols else 0,
             cells = if (isTable) List(newTableRows * newTableCols) { "" } else emptyList(),
+            layerMask = liveLayerMask,
             updatedUtc = now()
         )
         // What was drawn is what is kept. Tidying rough shapes into lines and circles was an
@@ -4306,7 +4613,7 @@ class DrawingView @JvmOverloads constructor(
         // A scratch is only consumed when it actually crosses existing ink. That second check is
         // important: a fast zig-zag written in empty space remains exactly what the user drew.
         if (scribbleErase && liveKind == StrokeKind.FREEHAND && !finished.isHighlighter &&
-            ScribbleErase.isScribble(l)
+            ScribbleErase.isScribble(l, scribbleSensitivity)
         ) {
             erasedThisGesture = ArrayList()
             addedThisGesture = ArrayList()
@@ -4341,7 +4648,7 @@ class DrawingView @JvmOverloads constructor(
                             InkPoint(r.right, r.centerY(), r.height())
                         ),
                         brush = BrushType.HIGHLIGHTER, opacity = finished.opacity,
-                        pageIndex = livePage, updatedUtc = now
+                        pageIndex = livePage, layerMask = finished.layerMask, updatedUtc = now
                     )
                 }
                 strokes.addAll(replacements)
@@ -4395,7 +4702,12 @@ class DrawingView @JvmOverloads constructor(
             var touched = false
             var i = 0
             while (i + 1 < pagePoints.size) {
-                if (s.hitTest(pagePoints[i], pagePoints[i + 1], liveEraser)) { touched = true; break }
+                val x = pagePoints[i]
+                val y = pagePoints[i + 1]
+                val targetLayers = writeLayerMask(livePage, x, y)
+                if ((AnnotationLayers.normalise(s.layerMask) and targetLayers) != 0 &&
+                    s.hitTest(x, y, liveEraser)
+                ) { touched = true; break }
                 i += 2
             }
             if (!touched) continue
@@ -4568,7 +4880,11 @@ class DrawingView @JvmOverloads constructor(
     private val eraseScratch = ArrayList<Float>(64)
 
     private fun topmostAt(px: Float, py: Float): Stroke? =
-        strokes.lastOrNull { it.pageIndex == livePage && it.hitTest(px, py, 4f) }
+        strokes.lastOrNull {
+            it.pageIndex == livePage &&
+                (AnnotationLayers.normalise(it.layerMask) and liveLayerMask) != 0 &&
+                it.hitTest(px, py, 4f)
+        }
 
     // ---- selection gestures --------------------------------------------------
 
@@ -4730,14 +5046,22 @@ class DrawingView @JvmOverloads constructor(
             Grab.MARQUEE -> {
                 marquee?.let { r ->
                     selection.clear()
-                    strokes.filter { it.pageIndex == livePage && it.insideRect(r) }
+                    strokes.filter {
+                        it.pageIndex == livePage &&
+                            (AnnotationLayers.normalise(it.layerMask) and liveLayerMask) != 0 &&
+                            it.insideRect(r)
+                    }
                         .forEach { selection.add(it.id) }
                     onSelectionChanged?.invoke(selection.size)
                 }
                 lasso?.let { ring ->
                     if (!cancelled && ring.size >= 6) {
                         selection.clear()
-                        strokes.filter { it.pageIndex == livePage && Lasso.catches(it, ring) }
+                        strokes.filter {
+                            it.pageIndex == livePage &&
+                                (AnnotationLayers.normalise(it.layerMask) and liveLayerMask) != 0 &&
+                                Lasso.catches(it, ring)
+                        }
                             .forEach { selection.add(it.id) }
                         onSelectionChanged?.invoke(selection.size)
                     }
@@ -5219,6 +5543,16 @@ class DrawingView @JvmOverloads constructor(
     }
 
     companion object {
+        private const val FILTER_LEFT = 1
+        private const val FILTER_RIGHT = 2
+        private const val FILTER_TOP = 3
+        private const val FILTER_BOTTOM = 4
+        private const val FILTER_TOP_LEFT = 5
+        private const val FILTER_TOP_RIGHT = 6
+        private const val FILTER_BOTTOM_LEFT = 7
+        private const val FILTER_BOTTOM_RIGHT = 8
+        private const val FILTER_MOVE = 9
+
         /** Set by an app that turns pages with a finger tap at the sides (InkSheets). */
         @JvmStatic
         @Volatile

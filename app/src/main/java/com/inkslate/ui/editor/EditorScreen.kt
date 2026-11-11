@@ -118,6 +118,7 @@ import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.InputMode
 
 import com.inkslate.core.Tool
+import com.inkslate.core.AnnotationLayers
 
 /** Whole-page music never needs more pixels across than the screen's shorter side can show. */
 internal fun musicRenderWidthPx(screenWidthPx:Float,screenHeightPx:Float):Int =
@@ -319,6 +320,7 @@ fun EditorScreen(
     val model = remember { com.inkslate.ink.InkModel(StrokeIdGen(DeviceId.get(context))) }
     // The surface of the view last touched. See ActiveSurface.
     val drawingView = remember(host) { com.inkslate.ui.ActiveSurface(host) }
+    var layerFiltersMask by remember { mutableStateOf(0) }
     var oneShotSelection by remember { mutableStateOf<OneShotSelection?>(null) }
     fun finishOneShotSelection() {
         val session = oneShotSelection ?: return
@@ -1285,7 +1287,10 @@ fun EditorScreen(
             val staged = java.io.File(staging, request.baseName + "." + extension)
             if (d.ink !== d.savedInk) withContext(Dispatchers.IO) { repo.saveWorking(d) }
             val built = withContext(Dispatchers.IO) {
-                repo.exportTo(d, staged, request.pages, request.flatten)
+                repo.exportTo(
+                    d, staged, request.pages, request.flatten,
+                    request.visibleLayers, request.layerOpacities
+                )
             }
             exporting = false
             built.fold(
@@ -1936,26 +1941,6 @@ fun EditorScreen(
             // navigationBarsPadding keeps the toolbar clear of the gesture bar, which
             // otherwise sits directly on top of the tool buttons
             Column(Modifier.navigationBarsPadding()) {
-                if (!com.inkslate.AppFlavor.musicView && (d.pageCount > 1 || PageSources.isPdf(d.file))) {
-                    PageBar(
-                        page = page,
-                        pageCount = d.pageCount,
-                        bookmarked = bookmarks.any { it.page == page },
-                        onPrev = { drawingView.value?.goToPage(page - 1) },
-                        onNext = { drawingView.value?.goToPage(page + 1) },
-                        onOpenNavigation = { navOpen = true },
-                        onOpenPages = { pagesOpen = true },
-                        onToggleBookmark = {
-                            if (bookmarks.any { it.page == page }) {
-                                d.ink = d.ink.withBookmarkRemoved(page)
-                                bookmarks = d.ink.bookmarks
-                                persistWorking()
-                            } else {
-                                bookmarkPrompt = page
-                            }
-                        }
-                    )
-                }
                 if (trayOpen) {
                     val placement = armedItem
                     ShapeTray(
@@ -2029,6 +2014,21 @@ fun EditorScreen(
                         onRedo = { drawingView.value?.redo(); dirty = true; undoTick++ },
                         canUndo = canUndo,
                         canRedo = canRedo,
+                        page = page,
+                        pageCount = d.pageCount,
+                        pageBookmarked = bookmarks.any { it.page == page },
+                        onPreviousPage = { drawingView.value?.goToPage(page - 1) },
+                        onNextPage = { drawingView.value?.goToPage(page + 1) },
+                        onOpenPageNavigation = { navOpen = true },
+                        onTogglePageBookmark = {
+                            if (bookmarks.any { it.page == page }) {
+                                d.ink = d.ink.withBookmarkRemoved(page)
+                                bookmarks = d.ink.bookmarks
+                                persistWorking()
+                            } else {
+                                bookmarkPrompt = page
+                            }
+                        },
                         onRestyleSelection = { color, width ->
                             drawingView.value?.restyleSelection(newColor = color, newWidth = width)
                             dirty = true; undoTick++
@@ -2102,6 +2102,20 @@ fun EditorScreen(
                         onSnapRuler = { drawingView.value?.snapRulerAngle() },
                         onRotateRuler = { d -> drawingView.value?.rotateRuler(d) },
                         onResetRuler = { drawingView.value?.placeRulerAcrossView() },
+                        layerFiltersMask = layerFiltersMask,
+                        onToggleLayerFilter = { layer ->
+                            drawingView.value?.toggleLayerFilter(layer)
+                            layerFiltersMask = drawingView.value?.layerFiltersMask() ?: 0
+                            scope.launch {
+                                val number = when (layer) {
+                                    AnnotationLayers.ONE -> 1
+                                    AnnotationLayers.TWO -> 2
+                                    else -> 3
+                                }
+                                val shown = (layerFiltersMask and layer) != 0
+                                snackbar.showSnackbar("Layer $number filter ${if (shown) "added" else "removed"}")
+                            }
+                        },
                         onPickCustomColour = { colourPickerOpen = true },
                         onMessage = { scope.launch { snackbar.showSnackbar(it) } },
                         onBeginCrop = {
@@ -2266,7 +2280,8 @@ fun EditorScreen(
                                     actions = visibleActions(tools.quickWheelActions, current),
                                     current = current,
                                     activationRadiusPx = 44f * density.density,
-                                    sizeStepPx = 14f * density.density,
+                                    sizeTrackStartPx = 74f * density.density,
+                                    sizeTrackLengthPx = 190f * density.density,
                                     sizeLadder = ladder
                                 )
                             }
@@ -2283,7 +2298,8 @@ fun EditorScreen(
                                     actions = actions,
                                     current = current,
                                     activationRadiusPx = 44f * density.density,
-                                    sizeStepPx = 14f * density.density,
+                                    sizeTrackStartPx = 74f * density.density,
+                                    sizeTrackLengthPx = 190f * density.density,
                                     sizeLadder = ladder
                                 )
                                 quickWheel = null
@@ -2291,7 +2307,7 @@ fun EditorScreen(
 
                                 when (gesture.submenu) {
                                     QuickWheelAction.COLOR -> {
-                                        val palette = quickWheelPalette(tools, current)
+                                        val palette = quickWheelPalette()
                                         val picked = palette.getOrNull(
                                             quickWheelColorIndex(actions, gesture.anchor, gesture.pointer, palette.size)
                                         ) ?: return@released
@@ -2341,6 +2357,10 @@ fun EditorScreen(
                                 tools.applyTo(view)
                                 if (tools.active.tool != Tool.SELECT) oneShotSelection = null
                             }
+                            view.onLayerFiltersChanged = { mask ->
+                                if (slot.index == host.activeViewIndex) layerFiltersMask = mask
+                            }
+                            view.onLayerOneAutoArmed = { tools.autoArmLayerOne() }
                             view.onDetailNeeded = { detailPage, rect, widthPx ->
                                 scope.launch {
                                     val d = doc ?: return@launch
@@ -3123,6 +3143,8 @@ fun EditorScreen(
                 pageCount = d.pageCount,
                 currentPage = page,
                 isPdf = PageSources.isPdf(d.file),
+                initialVisibleLayers = tools.visibleLayerMask,
+                initialLayerOpacities = tools.layerOpacities,
                 presetPages = exportPreset,
                 onDismiss = { exportOpen = false; exportPreset = null },
                 onExport = { request ->

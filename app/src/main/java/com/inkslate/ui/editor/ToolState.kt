@@ -22,6 +22,7 @@ import com.inkslate.core.InputMode
 import com.inkslate.core.EraserMode
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.ToolConfig
+import com.inkslate.core.AnnotationLayers
 
 
 /**
@@ -126,8 +127,20 @@ class ToolState(private val context: Context) {
         private set
     /** A deliberate back-and-forth scratch removes the ink it crosses. */
     var scribbleErase by mutableStateOf(false)
+    /** Wide 0..1 range: seven clear reversals at zero, two quick reversals at one. */
+    var scribbleSensitivity by mutableStateOf(com.inkslate.core.ScribbleErase.DEFAULT_SENSITIVITY)
+        private set
     var cropMargins by mutableStateOf(false)
     var rulerVisible by mutableStateOf(false)
+    /** Mixer channels currently audible/visible. Zero deliberately shows the original file only. */
+    var visibleLayerMask by mutableStateOf(AnnotationLayers.ONE)
+        private set
+    /** Record-armed channels. Zero auto-arms Layer 1 as soon as a stroke begins. */
+    var recordLayerMask by mutableStateOf(AnnotationLayers.ONE)
+        private set
+    /** Independent channel faders, retained separately from mute/visibility. */
+    var layerOpacities by mutableStateOf(listOf(1f, 1f, 1f))
+        private set
 
     /**
      * The document the ruler is lying on.
@@ -216,6 +229,8 @@ class ToolState(private val context: Context) {
     var keepScreenOn by mutableStateOf(true)
     /** Going Home from a fullscreen document leaves the system bars hidden. */
     var fullscreenOnHome by mutableStateOf(false)
+    /** Page controls sit opposite this hand, leaving the writing side clear. */
+    var rightHanded by mutableStateOf(true)
     /** Multiplier on release velocity. Higher covers more of a long document per flick. */
     var flingScale by mutableStateOf(1.35f)
     var tableRows by mutableStateOf(3)
@@ -339,6 +354,47 @@ class ToolState(private val context: Context) {
         persist()
     }
 
+    fun toggleLayerVisibility(layer: Int) {
+        val bit = AnnotationLayers.normalise(layer).let { it and -it }
+        visibleLayerMask = AnnotationLayers.mixerMask(visibleLayerMask xor bit)
+        revision++
+        persist()
+    }
+
+    fun toggleLayerRecord(layer: Int) {
+        val bit = AnnotationLayers.normalise(layer).let { it and -it }
+        recordLayerMask = AnnotationLayers.mixerMask(recordLayerMask xor bit)
+        revision++
+        persist()
+    }
+
+    fun autoArmLayerOne() {
+        if (recordLayerMask != 0) return
+        recordLayerMask = AnnotationLayers.ONE
+        visibleLayerMask = visibleLayerMask or AnnotationLayers.ONE
+        revision++
+        persist()
+    }
+
+    fun setLayerOpacity(layer: Int, value: Float, save: Boolean = true) {
+        val index = when (AnnotationLayers.normalise(layer).let { it and -it }) {
+            AnnotationLayers.ONE -> 0
+            AnnotationLayers.TWO -> 1
+            else -> 2
+        }
+        layerOpacities = layerOpacities.toMutableList().also {
+            it[index] = value.coerceIn(0f, 1f)
+        }
+        revision++
+        if (save) persist()
+    }
+
+    fun updateScribbleSensitivity(value: Float) {
+        scribbleSensitivity = value.coerceIn(0f, 1f)
+        revision++
+        persist()
+    }
+
     /** Called when the drawing surface reports that the input device changed. */
     fun onModeChanged(mode: InputMode) {
         // A mouse revealing itself is the same rule the barrel buttons follow: the profile joins
@@ -396,6 +452,10 @@ class ToolState(private val context: Context) {
         view.lassoSelect = lassoSelect
         view.snapHighlighterToText = snapHighlighterToText
         view.scribbleErase = scribbleErase
+        view.scribbleSensitivity = scribbleSensitivity
+        view.visibleLayerMask = visibleLayerMask
+        view.recordLayerMask = recordLayerMask
+        view.layerOpacities = layerOpacities.toFloatArray()
         view.cropMargins = cropMargins
         // Not the ruler: that is shown only on the document it lies on, which is the workspace's
         // to decide - see rulerOwner.
@@ -546,11 +606,16 @@ class ToolState(private val context: Context) {
             .putBoolean(K_QUICK_WHEEL, quickActionWheel)
             .putString(K_QUICK_WHEEL_ACTIONS, quickWheelActions.joinToString(",") { it.name })
             .putBoolean(K_SCRIBBLE_ERASE, scribbleErase)
+            .putFloat(K_SCRIBBLE_SENSITIVITY, scribbleSensitivity)
+            .putInt(K_VISIBLE_LAYERS, visibleLayerMask)
+            .putInt(K_RECORD_LAYERS, recordLayerMask)
+            .putString(K_LAYER_OPACITIES, layerOpacities.joinToString(","))
             .putBoolean(K_CROP, cropMargins)
             .putBoolean(K_FLING, flingEnabled)
             .putBoolean(K_REMEMBER_VIEW, rememberView)
             .putBoolean(K_KEEP_AWAKE, keepScreenOn)
             .putBoolean(K_FULLSCREEN_HOME, fullscreenOnHome)
+            .putBoolean(K_RIGHT_HANDED, rightHanded)
             .putString(K_STYLUS_BUTTON, stylusButton.name)
             .putFloat(K_FLING_SCALE, flingScale)
             .putInt(K_ROWS, tableRows)
@@ -586,11 +651,25 @@ class ToolState(private val context: Context) {
             ?.ifEmpty { null }
             ?: QuickWheelAction.DEFAULTS
         scribbleErase = sp.getBoolean(K_SCRIBBLE_ERASE, false)
+        scribbleSensitivity = sp.getFloat(
+            K_SCRIBBLE_SENSITIVITY,
+            com.inkslate.core.ScribbleErase.DEFAULT_SENSITIVITY
+        ).coerceIn(0f, 1f)
+        visibleLayerMask = AnnotationLayers.mixerMask(
+            sp.getInt(K_VISIBLE_LAYERS, sp.getInt(K_ACTIVE_LAYERS, AnnotationLayers.ONE))
+        )
+        recordLayerMask = AnnotationLayers.mixerMask(
+            sp.getInt(K_RECORD_LAYERS, visibleLayerMask)
+        )
+        layerOpacities = sp.getString(K_LAYER_OPACITIES, null)
+            ?.split(',')?.mapNotNull { it.toFloatOrNull()?.coerceIn(0f, 1f) }
+            ?.takeIf { it.size == 3 } ?: listOf(1f, 1f, 1f)
         cropMargins = sp.getBoolean(K_CROP, false)
         flingEnabled = sp.getBoolean(K_FLING, true)
         rememberView = sp.getBoolean(K_REMEMBER_VIEW, true)
         keepScreenOn = sp.getBoolean(K_KEEP_AWAKE, true)
         fullscreenOnHome = sp.getBoolean(K_FULLSCREEN_HOME, false)
+        rightHanded = sp.getBoolean(K_RIGHT_HANDED, true)
         // Both barrel buttons are their own pen now, and nothing in the UI can change that, so
         // an older install's saved ERASE is deliberately not read back - it would leave the
         // barrel rubbing out with no control left to turn it off.
@@ -633,11 +712,17 @@ class ToolState(private val context: Context) {
         private const val K_QUICK_WHEEL = "quick_action_wheel"
         private const val K_QUICK_WHEEL_ACTIONS = "quick_action_wheel_actions"
         private const val K_SCRIBBLE_ERASE = "scribble_erase"
+        private const val K_SCRIBBLE_SENSITIVITY = "scribble_sensitivity"
+        private const val K_ACTIVE_LAYERS = "annotation_layers"
+        private const val K_VISIBLE_LAYERS = "visible_annotation_layers"
+        private const val K_RECORD_LAYERS = "record_annotation_layers"
+        private const val K_LAYER_OPACITIES = "annotation_layer_opacities"
         private const val K_CROP = "crop_margins"
         private const val K_FLING = "fling"
         private const val K_REMEMBER_VIEW = "remember_view"
         private const val K_KEEP_AWAKE = "keep_awake"
         private const val K_FULLSCREEN_HOME = "fullscreen_on_home"
+        private const val K_RIGHT_HANDED = "right_handed"
         private const val K_STYLUS_BUTTON = "stylus_button"
         private const val K_STYLUS_BUTTON_2 = "stylus_button_2"
         private const val K_MOUSE_SEEN = "mouse_seen"

@@ -1480,7 +1480,9 @@ class DocumentRepo(private val context: Context) {
         doc: OpenDocument,
         target: File,
         pages: List<Int>?,
-        flatten: Boolean
+        flatten: Boolean,
+        visibleLayers: Int = com.inkslate.core.AnnotationLayers.ALL,
+        layerOpacities: List<Float> = listOf(1f, 1f, 1f)
     ): Result<File> = writing {
         runCatching {
             val store = ImageStore(doc.file)
@@ -1490,14 +1492,24 @@ class DocumentRepo(private val context: Context) {
             target.parentFile?.mkdirs()
 
             val format = if (flatten) InkFormat.FLATTENED else InkFormat.ANNOTATIONS
+            val exportInk = if (flatten) {
+                doc.ink.copy(pages = doc.ink.pages.mapValues { (_, strokes) ->
+                    strokes.mapNotNull { stroke ->
+                        val level = com.inkslate.core.AnnotationLayers.mixedOpacity(
+                            stroke.layerMask, visibleLayers, layerOpacities
+                        ) ?: return@mapNotNull null
+                        stroke.copy(opacity = stroke.opacity * level)
+                    }
+                })
+            } else doc.ink
             if (!PageSources.isPdf(doc.file)) {
                 // An image has no annotation layer, so the only question is which container the
                 // result goes in - and asking for a .pdf of a photograph is a reasonable thing
                 // to want when the other end only accepts PDFs.
                 if (target.extension.lowercase() == "pdf") {
-                    InkExporter.exportImageAsPdf(doc.file, target, doc.ink).getOrThrow()
+                    InkExporter.exportImageAsPdf(doc.file, target, exportInk).getOrThrow()
                 } else {
-                    InkExporter.exportImage(doc.file, target, doc.ink).getOrThrow()
+                    InkExporter.exportImage(doc.file, target, exportInk).getOrThrow()
                 }
             } else if (pages == null) {
                 // The editable copy rides along, so a document sent and sent back is still one
@@ -1509,12 +1521,12 @@ class DocumentRepo(private val context: Context) {
                     }
                         ?: com.inkslate.core.InkPayload.encode(doc.ink)
                 }
-                InkExporter.exportPdf(doc.file, target, doc.ink, format, embed = payload)
+                InkExporter.exportPdf(doc.file, target, exportInk, format, embed = payload)
                     .getOrThrow()
             } else {
                 val wanted = pages.filter { it in 0 until doc.pageCount }.distinct().sorted()
                 require(wanted.isNotEmpty()) { "No pages were selected" }
-                InkExporter.exportPdfPages(doc.file, target, doc.ink, format, wanted).getOrThrow()
+                InkExporter.exportPdfPages(doc.file, target, exportInk, format, wanted).getOrThrow()
             }
             EventLog.info("export", "Wrote ${target.name} (${target.length() / 1024}KB)")
             target

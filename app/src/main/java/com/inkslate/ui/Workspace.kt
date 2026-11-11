@@ -12,6 +12,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlaylistAdd
@@ -279,64 +281,91 @@ fun TabStrip(
         }
     }
 
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 1.dp) {
+    Surface(color = Color.Transparent) {
         Row(
-            modifier.fillMaxWidth().height(48.dp),
+            modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TabChip(
-                selected = homeShown,
-                focused = homeShown,
+            Surface(
                 onClick = onHome,
-                leading = { Icon(Icons.Default.Home, null, modifier = Modifier.size(18.dp)) },
-                label = "Home"
-            )
-            // Opening another document sits beside Home, where it is found, not after the last tab.
-            IconButton(onClick = onNewTab) {
-                Icon(Icons.Default.Add, "Open another document")
+                modifier = Modifier.size(38.dp),
+                shape = CircleShape,
+                color = if (homeShown) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerHigh,
+                shadowElevation = 3.dp
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Home, "Home", modifier = Modifier.size(19.dp))
+                }
             }
-            // The songs open now, kept as a setlist in the order of their tabs.
-            com.inkslate.AppFlavor.onSaveTabs?.let { save ->
-                if (tabs.isNotEmpty()) {
-                    IconButton(onClick = { save(tabs.filter { !it.closeRequested.value }.map { it.file }) }) {
-                        Icon(Icons.Default.PlaylistAdd, "Save as setlist", modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(5.dp))
+            Surface(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 1.dp,
+                shadowElevation = 2.dp
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Opening another document sits beside Home, where it is found.
+                    IconButton(onClick = onNewTab, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.Default.Add, "Open another document")
+                    }
+                    com.inkslate.AppFlavor.onSaveTabs?.let { save ->
+                        if (tabs.isNotEmpty()) {
+                            IconButton(
+                                onClick = { save(tabs.filter { !it.closeRequested.value }.map { it.file }) },
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Default.PlaylistAdd, "Save as setlist", modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                    Row(
+                        Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for (tab in tabs) key(tab.id) {
+                            DocumentTabChip(
+                                tab = tab,
+                                dragOffset = if (draggingId == tab.id) dragOffset else null,
+                                onWidth = { widths[tab.id] = it },
+                                onDragStart = { draggingId = tab.id; dragOffset = 0f },
+                                onDragBy = { dragBy(tab.id, it) },
+                                onDragEnd = { draggingId = null; dragOffset = 0f },
+                                shown = !homeShown && tab.id in shownIds,
+                                focused = !homeShown && tab.id == focusedId,
+                                twice = tab.id == primaryId && tab.id == secondaryId,
+                                splitLabel = when {
+                                    !splitAvailable -> null
+                                    tab.id == secondaryId -> null
+                                    tab.id == primaryId -> if (stacked) "Open a second view below" else "Open a second view to the side"
+                                    else -> if (stacked) "Open below" else "Open to the side"
+                                },
+                                splitActive = secondaryId != null,
+                                onSelect = { onSelect(tab.id) },
+                                onOpenInSplit = { onOpenInSplit(tab.id) },
+                                onCloseSplit = onCloseSplit,
+                                onClose = { onCloseTab(tab.id) },
+                                onCloseOthers = { onCloseOthers(tab.id) },
+                                onCloseAll = onCloseAll
+                            )
+                        }
                     }
                 }
             }
-            Row(
-                Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                for (tab in tabs) key(tab.id) {
-                    DocumentTabChip(
-                        tab = tab,
-                        dragOffset = if (draggingId == tab.id) dragOffset else null,
-                        onWidth = { widths[tab.id] = it },
-                        onDragStart = { draggingId = tab.id; dragOffset = 0f },
-                        onDragBy = { dragBy(tab.id, it) },
-                        onDragEnd = { draggingId = null; dragOffset = 0f },
-                        shown = !homeShown && tab.id in shownIds,
-                        focused = !homeShown && tab.id == focusedId,
-                        twice = tab.id == primaryId && tab.id == secondaryId,
-                        splitLabel = when {
-                            !splitAvailable -> null
-                            tab.id == secondaryId -> null
-                            tab.id == primaryId -> if (stacked) "Open a second view below" else "Open a second view to the side"
-                            else -> if (stacked) "Open below" else "Open to the side"
-                        },
-                        splitActive = secondaryId != null,
-                        onSelect = { onSelect(tab.id) },
-                        onOpenInSplit = { onOpenInSplit(tab.id) },
-                        onCloseSplit = onCloseSplit,
-                        onClose = { onCloseTab(tab.id) },
-                        onCloseOthers = { onCloseOthers(tab.id) },
-                        onCloseAll = onCloseAll
-                    )
-                }
-            }
             if (onLeaveFullscreen != null) {
-                IconButton(onClick = onLeaveFullscreen) {
-                    Icon(Icons.Default.FullscreenExit, "Leave fullscreen")
+                Spacer(Modifier.width(5.dp))
+                Surface(
+                    onClick = onLeaveFullscreen,
+                    modifier = Modifier.size(38.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 3.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.FullscreenExit, "Leave fullscreen", Modifier.size(19.dp))
+                    }
                 }
             }
         }
