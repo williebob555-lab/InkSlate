@@ -97,6 +97,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
@@ -117,6 +119,13 @@ import kotlin.math.roundToInt
 import com.inkslate.core.InputMode
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.AnnotationLayers
+
+/** Width budget for the three touch channels; kept pure so narrow layouts stay regression-tested. */
+internal fun layerMixerWidthDp(screenWidthDp: Float): Float = if (screenWidthDp < 600f) {
+    (screenWidthDp * .42f).coerceIn(168f, 210f)
+} else {
+    (screenWidthDp * .24f).coerceIn(220f, 280f)
+}
 
 /** Everything the toolbar needs to drive, gathered so the signature stays readable. */
 class ToolBarActions(
@@ -210,15 +219,12 @@ fun ToolBar(
     // tablet the viewport is short, and an unbounded toolbar would push the page off-screen.
     val configuration = LocalConfiguration.current
     val screenHeight = configuration.screenHeightDp.dp
-    val screenWidth = configuration.screenWidthDp.dp
-    val mixerWidth = if (screenWidth < 600.dp) {
-        (screenWidth * .42f).coerceIn(168.dp, 210.dp)
-    } else {
-        // Height, not width, is what makes the three channels easy to operate with the other
-        // hand. Keep enough room for a fingertip per channel without pushing colours into a
-        // horizontal scroller on ordinary tablets.
-        (screenWidth * .24f).coerceIn(220.dp, 280.dp)
-    }
+    val density = LocalDensity.current
+    val windowWidthDp = with(density) { LocalWindowInfo.current.containerSize.width.toDp().value }
+    // Height, not width, is what makes the three channels easy to operate with the other hand.
+    // Keep enough room for a fingertip per channel without pushing colours into a horizontal
+    // scroller on ordinary tablets.
+    val mixerWidth = layerMixerWidthDp(windowWidthDp).dp
     Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
         Box(Modifier.fillMaxWidth()) {
             Column(

@@ -71,6 +71,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -345,6 +346,7 @@ fun EditorScreen(
     // proportional to how far someone might pinch in.
     val config = LocalConfiguration.current
     val density = androidx.compose.ui.platform.LocalDensity.current
+    val windowWidthDp = with(density) { LocalWindowInfo.current.containerSize.width.toDp().value }
     val renderWidthPx = remember(config.screenWidthDp, config.screenHeightDp, doc) {
         // Music is shown a whole page at a time, so a page is never wider on screen than the
         // screen's shorter side. The old longer-side estimate made one portrait page 15-22 MB on
@@ -1789,6 +1791,10 @@ fun EditorScreen(
                 onClick = { menuOpen = false; exportOpen = true }
             )
             DropdownMenuItem(
+                text = { Text("Find in document") },
+                onClick = { menuOpen = false; searchOpen = true }
+            )
+            DropdownMenuItem(
                 text = { Text("Checkpoint this version") },
                 onClick = { menuOpen = false; checkpoint() }
             )
@@ -1976,8 +1982,10 @@ fun EditorScreen(
                                 else MaterialTheme.colorScheme.primary
                             )
                         }
-                        IconButton(onClick = { searchOpen = true }, modifier = Modifier.size(40.dp)) {
-                            Icon(Icons.Default.Search, "Find in document")
+                        if (windowWidthDp >= 360f) {
+                            IconButton(onClick = { searchOpen = true }, modifier = Modifier.size(40.dp)) {
+                                Icon(Icons.Default.Search, "Find in document")
+                            }
                         }
                         Box {
                             IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
@@ -2302,8 +2310,9 @@ fun EditorScreen(
                 else -> AndroidView(
                     factory = { ctx ->
                         DrawingView(ctx).also { view ->
-                    // Music (InkSheets): the music tools may lay marks on its pages and take presses.
-                    if (DrawingView.fitWholePage) view.musicPath = file.absolutePath
+                            // Music (InkSheets): the music tools may lay marks on its pages and
+                            // take presses.
+                            if (DrawingView.fitWholePage) view.musicPath = file.absolutePath
                             // The document's marks and their ids, shared with any other view of it.
                             view.model = model
                             view.onContentChanged = {

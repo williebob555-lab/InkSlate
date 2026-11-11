@@ -75,6 +75,20 @@ import androidx.compose.ui.zIndex
 import com.inkslate.ink.DrawingView
 import java.io.File
 
+/** The tab island yields to fixed action islands instead of drawing over them on narrow screens. */
+internal fun tabIslandMaxWidthDp(
+    screenWidthDp: Float,
+    endReservedDp: Float,
+    fullscreenControl: Boolean
+): Float {
+    val reserved = 38f + 5f + endReservedDp + if (fullscreenControl) 43f else 0f
+    return (screenWidthDp - reserved - 8f).coerceAtLeast(84f)
+}
+
+/** Find moves into the document menu on very narrow screens; Save and More stay one tap away. */
+internal fun compactActionIslandWidthDp(screenWidthDp: Float): Float =
+    if (screenWidthDp < 360f) 86f else 126f
+
 /** One open document: a tab in the workspace. Its id is stable for the tab's whole lifetime. */
 class DocTab(
     val id: String,
@@ -290,11 +304,14 @@ fun TabStrip(
 
     Surface(color = Color.Transparent) {
         BoxWithConstraints(modifier.fillMaxWidth().height(48.dp)) {
-        val reserved = 38.dp + 5.dp + endReserved + if (onToggleFullscreen != null) 43.dp else 0.dp
         // On a narrow portrait screen, document actions outrank showing a whole tab label. The
         // tab contents scroll inside their island; allowing the island itself to overlap the
         // actions made both sets of buttons unreliable.
-        val tabIslandMax = (maxWidth - reserved - 8.dp).coerceAtLeast(84.dp)
+        val tabIslandMax = tabIslandMaxWidthDp(
+            maxWidth.value,
+            endReserved.value,
+            onToggleFullscreen != null
+        ).dp
         Row(
             Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically

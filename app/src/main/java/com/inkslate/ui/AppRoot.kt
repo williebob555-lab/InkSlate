@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -113,6 +114,8 @@ fun AppRoot(
     // the page instead of over it. Turned to portrait, the same screen is that tall instead, and
     // the second document goes below.
     val config = LocalConfiguration.current
+    val windowDensity = LocalDensity.current
+    val windowWidthDp = with(windowDensity) { LocalWindowInfo.current.containerSize.width.toDp().value }
     val splitStacked = config.screenWidthDp < 840
     val splitAvailable = config.screenWidthDp >= 840 || config.screenHeightDp >= 840
 
@@ -628,7 +631,7 @@ fun AppRoot(
                     fullscreen = immersive.isFullscreen,
                     endReserved = if (!com.inkslate.AppFlavor.musicView && !homeShown &&
                         !immersive.isFullscreen
-                    ) 126.dp else 0.dp
+                    ) compactActionIslandWidthDp(windowWidthDp).dp else 0.dp
                 )
             }
 
