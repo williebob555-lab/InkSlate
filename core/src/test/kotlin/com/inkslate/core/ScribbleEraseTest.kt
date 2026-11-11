@@ -37,6 +37,16 @@ class ScribbleEraseTest {
         assertTrue(ScribbleErase.isScribble(points))
     }
 
+    @Test fun `angled unevenly sampled scratch is recognised`() {
+        val points = listOf(
+            InkPoint(4f, 7f, 2f), InkPoint(8f, 9f, 2f), InkPoint(19f, 14f, 2f),
+            InkPoint(38f, 24f, 2f), InkPoint(29f, 21f, 2f), InkPoint(13f, 13f, 2f),
+            InkPoint(5f, 10f, 2f), InkPoint(16f, 16f, 2f), InkPoint(35f, 26f, 2f),
+            InkPoint(24f, 22f, 2f), InkPoint(8f, 14f, 2f)
+        )
+        assertTrue(ScribbleErase.isScribble(points, 1f))
+    }
+
     @Test fun `slider extremes are genuinely different`() {
         val shortScratch = listOf(
             InkPoint(0f, 0f, 2f), InkPoint(28f, 2f, 2f),
@@ -53,6 +63,29 @@ class ScribbleEraseTest {
         val curve = (0..30).map { InkPoint(it.toFloat(), (it % 6).toFloat(), 2f) }
         assertFalse(ScribbleErase.isScribble(line))
         assertFalse(ScribbleErase.isScribble(curve))
+    }
+
+    @Test fun `hooks in cursive writing do not become full scribble traversals`() {
+        val writing = listOf(
+            InkPoint(0f, 9f, 2f), InkPoint(2f, 2f, 2f), InkPoint(4f, 10f, 2f),
+            InkPoint(6f, 4f, 2f), InkPoint(8f, 9f, 2f), InkPoint(11f, 3f, 2f),
+            InkPoint(14f, 9f, 2f), InkPoint(17f, 5f, 2f), InkPoint(20f, 9f, 2f),
+            InkPoint(24f, 4f, 2f), InkPoint(28f, 8f, 2f), InkPoint(32f, 6f, 2f)
+        )
+        assertFalse(ScribbleErase.isScribble(writing, 1f))
+    }
+
+    @Test fun `small dense fill is protected at maximum sensitivity`() {
+        val fill = buildList {
+            repeat(7) { pass ->
+                val from = if (pass % 2 == 0) 0f else 11f
+                val to = if (pass % 2 == 0) 11f else 0f
+                repeat(4) { step ->
+                    add(InkPoint(from + (to - from) * step / 3f, pass * 1.8f, 2f))
+                }
+            }
+        }
+        assertFalse(ScribbleErase.isScribble(fill, 1f))
     }
 
     @Test fun `dense back and forth fill remains ink`() {

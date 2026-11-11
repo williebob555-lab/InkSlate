@@ -5,6 +5,8 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.util.Matrix
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * Enlarges a document's page to cover a canvas that has outgrown it.
@@ -22,6 +24,54 @@ import com.tom_roush.pdfbox.util.Matrix
  * keeps whatever was printed on it.
  */
 object CanvasPaper {
+
+    /**
+     * Materialise one bounded view of an otherwise unbounded whiteboard for export only.
+     * The editable document keeps world coordinates and no permanent page size; this temporary
+     * PDF is merely the envelope another PDF reader needs.
+     */
+    fun writeSnapshot(target: File, canvas: InkCanvas) {
+        PDDocument().use { pdf ->
+            val width = canvas.width.coerceAtLeast(72f)
+            val height = canvas.height.coerceAtLeast(72f)
+            val page = com.tom_roush.pdfbox.pdmodel.PDPage(PDRectangle(width, height))
+            pdf.addPage(page)
+            PDPageContentStream(pdf, page).use { cs ->
+                cs.transform(Matrix(1f, 0f, 0f, -1f, 0f, height))
+                val background = runCatching {
+                    BlankDocumentFactory.Background.valueOf(canvas.background)
+                }.getOrDefault(BlankDocumentFactory.Background.PLAIN)
+                BlankDocumentFactory.paintBackground(
+                    cs = cs,
+                    background = background,
+                    w = width,
+                    h = height,
+                    paperColor = canvas.paperColor,
+                    lineColor = canvas.lineColor,
+                    spacing = canvas.spacing,
+                    // Keep ruling phase stable when the export window begins at a negative world
+                    // coordinate; the content is shifted to local page coordinates below.
+                    anchorX = canvas.paperLeft - canvas.left,
+                    anchorY = canvas.paperTop - canvas.top
+                )
+                canvas.noteGrid?.let { grid ->
+                    cs.setStrokingColor(
+                        android.graphics.Color.red(canvas.lineColor),
+                        android.graphics.Color.green(canvas.lineColor),
+                        android.graphics.Color.blue(canvas.lineColor)
+                    )
+                    cs.setLineWidth(1.15f)
+                    grid.segments(com.inkslate.core.Box(canvas.left, canvas.top, canvas.right, canvas.bottom))
+                        .forEach { segment ->
+                            cs.moveTo(segment.x0 - canvas.left, segment.y0 - canvas.top)
+                            cs.lineTo(segment.x1 - canvas.left, segment.y1 - canvas.top)
+                            cs.stroke()
+                        }
+                }
+            }
+            FileOutputStream(target).use { pdf.save(it) }
+        }
+    }
 
     /**
      * Grow page 0 of [pdf] to cover [canvas], and return the canvas with its paper recorded as

@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.PlaylistAdd
@@ -282,8 +284,11 @@ fun TabStrip(
     }
 
     Surface(color = Color.Transparent) {
+        BoxWithConstraints(modifier.fillMaxWidth().height(48.dp)) {
+        val reserved = 38.dp + 5.dp + if (onLeaveFullscreen != null) 43.dp else 0.dp
+        val tabIslandMax = (maxWidth - reserved - 8.dp).coerceAtLeast(120.dp)
         Row(
-            modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -300,7 +305,7 @@ fun TabStrip(
             }
             Spacer(Modifier.width(5.dp))
             Surface(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
+                modifier = Modifier.widthIn(max = tabIslandMax).fillMaxHeight(),
                 shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 tonalElevation = 1.dp,
@@ -322,12 +327,14 @@ fun TabStrip(
                         }
                     }
                     Row(
-                        Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
+                        Modifier.fillMaxHeight().horizontalScroll(rememberScrollState()),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        for (tab in tabs) key(tab.id) {
+                        for ((tabIndex, tab) in tabs.withIndex()) key(tab.id) {
                             DocumentTabChip(
                                 tab = tab,
+                                position = tabIndex,
+                                tabCount = tabs.size,
                                 dragOffset = if (draggingId == tab.id) dragOffset else null,
                                 onWidth = { widths[tab.id] = it },
                                 onDragStart = { draggingId = tab.id; dragOffset = 0f },
@@ -354,6 +361,7 @@ fun TabStrip(
                     }
                 }
             }
+            Spacer(Modifier.weight(1f))
             if (onLeaveFullscreen != null) {
                 Spacer(Modifier.width(5.dp))
                 Surface(
@@ -369,7 +377,20 @@ fun TabStrip(
                 }
             }
         }
+        }
     }
+}
+
+/** A top-connected tab whose curved lower shoulders make the joints readable without dividers. */
+private val ConnectedTabShape = GenericShape { size, _ ->
+    val shoulder = size.height * .28f
+    moveTo(0f, 0f)
+    lineTo(size.width, 0f)
+    lineTo(size.width, size.height - shoulder)
+    cubicTo(size.width, size.height - shoulder * .35f, size.width - shoulder * .35f, size.height, size.width - shoulder, size.height)
+    lineTo(shoulder, size.height)
+    cubicTo(shoulder * .35f, size.height, 0f, size.height - shoulder * .35f, 0f, size.height - shoulder)
+    close()
 }
 
 @Composable
@@ -383,16 +404,24 @@ private fun TabChip(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     /** Replaces the plain tap and long-press when the chip handles its own touches. */
-    gestures: Modifier? = null
+    gestures: Modifier? = null,
+    position: Int = 0,
+    tabCount: Int = 1
 ) {
-    val background = if (selected) MaterialTheme.colorScheme.surface else Color.Transparent
+    val step = if (tabCount <= 1) 0f else position / (tabCount - 1f)
+    val resting = androidx.compose.ui.graphics.lerp(
+        MaterialTheme.colorScheme.surfaceContainerHighest,
+        MaterialTheme.colorScheme.surfaceContainerLow,
+        step * .90f
+    )
+    val background = if (selected) MaterialTheme.colorScheme.surface else resting
     val content = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     val accent = MaterialTheme.colorScheme.primary
     Row(
         modifier
             .fillMaxHeight()
             .widthIn(min = 96.dp, max = 220.dp)
-            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
+            .clip(ConnectedTabShape)
             .background(background)
             // The document the bars belong to, marked the way a focused field is: a line under it.
             .drawBehind {
@@ -422,6 +451,8 @@ private fun TabChip(
 @Composable
 private fun DocumentTabChip(
     tab: DocTab,
+    position: Int,
+    tabCount: Int,
     /** How far the tab has been dragged from its slot, or null when it is not being dragged. */
     dragOffset: Float?,
     onWidth: (Int) -> Unit,
@@ -501,6 +532,8 @@ private fun DocumentTabChip(
             selected = shown || dragOffset != null,
             focused = focused,
             onClick = onSelect,
+            position = position,
+            tabCount = tabCount,
             gestures = gestures,
             label = tab.title ?: tab.file.name,
             leading = { if(!AppFlavor.musicView) Icon(icon, null, modifier = Modifier.size(16.dp)) },

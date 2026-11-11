@@ -1,9 +1,9 @@
 package com.inkslate.core
 
-import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.hypot
-import kotlin.math.max
-import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * Recognises the deliberate back-and-forth scratch used to erase ink in drawing applications.
@@ -26,48 +26,68 @@ object ScribbleErase {
         sensitivity: Float = DEFAULT_SENSITIVITY
     ): Boolean {
         val s = sensitivity.coerceIn(0f, 1f)
-        val minimumSamples = lerpInt(28, 5, s)
+        val minimumSamples = lerpInt(24, 4, s)
         if (points.size < minimumSamples) return false
-        var minX = Float.MAX_VALUE
-        var minY = Float.MAX_VALUE
-        var maxX = -Float.MAX_VALUE
-        var maxY = -Float.MAX_VALUE
-        var length = 0f
-        for (i in points.indices) {
-            val p = points[i]
-            minX = minOf(minX, p.x); maxX = maxOf(maxX, p.x)
-            minY = minOf(minY, p.y); maxY = maxOf(maxY, p.y)
-            if (i > 0) length += hypot(p.x - points[i - 1].x, p.y - points[i - 1].y)
-        }
-        val width = maxX - minX
-        val height = maxY - minY
-        val horizontal = width >= height
-        val span = max(width, height)
-        val minimumSpan = lerp(18f, 6f, s)
-        val minimumTravel = lerp(7.5f, 1.8f, s)
-        if (span < minimumSpan || length < span * minimumTravel) return false
+        val sampled = resample(points, 72) ?: return false
 
-        // A scratch keeps crossing a narrow band. Dense shading/filling advances across a broad
-        // area as it reverses, and must stay ink even though it contains many more reversals.
-        val minorSpan = min(width, height)
-        if (minorSpan > max(14f, span * 0.65f)) return false
-
-        // Ignore tiny digitiser tremors. Only a change that travelled a visible share of the
-        // gesture span counts as turning back across it.
-        val epsilon = max(lerp(2.2f, 0.8f, s), span * lerp(0.06f, 0.018f, s))
-        var lastDirection = 0
-        var reversals = 0
-        var anchor = if (horizontal) points.first().x else points.first().y
-        for (i in 1 until points.size) {
-            val value = if (horizontal) points[i].x else points[i].y
-            val delta = value - anchor
-            if (abs(delta) < epsilon) continue
-            val direction = if (delta > 0f) 1 else -1
-            if (lastDirection != 0 && direction != lastDirection) reversals++
-            lastDirection = direction
-            anchor = value
+        // Rotate into the gesture's own coordinate system. This treats diagonal scratches like
+        // horizontal ones, while uniform arc-length samples stop slow pen motion receiving more
+        // votes merely because Android delivered more events there.
+        val centreX = sampled.sumOf { it.x.toDouble() }.toFloat() / sampled.size
+        val centreY = sampled.sumOf { it.y.toDouble() }.toFloat() / sampled.size
+        var xx = 0f
+        var xy = 0f
+        var yy = 0f
+        sampled.forEach {
+            val x = it.x - centreX
+            val y = it.y - centreY
+            xx += x * x
+            xy += x * y
+            yy += y * y
         }
-        return reversals >= lerpInt(7, 2, s)
+        if (xx + yy < 1f) return false
+        val angle = .5f * atan2(2f * xy, xx - yy)
+        val majorX = cos(angle)
+        val majorY = sin(angle)
+        val minorX = -majorY
+        val minorY = majorX
+        val major = sampled.map { (it.x - centreX) * majorX + (it.y - centreY) * majorY }
+        val minor = sampled.map { (it.x - centreX) * minorX + (it.y - centreY) * minorY }
+
+        // Ignore a single noisy touch-down/up sample when defining the shared corridor.
+        val majorLow = percentile(major, .04f)
+        val majorHigh = percentile(major, .96f)
+        val majorSpan = majorHigh - majorLow
+        if (majorSpan < lerp(16f, 4f, s)) return false
+        val minorSpan = percentile(minor, .96f) - percentile(minor, .04f)
+
+        // Dense fill advances its return strokes across an area. A scratch keeps returning through
+        // one corridor. This scale-free ratio closes the old loophole where every fill smaller
+        // than an absolute 14 document units bypassed the protection.
+        if (minorSpan / majorSpan > lerp(.40f, .58f, s)) return false
+
+        // Count completed end-to-end trips, not every local direction change. Hooks, letters and
+        // digitiser jitter may reverse often, but they do not repeatedly cross opposite zones of
+        // the whole mark. Maximum sensitivity relaxes genuine trip length/count without accepting
+        // arbitrary wiggle.
+        val traverseShare = lerp(.72f, .42f, s)
+        val middle = (majorLow + majorHigh) / 2f
+        val lowZone = middle - majorSpan * traverseShare / 2f
+        val highZone = middle + majorSpan * traverseShare / 2f
+        var side = 0
+        var traversals = 0
+        major.forEach { value ->
+            val reached = when {
+                value <= lowZone -> -1
+                value >= highZone -> 1
+                else -> 0
+            }
+            if (reached != 0) {
+                if (side != 0 && reached != side) traversals++
+                side = reached
+            }
+        }
+        return traversals >= lerpInt(6, 2, s)
     }
 
     /** Lowest working setting, plus a little margin for the next less-perfect attempt. */
@@ -87,4 +107,41 @@ object ScribbleErase {
 
     private fun lerpInt(from: Int, to: Int, amount: Float): Int =
         kotlin.math.round(lerp(from.toFloat(), to.toFloat(), amount)).toInt()
+
+    private data class Point(val x: Float, val y: Float)
+
+    /** Uniform points along the path, so recognition measures geometry rather than event rate. */
+    private fun resample(points: List<InkPoint>, count: Int): List<Point>? {
+        val distances = FloatArray(points.size)
+        var length = 0f
+        for (i in 1 until points.size) {
+            length += hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+            distances[i] = length
+        }
+        if (length < 4f) return null
+        val result = ArrayList<Point>(count)
+        var segment = 1
+        for (sample in 0 until count) {
+            val target = length * sample / (count - 1f)
+            while (segment < distances.lastIndex && distances[segment] < target) segment++
+            val before = segment - 1
+            val segmentLength = distances[segment] - distances[before]
+            val amount = if (segmentLength <= .0001f) 0f
+            else (target - distances[before]) / segmentLength
+            result += Point(
+                points[before].x + (points[segment].x - points[before].x) * amount,
+                points[before].y + (points[segment].y - points[before].y) * amount
+            )
+        }
+        return result
+    }
+
+    private fun percentile(values: List<Float>, at: Float): Float {
+        val sorted = values.sorted()
+        val position = at.coerceIn(0f, 1f) * sorted.lastIndex
+        val low = position.toInt()
+        val high = (low + 1).coerceAtMost(sorted.lastIndex)
+        val amount = position - low
+        return sorted[low] + (sorted[high] - sorted[low]) * amount
+    }
 }

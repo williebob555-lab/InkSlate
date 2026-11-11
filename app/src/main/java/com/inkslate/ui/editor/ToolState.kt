@@ -238,7 +238,15 @@ class ToolState(private val context: Context) {
 
     var presets by mutableStateOf(loadPresets())
         private set
-    var activePreset by mutableStateOf(-1)
+    /** The selected preset belongs to the input profile, just like colour and nib size do. */
+    private val presetByMode = mutableMapOf<InputMode, Int>()
+    private var activePresetState by mutableStateOf(-1)
+    var activePreset: Int
+        get() = activePresetState
+        set(value) {
+            activePresetState = value
+            presetByMode[activeMode] = value
+        }
     var customColors by mutableStateOf(loadCustomColors())
         private set
 
@@ -402,14 +410,16 @@ class ToolState(private val context: Context) {
         if (mode.isMouse) noteMouseSeen()
         if (activeMode == mode) return
         activeMode = mode
-        activePreset = -1
+        activePresetState = presetByMode[mode] ?: matchingPreset(configFor(mode))
         revision++
     }
 
     fun switchMode(mode: InputMode, view: DrawingView?) {
-        activeMode = mode
-        activePreset = -1
-        revision++
+        if (activeMode != mode) {
+            activeMode = mode
+            activePresetState = presetByMode[mode] ?: matchingPreset(configFor(mode))
+            revision++
+        }
         view?.setActiveMode(mode)
     }
 
@@ -508,7 +518,14 @@ class ToolState(private val context: Context) {
     fun removePreset(index: Int) {
         if (presets.size <= 1 || index !in presets.indices) return
         presets = presets.toMutableList().also { it.removeAt(index) }
-        activePreset = -1
+        presetByMode.replaceAll { _, selected ->
+            when {
+                selected == index -> -1
+                selected > index -> selected - 1
+                else -> selected
+            }
+        }
+        activePresetState = presetByMode[activeMode] ?: -1
         storePresets()
     }
 
@@ -516,6 +533,20 @@ class ToolState(private val context: Context) {
         if (c in customColors) return
         customColors = (listOf(c) + customColors).take(18)
         sp.edit().putString(K_COLORS, customColors.joinToString(",")).apply()
+    }
+
+    fun removeCustomColor(c: Int) {
+        if (c !in customColors) return
+        customColors = customColors.filterNot { it == c }
+        sp.edit().putString(K_COLORS, customColors.joinToString(",")).apply()
+    }
+
+    private fun matchingPreset(config: ToolConfig): Int = presets.indexOfFirst { preset ->
+        config.tool == Tool.DRAW &&
+            config.brush == preset.brush &&
+            config.color == preset.color &&
+            kotlin.math.abs(config.strokeWidth - preset.width) < 0.001f &&
+            kotlin.math.abs(config.opacity - preset.opacity) < 0.001f
     }
 
     // ---- stamps ---------------------------------------------------------------

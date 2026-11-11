@@ -39,6 +39,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -750,7 +751,12 @@ private fun ScribbleCalibrationDialog(
     onApply: (Float) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var points by remember { mutableStateOf<List<Offset>>(emptyList()) }
+    // Keep one stable collection for the lifetime of pointerInput. A list held in mutableStateOf
+    // is captured when the gesture coroutine starts; appending with `points = points + position`
+    // can therefore rebuild from that stale snapshot on every pointer event and leave calibration
+    // with only its last sample. The state list is both live inside the coroutine and observable by
+    // Canvas, so what the user sees is exactly what the recogniser receives.
+    val points = remember { mutableStateListOf<Offset>() }
     var recommendation by remember { mutableStateOf<Float?>(null) }
     var attempted by remember { mutableStateOf(false) }
     val guide = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f)
@@ -769,7 +775,8 @@ private fun ScribbleCalibrationDialog(
                         .pointerInput(Unit) {
                             detectDragGestures(
                                 onDragStart = {
-                                    points = listOf(it)
+                                    points.clear()
+                                    points.add(it)
                                     recommendation = null
                                     attempted = false
                                 },
@@ -779,10 +786,10 @@ private fun ScribbleCalibrationDialog(
                                         points.map { InkPoint(it.x, it.y, 1f) }
                                     )
                                 },
-                                onDragCancel = { points = emptyList() }
+                                onDragCancel = { points.clear() }
                             ) { change, _ ->
                                 change.consume()
-                                points = points + change.position
+                                points.add(change.position)
                             }
                         }
                 ) {

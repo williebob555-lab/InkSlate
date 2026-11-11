@@ -769,7 +769,10 @@ class DocumentRepo(private val context: Context) {
             doc.ink.copy(
                 canvas = base.copy(
                     background = background, paperColor = paperColor,
-                    lineColor = lineColor, spacing = spacing
+                    lineColor = lineColor, spacing = spacing,
+                    // Imported PDFs keep their printed page as a finite base. Blank whiteboards
+                    // (ownPaper) are the true coordinate planes that can be exported from ink.
+                    unbounded = base.ownPaper
                 )
             )
         }
@@ -784,6 +787,9 @@ class DocumentRepo(private val context: Context) {
      */
     private fun matchCanvasPaper(doc: OpenDocument): Result<Unit> {
         val canvas = doc.ink.canvas ?: return Result.success(Unit)
+        // An infinite whiteboard deliberately has no document-sized rectangle to catch up to.
+        // Explicit export creates a temporary boundary around the ink instead.
+        if (canvas.isUnbounded) return Result.success(Unit)
         if (!canvas.paperIsBehind) return Result.success(Unit)
         if (!PageSources.isPdf(doc.file)) return Result.success(Unit)
 
@@ -803,6 +809,34 @@ class DocumentRepo(private val context: Context) {
             )
         }
         return result
+    }
+
+    /** Temporary export envelope for a whiteboard; never written back into the document model. */
+    private fun boundedCanvasForExport(ink: InkDocument): com.inkslate.core.InkCanvas? {
+        val canvas = ink.canvas ?: return null
+        if (!canvas.isUnbounded) return canvas
+        val strokes = ink.strokesOn(0)
+        if (strokes.isEmpty()) {
+            return canvas.copy(unbounded = false)
+        }
+        val bounds = android.graphics.RectF(strokes.first().bounds())
+        for (stroke in strokes.drop(1)) bounds.union(stroke.bounds())
+        val padding = 72f
+        val left = bounds.left - padding
+        val top = bounds.top - padding
+        val right = bounds.right + padding
+        val bottom = bounds.bottom + padding
+        return canvas.copy(
+            left = left,
+            top = top,
+            right = right.coerceAtLeast(left + 72f),
+            bottom = bottom.coerceAtLeast(top + 72f),
+            paperLeft = left,
+            paperTop = top,
+            paperRight = right.coerceAtLeast(left + 72f),
+            paperBottom = bottom.coerceAtLeast(top + 72f),
+            unbounded = false
+        )
     }
 
     fun bakeInto(doc: OpenDocument): Result<Unit> = writing { bakeIntoLocked(doc) }
@@ -1484,11 +1518,10 @@ class DocumentRepo(private val context: Context) {
         visibleLayers: Int = com.inkslate.core.AnnotationLayers.ALL,
         layerOpacities: List<Float> = listOf(1f, 1f, 1f)
     ): Result<File> = writing {
+        var snapshot: File? = null
         runCatching {
             val store = ImageStore(doc.file)
             InkExporter.imageResolver = { id -> store.load(id) }
-            InkExporter.displayOrigin = doc.ink.canvas?.let { it.left to it.top }
-            matchCanvasPaper(doc)
             target.parentFile?.mkdirs()
 
             val format = if (flatten) InkFormat.FLATTENED else InkFormat.ANNOTATIONS
@@ -1502,14 +1535,27 @@ class DocumentRepo(private val context: Context) {
                     }
                 })
             } else doc.ink
-            if (!PageSources.isPdf(doc.file)) {
+            val exportCanvas = boundedCanvasForExport(exportInk)
+            val sourceForExport = if (exportCanvas != null && doc.ink.canvas?.isUnbounded == true) {
+                File.createTempFile("inkslate-whiteboard-", ".pdf", context.cacheDir).also {
+                    snapshot = it
+                    CanvasPaper.writeSnapshot(it, exportCanvas)
+                }
+            } else {
+                matchCanvasPaper(doc)
+                doc.file
+            }
+            InkExporter.displayOrigin = exportCanvas?.let { it.left to it.top }
+                ?: doc.ink.canvas?.let { it.left to it.top }
+
+            if (!PageSources.isPdf(sourceForExport)) {
                 // An image has no annotation layer, so the only question is which container the
                 // result goes in - and asking for a .pdf of a photograph is a reasonable thing
                 // to want when the other end only accepts PDFs.
                 if (target.extension.lowercase() == "pdf") {
-                    InkExporter.exportImageAsPdf(doc.file, target, exportInk).getOrThrow()
+                    InkExporter.exportImageAsPdf(sourceForExport, target, exportInk).getOrThrow()
                 } else {
-                    InkExporter.exportImage(doc.file, target, exportInk).getOrThrow()
+                    InkExporter.exportImage(sourceForExport, target, exportInk).getOrThrow()
                 }
             } else if (pages == null) {
                 // The editable copy rides along, so a document sent and sent back is still one
@@ -1521,16 +1567,20 @@ class DocumentRepo(private val context: Context) {
                     }
                         ?: com.inkslate.core.InkPayload.encode(doc.ink)
                 }
-                InkExporter.exportPdf(doc.file, target, exportInk, format, embed = payload)
+                InkExporter.exportPdf(sourceForExport, target, exportInk, format, embed = payload)
                     .getOrThrow()
             } else {
                 val wanted = pages.filter { it in 0 until doc.pageCount }.distinct().sorted()
                 require(wanted.isNotEmpty()) { "No pages were selected" }
-                InkExporter.exportPdfPages(doc.file, target, exportInk, format, wanted).getOrThrow()
+                InkExporter.exportPdfPages(sourceForExport, target, exportInk, format, wanted).getOrThrow()
             }
             EventLog.info("export", "Wrote ${target.name} (${target.length() / 1024}KB)")
             target
-        }.onFailure { EventLog.error("export", "Export to ${target.name} failed: ${it.message}") }
+        }.onFailure {
+            EventLog.error("export", "Export to ${target.name} failed: ${it.message}")
+        }.also {
+            snapshot?.delete()
+        }
     }
 
     /**

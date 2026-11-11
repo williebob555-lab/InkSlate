@@ -81,7 +81,7 @@ fun BlankPaperOptions(
 ) {
     OptionLabel("Background")
     OptionWrapRow {
-        Background.entries.forEach { b ->
+        Background.entries.filterNot { it == Background.NOTE_GRID }.forEach { b ->
             OptionChip(b.label, style.background == b) { onChange(style.copy(background = b)) }
         }
     }
@@ -189,7 +189,7 @@ fun PaperPreview(style: PaperStyle, modifier: Modifier = Modifier, aspect: Float
                 var y = step
                 while (y < size.height) { h(y); y += step }
             }
-            Background.PLAIN -> Unit
+            Background.PLAIN, Background.NOTE_GRID -> Unit
         }
     }
 }

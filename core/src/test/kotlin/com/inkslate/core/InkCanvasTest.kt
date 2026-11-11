@@ -24,6 +24,22 @@ class InkCanvasTest {
     }
 
     @Test
+    fun `app made whiteboard is unbounded without growing its saved rectangle`() {
+        val whiteboard = InkCanvas.startingAt(600f, 800f, ownPaper = true)
+        assertTrue(whiteboard.isUnbounded)
+        assertFalse(whiteboard.paperIsBehind)
+        assertEquals(600f, whiteboard.width, 0.001f)
+    }
+
+    @Test
+    fun `unbounded state survives a merge`() {
+        val bounded = InkCanvas.startingAt(600f, 800f)
+        val unbounded = bounded.copy(unbounded = true)
+        assertTrue(bounded.mergeWith(unbounded).isUnbounded)
+        assertTrue(unbounded.mergeWith(bounded).isUnbounded)
+    }
+
+    @Test
     fun `content well inside changes nothing`() {
         val same = start.grownTo(Box(300f, 300f, 320f, 320f))
         assertSame(start, same)

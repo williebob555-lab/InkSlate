@@ -4,6 +4,36 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Scribble calibration now measures the entire gesture.** The practice canvas previously kept
+  replacing its captured input from a stale one-point snapshot, so even maximum sensitivity could
+  report that a clear scratch was not recognized. Its live sample collection is now stable and the
+  line shown on screen is the same complete stroke passed to calibration.
+- **Scribble recognition now looks for complete crossings instead of noisy direction changes.**
+  Input is resampled by travelled distance and measured on its own principal axis, so a diagonal
+  or unevenly sampled scratch still counts. Dense fill and cursive hooks remain drawing even at
+  maximum sensitivity; the maximum now relaxes the number and length of genuine traversals rather
+  than admitting arbitrary jitter.
+- **The layer mixer is a full-height right-hand control surface.** It is structurally separated
+  from pen-oriented controls, with large visibility, write-arm and filter targets and a long
+  vertical opacity fader for every layer. Narrow layouts stack the two actions instead of
+  overlapping them. Two fingers begun inside a filter move and resize that filter rather than
+  zooming the document; gestures begun outside still control the page.
+- **Whiteboards are coordinate planes instead of expanding documents.** Panning and zooming no
+  longer mutate or cap a saved page rectangle; the renderer paints whatever world coordinates are
+  in view. Export derives one temporary page with a one-inch padding from the actual annotation
+  bounds, so distant work is included without permanently growing the editable file.
+- **Note Grid is a new-document preset.** Each topic row owns its own number and widths of columns.
+  Writing beyond the current structure creates a row or column; overflowing a cell enlarges it and
+  moves later cells/rows, while its borders remain derived structure rather than thousands of ink
+  strokes. The grid dimensions merge by maximum size across devices.
+- **The compact toolbar keeps state instead of fighting the hand.** Finger panning leaves the pen
+  editor visible, each input profile recovers its selected pen preset, and long-press menus can
+  update/delete presets or delete custom colours. Pen-size marks now progress perceptually evenly;
+  the reclaimed space exposes ink opacity instead of stretching the size control. Page transport
+  floats above the toolbar on the right rather than occupying the colour row.
+- **The top chrome is now made of actual islands.** The canvas reaches the top behind separate Home,
+  connected-tab and fullscreen surfaces. The tab island wraps its tabs instead of spanning empty
+  width, uses curved lower joins, and steps from lighter to darker across the visible tabs.
 - **Annotations now use a three-channel layer mixer in both apps.** The highlighted mixer keeps
   visibility, record-arm and opacity separate for Layers 1–3. Every channel can be muted to show
   only the original PDF; beginning a stroke with nothing armed automatically arms Layer 1. Ink

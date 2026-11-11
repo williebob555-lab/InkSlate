@@ -67,6 +67,10 @@ data class InkCanvas(
      * that has to be shown.
      */
     @SerialName("ownPaper") val ownPaper: Boolean = false,
+    /** Infinite whiteboards persist ink coordinates, not an ever-growing paper rectangle. */
+    @SerialName("unbounded") val unbounded: Boolean = false,
+    /** Present only for the dynamic Note Grid preset. */
+    @SerialName("noteGrid") val noteGrid: NoteGrid? = null,
     /**
      * When the paper's look - pattern, colours, spacing - was last chosen.
      *
@@ -91,6 +95,9 @@ data class InkCanvas(
      */
     val paperIsOurs: Boolean
         get() = ownPaper || !background.equals("PLAIN", ignoreCase = true)
+
+    /** Existing app-created whiteboards migrate to the coordinate canvas automatically. */
+    val isUnbounded: Boolean get() = unbounded || ownPaper
 
     val width: Float get() = right - left
     val height: Float get() = bottom - top
@@ -207,6 +214,12 @@ data class InkCanvas(
             lineColor = look.lineColor,
             spacing = look.spacing,
             ownPaper = look.ownPaper,
+            unbounded = unbounded || other.unbounded,
+            noteGrid = when {
+                noteGrid == null -> other.noteGrid
+                other.noteGrid == null -> noteGrid
+                else -> noteGrid.mergeWith(other.noteGrid)
+            },
             settingsUtc = look.settingsUtc
         )
     }
@@ -238,7 +251,9 @@ data class InkCanvas(
             left = 0f, top = 0f, right = width, bottom = height,
             paperLeft = 0f, paperTop = 0f, paperRight = width, paperBottom = height,
             background = background, paperColor = paperColor,
-            lineColor = lineColor, spacing = spacing, ownPaper = ownPaper
+            lineColor = lineColor, spacing = spacing, ownPaper = ownPaper,
+            unbounded = ownPaper,
+            noteGrid = if (background.equals("NOTE_GRID", ignoreCase = true)) NoteGrid() else null
         )
 
         /** Snap a value down to a multiple of [step]; used when laying patterns out. */

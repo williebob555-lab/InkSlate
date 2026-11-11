@@ -11,11 +11,13 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -67,8 +69,12 @@ import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
+import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -108,7 +114,6 @@ import com.inkslate.ink.StrokeRasteriser
 import com.inkslate.core.EraserMode
 import com.inkslate.core.Tool
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 import com.inkslate.core.InputMode
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.AnnotationLayers
@@ -203,14 +208,24 @@ fun ToolBar(
 
     // Cap the toolbar at a share of the screen and let it scroll internally. In landscape on a
     // tablet the viewport is short, and an unbounded toolbar would push the page off-screen.
-    val screenHeight = LocalConfiguration.current.screenHeightDp.dp
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    val screenWidth = configuration.screenWidthDp.dp
+    val wantedMixerWidth = screenWidth * if (screenWidth > screenHeight) .42f else .48f
+    val mixerWidth = if (screenWidth < 600.dp) {
+        (screenWidth * .55f).coerceIn(198.dp, 260.dp)
+    } else wantedMixerWidth.coerceIn(300.dp, 360.dp)
     Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(max = screenHeight * 0.55f)
-                .verticalScroll(rememberScrollState())
-        ) {
+        Box(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    // The mixer is a full-height sibling, not another row. Reserving its exact
+                    // column here guarantees that neither side can overlap the other at any size.
+                    .padding(end = mixerWidth + 8.dp)
+                    .heightIn(max = screenHeight * 0.55f)
+                    .verticalScroll(rememberScrollState())
+            ) {
 
             // ---- cropping, which takes over the toolbar while it is on ----
             AnimatedVisibility(visible = cropping) {
@@ -298,10 +313,6 @@ fun ToolBar(
                 Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (!com.inkslate.AppFlavor.musicView && state.rightHanded && actions.pageCount > 1) {
-                    PageControlIsland(actions)
-                    Spacer(Modifier.width(5.dp))
-                }
                 InputModeToggle(state.activeMode) { held -> actions.onCycleMode(held) }
                 Spacer(Modifier.width(6.dp))
                 // Deduplicated. A colour picked from the palette is also remembered as a recent
@@ -337,7 +348,10 @@ fun ToolBar(
                                         highlighter = p.brush.isHighlighter,
                                         selected = state.activePreset == i,
                                         onClick = { change { state.selectPreset(i) } },
-                                        onLongClick = { change { state.savePresetFromCurrent(i) } }
+                                        onUpdate = { change { state.savePresetFromCurrent(i) } },
+                                        onDelete = if (state.presets.size > 1) {
+                                            { change { state.removePreset(i) } }
+                                        } else null
                                     )
                                 }
                                 IconButton(
@@ -374,30 +388,20 @@ fun ToolBar(
                         }
                     }
                     items(swatches) { c ->
-                        ColorDot(Color(c), cfg.color == c) {
-                            change {
-                                state.edit { it.color = c }
-                                state.rememberColor(c)
-                                state.activePreset = -1
+                        ColorDot(
+                            color = Color(c),
+                            selected = cfg.color == c,
+                            deletable = c in state.customColors,
+                            onDelete = { state.removeCustomColor(c) },
+                            onClick = {
+                                change {
+                                    state.edit { it.color = c }
+                                    state.rememberColor(c)
+                                    state.activePreset = -1
+                                }
                             }
-                        }
+                        )
                     }
-                }
-                Spacer(Modifier.width(5.dp))
-                LayerMixerBlock(
-                    state = state,
-                    filterMask = actions.layerFiltersMask,
-                    onVisibility = { layer -> change { state.toggleLayerVisibility(layer) } },
-                    onRecord = { layer -> change { state.toggleLayerRecord(layer) } },
-                    onOpacity = { layer, value ->
-                        change { state.setLayerOpacity(layer, value, save = false) }
-                    },
-                    onOpacityFinished = state::persistNow,
-                    onFilter = actions.onToggleLayerFilter
-                )
-                if (!com.inkslate.AppFlavor.musicView && !state.rightHanded && actions.pageCount > 1) {
-                    Spacer(Modifier.width(5.dp))
-                    PageControlIsland(actions)
                 }
             }
 
@@ -422,7 +426,7 @@ fun ToolBar(
                     value = current,
                     ladder = ladder,
                     eraser = isEraser,
-                    modifier = Modifier.weight(.52f).height(32.dp),
+                    modifier = Modifier.weight(if (isEraser) 1f else .66f).height(32.dp),
                     onValue = { w ->
                         change {
                             state.edit { if (isEraser) it.eraserRadius = w else it.strokeWidth = w }
@@ -431,6 +435,24 @@ fun ToolBar(
                     }
                 )
                 RelativeSizePreview(current, ladder, isEraser)
+                if (!isEraser) {
+                    Text(
+                        "Ink",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 3.dp)
+                    )
+                    Slider(
+                        value = cfg.opacity,
+                        onValueChange = { opacity ->
+                            change {
+                                state.edit { it.opacity = opacity }
+                                state.activePreset = -1
+                            }
+                        },
+                        modifier = Modifier.weight(.34f).height(32.dp)
+                    )
+                }
                 // Reads the slider as a thickness on the glass rather than on the page. It lives
                 // here rather than in a settings screen because it changes what the control
                 // beside it means, and that is not something to find out about later.
@@ -461,7 +483,6 @@ fun ToolBar(
                             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
                     )
                 }
-                Spacer(Modifier.weight(.48f))
             }
 
             // The barrel profile deliberately shows nothing extra here. It is a third pen
@@ -725,6 +746,25 @@ fun ToolBar(
                 }
                 }
             }
+            }
+
+            // A mixer works like a channel strip: it keeps the whole toolbar height instead of
+            // being squeezed into whichever row happened to have room. The main column reserved
+            // this width above, so every control remains independent and fingertip-sized.
+            Box(Modifier.matchParentSize().padding(top = 4.dp, end = 6.dp, bottom = 4.dp)) {
+                LayerMixerBlock(
+                    state = state,
+                    filterMask = actions.layerFiltersMask,
+                    onVisibility = { layer -> change { state.toggleLayerVisibility(layer) } },
+                    onRecord = { layer -> change { state.toggleLayerRecord(layer) } },
+                    onOpacity = { layer, value ->
+                        change { state.setLayerOpacity(layer, value, save = false) }
+                    },
+                    onOpacityFinished = state::persistNow,
+                    onFilter = actions.onToggleLayerFilter,
+                    modifier = Modifier.align(Alignment.CenterEnd).width(mixerWidth).fillMaxHeight()
+                )
+            }
         }
     }
 }
@@ -795,11 +835,13 @@ private fun SizeLadderControl(
         val right = size.width - 8f
         val y = size.height / 2f
         drawLine(trackColour, Offset(left, y), Offset(right, y), 2f)
-        val largest = ladder.maxOrNull()?.coerceAtLeast(.01f) ?: 1f
-        ladder.forEachIndexed { index, stop ->
+        ladder.forEachIndexed { index, _ ->
             val x = if (ladder.size <= 1) size.width / 2f
             else left + (right - left) * index / ladder.lastIndex
-            val relative = sqrt((stop / largest).coerceIn(0f, 1f))
+            // The slider chooses discrete stops by position, so its visual progression should be
+            // equally legible by position too. Mapping the real widths here made almost the whole
+            // first half look identical and then explode at the end.
+            val relative = if (ladder.size <= 1) 0f else index / ladder.lastIndex.toFloat()
             val radius = 1.5f + relative * 4.5f
             drawCircle(
                 color = if (index == selected) accent else markColour,
@@ -816,7 +858,15 @@ private fun SizeLadderControl(
 
 /** Compact page transport; it replaces the full-width navigation bar. */
 @Composable
-private fun PageControlIsland(actions: ToolBarActions) {
+internal fun PageControlIsland(
+    page: Int,
+    pageCount: Int,
+    pageBookmarked: Boolean,
+    onPreviousPage: () -> Unit,
+    onNextPage: () -> Unit,
+    onOpenPageNavigation: () -> Unit,
+    onTogglePageBookmark: () -> Unit
+) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(14.dp),
@@ -828,32 +878,32 @@ private fun PageControlIsland(actions: ToolBarActions) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = actions.onPreviousPage,
-                enabled = actions.page > 0,
+                onClick = onPreviousPage,
+                enabled = page > 0,
                 modifier = Modifier.size(32.dp)
             ) { Icon(Icons.Default.ChevronLeft, "Previous page", Modifier.size(18.dp)) }
             TextButton(
-                onClick = actions.onOpenPageNavigation,
+                onClick = onOpenPageNavigation,
                 modifier = Modifier.height(32.dp),
                 contentPadding = PaddingValues(horizontal = 5.dp)
             ) {
-                Text("${actions.page + 1}/${actions.pageCount}", style = MaterialTheme.typography.labelMedium)
+                Text("${page + 1}/$pageCount", style = MaterialTheme.typography.labelMedium)
             }
             IconButton(
-                onClick = actions.onTogglePageBookmark,
+                onClick = onTogglePageBookmark,
                 modifier = Modifier.size(32.dp)
             ) {
                 Icon(
-                    if (actions.pageBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                    if (actions.pageBookmarked) "Remove bookmark" else "Bookmark page",
+                    if (pageBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                    if (pageBookmarked) "Remove bookmark" else "Bookmark page",
                     Modifier.size(17.dp),
-                    tint = if (actions.pageBookmarked) MaterialTheme.colorScheme.primary
+                    tint = if (pageBookmarked) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             IconButton(
-                onClick = actions.onNextPage,
-                enabled = actions.page < actions.pageCount - 1,
+                onClick = onNextPage,
+                enabled = page < pageCount - 1,
                 modifier = Modifier.size(32.dp)
             ) { Icon(Icons.Default.ChevronRight, "Next page", Modifier.size(18.dp)) }
         }
@@ -869,16 +919,20 @@ private fun LayerMixerBlock(
     onRecord: (Int) -> Unit,
     onOpacity: (Int, Float) -> Unit,
     onOpacityFinished: () -> Unit,
-    onFilter: (Int) -> Unit
+    onFilter: (Int) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
+        modifier = modifier,
         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .62f),
         shape = RoundedCornerShape(13.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .38f))
     ) {
+        BoxWithConstraints {
+        val stackActions = maxWidth < 280.dp
         Row(
-            Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
-            horizontalArrangement = Arrangement.spacedBy(3.dp)
+            Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 5.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             listOf(AnnotationLayers.ONE, AnnotationLayers.TWO, AnnotationLayers.THREE)
                 .forEachIndexed { index, layer ->
@@ -893,9 +947,12 @@ private fun LayerMixerBlock(
                         onRecord = { onRecord(layer) },
                         onOpacity = { onOpacity(layer, it) },
                         onOpacityFinished = onOpacityFinished,
-                        onFilter = { onFilter(layer) }
+                        onFilter = { onFilter(layer) },
+                        modifier = Modifier.weight(1f),
+                        stackActions = stackActions
                     )
                 }
+        }
         }
     }
 }
@@ -913,53 +970,93 @@ private fun LayerChannel(
     onRecord: () -> Unit,
     onOpacity: (Float) -> Unit,
     onOpacityFinished: () -> Unit,
-    onFilter: () -> Unit
+    onFilter: () -> Unit,
+    modifier: Modifier = Modifier,
+    stackActions: Boolean = false
 ) {
     val colour = Color(AnnotationLayers.colour(layer))
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(34.dp, 31.dp), contentAlignment = Alignment.Center) {
-            Box(
-                Modifier.size(29.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(colour.copy(alpha = if (visible) .24f else .045f))
-                    .border(
-                        if (visible) 2.dp else 1.dp,
-                        colour.copy(alpha = if (visible) 1f else .38f),
-                        RoundedCornerShape(9.dp)
-                    )
-                    .combinedClickable(onClick = onVisibility, onLongClick = onFilter)
-                    .semantics {
-                        contentDescription = "Layer $label ${if (visible) "visible" else "muted"}. " +
-                            "Tap to ${if (visible) "mute" else "show"}; long press for filter."
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    label,
-                    color = colour.copy(alpha = if (visible) 1f else .55f),
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+    Column(
+        modifier = modifier.fillMaxHeight(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier.fillMaxWidth().height(44.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(colour.copy(alpha = if (visible) .24f else .045f))
+                .border(
+                    if (visible) 2.dp else 1.dp,
+                    colour.copy(alpha = if (visible) 1f else .38f),
+                    RoundedCornerShape(11.dp)
                 )
-                if (filterShown) {
-                    Box(
-                        Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp)
-                            .size(11.dp, 3.dp).clip(CircleShape).background(colour)
-                    )
-                }
-            }
-            Box(
-                Modifier.align(Alignment.TopEnd)
-                    .size(13.dp)
-                    .clip(CircleShape)
-                    .background(if (armed) Color(0xFFEF4444) else MaterialTheme.colorScheme.surface)
-                    .border(1.5.dp, Color(0xFFEF4444), CircleShape)
-                    .clickable(onClick = onRecord)
-                    .semantics {
-                        contentDescription = "Layer $label ${if (armed) "record armed" else "not armed"}"
-                    }
+                .clickable(onClick = onVisibility)
+                .semantics {
+                    contentDescription = "Layer $label ${if (visible) "visible" else "muted"}. " +
+                        "Tap to ${if (visible) "mute" else "show"}."
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                color = colour.copy(alpha = if (visible) 1f else .55f),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
             )
         }
-        VerticalLayerFader(opacity, colour, onOpacity, onOpacityFinished)
+        VerticalLayerFader(
+            opacity,
+            colour,
+            onOpacity,
+            onOpacityFinished,
+            Modifier.weight(1f).fillMaxWidth()
+        )
+        @Composable fun RecordButton() {
+            IconButton(
+                onClick = onRecord,
+                modifier = Modifier.size(44.dp)
+                    .semantics {
+                        contentDescription = "Layer $label ${if (armed) "writing on" else "writing off"}"
+                    }
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.FiberManualRecord,
+                        if (armed) "Stop writing to layer $label" else "Write to layer $label",
+                        Modifier.size(15.dp),
+                        tint = if (armed) Color(0xFFEF4444)
+                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f)
+                    )
+                    Text("Write", fontSize = 8.sp, maxLines = 1)
+                }
+            }
+        }
+        @Composable fun FilterButton() {
+            IconButton(
+                onClick = onFilter,
+                modifier = Modifier.size(44.dp)
+                    .semantics { contentDescription = "${if (filterShown) "Remove" else "Place"} layer $label filter" }
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Default.FilterAlt,
+                        if (filterShown) "Remove layer $label filter" else "Place layer $label filter",
+                        Modifier.size(16.dp),
+                        tint = if (filterShown) colour else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text("Filter", fontSize = 8.sp, maxLines = 1)
+                }
+            }
+        }
+        if (stackActions) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                RecordButton()
+                FilterButton()
+            }
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                RecordButton()
+                FilterButton()
+            }
+        }
     }
 }
 
@@ -969,7 +1066,8 @@ private fun VerticalLayerFader(
     value: Float,
     colour: Color,
     onValue: (Float) -> Unit,
-    onFinished: () -> Unit
+    onFinished: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var heightPx by remember { mutableFloatStateOf(1f) }
     fun choose(y: Float) {
@@ -979,7 +1077,8 @@ private fun VerticalLayerFader(
     val track = MaterialTheme.colorScheme.outline.copy(alpha = .42f)
     val surface = MaterialTheme.colorScheme.surface
     Canvas(
-        Modifier.size(24.dp, 34.dp)
+        modifier
+            .heightIn(min = 42.dp)
             .onSizeChanged { heightPx = it.height.toFloat() }
             .pointerInteropFilter { event ->
                 when (event.actionMasked) {
@@ -1132,15 +1231,17 @@ private fun PresetDot(
     highlighter: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onUpdate: () -> Unit,
+    onDelete: (() -> Unit)?
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val ring = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         Modifier
             .size(32.dp)
             .clip(CircleShape)
             .border(if (selected) 2.5.dp else 1.dp, ring, CircleShape)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true }),
         contentAlignment = Alignment.Center
     ) {
         // dot size hints at thickness so presets are distinguishable at a glance
@@ -1151,11 +1252,32 @@ private fun PresetDot(
                 .background(color.copy(alpha = if (highlighter) 0.55f else 1f))
                 .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
         )
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Update from current pen") },
+                onClick = { menuOpen = false; onUpdate() }
+            )
+            onDelete?.let { remove ->
+                DropdownMenuItem(
+                    text = { Text("Delete preset") },
+                    onClick = { menuOpen = false; remove() },
+                    leadingIcon = { Icon(Icons.Default.Delete, null) }
+                )
+            }
+        }
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
+private fun ColorDot(
+    color: Color,
+    selected: Boolean,
+    deletable: Boolean = false,
+    onDelete: () -> Unit = {},
+    onClick: () -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
     Box(
         Modifier
             .size(if (selected) 30.dp else 26.dp)
@@ -1167,8 +1289,16 @@ private fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
                 else MaterialTheme.colorScheme.outline,
                 CircleShape
             )
-            .clickable(onClick = onClick)
-    )
+            .combinedClickable(onClick = onClick, onLongClick = { if (deletable) menuOpen = true })
+    ) {
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text("Delete custom colour") },
+                onClick = { menuOpen = false; onDelete() },
+                leadingIcon = { Icon(Icons.Default.Delete, null) }
+            )
+        }
+    }
 }
 
 @Composable

@@ -101,7 +101,7 @@ class PaperPatternRegionTest {
     fun `every pattern draws a strip the same as it draws the whole`() {
         val strip = floatArrayOf(-100f, -100f, 220f, 40f)
         for (pattern in PaperPattern.Pattern.entries) {
-            if (pattern == PaperPattern.Pattern.PLAIN) continue
+            if (pattern == PaperPattern.Pattern.PLAIN || pattern == PaperPattern.Pattern.NOTE_GRID) continue
 
             val all = marksOf(pattern, whole[0], whole[1], whole[2], whole[3])
             val part = marksOf(pattern, strip[0], strip[1], strip[2], strip[3])

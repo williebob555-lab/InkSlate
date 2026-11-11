@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -1990,6 +1991,30 @@ fun EditorScreen(
                 // one tap to close, and the tray above it still switches shape.
                 val panelOpen = armedSettings != null || placedSettings != null
                 if (!panelOpen || LocalConfiguration.current.screenWidthDp >= 840) {
+                if (!com.inkslate.AppFlavor.musicView && d.pageCount > 1) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(end = 10.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        PageControlIsland(
+                            page = page,
+                            pageCount = d.pageCount,
+                            pageBookmarked = bookmarks.any { it.page == page },
+                            onPreviousPage = { drawingView.value?.goToPage(page - 1) },
+                            onNextPage = { drawingView.value?.goToPage(page + 1) },
+                            onOpenPageNavigation = { navOpen = true },
+                            onTogglePageBookmark = {
+                                if (bookmarks.any { it.page == page }) {
+                                    d.ink = d.ink.withBookmarkRemoved(page)
+                                    bookmarks = d.ink.bookmarks
+                                    persistWorking()
+                                } else {
+                                    bookmarkPrompt = page
+                                }
+                            }
+                        )
+                    }
+                }
                 ToolBar(
                     state = tools,
                     selectionCount = selectionCount,

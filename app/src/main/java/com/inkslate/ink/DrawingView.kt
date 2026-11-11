@@ -577,6 +577,10 @@ class DrawingView @JvmOverloads constructor(
     private var filterGrabIndex = -1
     private var filterGrabHandle = 0
     private var filterGrabAt = floatArrayOf(0f, 0f)
+    private var filterTransformIndex = -1
+    private var filterTransformStart: LayerFilter? = null
+    private var filterTransformFocus = floatArrayOf(0f, 0f)
+    private var filterTransformSpan = 1f
     var onLayerFiltersChanged: ((Int) -> Unit)? = null
     var onLayerOneAutoArmed: (() -> Unit)? = null
 
@@ -1041,6 +1045,81 @@ class DrawingView @JvmOverloads constructor(
         filterGrabAt[0] = x
         filterGrabAt[1] = y
         renderedInk?.close(); renderedInk = null
+        invalidate()
+    }
+
+    /** Two fingers that both begin in one filter own that gesture instead of zooming the page. */
+    private fun tryBeginLayerFilterTransform(event: MotionEvent): Boolean {
+        if (event.pointerCount < 2) return false
+        if (event.getToolType(0) != MotionEvent.TOOL_TYPE_FINGER ||
+            event.getToolType(1) != MotionEvent.TOOL_TYPE_FINGER
+        ) return false
+        toDoc(event.getX(0), event.getY(0))
+        val docX = tmpPts[0]
+        val docY = tmpPts[1]
+        val page = pageAtDoc(docX, docY)
+        val origin = originOf(page)
+        val x0 = docX - origin[0]
+        val y0 = docY - origin[1]
+        toDoc(event.getX(1), event.getY(1))
+        val x1 = tmpPts[0] - origin[0]
+        val y1 = tmpPts[1] - origin[1]
+        val index = layerFilters.indexOfLast {
+            it.pageIndex == page && it.contains(x0, y0) && it.contains(x1, y1)
+        }
+        if (index < 0) return false
+
+        discardPending()
+        livePage = page
+        filterGrabIndex = -1
+        filterGrabHandle = 0
+        drawingPointerId = -1
+        drawingIsStylus = false
+        filterTransformIndex = index
+        filterTransformStart = layerFilters[index]
+        filterTransformFocus[0] = (x0 + x1) / 2f
+        filterTransformFocus[1] = (y0 + y1) / 2f
+        filterTransformSpan = hypot(x1 - x0, y1 - y0).coerceAtLeast(1f)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        invalidate()
+        return true
+    }
+
+    /** Move and scale the claimed filter around the two-finger midpoint. */
+    private fun updateLayerFilterTransform(event: MotionEvent) {
+        val index = filterTransformIndex
+        val start = filterTransformStart ?: return
+        if (index !in layerFilters.indices || event.pointerCount < 2) return
+        val origin = originOf(start.pageIndex)
+        toDoc(event.getX(0), event.getY(0))
+        val x0 = tmpPts[0] - origin[0]
+        val y0 = tmpPts[1] - origin[1]
+        toDoc(event.getX(1), event.getY(1))
+        val x1 = tmpPts[0] - origin[0]
+        val y1 = tmpPts[1] - origin[1]
+        val focusX = (x0 + x1) / 2f
+        val focusY = (y0 + y1) / 2f
+        val scale = (hypot(x1 - x0, y1 - y0) / filterTransformSpan).coerceIn(.2f, 5f)
+        val slot = slots.getOrNull(start.pageIndex)
+        val pageW = slot?.width ?: pageWidthPt
+        val pageH = slot?.height ?: pageHeightPt
+        layerFilters[index] = start.pinched(
+            focusX - filterTransformFocus[0],
+            focusY - filterTransformFocus[1],
+            scale,
+            pageW,
+            pageH
+        )
+        renderedInk?.close(); renderedInk = null
+        invalidate()
+    }
+
+    private fun endLayerFilterTransform() {
+        filterTransformIndex = -1
+        filterTransformStart = null
+        filterTransformSpan = 1f
+        parent?.requestDisallowInterceptTouchEvent(false)
+        suppressDrawUntil = System.currentTimeMillis() + MULTITOUCH_GUARD_MS
         invalidate()
     }
 
@@ -1821,6 +1900,7 @@ class DrawingView @JvmOverloads constructor(
      */
     private fun growCanvasFor(bounds: RectF) {
         val current = canvas ?: return
+        if (current.isUnbounded) return
 
         val reach = MAX_GROWTH_STEP_PT
         if (bounds.left < current.left - reach || bounds.top < current.top - reach ||
@@ -1904,6 +1984,12 @@ class DrawingView @JvmOverloads constructor(
             pageHeight = paperRect.height(),
             sink = sink
         )
+        c.noteGrid?.segments(
+            Box(canvasRect.left, canvasRect.top, canvasRect.right, canvasRect.bottom)
+        )?.forEach { segment ->
+            canvasRulingPaint.strokeWidth = 1.15f
+            target.drawLine(segment.x0, segment.y0, segment.x1, segment.y1, canvasRulingPaint)
+        }
         target.restore()
         canvasPaperPaint.colorFilter = null
         canvasRulingPaint.colorFilter = null
@@ -1919,6 +2005,45 @@ class DrawingView @JvmOverloads constructor(
             if (box == null) box = RectF(b) else box.union(b)
         }
         box?.let { growCanvasFor(it) }
+    }
+
+    /**
+     * Let a Note Grid cell make room for new ink, moving only cells to its right and rows below.
+     * The grid itself is structure, not a collection of drawn lines; changing it therefore costs
+     * no additional strokes no matter how large the notebook becomes.
+     */
+    private fun reflowNoteGridFor(added: Stroke): Pair<List<Stroke>, List<Stroke>> {
+        val current = canvas ?: return emptyList<Stroke>() to emptyList()
+        val grid = current.noteGrid ?: return emptyList<Stroke>() to emptyList()
+        if (added.pageIndex != (slots.firstOrNull()?.index ?: 0)) {
+            return emptyList<Stroke>() to emptyList()
+        }
+        val anchor = added.points.firstOrNull() ?: return emptyList<Stroke>() to emptyList()
+        val box = added.bounds().let { Box(it.left, it.top, it.right, it.bottom) }
+        val reflow = grid.accommodate(anchor.x, anchor.y, box)
+        val updatedCanvas = current.copy(noteGrid = reflow.grid)
+        if (updatedCanvas != current) {
+            canvas = updatedCanvas
+            onCanvasGrew?.invoke(updatedCanvas)
+        }
+        val before = ArrayList<Stroke>()
+        val after = ArrayList<Stroke>()
+        if (reflow.shiftRight > 0f || reflow.shiftDown > 0f) {
+            for (index in strokes.indices) {
+                val stroke = strokes[index]
+                if (stroke.pageIndex != added.pageIndex) continue
+                val bounds = stroke.bounds()
+                val (dx, dy) = reflow.shiftFor(bounds.centerX(), bounds.centerY())
+                if (dx == 0f && dy == 0f) continue
+                val moved = stroke.transformed(
+                    Matrix().apply { setTranslate(dx, dy) }, stroke.id
+                ).copy(updatedUtc = now())
+                before += stroke
+                after += moved
+                strokes[index] = moved
+            }
+        }
+        return before to after
     }
 
     /** Room to pan into: a canvas can be scrolled past its edge, which is where it grows next. */
@@ -3053,11 +3178,13 @@ class DrawingView @JvmOverloads constructor(
         // strictly worse than no optimisation. If the computed viewport looks implausible -
         // empty, non-finite, or nowhere near the document - draw everything and say so in the
         // diagnostics rather than quietly dropping what the user can plainly see.
-        val cullingSane = viewportDoc.width() > 0f && viewportDoc.height() > 0f &&
+        val unboundedCanvas = this.canvas?.isUnbounded == true
+        val coordinatesSane = viewportDoc.width() > 0f && viewportDoc.height() > 0f &&
             viewportDoc.left.isFinite() && viewportDoc.top.isFinite() &&
-            viewportDoc.right.isFinite() && viewportDoc.bottom.isFinite() &&
-            RectF.intersects(viewportDoc, docBounds())
-        if (!cullingSane) {
+            viewportDoc.right.isFinite() && viewportDoc.bottom.isFinite()
+        val cullingSane = coordinatesSane &&
+            (unboundedCanvas || RectF.intersects(viewportDoc, docBounds()))
+        if (!coordinatesSane) {
             RenderStats.cullingFallbacks++
             viewportDoc.set(docBounds())
             viewportDoc.inset(-CULL_MARGIN_PT, -CULL_MARGIN_PT)
@@ -3071,8 +3198,9 @@ class DrawingView @JvmOverloads constructor(
 
         for (slotIndex in com.inkslate.core.PageArranger.drawRange(slots.size, layout, currentPage)) {
             val slot = slots[slotIndex]
-            if (intersects(slot, fullViewportDoc)) drawnPages.add(slot.index)
-            if (cullingSane && !intersects(slot, viewportDoc)) continue
+            val infiniteSlot = unboundedCanvas && slot.index == slots.firstOrNull()?.index
+            if (infiniteSlot || intersects(slot, fullViewportDoc)) drawnPages.add(slot.index)
+            if (!infiniteSlot && cullingSane && !intersects(slot, viewportDoc)) continue
 
             canvas.save()
             canvas.translate(slot.originX, slot.originY)
@@ -3080,7 +3208,17 @@ class DrawingView @JvmOverloads constructor(
             // coordinates, so cropping never moves a stroke relative to the text it annotates.
             canvas.translate(-slot.cropLeft, -slot.cropTop)
 
-            val canvasRect = slot.canvasRect
+            // An infinite whiteboard has no saved paper bounds. Paint exactly the area in view
+            // (plus overscan) using stable world coordinates; panning farther merely asks for a
+            // different window of the same plane and never mutates the document.
+            val canvasRect = if (infiniteSlot) {
+                RectF(
+                    fullViewportDoc.left - slot.originX + slot.cropLeft,
+                    fullViewportDoc.top - slot.originY + slot.cropTop,
+                    fullViewportDoc.right - slot.originX + slot.cropLeft,
+                    fullViewportDoc.bottom - slot.originY + slot.cropTop
+                ).also { it.inset(-CULL_MARGIN_PT * 2f, -CULL_MARGIN_PT * 2f) }
+            } else slot.canvasRect
             if (canvasRect == null) canvas.clipRect(
                 slot.cropLeft, slot.cropTop,
                 slot.cropLeft + slot.visibleWidth, slot.cropTop + slot.visibleHeight
@@ -3120,7 +3258,7 @@ class DrawingView @JvmOverloads constructor(
                 postInvalidateOnAnimation()
             }
             // The edge belongs to the whole surface, so on a canvas it goes round the canvas.
-            canvas.drawRect(canvasRect ?: pageRect, pageEdge)
+            if (!infiniteSlot) canvas.drawRect(canvasRect ?: pageRect, pageEdge)
             // The music tools' marks: over the print, under the ink (InkSheets).
             musicPath?.takeIf { enhancementsReady }?.let { path ->
                 val overlayStarted = System.nanoTime()
@@ -3530,6 +3668,22 @@ class DrawingView @JvmOverloads constructor(
         // A music tool in hand: one finger or the pen selects bars, cleans them up - it neither
         // writes nor turns the page. A second finger lets it go, and moves the page as ever.
         if (musicTouch(event)) return true
+
+        // A filter is a movable viewport, so a two-finger gesture that begins inside one belongs
+        // to that viewport. Claim it before the document transform recogniser can turn the same
+        // touch into page zoom. Outside a filter, the ordinary page gesture remains unchanged.
+        if (filterTransformIndex >= 0) {
+            when (action) {
+                MotionEvent.ACTION_MOVE -> updateLayerFilterTransform(event)
+                MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_CANCEL -> endLayerFilterTransform()
+            }
+            return true
+        }
+        if (event.pointerCount >= 2 &&
+            (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_DOWN) &&
+            tryBeginLayerFilterTransform(event)
+        ) return true
 
         // Two fingers on the ruler adjust the ruler rather than the page. Without this
         // exception, the most natural way to grab a straightedge instead zooms the document.
@@ -4368,7 +4522,12 @@ class DrawingView @JvmOverloads constructor(
     private fun switchInputMode(wanted: InputMode) {
         if (wanted == activeMode) return
         activeMode = wanted
-        onInputModeChanged?.invoke(wanted)
+        // Finger panning is an interaction, not a request to edit the finger profile. Keep the
+        // pen's controls visible while the other hand moves the paper. Touch drawing and erasing
+        // still select the touch profile as before.
+        if (wanted != InputMode.TOUCH || touchConfig.tool != Tool.PAN) {
+            onInputModeChanged?.invoke(wanted)
+        }
     }
 
     /** Throw away a held touch. Nothing was drawn, so there is nothing to undo. */
@@ -4394,6 +4553,8 @@ class DrawingView @JvmOverloads constructor(
         lineDrag = null
         filterGrabIndex = -1
         filterGrabHandle = 0
+        filterTransformIndex = -1
+        filterTransformStart = null
 
         // An interrupted drag is a different matter. The strokes have already been moved, and
         // clearing the gesture without putting them back would leave the selection somewhere the
@@ -4657,7 +4818,9 @@ class DrawingView @JvmOverloads constructor(
                 return
             }
         }
-        strokes.add(finished); pushOp(Op(listOf(finished), emptyList()))
+        val (gridBefore, gridAfter) = reflowNoteGridFor(finished)
+        strokes.add(finished)
+        pushOp(Op(listOf(finished) + gridAfter, gridBefore))
         growCanvasForAll(listOf(finished)); changed()
     }
 
@@ -5183,6 +5346,7 @@ class DrawingView @JvmOverloads constructor(
      */
     private fun clampTranslation(heldFrom: RectF? = null) {
         if (slots.isEmpty()) return
+        if (canvas?.isUnbounded == true) return
         val r = reachOnScreen()
         val w = width.toFloat()
         val h = height.toFloat()

@@ -50,6 +50,21 @@ class AnnotationLayersTest {
         assertTrue(filter.withBounds(15f, 15f, 20f, 20f).width >= 24f)
     }
 
+    @Test fun `two finger filter transform follows midpoint scales and remains on page`() {
+        val original = LayerFilter(0, 1, 40f, 50f, 140f, 110f)
+        val changed = original.pinched(30f, -20f, 1.5f, 240f, 180f)
+        assertEquals(150f, changed.width, .001f)
+        assertEquals(90f, changed.height, .001f)
+        assertEquals(120f, (changed.left + changed.right) / 2f, .001f)
+        assertEquals(60f, (changed.top + changed.bottom) / 2f, .001f)
+
+        val clamped = original.pinched(-500f, 500f, 8f, 200f, 160f)
+        assertEquals(0f, clamped.left, .001f)
+        assertEquals(0f, clamped.top, .001f)
+        assertEquals(200f, clamped.right, .001f)
+        assertEquals(160f, clamped.bottom, .001f)
+    }
+
     @Test fun `every nonempty layer combination has a distinct colour`() {
         assertEquals(7, (1..7).map(AnnotationLayers::colour).toSet().size)
     }

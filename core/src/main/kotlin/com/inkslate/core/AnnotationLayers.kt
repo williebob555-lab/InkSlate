@@ -64,6 +64,31 @@ data class LayerFilter(
         left = left + dx, top = top + dy, right = right + dx, bottom = bottom + dy
     )
 
+    /** One two-finger frame: resize around the original centre, move with the finger midpoint. */
+    fun pinched(
+        focusDx: Float,
+        focusDy: Float,
+        scale: Float,
+        pageWidth: Float,
+        pageHeight: Float,
+        minimum: Float = 24f
+    ): LayerFilter {
+        val pageW = pageWidth.coerceAtLeast(minimum)
+        val pageH = pageHeight.coerceAtLeast(minimum)
+        val newWidth = (width * scale).coerceIn(minimum, pageW)
+        val newHeight = (height * scale).coerceIn(minimum, pageH)
+        val centreX = left + width / 2f + focusDx
+        val centreY = top + height / 2f + focusDy
+        val newLeft = (centreX - newWidth / 2f).coerceIn(0f, (pageW - newWidth).coerceAtLeast(0f))
+        val newTop = (centreY - newHeight / 2f).coerceIn(0f, (pageH - newHeight).coerceAtLeast(0f))
+        return copy(
+            left = newLeft,
+            top = newTop,
+            right = newLeft + newWidth,
+            bottom = newTop + newHeight
+        )
+    }
+
     fun withBounds(l: Float, t: Float, r: Float, b: Float, minimum: Float = 24f): LayerFilter {
         val nl = minOf(l, r - minimum)
         val nt = minOf(t, b - minimum)

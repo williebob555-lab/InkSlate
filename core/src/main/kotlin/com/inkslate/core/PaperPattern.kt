@@ -25,7 +25,7 @@ object PaperPattern {
      * document carries the name of its ruling, so a canvas made on the tablet is ruled the same
      * way when it opens on the laptop, whatever either build happens to offer in its own menus.
      */
-    enum class Pattern { PLAIN, RULED, GRID, DOTS, GRAPH, CORNELL, MUSIC, ISOMETRIC }
+    enum class Pattern { PLAIN, RULED, GRID, DOTS, GRAPH, CORNELL, MUSIC, ISOMETRIC, NOTE_GRID }
 
     /**
      * The pattern [name] refers to, or [Pattern.PLAIN] when it names nothing known.
@@ -184,7 +184,9 @@ object PaperPattern {
                 for (y in ticks(anchorY, step, top, bottom)) sink.line(left, y, right, y)
             }
 
-            Pattern.PLAIN -> Unit
+            // Note Grid owns non-repeating, independently sized rows and columns in InkCanvas;
+            // the platform renderers draw those saved dimensions after this paper fill.
+            Pattern.PLAIN, Pattern.NOTE_GRID -> Unit
         }
     }
 

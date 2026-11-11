@@ -87,6 +87,15 @@ fun NewDocumentDialog(
                     )
                 }
 
+                OptionLabel("Presets")
+                OptionWrapRow {
+                    OptionChip("Note Grid", paper.background == BlankDocumentFactory.Background.NOTE_GRID) {
+                        paper = paper.copy(background = BlankDocumentFactory.Background.NOTE_GRID)
+                        canvas = true
+                        pages = 1
+                    }
+                }
+
                 BlankPaperOptions(
                     style = paper,
                     onChange = { paper = it },

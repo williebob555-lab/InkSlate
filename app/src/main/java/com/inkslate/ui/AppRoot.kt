@@ -36,6 +36,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -468,48 +469,8 @@ fun AppRoot(
                 // documents are still a tap away; the way back out sits at the end of them.
                 // A remote can ask for Home, as the Home button in the tab row does.
                 androidx.compose.runtime.SideEffect { com.inkslate.core.Perform.showHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true } }
-                if (tabs.isNotEmpty()) {
-                    TabStrip(
-                        modifier = Modifier.statusBarsPadding(),
-                        tabs = tabs,
-                        homeShown = homeShown,
-                        shownIds = setOfNotNull(primaryTab?.id, secondaryTab?.id),
-                        focusedId = focusedTab?.id,
-                        primaryId = primaryTab?.id,
-                        secondaryId = secondaryTab?.id,
-                        splitAvailable = splitAvailable,
-                        stacked = splitStacked,
-                        onMoveTab = { from, to ->
-                            tabs.add(to, tabs.removeAt(from))
-                            com.inkslate.AppFlavor.onTabsMoved?.invoke(tabs.filter { !it.closeRequested.value }.map { it.file })
-                        },
-                        onHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true },
-                        onSelect = ::selectTab,
-                        onOpenInSplit = ::openInSplit,
-                        onCloseSplit = ::closeSplit,
-                        onCloseTab = { id -> tabOf(id)?.closeRequested?.value = true },
-                        onCloseOthers = ::closeOthers,
-                        onCloseAll = ::closeAll,
-                        onNewTab = {
-                            homeShown = true
-                            // InkSlate's + button is for opening another document, so begin beside
-                            // the document the user is already working in instead of making them
-                            // traverse the library again. InkSheets keeps its purpose-built Home.
-                            screen = if (com.inkslate.AppFlavor.home == null) {
-                                Screen.Browser(focusedTab?.file?.parentFile?.takeIf { it.isDirectory }?.absolutePath)
-                            } else Screen.Home
-                        },
-                        onLeaveFullscreen = if (immersive.isFullscreen) {
-                            { immersive.set(false) }
-                        } else null
-                    )
-                }
-
-                // With the tabs at the top, the status bar's room is already made above them, so
-                // the app bars below must not make it a second time.
                 Column(
                     Modifier.weight(1f).fillMaxWidth()
-                        .then(if (tabs.isNotEmpty()) Modifier.consumeWindowInsets(WindowInsets.statusBars) else Modifier)
                 ) {
                 if (focusedTab != null) HostBar(focusedTab.host) { it.topBar }
 
@@ -613,6 +574,44 @@ fun AppRoot(
                     HostBar(focusedTab.host) { it.bottomBar }
                 }
                 }
+            }
+
+            // A genuine island overlays the workspace instead of reserving a full-width app-bar
+            // row. The document therefore reaches the top edge everywhere the few actual controls
+            // do not cover it; one tab leaves almost all of that edge open, while more tabs grow
+            // only the connected centre island.
+            if (tabs.isNotEmpty()) {
+                TabStrip(
+                    modifier = Modifier.statusBarsPadding().zIndex(20f),
+                    tabs = tabs,
+                    homeShown = homeShown,
+                    shownIds = setOfNotNull(primaryTab?.id, secondaryTab?.id),
+                    focusedId = focusedTab?.id,
+                    primaryId = primaryTab?.id,
+                    secondaryId = secondaryTab?.id,
+                    splitAvailable = splitAvailable,
+                    stacked = splitStacked,
+                    onMoveTab = { from, to ->
+                        tabs.add(to, tabs.removeAt(from))
+                        com.inkslate.AppFlavor.onTabsMoved?.invoke(tabs.filter { !it.closeRequested.value }.map { it.file })
+                    },
+                    onHome = { com.inkslate.AppFlavor.onHome?.invoke(); homeShown = true },
+                    onSelect = ::selectTab,
+                    onOpenInSplit = ::openInSplit,
+                    onCloseSplit = ::closeSplit,
+                    onCloseTab = { id -> tabOf(id)?.closeRequested?.value = true },
+                    onCloseOthers = ::closeOthers,
+                    onCloseAll = ::closeAll,
+                    onNewTab = {
+                        homeShown = true
+                        screen = if (com.inkslate.AppFlavor.home == null) {
+                            Screen.Browser(focusedTab?.file?.parentFile?.takeIf { it.isDirectory }?.absolutePath)
+                        } else Screen.Home
+                    },
+                    onLeaveFullscreen = if (immersive.isFullscreen) {
+                        { immersive.set(false) }
+                    } else null
+                )
             }
 
             // Every open document, whether or not any of it is on screen. Each keeps its marks,

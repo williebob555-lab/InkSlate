@@ -33,7 +33,8 @@ object BlankDocumentFactory {
         GRAPH("Fine graph"),
         CORNELL("Cornell notes"),
         MUSIC("Music staves"),
-        ISOMETRIC("Isometric")
+        ISOMETRIC("Isometric"),
+        NOTE_GRID("Note Grid")
     }
 
     /** Page geometry, in PDF points (72 per inch). */
