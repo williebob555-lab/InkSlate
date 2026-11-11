@@ -3,6 +3,7 @@ package com.inkslate.core
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Recognises the deliberate back-and-forth scratch used to erase ink in drawing applications.
@@ -28,9 +29,16 @@ object ScribbleErase {
             minY = minOf(minY, p.y); maxY = maxOf(maxY, p.y)
             if (i > 0) length += hypot(p.x - points[i - 1].x, p.y - points[i - 1].y)
         }
-        val horizontal = maxX - minX >= maxY - minY
-        val span = max(maxX - minX, maxY - minY)
+        val width = maxX - minX
+        val height = maxY - minY
+        val horizontal = width >= height
+        val span = max(width, height)
         if (span < 10f || length < span * 4f) return false
+
+        // A scratch keeps crossing a narrow band. Dense shading/filling advances across a broad
+        // area as it reverses, and must stay ink even though it contains many more reversals.
+        val minorSpan = min(width, height)
+        if (minorSpan > max(9f, span * 0.38f)) return false
 
         // Ignore tiny digitiser tremors. Only a change that travelled a visible share of the
         // gesture span counts as turning back across it.

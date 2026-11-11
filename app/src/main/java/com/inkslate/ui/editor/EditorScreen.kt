@@ -2136,7 +2136,7 @@ fun EditorScreen(
     }
 
     val pane: @Composable (com.inkslate.ui.DocView, Boolean) -> Unit = { slot, inFocus ->
-        var quickWheel by remember(slot) { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+        var quickWheel by remember(slot) { mutableStateOf<QuickWheelGesture?>(null) }
         // A stamp in hand belongs to the pane being worked in. Leaving it puts the item down in
         // the pane left behind, and arriving picks it up again in this one - so the tray, which is
         // the workspace's, keeps meaning the same thing wherever the pen goes next.
@@ -2251,7 +2251,95 @@ fun EditorScreen(
                                 }
                             }
                             view.onQuickActionWheelRequested = { x, y ->
-                                quickWheel = androidx.compose.ui.geometry.Offset(x, y)
+                                val point = androidx.compose.ui.geometry.Offset(x, y)
+                                quickWheel = QuickWheelGesture(anchor = point)
+                            }
+                            view.onQuickActionWheelMoved = moved@{ x, y ->
+                                val gesture = quickWheel ?: return@moved
+                                val current = tools.active.snapshot()
+                                val ladder = if (current.tool == Tool.ERASER) {
+                                    ToolState.ERASER_SIZES
+                                } else ToolState.WIDTHS
+                                quickWheel = advanceQuickWheelGesture(
+                                    gesture = gesture,
+                                    pointer = androidx.compose.ui.geometry.Offset(x, y),
+                                    actions = visibleActions(tools.quickWheelActions, current),
+                                    current = current,
+                                    activationRadiusPx = 44f * density.density,
+                                    sizeStepPx = 14f * density.density,
+                                    sizeLadder = ladder
+                                )
+                            }
+                            view.onQuickActionWheelReleased = released@{ x, y, cancelled ->
+                                val started = quickWheel ?: return@released
+                                val current = tools.active.snapshot()
+                                val actions = visibleActions(tools.quickWheelActions, current)
+                                val ladder = if (current.tool == Tool.ERASER) {
+                                    ToolState.ERASER_SIZES
+                                } else ToolState.WIDTHS
+                                val gesture = advanceQuickWheelGesture(
+                                    gesture = started,
+                                    pointer = androidx.compose.ui.geometry.Offset(x, y),
+                                    actions = actions,
+                                    current = current,
+                                    activationRadiusPx = 44f * density.density,
+                                    sizeStepPx = 14f * density.density,
+                                    sizeLadder = ladder
+                                )
+                                quickWheel = null
+                                if (cancelled) return@released
+
+                                when (gesture.submenu) {
+                                    QuickWheelAction.COLOR -> {
+                                        val palette = quickWheelPalette(tools, current)
+                                        val picked = palette.getOrNull(
+                                            quickWheelColorIndex(actions, gesture.anchor, gesture.pointer, palette.size)
+                                        ) ?: return@released
+                                        tools.edit { config ->
+                                            if (config.tool == Tool.ERASER) config.tool = Tool.DRAW
+                                            config.color = picked
+                                        }
+                                        tools.rememberColor(picked)
+                                    }
+                                    QuickWheelAction.SIZE -> {
+                                        val picked = gesture.previewSize ?: gesture.initialSize
+                                        tools.edit { config ->
+                                            if (config.tool == Tool.ERASER) config.eraserRadius = picked
+                                            else config.strokeWidth = picked
+                                        }
+                                    }
+                                    else -> when (
+                                        quickWheelMainAction(actions, current, gesture.anchor, gesture.pointer)
+                                    ) {
+                                        QuickWheelAction.PEN -> tools.edit { config ->
+                                            if (config.brush == BrushType.HIGHLIGHTER) config.toggleHighlighter()
+                                            config.tool = Tool.DRAW
+                                        }
+                                        QuickWheelAction.HIGHLIGHTER -> tools.edit { config ->
+                                            if (config.brush != BrushType.HIGHLIGHTER) config.toggleHighlighter()
+                                            config.tool = Tool.DRAW
+                                        }
+                                        QuickWheelAction.ERASER -> tools.edit { it.tool = Tool.ERASER }
+                                        QuickWheelAction.SELECT_ONCE -> {
+                                            val mode = tools.activeMode
+                                            val previous = tools.configFor(mode).tool
+                                                .takeUnless { it == Tool.SELECT } ?: Tool.DRAW
+                                            oneShotSelection = OneShotSelection(mode, previous, view)
+                                            tools.editMode(mode) { it.tool = Tool.SELECT }
+                                        }
+                                        QuickWheelAction.UNDO -> {
+                                            view.undo(); dirty = true; undoTick++
+                                            finishOneShotSelection()
+                                        }
+                                        QuickWheelAction.REDO -> {
+                                            view.redo(); dirty = true; undoTick++
+                                            finishOneShotSelection()
+                                        }
+                                        QuickWheelAction.COLOR, QuickWheelAction.SIZE, null -> Unit
+                                    }
+                                }
+                                tools.applyTo(view)
+                                if (tools.active.tool != Tool.SELECT) oneShotSelection = null
                             }
                             view.onDetailNeeded = { detailPage, rect, widthPx ->
                                 scope.launch {
@@ -2394,32 +2482,8 @@ fun EditorScreen(
                 )
             }
 
-            if (inFocus) quickWheel?.let { anchor ->
-                QuickActionWheel(
-                    state = tools,
-                    anchor = anchor,
-                    onSelectOnce = {
-                        val view = slot.view ?: return@QuickActionWheel
-                        val mode = tools.activeMode
-                        val previous = tools.configFor(mode).tool.takeUnless { it == Tool.SELECT } ?: Tool.DRAW
-                        oneShotSelection = OneShotSelection(mode, previous, view)
-                        tools.editMode(mode) { it.tool = Tool.SELECT }
-                        tools.applyTo(view)
-                    },
-                    onUndo = {
-                        slot.view?.undo(); dirty = true; undoTick++
-                        finishOneShotSelection()
-                    },
-                    onRedo = {
-                        slot.view?.redo(); dirty = true; undoTick++
-                        finishOneShotSelection()
-                    },
-                    onChanged = {
-                        tools.applyTo(slot.view)
-                        if (tools.active.tool != Tool.SELECT) oneShotSelection = null
-                    },
-                    onDismiss = { quickWheel = null }
-                )
+            if (inFocus) quickWheel?.let { gesture ->
+                QuickActionWheel(state = tools, gesture = gesture)
             }
 
             // A page that will not rasterise used to look identical to a genuinely blank one.

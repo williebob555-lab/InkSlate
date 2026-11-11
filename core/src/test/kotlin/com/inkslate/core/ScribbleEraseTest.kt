@@ -35,6 +35,19 @@ class ScribbleEraseTest {
         assertFalse(ScribbleErase.isScribble(curve))
     }
 
+    @Test fun `dense back and forth fill remains ink`() {
+        val fill = buildList {
+            repeat(10) { pass ->
+                val from = if (pass % 2 == 0) 0 else 32
+                val to = if (pass % 2 == 0) 32 else 0
+                repeat(6) { step ->
+                    add(InkPoint(from + (to - from) * step / 5f, pass * 4.5f, 2f))
+                }
+            }
+        }
+        assertFalse(ScribbleErase.isScribble(fill))
+    }
+
     @Test fun `pen and highlighter remember independent color and width`() {
         val c = ToolConfig(color = 0xFF2563EB.toInt(), strokeWidth = 2.5f)
         c.toggleHighlighter()

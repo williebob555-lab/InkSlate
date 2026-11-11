@@ -85,6 +85,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import android.view.MotionEvent
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -387,13 +389,7 @@ fun ToolBar(
                     },
                     modifier = Modifier.size(28.dp)
                 ) { Icon(Icons.Default.Add, "Thicker", Modifier.size(15.dp)) }
-                Text(
-                    // two decimals below 1pt, where a hundredth is a visible difference
-                    if (current < 1f) "%.2f".format(current) else "%.1f".format(current),
-                    style = MaterialTheme.typography.labelSmall,
-                    modifier = Modifier.width(38.dp),
-                    textAlign = TextAlign.End
-                )
+                RelativeSizePreview(current, ladder, isEraser)
                 // Reads the slider as a thickness on the glass rather than on the page. It lives
                 // here rather than in a settings screen because it changes what the control
                 // beside it means, and that is not something to find out about later.
@@ -708,6 +704,32 @@ fun ToolBar(
                 }
             }
         }
+    }
+}
+
+/** A size is easier to judge as ink than as a decimal, especially while moving quickly. */
+@Composable
+private fun RelativeSizePreview(value: Float, ladder: FloatArray, eraser: Boolean) {
+    val index = ToolState.stopIndex(ladder, value)
+    val fraction = if (ladder.size <= 1) 0f else index / ladder.lastIndex.toFloat()
+    Canvas(
+        Modifier
+            .size(38.dp, 28.dp)
+            .semantics {
+                contentDescription = (if (eraser) "Eraser size" else "Pen size") +
+                    if (value < 1f) " %.2f".format(value) else " %.1f".format(value)
+            }
+    ) {
+        drawCircle(
+            color = Color.Black.copy(alpha = .14f),
+            radius = size.minDimension * .42f,
+            center = center
+        )
+        drawCircle(
+            color = if (eraser) Color(0xFFEF4444) else Color(0xFF2563EB),
+            radius = size.minDimension * (.08f + .32f * fraction),
+            center = center
+        )
     }
 }
 

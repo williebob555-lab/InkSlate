@@ -39,16 +39,23 @@ Newest first. These notes describe changes made, not confirmation that every rep
 - **Arrange tabs no longer wastes scroll space on static chrome.** Its title, Reset and Done move
   with the workspace content instead of permanently covering part of the list.
 - **Compact stylus quick actions are available in both InkSlate and InkSheets.** Settings → Stylus
-  can assign the first barrel button to a 164 dp wheel at the pen tip. Its default ring provides
+  can assign the first barrel button to a compact wheel at the pen tip. Its default ring provides
   Pen, Highlighter, Eraser, one-shot Select, Undo, Colour and Size; Settings can swap actions,
-  including Redo, without allowing the ring to grow past seven. Colour reuses the ring for
-  swatches, and dragging Size outward/inward changes width without a slider. One-shot Select
+  including Redo, without allowing the ring to grow past seven. Hold the button and touch once,
+  move in any direction, then lift to commit the highlighted action and close the wheel. The pen
+  may travel beyond the drawn ring without losing that direction. Colour opens a separate curved
+  palette island, while Size opens a detached marked pill and changes by pulling outward/inward.
+  One-shot Select
   returns to the previous tool after moving, editing, deleting or cancelling the selection. The
-  wheel disappears after the choice.
+  wheel has no solid plate: coloured action islands leave the page visible between them, and the
+  current persistent tool forms a filled rounded wedge into the centre. The candidate island grows
+  and gains a bright outline before lift. It opens only when the pen touches down while its barrel
+  button is held, never merely from pressing the button in hover.
   Pen and highlighter now retain independent colours, widths and opacity.
 - **Optional scribble-to-erase is guarded against accidental deletion.** A gesture must reverse
   direction four times, traverse the same span several times and actually cross existing ink
-  before it is treated as erasing. An uncertain scratch in empty space remains ordinary ink.
+  before it is treated as erasing. An uncertain scratch in empty space remains ordinary ink, and
+  broad back-and-forth fill strokes are explicitly kept as drawing rather than mistaken for erase.
 - **InkSlate library navigation is more direct.** Folders can be pinned from their menu and appear
   in the Pinned row on Home. Pressing + while a document is open starts the file browser in that
   active document's folder instead of returning to the generic Home menu.

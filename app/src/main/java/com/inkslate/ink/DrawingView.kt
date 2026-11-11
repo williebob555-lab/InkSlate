@@ -1022,6 +1022,14 @@ class DrawingView @JvmOverloads constructor(
     /** Opens the compact wheel at the last reported pen-tip position, in this view's pixels. */
     var onQuickActionWheelRequested: ((x: Float, y: Float) -> Unit)? = null
 
+    /** Tracks the same held pen gesture after the wheel has appeared. */
+    var onQuickActionWheelMoved: ((x: Float, y: Float) -> Unit)? = null
+
+    /** Pen-up commits the highlighted direction; cancellation only dismisses it. */
+    var onQuickActionWheelReleased: ((x: Float, y: Float, cancelled: Boolean) -> Unit)? = null
+
+    private var quickWheelGestureActive = false
+
     /**
      * Raised the first time each pen button reports itself, with 1 or 2.
      *
@@ -1068,9 +1076,8 @@ class DrawingView @JvmOverloads constructor(
         if (index == 0) return
         onStylusButtonSeen?.invoke(index)
         val action = actionForButton(index)
-        if (action == StylusButtonAction.QUICK_WHEEL) {
-            onQuickActionWheelRequested?.invoke(lastStylusX, lastStylusY)
-        } else if (!action.isHeld && action != StylusButtonAction.NONE) {
+        // QUICK_WHEEL deliberately does nothing in hover. It opens only on a real pen-down below.
+        if (action != StylusButtonAction.QUICK_WHEEL && !action.isHeld && action != StylusButtonAction.NONE) {
             onStylusButtonPressed?.invoke(action)
         }
     }
@@ -3210,6 +3217,39 @@ class DrawingView @JvmOverloads constructor(
         if (action == MotionEvent.ACTION_DOWN) { stopFling(); clearHighlight() }
         trackVelocity(event)
 
+        // The quick wheel is one uninterrupted stylus gesture. It must be claimed before music
+        // tools, page turning or drawing inspect the event; the overlay that appears above this
+        // view is only visual and this view remains owner of the pointer stream through pen-up.
+        val quickIndex = event.actionIndex.coerceIn(0, event.pointerCount - 1)
+        val quickTool = event.getToolType(quickIndex)
+        val quickStylus = quickTool == MotionEvent.TOOL_TYPE_STYLUS ||
+            quickTool == MotionEvent.TOOL_TYPE_ERASER
+        val quickButton = if (quickStylus) buttonIndexOf(event.buttonState) else 0
+        if (action == MotionEvent.ACTION_DOWN && quickButton > 0 &&
+            actionForButton(quickButton) == StylusButtonAction.QUICK_WHEEL
+        ) {
+            noteStylusButton(quickButton, event.getX(quickIndex), event.getY(quickIndex))
+            quickWheelGestureActive = true
+            onQuickActionWheelRequested?.invoke(event.getX(quickIndex), event.getY(quickIndex))
+            return true
+        }
+        if (quickWheelGestureActive) {
+            when (action) {
+                MotionEvent.ACTION_MOVE -> onQuickActionWheelMoved?.invoke(event.x, event.y)
+                MotionEvent.ACTION_UP -> {
+                    quickWheelGestureActive = false
+                    noteStylusButton(0, event.x, event.y)
+                    onQuickActionWheelReleased?.invoke(event.x, event.y, false)
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    quickWheelGestureActive = false
+                    noteStylusButton(0, event.x, event.y)
+                    onQuickActionWheelReleased?.invoke(event.x, event.y, true)
+                }
+            }
+            return true
+        }
+
         // A music tool in hand: one finger or the pen selects bars, cleans them up - it neither
         // writes nor turns the page. A second finger lets it go, and moves the page as ever.
         if (musicTouch(event)) return true
@@ -3320,9 +3360,6 @@ class DrawingView @JvmOverloads constructor(
         val heldButton = if (isStylus) buttonIndexOf(event.buttonState) else 0
         if (isStylus) noteStylusButton(heldButton, event.getX(idx), event.getY(idx))
         val buttonAction = actionForButton(heldButton)
-        // The wheel owns the pen until the barrel is released; otherwise touching a wedge would
-        // also leave a dot or begin a stroke underneath the overlay.
-        if (heldButton > 0 && buttonAction == StylusButtonAction.QUICK_WHEEL) return true
         // A held button brings its whole profile with it, so the stroke it draws is that profile's
         // colour, brush and width rather than the current pen's at a different tool.
         heldButtonConfig =
