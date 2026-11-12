@@ -89,6 +89,27 @@ internal fun tabIslandMaxWidthDp(
 internal fun compactActionIslandWidthDp(screenWidthDp: Float): Float =
     if (screenWidthDp < 360f) 86f else 126f
 
+/**
+ * A strip attached to the top edge: wide where it meets the screen and tucked inward below.
+ * This is the inverse of a rounded rectangle. Its shoulders are the concave quarter-turn the
+ * user sketched, rather than convex corners that make the island look like a floating pill.
+ */
+private val TopConnectedIslandShape = GenericShape { size, _ ->
+    val r = size.height * .34f
+    val bottom = size.height * .24f
+    val k = .5522848f
+    moveTo(0f, 0f)
+    lineTo(size.width, 0f)
+    cubicTo(size.width - r * k, 0f, size.width - r, r - r * k, size.width - r, r)
+    lineTo(size.width - r, size.height - bottom)
+    cubicTo(size.width - r, size.height - bottom * k, size.width - r - bottom * k, size.height, size.width - r - bottom, size.height)
+    lineTo(r + bottom, size.height)
+    cubicTo(r + bottom * k, size.height, r, size.height - bottom * k, r, size.height - bottom)
+    lineTo(r, r)
+    cubicTo(r, r - r * k, r * k, 0f, 0f, 0f)
+    close()
+}
+
 /** One open document: a tab in the workspace. Its id is stable for the tab's whole lifetime. */
 class DocTab(
     val id: String,
@@ -339,19 +360,15 @@ fun TabStrip(
             Spacer(Modifier.width(5.dp))
             Surface(
                 modifier = Modifier.widthIn(max = tabIslandMax).fillMaxHeight(),
-                // A true quarter-circle at each top corner meets the screen edge tangentially;
-                // it is the silhouette of an attached island, not a rectangle hung from it.
-                shape = RoundedCornerShape(
-                    topStart = 16.dp,
-                    topEnd = 16.dp,
-                    bottomStart = 16.dp,
-                    bottomEnd = 16.dp
-                ),
+                shape = TopConnectedIslandShape,
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 tonalElevation = 1.dp,
                 shadowElevation = 2.dp
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     // Opening another document sits beside Home, where it is found.
                     IconButton(onClick = onNewTab, modifier = Modifier.size(40.dp)) {
                         Icon(Icons.Default.Add, "Open another document")
@@ -428,25 +445,32 @@ fun TabStrip(
     }
 }
 
-/** A folder tab: narrow at the top, widening through quarter-curves into its neighbours. */
+/** A folder tab connected to the top strip, then narrowing into the label below it. */
 private val ConnectedTabShape = GenericShape { size, _ ->
     val shoulder = (size.height * .32f).coerceAtMost(size.width * .22f)
-    // The 0.552 coefficient is the cubic approximation of a circular quadrant. Both sides are
-    // tangent to the flat top and flat base, like a physical divider tab in a folder.
+    val bottom = size.height * .12f
     val k = .5522848f
-    moveTo(shoulder, 0f)
-    lineTo(size.width - shoulder, 0f)
+    moveTo(0f, 0f)
+    lineTo(size.width, 0f)
     cubicTo(
-        size.width - shoulder + shoulder * k, 0f,
-        size.width - shoulder * k, size.height,
-        size.width, size.height
+        size.width - shoulder * k, 0f,
+        size.width - shoulder, shoulder - shoulder * k,
+        size.width - shoulder, shoulder
     )
-    lineTo(0f, size.height)
+    lineTo(size.width - shoulder, size.height - bottom)
     cubicTo(
-        shoulder * k, size.height,
-        shoulder - shoulder * k, 0f,
-        shoulder, 0f
+        size.width - shoulder, size.height - bottom * k,
+        size.width - shoulder - bottom * k, size.height,
+        size.width - shoulder - bottom, size.height
     )
+    lineTo(shoulder + bottom, size.height)
+    cubicTo(
+        shoulder + bottom * k, size.height,
+        shoulder, size.height - bottom * k,
+        shoulder, size.height - bottom
+    )
+    lineTo(shoulder, shoulder)
+    cubicTo(shoulder, shoulder - shoulder * k, shoulder * k, 0f, 0f, 0f)
     close()
 }
 

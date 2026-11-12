@@ -34,7 +34,7 @@ open class StrokeRenderer(private val retainGeometry: Boolean = true) {
      */
     private class Geometry(val path: Path, val bounds: RectF)
 
-    private val geometryCache = object : LruCache<String, Geometry>(2400) {}
+    private val geometryCache = object : LruCache<String, Geometry>(GEOMETRY_CACHE_CAPACITY) {}
 
     /** Identity plus everything that changes the geometry. */
     private fun keyOf(s: Stroke): String {
@@ -87,6 +87,11 @@ open class StrokeRenderer(private val retainGeometry: Boolean = true) {
      * document knowledge, and so thumbnails and export can plug in their own lookup.
      */
     var imageResolver: ((String) -> android.graphics.Bitmap?)? = null
+
+    companion object {
+        /** Number of individual stroke paths direct vector drawing can retain without churn. */
+        internal const val GEOMETRY_CACHE_CAPACITY = 2400
+    }
 
     private val imagePaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)

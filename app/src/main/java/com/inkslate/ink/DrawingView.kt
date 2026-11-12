@@ -3386,8 +3386,13 @@ class DrawingView @JvmOverloads constructor(
                 !visibleOpacityIsFull || nonDefaultMembership
             val cacheEligible = pageFilters.isEmpty() && visibleLayerMask != 0 && visibleOpacityIsFull
             val cameraMoving = gesturing || !scroller.isFinished
+            // Raster chunks are a pressure valve, not the normal renderer. Direct vectors stay
+            // sharper and update immediately while every visible path fits in the geometry cache.
+            // Zooming far enough out on a dense notebook pushes the visible set beyond that
+            // capacity; only then do background tiles take over and prevent cache churn.
+            val exceedsVectorCache = onPage.size > StrokeRenderer.GEOMETRY_CACHE_CAPACITY
             val cached = cacheEligible && enhancementsReady && regionIndex != null &&
-                strokesByPage[slot.index].orEmpty().size >= 80 &&
+                exceedsVectorCache &&
                 run {
                     val tiles = renderedInk ?: RenderedInk({ callback -> post { callback() } }, { postInvalidateOnAnimation() }).also { renderedInk = it }
                     val wholeView = Box(

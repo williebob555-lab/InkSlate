@@ -11,14 +11,19 @@ Newest first. These notes describe changes made, not confirmation that every rep
 - **A failed annotation tile cannot stay blank.** If background rasterisation permanently rejects
   a tile, it now draws that tile from the saved strokes instead of remembering a blank result. This
   protects annotations that are present in the file but were invisible in the cache path.
+- **Ordinary drawings stay vector ink.** Raster chunks are now used only when the strokes visible
+  at the current zoom exceed the 2,400-path geometry cache. Zoomed-in and modest documents remain
+  immediate, sharp vectors; zooming far enough out on a dense notebook still activates the bounded
+  tile path that prevents multi-second interface stalls.
 - **Page controls are a real floating island.** They are overlaid at the lower-right of the
   document instead of occupying a full-width toolbar row, removing the empty bar extending left.
 - **The compact tool strip stays one row tall.** Common and insert tools scroll in a single row;
   Undo, Redo and More stay fixed and reachable at its end. Narrow screens no longer make a second
   row of tools and the associated dead space.
-- **The top tab island uses folder-tab geometry.** Its outer top corners meet the screen through
-  quarter-circle tangent curves. Individual tabs overlap at curved shoulders on both sides and
-  retain a clear brighter-to-darker gradient from left to right, including the selected tab.
+- **The top tab island uses the intended folder-tab geometry.** The top-connected strip is widest
+  where it meets the screen and curves inward below; tabs project downward from it instead of
+  flaring toward the page like pills. They retain a clear brighter-to-darker gradient from left to
+  right, including the selected tab.
 - **Validation:** the complete InkSlate and InkSheets Android unit suites pass. A new rendering
   regression confirms that a rejected cache tile displays its source strokes rather than blank
   paper. Physical-device feel and the historical-whiteboard migration still require this test
