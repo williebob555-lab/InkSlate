@@ -357,7 +357,9 @@ fun TabStrip(
                     Icon(Icons.Default.Home, "Home", modifier = Modifier.size(19.dp))
                 }
             }
-            Spacer(Modifier.width(5.dp))
+            // Almost kiss the Home circle: the circle's right quadrant and the island's left
+            // shoulder then read as one intentional pair instead of two unrelated controls.
+            Spacer(Modifier.width(1.dp))
             Surface(
                 modifier = Modifier.widthIn(max = tabIslandMax).fillMaxHeight(),
                 shape = TopConnectedIslandShape,
@@ -366,11 +368,13 @@ fun TabStrip(
                 shadowElevation = 2.dp
             ) {
                 Row(
-                    Modifier.padding(horizontal = 8.dp),
+                    // Keep the plus in the island's curved nose. Only the far end needs inset for
+                    // the matching shoulder; padding both ends pushed it needlessly from Home.
+                    Modifier.padding(end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Opening another document sits beside Home, where it is found.
-                    IconButton(onClick = onNewTab, modifier = Modifier.size(40.dp)) {
+                    IconButton(onClick = onNewTab, modifier = Modifier.size(38.dp)) {
                         Icon(Icons.Default.Add, "Open another document")
                     }
                     com.inkslate.AppFlavor.onSaveTabs?.let { save ->
@@ -383,12 +387,14 @@ fun TabStrip(
                             }
                         }
                     }
+                    Spacer(Modifier.width(2.dp))
                     Row(
                         Modifier.fillMaxHeight().horizontalScroll(rememberScrollState()),
                         verticalAlignment = Alignment.CenterVertically,
-                        // Folder tabs overlap at their shoulders rather than leaving a stack of
-                        // unrelated rounded buttons. The curved edge remains the divider.
-                        horizontalArrangement = Arrangement.spacedBy((-7).dp)
+                        // Adjacent shapes meet at the top edge. Negative spacing made the later
+                        // tab's gradient physically paint over the previous tab and let the first
+                        // tab intrude into the add control.
+                        horizontalArrangement = Arrangement.spacedBy(0.dp)
                     ) {
                         for ((tabIndex, tab) in tabs.withIndex()) key(tab.id) {
                             DocumentTabChip(

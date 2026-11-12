@@ -24,6 +24,9 @@ Newest first. These notes describe changes made, not confirmation that every rep
   where it meets the screen and curves inward below; tabs project downward from it instead of
   flaring toward the page like pills. They retain a clear brighter-to-darker gradient from left to
   right, including the selected tab.
+- **Tab colours no longer overlap.** Adjacent document tabs meet without negative spacing, the
+  add control has a protected gap before the first tab, and the island's left shoulder sits beside
+  Home so the two curves visually follow one another.
 - **Validation:** the complete InkSlate and InkSheets Android unit suites pass. A new rendering
   regression confirms that a rejected cache tile displays its source strokes rather than blank
   paper. Physical-device feel and the historical-whiteboard migration still require this test
