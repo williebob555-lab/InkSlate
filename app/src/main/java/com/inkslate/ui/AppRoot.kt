@@ -1,6 +1,11 @@
 package com.inkslate.ui
 
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +23,12 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -46,6 +53,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.inkslate.data.FileRepo
+import com.inkslate.data.SystemFileImport
 import com.inkslate.pdf.BlankDocumentFactory
 import com.inkslate.ui.browser.BrowserScreen
 import com.inkslate.data.DocumentRepo
@@ -65,6 +73,12 @@ private sealed interface Screen {
     data object Home : Screen
     data class Browser(val dir: String?) : Screen
     data object Settings : Screen
+}
+
+private sealed interface PickedImport {
+    val destination: File
+    data class Files(override val destination: File, val uris: List<Uri>) : PickedImport
+    data class Folder(override val destination: File, val uri: Uri) : PickedImport
 }
 
 /** How many documents may be open as tabs at once before the oldest is closed to make room. */
@@ -108,6 +122,87 @@ fun AppRoot(
     var newDocOpen by remember { mutableStateOf(false) }
     // The folder Home was showing when New was pressed, which is where the new document goes.
     var newDocIn by remember { mutableStateOf<File?>(null) }
+    val fileRepo = remember { FileRepo(context) }
+
+    fun destination(candidate: File?): File = candidate?.takeIf { it.isDirectory }
+        ?: fileRepo.defaultNewFolder
+        ?: File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOCUMENTS
+            ),
+            "InkSlate"
+        )
+
+    var importSourceTarget by remember { mutableStateOf<File?>(null) }
+    var pickerTarget by remember { mutableStateOf<File?>(null) }
+    var pickedImport by remember { mutableStateOf<PickedImport?>(null) }
+    var importing by remember { mutableStateOf(false) }
+    val importFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val target = pickerTarget
+        pickerTarget = null
+        if (target != null && uris.isNotEmpty()) {
+            uris.forEach { uri ->
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                }
+            }
+            pickedImport = PickedImport.Files(target, uris)
+        }
+    }
+    val importFolder = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        val target = pickerTarget
+        pickerTarget = null
+        if (target != null && uri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            }
+            pickedImport = PickedImport.Folder(target, uri)
+        }
+    }
+
+    fun offerImport(candidate: File?) {
+        // The picker can open immediately; any directory creation belongs to the background copy.
+        importSourceTarget = destination(candidate)
+    }
+
+    fun finishImport(move: Boolean) {
+        val request = pickedImport ?: return
+        pickedImport = null
+        importing = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                when (request) {
+                    is PickedImport.Files -> SystemFileImport.files(
+                        context, request.uris, request.destination, move
+                    )
+                    is PickedImport.Folder -> SystemFileImport.folder(
+                        context, request.uri, request.destination, move
+                    )
+                }
+            }
+            importing = false
+            refreshKey++
+            val message = buildString {
+                append(
+                    if (result.imported.isEmpty()) "Nothing was imported"
+                    else "Added ${result.imported.size} item${if (result.imported.size == 1) "" else "s"}"
+                )
+                if (result.failed > 0) append("; ${result.failed} failed")
+                if (result.sourceRemovalFailed > 0) {
+                    append("; copied, but Android could not remove the source")
+                }
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
 
     // A screen wide enough to show a side panel is wide enough to show a second document beside
     // the first - the same 840dp the editor already uses to decide whether a panel can sit beside
@@ -503,6 +598,7 @@ fun AppRoot(
                                             onBrowse = { screen = Screen.Browser(null) },
                                             onOpenSettings = { screen = Screen.Settings },
                                             onNewDocument = { newDocIn = it; newDocOpen = true },
+                                            onImport = ::offerImport,
                                             refreshKey = refreshKey
                                         )
                                     }
@@ -513,7 +609,10 @@ fun AppRoot(
                                     onOpenFile = ::openFile,
                                     onOpenSettings = { screen = Screen.Settings },
                                     onHome = { screen = Screen.Home; refreshKey++ },
-                                    onDirChanged = { screen = Screen.Browser(it.absolutePath) }
+                                    onDirChanged = { screen = Screen.Browser(it.absolutePath) },
+                                    onNewDocument = { newDocIn = it; newDocOpen = true },
+                                    onImport = ::offerImport,
+                                    externalRefreshKey = refreshKey
                                 )
 
                                 Screen.Settings -> SettingsScreen(onBack = { screen = Screen.Home })
@@ -671,7 +770,6 @@ fun AppRoot(
     }
 
     if (newDocOpen) {
-        val repo = remember { FileRepo(context) }
         NewDocumentDialog(
             onDismiss = { newDocOpen = false },
             onCreate = { spec ->
@@ -679,13 +777,7 @@ fun AppRoot(
                 scope.launch {
                     // Wherever the user nominated by long-pressing a folder, falling back to
                     // the first added folder so "New" never has to ask.
-                    val target = newDocIn?.takeIf { it.isDirectory } ?: repo.defaultNewFolder
-                        ?: File(
-                            android.os.Environment.getExternalStoragePublicDirectory(
-                                android.os.Environment.DIRECTORY_DOCUMENTS
-                            ),
-                            "InkSlate"
-                        )
+                    val target = destination(newDocIn)
                     val created = withContext(Dispatchers.IO) {
                         BlankDocumentFactory.create(target, spec).onSuccess { f ->
                             if (spec.autoGrow) {
@@ -702,12 +794,81 @@ fun AppRoot(
                         }
                     }
                     created.getOrNull()?.let { f ->
-                        repo.noteOpened(f)
+                        fileRepo.noteOpened(f)
                         refreshKey++
                         openFile(f)
                     }
                 }
             }
+        )
+    }
+
+    importSourceTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { importSourceTarget = null },
+            title = { Text("Add from device") },
+            text = {
+                Text(
+                    "Choose files or a ZIP, or choose a whole folder. Android's system picker " +
+                        "will open. The content will go into ${target.name.ifBlank { target.path }}."
+                )
+            },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = {
+                        importSourceTarget = null
+                        pickerTarget = target
+                        // The native picker still shows the real file types and locations. Do not
+                        // hide an otherwise valid document merely because its provider reports an
+                        // unusual MIME type.
+                        importFiles.launch(arrayOf("*/*"))
+                    }) { Text("Files or ZIP") }
+                    TextButton(onClick = {
+                        importSourceTarget = null
+                        pickerTarget = target
+                        importFolder.launch(null)
+                    }) { Text("Folder") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { importSourceTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    pickedImport?.let { request ->
+        val count = when (request) {
+            is PickedImport.Files -> request.uris.size
+            is PickedImport.Folder -> 1
+        }
+        AlertDialog(
+            onDismissRequest = { pickedImport = null },
+            title = { Text("Copy or move?") },
+            text = {
+                Text(
+                    "Add $count selected item${if (count == 1) "" else "s"} to " +
+                        "${request.destination.name.ifBlank { request.destination.path }}. " +
+                        "Move removes the original after the copy succeeds."
+                )
+            },
+            confirmButton = {
+                Row {
+                    TextButton(onClick = { finishImport(false) }) { Text("Copy") }
+                    TextButton(onClick = { finishImport(true) }) { Text("Move") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pickedImport = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (importing) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text("Adding files") },
+            text = { Text("Copying into your library...") },
+            confirmButton = {}
         )
     }
 }

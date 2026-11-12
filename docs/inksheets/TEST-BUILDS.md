@@ -4,6 +4,41 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Layer opacity is easier to operate by touch.** Mixer fader heads are now 20 dp across with a
+  13 dp coloured centre, and their tracks reserve the head radius instead of clipping it at 0%
+  or 100%.
+- **Page editing is reachable from every PDF.** The floating page island is present even for a
+  one-page document and has a clearly labelled page-grid action. It opens the existing Pages
+  workspace, where pages can be inserted from blank paper or files, duplicated, reordered,
+  rotated and removed.
+- **New documents are created where the user is working.** The folder browser's primary New action
+  now opens the document creator in that active folder. Pinning or unpinning the folder remains a
+  separate action instead of replacing document creation.
+- **Files and folders can be added with Android's system picker.** Home and every browsed folder
+  offer Add from device. The user can pick multiple files, a ZIP, or a folder, then explicitly
+  Copy or Move it into the active folder. ZIP imports reject unsafe paths and excessive expansion;
+  all imports preserve existing names by choosing a non-conflicting destination. Failed files,
+  folders and archives clean up partial output, and Move removes the source only after the copy
+  has succeeded.
+- **Validation:** both Android variants compile; their complete unit suites pass; the focused
+  import tests cover nested ZIP files, collision naming and traversal rejection; and the full
+  core, score/audio core, Android, desktop and InkSheets desktop gate passes locally. No Android
+  device or emulator was attached for a physical touch test, so that remains test-build feedback.
+
+## 1.2.2-test.346 — dense-document recovery
+
+- **Dense documents retain their useful page index while ink changes.** A pen-up, move or delete
+  now records a small overlay on the existing spatial index rather than throwing the index away
+  and rebuilding bounds for every annotation. The overlay compacts in the background after a
+  bounded number of changes.
+- **A cold tile cache no longer redraws all dense vector ink on the interface thread.** Dense pages
+  use indexed visible regions while tiles warm, layer masks remain cacheable, and recent viewport
+  work is retained. This directly addresses the 344/345 failure mode where Exam2 could starve
+  toolbar touch and scrolling even before the page appeared.
+- **Validation:** build 346 passed the clean GitHub Android gate and published signed Android,
+  Windows and Fedora packages. The focused regression uses a 5,001-stroke page and covers adding,
+  moving and deleting ink without discarding the base index.
+
 - **Scribble calibration now measures the entire gesture.** The practice canvas previously kept
   replacing its captured input from a stale one-point snapshot, so even maximum sensitivity could
   report that a clear scratch was not recognized. Its live sample collection is now stable and the

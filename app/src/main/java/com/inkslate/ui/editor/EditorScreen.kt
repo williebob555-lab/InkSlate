@@ -2053,7 +2053,7 @@ fun EditorScreen(
                 // one tap to close, and the tray above it still switches shape.
                 val panelOpen = armedSettings != null || placedSettings != null
                 if (!panelOpen || LocalConfiguration.current.screenWidthDp >= 840) {
-                if (!com.inkslate.AppFlavor.musicView && d.pageCount > 1) {
+                if (!com.inkslate.AppFlavor.musicView && PageSources.isPdf(d.file)) {
                     Row(
                         Modifier.fillMaxWidth().padding(end = 10.dp, bottom = 4.dp),
                         horizontalArrangement = Arrangement.End
@@ -2065,6 +2065,7 @@ fun EditorScreen(
                             onPreviousPage = { drawingView.value?.goToPage(page - 1) },
                             onNextPage = { drawingView.value?.goToPage(page + 1) },
                             onOpenPageNavigation = { navOpen = true },
+                            onOpenPages = { pagesOpen = true },
                             onTogglePageBookmark = {
                                 if (bookmarks.any { it.page == page }) {
                                     d.ink = d.ink.withBookmarkRemoved(page)

@@ -25,6 +25,8 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     /** A new document, into the folder being looked at (null: wherever new documents go). */
     onNewDocument: (File?) -> Unit,
+    /** Use Android's system picker to copy or move content into the folder being looked at. */
+    onImport: (File?) -> Unit,
     refreshKey: Int
 ) {
     val context = LocalContext.current
@@ -43,7 +45,8 @@ fun HomeScreen(
         onOpenFile = onOpenFile,
         onBrowse = onBrowse,
         onOpenSettings = onOpenSettings,
-        onNewDocument = onNewDocument
+        onNewDocument = onNewDocument,
+        onImport = onImport
     )
 }
 

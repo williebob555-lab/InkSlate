@@ -875,6 +875,7 @@ internal fun PageControlIsland(
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
     onOpenPageNavigation: () -> Unit,
+    onOpenPages: () -> Unit,
     onTogglePageBookmark: () -> Unit
 ) {
     Surface(
@@ -898,6 +899,9 @@ internal fun PageControlIsland(
                 contentPadding = PaddingValues(horizontal = 5.dp)
             ) {
                 Text("${page + 1}/$pageCount", style = MaterialTheme.typography.labelMedium)
+            }
+            IconButton(onClick = onOpenPages, modifier = Modifier.size(36.dp)) {
+                Icon(Icons.Default.GridOn, "Edit pages", Modifier.size(19.dp))
             }
             IconButton(
                 onClick = onTogglePageBookmark,
@@ -1080,9 +1084,13 @@ private fun VerticalLayerFader(
     modifier: Modifier = Modifier
 ) {
     var heightPx by remember { mutableFloatStateOf(1f) }
+    val density = LocalDensity.current
+    val knobRadiusPx = with(density) { 10.dp.toPx() }
+    val innerRadiusPx = with(density) { 6.5.dp.toPx() }
+    val trackWidthPx = with(density) { 2.dp.toPx() }
     fun choose(y: Float) {
-        val usable = (heightPx - 6f).coerceAtLeast(1f)
-        onValue((1f - (y - 3f) / usable).coerceIn(0f, 1f))
+        val usable = (heightPx - knobRadiusPx * 2f).coerceAtLeast(1f)
+        onValue((1f - (y - knobRadiusPx) / usable).coerceIn(0f, 1f))
     }
     val track = MaterialTheme.colorScheme.outline.copy(alpha = .42f)
     val surface = MaterialTheme.colorScheme.surface
@@ -1104,13 +1112,13 @@ private fun VerticalLayerFader(
             .semantics { contentDescription = "${(value * 100).roundToInt()} percent opacity" }
     ) {
         val x = size.width / 2f
-        val top = 3f
-        val bottom = size.height - 3f
+        val top = knobRadiusPx
+        val bottom = size.height - knobRadiusPx
         val knob = bottom - (bottom - top) * value.coerceIn(0f, 1f)
-        drawLine(track, Offset(x, top), Offset(x, bottom), 3f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawLine(colour, Offset(x, knob), Offset(x, bottom), 4f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawCircle(surface, 5.5f, Offset(x, knob))
-        drawCircle(colour, 3.7f, Offset(x, knob))
+        drawLine(track, Offset(x, top), Offset(x, bottom), trackWidthPx, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawLine(colour, Offset(x, knob), Offset(x, bottom), trackWidthPx * 1.45f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        drawCircle(surface, knobRadiusPx, Offset(x, knob))
+        drawCircle(colour, innerRadiusPx, Offset(x, knob))
     }
 }
 

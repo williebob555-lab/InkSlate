@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PushPin
@@ -89,7 +90,10 @@ fun BrowserScreen(
     onOpenFile: (File) -> Unit,
     onOpenSettings: () -> Unit,
     onHome: () -> Unit,
-    onDirChanged: (File) -> Unit
+    onDirChanged: (File) -> Unit,
+    onNewDocument: (File) -> Unit,
+    onImport: (File) -> Unit,
+    externalRefreshKey: Int = 0
 ) {
     val context = LocalContext.current
     val repo = remember { FileRepo(context) }
@@ -121,7 +125,7 @@ fun BrowserScreen(
 
     val recents = remember(refreshKey, dir) { repo.recents(10) }
 
-    LaunchedEffect(dir, sortBy, ascending, refreshKey) {
+    LaunchedEffect(dir, sortBy, ascending, refreshKey, externalRefreshKey) {
         loading = true
         repo.lastFolder = dir.absolutePath
         entries = withContext(Dispatchers.IO) { repo.list(dir, sortBy, ascending) }
@@ -132,19 +136,9 @@ fun BrowserScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
-                onClick = {
-                    if (inLibrary) repo.removeLibraryFolder(dir) else repo.addLibraryFolder(dir)
-                    inLibrary = !inLibrary
-                    scope.launch {
-                        snackbar.showSnackbar(
-                            if (inLibrary) "Added to Home" else "Removed from Home"
-                        )
-                    }
-                },
-                icon = {
-                    Icon(if (inLibrary) Icons.Default.Check else Icons.Default.Add, null)
-                },
-                text = { Text(if (inLibrary) "On Home" else "Add to Home") }
+                onClick = { onNewDocument(dir) },
+                icon = { Icon(Icons.Default.Add, null) },
+                text = { Text("New in ${dir.name.ifBlank { "this folder" }}") }
             )
         },
         topBar = {
@@ -175,6 +169,23 @@ fun BrowserScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { onImport(dir) }) {
+                        Icon(Icons.Default.LibraryAdd, "Add from device")
+                    }
+                    IconButton(onClick = {
+                        if (inLibrary) repo.removeLibraryFolder(dir) else repo.addLibraryFolder(dir)
+                        inLibrary = !inLibrary
+                        scope.launch {
+                            snackbar.showSnackbar(
+                                if (inLibrary) "Added to Home" else "Removed from Home"
+                            )
+                        }
+                    }) {
+                        Icon(
+                            if (inLibrary) Icons.Default.Check else Icons.Default.PushPin,
+                            if (inLibrary) "Remove folder from Home" else "Add folder to Home"
+                        )
+                    }
                     IconButton(onClick = { newFolderOpen = true }) {
                         Icon(Icons.Default.CreateNewFolder, "New folder")
                     }

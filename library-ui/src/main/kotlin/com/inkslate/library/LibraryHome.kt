@@ -140,7 +140,9 @@ fun LibraryHome(
     onBrowse: () -> Unit,
     onOpenSettings: () -> Unit,
     /** A new document, into the folder being looked at (null: wherever new documents go). */
-    onNewDocument: (File?) -> Unit
+    onNewDocument: (File?) -> Unit,
+    /** Add files with the host platform's native picker into the folder being looked at. */
+    onImport: ((File?) -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -483,6 +485,11 @@ fun LibraryHome(
                         },
                         actions = {
                             platform.linkIndicator()
+                            if (onImport != null) {
+                                IconButton(onClick = { onImport(if (atTop && home == null) null else here) }) {
+                                    Icon(Icons.Default.LibraryAdd, "Add from device")
+                                }
+                            }
                             IconButton(onClick = { organizing = true to (if (atTop) null else here) }, enabled = roots.isNotEmpty()) {
                                 Icon(Icons.Default.AutoAwesome, "Sort into class folders")
                             }
