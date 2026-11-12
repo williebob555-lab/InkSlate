@@ -43,6 +43,18 @@ object RenderStats {
     @Volatile var cacheHits: Long = 0
     @Volatile var cacheMisses: Long = 0
 
+    /** Display-tile outcomes. Kept separate from the per-stroke geometry cache above. */
+    @Volatile var tileExactHits: Long = 0
+    @Volatile var tileRetainedHits: Long = 0
+    @Volatile var tileColdMisses: Long = 0
+    @Volatile var tileVectorFallbacks: Long = 0
+    @Volatile var tileBuilds: Long = 0
+    @Volatile var tileRejects: Long = 0
+    @Volatile var lastIndexRefreshMs: Long = 0
+    @Volatile var worstIndexRefreshMs: Long = 0
+    @Volatile var lastIndexBuildMs: Long = 0
+    @Volatile var worstIndexBuildMs: Long = 0
+
     /** Whether the last frame repainted the whole view or just a damaged region. */
     @Volatile var lastFrameFullRedraw: Boolean = true
 
@@ -70,6 +82,16 @@ object RenderStats {
         if (ms > worstDocumentOpenMs) worstDocumentOpenMs = ms
     }
 
+    fun recordIndexRefresh(ms: Long) {
+        lastIndexRefreshMs = ms
+        if (ms > worstIndexRefreshMs) worstIndexRefreshMs = ms
+    }
+
+    fun recordIndexBuild(ms: Long) {
+        lastIndexBuildMs = ms
+        if (ms > worstIndexBuildMs) worstIndexBuildMs = ms
+    }
+
     /** Frames where the viewport looked wrong and culling was skipped. Should stay at 0. */
     @Volatile var cullingFallbacks: Long = 0
 
@@ -92,6 +114,16 @@ object RenderStats {
         averageFrameMs = 0f
         cacheHits = 0
         cacheMisses = 0
+        tileExactHits = 0
+        tileRetainedHits = 0
+        tileColdMisses = 0
+        tileVectorFallbacks = 0
+        tileBuilds = 0
+        tileRejects = 0
+        lastIndexRefreshMs = 0
+        worstIndexRefreshMs = 0
+        lastIndexBuildMs = 0
+        worstIndexBuildMs = 0
         cullingFallbacks = 0
         worstMusicMarksMs = 0f
         lastMusicMarksMs = 0f
@@ -122,6 +154,17 @@ object RenderStats {
         append("  overlay ").append(String.format("%.1f", lastMusicMarksMs)).append("ms")
         append("  render ").append(lastPageRenderMs).append("ms")
         append("  open ").append(lastDocumentOpenMs).append("ms")
+        append('\n')
+        append("tiles hit ").append(tileExactHits).append('+').append(tileRetainedHits)
+        append("  cold ").append(tileColdMisses)
+        append("  vector ").append(tileVectorFallbacks)
+        append("  built ").append(tileBuilds)
+        if (tileRejects > 0) append("  rejected ").append(tileRejects)
+        append('\n')
+        append("index refresh ").append(lastIndexRefreshMs).append("ms/")
+            .append(worstIndexRefreshMs).append(" max")
+        append("  build ").append(lastIndexBuildMs).append("ms/")
+            .append(worstIndexBuildMs).append(" max")
         append('\n')
         val rt = Runtime.getRuntime()
         append("heap ").append((rt.totalMemory() - rt.freeMemory()) / 1048576).append("MB / ")

@@ -231,10 +231,6 @@ class DrawingView @JvmOverloads constructor(
     private var inkFocusY = 0f
     private val strokeRegions = HashMap<Int, com.inkslate.core.StrokeRegions>()
     private val regionBuildVersions = java.util.concurrent.ConcurrentHashMap<Int, Long>()
-    @Volatile private var fullIndexBuildVersion = -1L
-    private data class FullIndexRequest(val strokes: List<Stroke>, val version: Long)
-    private val pendingFullIndex = java.util.concurrent.atomic.AtomicReference<FullIndexRequest?>(null)
-    private val fullIndexWorkerQueued = java.util.concurrent.atomic.AtomicBoolean(false)
     @Volatile private var indexWorkEnabled = false
 
     /** The model's version this view's page index was built from. */
@@ -242,94 +238,42 @@ class DrawingView @JvmOverloads constructor(
 
     private fun rebuildPageIndex() {
         if (!pageIndexDirty && indexedVersion == model.version) return
+        val started = android.os.SystemClock.elapsedRealtime()
         val version = model.version
         indexedVersion = version
-        strokesByPage.values.forEach { it.clear() }
-        strokeRegions.clear()
-
-        // Opening a heavily annotated notebook must show its paper before preparing navigation
-        // metadata for every mark. Copying references is cheap; grouping and calculating bounds
-        // happen on the one bounded worker below. Until it arrives, the page is deliberately the
-        // original document rather than a frozen interface.
-        if (strokes.size >= ASYNC_FULL_INDEX_STROKES) {
-            requestFullIndex(ArrayList(strokes), version)
-            pageIndexDirty = false
-            return
-        }
-
+        val pages = HashMap<Int, MutableList<Stroke>>()
         for (st in strokes) {
-            strokesByPage.getOrPut(st.pageIndex) { ArrayList() }.add(st)
+            pages.getOrPut(st.pageIndex) { ArrayList() }.add(st)
         }
-        strokesByPage.forEach { (page, marks) ->
-            if (marks.size < ASYNC_REGION_STROKES) {
+
+        strokesByPage.clear()
+        strokesByPage.putAll(pages)
+        strokeRegions.keys.retainAll(pages.keys)
+        regionBuildVersions.keys.retainAll(pages.keys)
+
+        // Keep a useful index alive while the document changes. A pen-up usually changes one
+        // object; refreshing the small overlay is cheap and means neither the old annotations nor
+        // the tile cache disappear while a complete index is rebuilt. Very old overlays are
+        // compacted in the background without blocking drawing.
+        pages.entries.sortedBy { if (it.key == currentPage) 0 else 1 }.forEach { (page, marks) ->
+            val existing = strokeRegions[page]
+            if (existing != null) {
+                val changed = existing.refresh(marks)
+                if (changed >= REGION_COMPACT_CHANGES) requestRegionBuild(page, marks, version)
+                else regionBuildVersions.remove(page)
+            } else if (marks.size < ASYNC_REGION_STROKES) {
                 strokeRegions[page] = com.inkslate.core.StrokeRegions(marks)
             } else {
                 requestRegionBuild(page, marks, version)
             }
         }
         pageIndexDirty = false
-    }
-
-    private fun requestFullIndex(snapshot: List<Stroke>, version: Long) {
-        fullIndexBuildVersion = version
-        // Replace, do not append. While someone writes quickly, an old queued snapshot has no
-        // value and retaining several large reference arrays is exactly how background work turns
-        // into a heap crash. One worker per view drains only the newest request.
-        pendingFullIndex.set(FullIndexRequest(snapshot, version))
-        queueFullIndexWorker()
-    }
-
-    private fun queueFullIndexWorker() {
-        if (!fullIndexWorkerQueued.compareAndSet(false, true)) return
-        REGION_EXECUTOR.execute {
-            try {
-                while (true) {
-                    val request = pendingFullIndex.getAndSet(null) ?: break
-                    val version = request.version
-                    if (!indexWorkEnabled || fullIndexBuildVersion != version) continue
-                    val started = android.os.SystemClock.elapsedRealtime()
-                    val pages = HashMap<Int, MutableList<Stroke>>()
-                    for (stroke in request.strokes) {
-                        pages.getOrPut(stroke.pageIndex) { ArrayList() }.add(stroke)
-                    }
-                    if (!indexWorkEnabled || fullIndexBuildVersion != version || pendingFullIndex.get() != null) continue
-                    val regions = HashMap<Int, com.inkslate.core.StrokeRegions>()
-                    for ((page, marks) in pages) {
-                        if (!indexWorkEnabled || fullIndexBuildVersion != version || pendingFullIndex.get() != null) break
-                        try {
-                            regions[page] = com.inkslate.core.StrokeRegions(marks) {
-                                !indexWorkEnabled || fullIndexBuildVersion != version ||
-                                    pendingFullIndex.get() != null
-                            }
-                        } catch (_: java.util.concurrent.CancellationException) {
-                            break
-                        }
-                    }
-                    if (!indexWorkEnabled || fullIndexBuildVersion != version || pendingFullIndex.get() != null) continue
-                    val elapsed = android.os.SystemClock.elapsedRealtime() - started
-                    post {
-                        if (fullIndexBuildVersion == version &&
-                            indexedVersion == version && model.version == version
-                        ) {
-                            strokesByPage.clear()
-                            strokesByPage.putAll(pages)
-                            strokeRegions.clear()
-                            strokeRegions.putAll(regions)
-                            fullIndexBuildVersion = -1L
-                            com.inkslate.data.EventLog.info(
-                                "ink",
-                                "Prepared ${request.strokes.size} marks on ${pages.size} page(s) " +
-                                    "off the interface in ${elapsed}ms"
-                            )
-                            postInvalidateOnAnimation()
-                        }
-                    }
-                }
-            } finally {
-                fullIndexWorkerQueued.set(false)
-                // A request can arrive between the final empty read and clearing the flag.
-                if (pendingFullIndex.get() != null) queueFullIndexWorker()
-            }
+        val elapsed = android.os.SystemClock.elapsedRealtime() - started
+        RenderStats.recordIndexRefresh(elapsed)
+        if (elapsed >= 32L) {
+            com.inkslate.data.EventLog.warn(
+                "ink-index", "Interface refresh took ${elapsed}ms for ${strokes.size} marks"
+            )
         }
     }
 
@@ -343,6 +287,7 @@ class DrawingView @JvmOverloads constructor(
         val snapshot = marks.toList()
         REGION_EXECUTOR.execute {
             if (!indexWorkEnabled || regionBuildVersions[page] != version) return@execute
+            val started = android.os.SystemClock.elapsedRealtime()
             val built = try {
                 com.inkslate.core.StrokeRegions(snapshot) {
                     !indexWorkEnabled || regionBuildVersions[page] != version
@@ -350,12 +295,20 @@ class DrawingView @JvmOverloads constructor(
             } catch (_: java.util.concurrent.CancellationException) {
                 return@execute
             }
+            val elapsed = android.os.SystemClock.elapsedRealtime() - started
+            RenderStats.recordIndexBuild(elapsed)
             post {
                 if (indexWorkEnabled && regionBuildVersions[page] == version &&
                     indexedVersion == version && model.version == version
                 ) {
                     strokeRegions[page] = built
                     regionBuildVersions.remove(page, version)
+                    if (elapsed >= 250L) {
+                        com.inkslate.data.EventLog.info(
+                            "ink-index",
+                            "Prepared ${marks.size} marks on page ${page + 1} in ${elapsed}ms"
+                        )
+                    }
                     postInvalidateOnAnimation()
                 }
             }
@@ -3409,11 +3362,20 @@ class DrawingView @JvmOverloads constructor(
             viewToPage.mapPoints(focus)
             val regionIndex = strokeRegions[slot.index]
             val pageFilters = layerFilters.filter { it.pageIndex == slot.index }
+            val visibleOpacityIsFull = (0..2).all { index ->
+                val bit = 1 shl index
+                visibleLayerMask and bit == 0 || layerOpacities[index] >= .999f
+            }
+            val nonDefaultMembership = onPage.any {
+                AnnotationLayers.normalise(it.layerMask) != AnnotationLayers.ONE
+            }
             val layered = pageFilters.isNotEmpty() || visibleLayerMask != AnnotationLayers.ONE ||
-                !layerOpacities.contentEquals(floatArrayOf(1f, 1f, 1f)) ||
-                onPage.any { AnnotationLayers.normalise(it.layerMask) != AnnotationLayers.ONE }
-            val cached = !layered && enhancementsReady && regionIndex != null &&
-                strokesByPage[slot.index].orEmpty().size >= 80 && currentScale() <= 1.25f && run {
+                !visibleOpacityIsFull || nonDefaultMembership
+            val cacheEligible = pageFilters.isEmpty() && visibleLayerMask != 0 && visibleOpacityIsFull
+            val cameraMoving = gesturing || !scroller.isFinished
+            val cached = cacheEligible && enhancementsReady && regionIndex != null &&
+                strokesByPage[slot.index].orEmpty().size >= 80 &&
+                (currentScale() <= 1.25f || cameraMoving) && run {
                     val tiles = renderedInk ?: RenderedInk({ callback -> post { callback() } }, { postInvalidateOnAnimation() }).also { renderedInk = it }
                     val wholeView = Box(
                         fullViewportDoc.left - slot.originX + slot.cropLeft,
@@ -3422,7 +3384,7 @@ class DrawingView @JvmOverloads constructor(
                         fullViewportDoc.bottom - slot.originY + slot.cropTop)
                     tiles.draw(canvas, slot.index, wholeView, currentScale(), regionIndex,
                         pageFilter.filter, focus[0] - slot.originX + slot.cropLeft,
-                        focus[1] - slot.originY + slot.cropTop, gesturing || !scroller.isFinished)
+                        focus[1] - slot.originY + slot.cropTop, cameraMoving, visibleLayerMask)
                 }
             if (!cached) {
                 if (layered) drawLayeredStrokes(canvas, onPage, pageFilters)
@@ -4578,8 +4540,6 @@ class DrawingView @JvmOverloads constructor(
         // index is derived state, so dropping an unfinished request is safe; it is rebuilt after
         // this view is attached again.
         indexWorkEnabled = false
-        fullIndexBuildVersion = -1L
-        pendingFullIndex.set(null)
         regionBuildVersions.clear()
         pageIndexDirty = true
         renderedInk?.close(); renderedInk = null
@@ -5834,8 +5794,8 @@ class DrawingView @JvmOverloads constructor(
 
     companion object {
         /** One deliberately low-priority worker keeps large-document preparation bounded. */
-        private const val ASYNC_FULL_INDEX_STROKES = 600
         private const val ASYNC_REGION_STROKES = 240
+        private const val REGION_COMPACT_CHANGES = 384
         private val REGION_EXECUTOR = java.util.concurrent.Executors.newSingleThreadExecutor { task ->
             Thread(task, "ink-spatial-index").apply {
                 priority = Thread.MIN_PRIORITY

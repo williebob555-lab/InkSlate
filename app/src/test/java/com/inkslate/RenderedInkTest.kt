@@ -8,6 +8,7 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import com.inkslate.core.BrushType
+import com.inkslate.core.AnnotationLayers
 import com.inkslate.core.InkPoint
 import com.inkslate.core.Stroke
 import com.inkslate.ink.RenderedInk
@@ -139,6 +140,40 @@ class RenderedInkTest {
             assertEquals("camera motion must not replay stroke geometry", hits, RenderStats.cacheHits)
             val erased = draw(StrokeRegions(emptyList()), .5f, false)
             for (y in 0 until erased.height) for (x in 0 until erased.width) assertEquals(Color.rgb(185, 210, 220), erased.getPixel(x, y))
+        } finally { cache.close() }
+    }
+
+    @Test fun `dense cold tile never redraws all vectors on the interface thread`() {
+        val callbacks = LinkedBlockingQueue<() -> Unit>()
+        val cache = RenderedInk({ callbacks.add(it) }, {})
+        val marks = (0 until 100).map { i -> stroke("dense-$i", (i % 20) * 3f) }
+        val background = Color.rgb(185, 210, 220)
+        val output = image()
+        val beforeCold = RenderStats.tileColdMisses
+        val beforeVectors = RenderStats.tileVectorFallbacks
+        try {
+            assertTrue(cache.draw(Canvas(output), 0, Box(0f, 0f, 512f, 80f), 1f,
+                StrokeRegions(marks), null, 256f, 40f, false))
+            assertTrue(RenderStats.tileColdMisses > beforeCold)
+            assertEquals(beforeVectors, RenderStats.tileVectorFallbacks)
+            // The source page remains immediately usable while its annotation tile is prepared.
+            assertEquals(background, output.getPixel(256, 40))
+        } finally { cache.close() }
+    }
+
+    @Test fun `tile cache honours the visible annotation channels`() {
+        val cache = RenderedInk({}, {})
+        val hidden = (0 until 20).map { i ->
+            stroke("hidden-$i", 10f).copy(layerMask = AnnotationLayers.TWO)
+        }
+        val visible = stroke("visible", 45f).copy(layerMask = AnnotationLayers.ONE)
+        val output = image()
+        val background = Color.rgb(185, 210, 220)
+        try {
+            assertTrue(cache.draw(Canvas(output), 0, Box(0f, 0f, 512f, 80f), 1f,
+                StrokeRegions(hidden + visible), null, 256f, 40f, false, AnnotationLayers.ONE))
+            assertEquals(background, output.getPixel(480, 17))
+            assertNotEquals(background, output.getPixel(480, 52))
         } finally { cache.close() }
     }
 

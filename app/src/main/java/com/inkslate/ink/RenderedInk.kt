@@ -10,6 +10,7 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.os.Build
 import com.inkslate.core.Box
+import com.inkslate.core.AnnotationLayers
 import com.inkslate.core.Stroke
 import com.inkslate.core.StrokeRegions
 import java.util.concurrent.Executors
@@ -32,6 +33,8 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
     private val pending = HashMap<Key, List<Stroke>>()
     private val rejected = HashMap<Key, Pair<List<Stroke>, ColorFilter?>>()
     private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "ink-tiles").apply { isDaemon = true; priority = Thread.MIN_PRIORITY } }
+    // Tile geometry is deliberately not retained here. The bitmap cache is bounded by bytes;
+    // keeping thousands of complex Paths as well would reintroduce the old unbounded-heap risk.
     private val renderer = StrokeRenderer(false)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val multiply = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
@@ -43,7 +46,8 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
 
     /** Recent resolution survives camera motion; sharper replacement is prepared off the UI thread. */
     fun draw(canvas: Canvas, page: Int, viewport: Box, scale: Float, regions: StrokeRegions,
-             filter: ColorFilter?, focusX: Float, focusY: Float, moving: Boolean): Boolean {
+             filter: ColorFilter?, focusX: Float, focusY: Float, moving: Boolean,
+             visibleLayers: Int = AnnotationLayers.ALL): Boolean {
         if (closed || Build.VERSION.SDK_INT < 29 || !scale.isFinite() || scale <= 0f) return false
         if (indexedRegions !== regions || layerCounts.size > 256) {
             indexedRegions = regions; layerCounts.clear()
@@ -54,7 +58,16 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
         var level = ceil(ln(scale.toDouble()) / ln(2.0)).toInt().coerceIn(-5, 0)
         val positions = (x0..x1).flatMap { x -> (y0..y1).map { y -> Key(page, x, y, level) } }
             .sortedBy { val dx = (it.x + .5f) * SIZE - focusX; val dy = (it.y + .5f) * SIZE - focusY; dx * dx + dy * dy }
-        val chunks = positions.map { it to regions.query(box(it).expanded(128f)) }
+        val mask = AnnotationLayers.mixerMask(visibleLayers)
+        val chunks = positions.map { position ->
+            val candidates = regions.query(box(position).expanded(128f))
+            val allVisible = mask == AnnotationLayers.ALL || candidates.all {
+                AnnotationLayers.normalise(it.layerMask) and mask != 0
+            }
+            position to if (allVisible) candidates else candidates.filter {
+                AnnotationLayers.normalise(it.layerMask) and mask != 0
+            }
+        }
         val layerCount = chunks.sumOf { (_, marks) -> layerCounts.getOrPut(marks) { blendCount(marks).coerceAtMost(8) } }
         // Fit the visible working set before admitting it. Otherwise a large viewport could
         // cycle through more bitmaps than the budget and reproduce the old cache-thrashing bug.
@@ -72,13 +85,22 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
                 k.page == page && k.x == key.x && k.y == key.y && t.matches(marks, filter)
             }?.let { (k, _) -> tiles[k] }
             if (retained != null) {
+                if (exact != null) RenderStats.tileExactHits++ else RenderStats.tileRetainedHits++
                 canvas.save(); canvas.clipRect(box.left, box.top, box.right, box.bottom)
                 for (layer in retained.layers) {
                     paint.xfermode = if (layer.multiply) multiply else null
                     canvas.drawBitmap(layer.bitmap, null, bitmapBox(key, retained.layers[0].bitmap.width), paint)
                 }
                 paint.xfermode = null; canvas.restore()
-            } else drawVectors(canvas, box, marks)
+            } else if (marks.size <= DIRECT_FALLBACK_STROKES) {
+                // A handful of marks is cheaper than waiting for a bitmap and cannot create a
+                // noticeable frame stall. Dense tiles deliberately show the source page first;
+                // repainting hundreds of paths on the interface thread defeats the cache.
+                RenderStats.tileVectorFallbacks++
+                drawVectors(canvas, box, marks)
+            } else {
+                RenderStats.tileColdMisses++
+            }
             if (exact == null && (!moving || retained == null)) request(key, marks, filter)
         }
         return true
@@ -101,12 +123,14 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
             deliver {
                 pending.remove(key)
                 if (!closed && result != null && result.bytes <= budget) {
+                    RenderStats.tileBuilds++
                     tiles.remove(key)?.let { bytes -= it.bytes }
                     tiles[key] = result; bytes += result.bytes
                     val iter = tiles.entries.iterator()
                     while (bytes > budget && iter.hasNext()) { bytes -= iter.next().value.bytes; iter.remove() }
                     // Let GC retire images after the render thread has finished using them.
                 } else if (!closed) {
+                    RenderStats.tileRejects++
                     if (rejected.size >= 256) rejected.clear()
                     rejected[key] = marks to filter
                 }
@@ -115,11 +139,21 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
         }
     }
 
-    fun close() { closed = true; tiles.clear(); rejected.clear(); layerCounts.clear(); indexedRegions = null; bytes = 0; worker.shutdownNow() }
+    fun close() {
+        closed = true
+        tiles.clear()
+        rejected.clear()
+        layerCounts.clear()
+        indexedRegions = null
+        renderer.clearCache()
+        bytes = 0
+        worker.shutdownNow()
+    }
 
     companion object {
         internal const val SIZE = 512f
         private const val BLEED = 3
+        private const val DIRECT_FALLBACK_STROKES = 8
         internal fun box(key: Key) = Box(key.x * SIZE, key.y * SIZE, (key.x + 1) * SIZE, (key.y + 1) * SIZE)
         private fun bitmapBox(key: Key, pixels: Int): RectF {
             val scale = (pixels - BLEED * 2) / SIZE
