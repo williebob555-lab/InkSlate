@@ -521,65 +521,71 @@ fun ToolBar(
             }
 
             // ---- tools ----
-            // FlowRow, not a horizontal scroller: with scrolling, Redo and More sat off the
-            // right edge on a narrow screen with nothing to suggest they were there.
-            FlowRow(
+            // One physical row. Secondary insert tools may scroll, but the tools used to recover
+            // from an edit (Undo, Redo and More) are fixed at the end. A FlowRow made the toolbar
+            // two rows tall whenever a narrow device could not fit every uncommon insert action,
+            // wasting exactly the page space the compact toolbar is meant to preserve.
+            Row(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.Start,
-                verticalArrangement = Arrangement.Top
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                ToolButton(Icons.Default.Gesture, "Draw", cfg.tool == Tool.DRAW && !cfg.brush.isHighlighter) {
-                    change {
-                        state.edit {
-                            it.tool = Tool.DRAW
-                            if (it.brush.isHighlighter) it.toggleHighlighter()
+                LazyRow(Modifier.weight(1f)) {
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ToolButton(Icons.Default.Gesture, "Draw", cfg.tool == Tool.DRAW && !cfg.brush.isHighlighter) {
+                                change {
+                                    state.edit {
+                                        it.tool = Tool.DRAW
+                                        if (it.brush.isHighlighter) it.toggleHighlighter()
+                                    }
+                                }
+                            }
+                            ToolButton(Icons.Default.BorderColor, "Marker", cfg.brush.isHighlighter && cfg.tool == Tool.DRAW) {
+                                // toggles, so leaving the highlighter is one tap and restores your pen
+                                change { state.edit { it.toggleHighlighter() } }
+                            }
+                            ToolButton(Icons.Default.Remove, "Erase", cfg.tool == Tool.ERASER) {
+                                change { state.edit { it.tool = Tool.ERASER } }
+                            }
+                            ToolButton(Icons.Default.SelectAll, "Select", cfg.tool == Tool.SELECT) {
+                                change { state.edit { it.tool = Tool.SELECT } }
+                            }
+                            ToolButton(Icons.Default.OpenWith, "Pan", cfg.tool == Tool.PAN) {
+                                change { state.edit { it.tool = Tool.PAN } }
+                            }
+                            ToolDivider()
+                            // Line, arrow, box and oval have moved into the stamp picker. They are shapes you
+                            // drag out, like everything else in there, and having them here cost four
+                            // permanent slots in front of the tools used constantly.
+                            ToolButton(Icons.Default.TextFields, "Text", cfg.tool == Tool.TEXT) {
+                                change { state.edit { it.tool = Tool.TEXT } }
+                            }
+                            // Tables, captures, rulers, stamps and pictures are for homework; music is
+                            // marked in pen and text.
+                            ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
+                            if (!com.inkslate.AppFlavor.musicView) {
+                                ToolButton(Icons.Default.GridOn, "Table", false) {
+                                    actions.onInsertTable(state.tableRows, state.tableCols)
+                                }
+                                ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
+                                    change { state.edit { it.tool = Tool.REGION } }
+                                }
+                                ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
+                                    change { state.rulerVisible = !state.rulerVisible; state.persistNow() }
+                                }
+                                // Symbols are in the tray as well, so one button covers everything you put on
+                                // the page rather than draw on it.
+                                ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
+                                ToolButton(Icons.Default.PhotoCamera, "Photo", false) { actions.onTakePhoto() }
+                            }
+                            if (actions.canPaste) {
+                                ToolButton(Icons.Default.ContentPaste, "Paste", false) { actions.onPaste() }
+                            }
                         }
                     }
                 }
-                ToolButton(Icons.Default.BorderColor, "Marker", cfg.brush.isHighlighter && cfg.tool == Tool.DRAW) {
-                    // toggles, so leaving the highlighter is one tap and restores your pen
-                    change { state.edit { it.toggleHighlighter() } }
-                }
-                ToolButton(Icons.Default.Remove, "Erase", cfg.tool == Tool.ERASER) {
-                    change { state.edit { it.tool = Tool.ERASER } }
-                }
-                ToolButton(Icons.Default.SelectAll, "Select", cfg.tool == Tool.SELECT) {
-                    change { state.edit { it.tool = Tool.SELECT } }
-                }
-                ToolButton(Icons.Default.OpenWith, "Pan", cfg.tool == Tool.PAN) {
-                    change { state.edit { it.tool = Tool.PAN } }
-                }
                 ToolDivider()
-                // Line, arrow, box and oval have moved into the stamp picker. They are shapes you
-                // drag out, like everything else in there, and having them here cost four
-                // permanent slots in front of the tools used constantly.
-                ToolButton(Icons.Default.TextFields, "Text", cfg.tool == Tool.TEXT) {
-                    change { state.edit { it.tool = Tool.TEXT } }
-                }
-                // Tables, captures, rulers, stamps and pictures are for homework; music is
-                // marked in pen and text.
-                ToolButton(Icons.Default.Interests, "Shapes", shapesOpen) { actions.onToggleShapes() }
-                if (!com.inkslate.AppFlavor.musicView) {
-                    ToolButton(Icons.Default.GridOn, "Table", false) {
-                        actions.onInsertTable(state.tableRows, state.tableCols)
-                    }
-                    ToolButton(Icons.Default.CropFree, "Capture", cfg.tool == Tool.REGION) {
-                        change { state.edit { it.tool = Tool.REGION } }
-                    }
-                    ToolButton(Icons.Default.Straighten, "Ruler", state.rulerVisible) {
-                        change { state.rulerVisible = !state.rulerVisible; state.persistNow() }
-                    }
-                    // Symbols are in the tray as well, so one button covers everything you put on
-                    // the page rather than draw on it.
-                    ToolButton(Icons.Default.Image, "Picture", false) { actions.onInsertPicture() }
-                    ToolButton(Icons.Default.PhotoCamera, "Photo", false) { actions.onTakePhoto() }
-                }
-                if (actions.canPaste) {
-                    ToolButton(Icons.Default.ContentPaste, "Paste", false) { actions.onPaste() }
-                }
-                ToolDivider()
-                // Undo and redo live here too, so they remain reachable in fullscreen where the
-                // app bar is hidden.
+                // These never disappear into the scroller.
                 ToolButton(Icons.AutoMirrored.Filled.Undo, "Undo", false, enabled = actions.canUndo) {
                     actions.onUndo()
                 }
@@ -876,9 +882,11 @@ internal fun PageControlIsland(
     onNextPage: () -> Unit,
     onOpenPageNavigation: () -> Unit,
     onOpenPages: () -> Unit,
-    onTogglePageBookmark: () -> Unit
+    onTogglePageBookmark: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Surface(
+        modifier = modifier,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         shape = RoundedCornerShape(14.dp),
         shadowElevation = 3.dp,

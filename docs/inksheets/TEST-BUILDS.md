@@ -2,6 +2,28 @@
 
 Newest first. These notes describe changes made, not confirmation that every reported device issue is resolved. Performance and remaining toolbar reports are still open. Historical entries are changelogs; only the latest installers are retained on the test release.
 
+## Next test build — edge-free canvases and compact workspace
+
+- **Existing InkSlate whiteboards become genuinely unbounded.** Older app-created canvases are
+  migrated only after their saved camera position and missing-ink recovery checks finish, so the
+  visible page edge disappears without changing imported PDFs or making a large notebook prepare
+  its whole coordinate space during opening.
+- **A failed annotation tile cannot stay blank.** If background rasterisation permanently rejects
+  a tile, it now draws that tile from the saved strokes instead of remembering a blank result. This
+  protects annotations that are present in the file but were invisible in the cache path.
+- **Page controls are a real floating island.** They are overlaid at the lower-right of the
+  document instead of occupying a full-width toolbar row, removing the empty bar extending left.
+- **The compact tool strip stays one row tall.** Common and insert tools scroll in a single row;
+  Undo, Redo and More stay fixed and reachable at its end. Narrow screens no longer make a second
+  row of tools and the associated dead space.
+- **The top tab island uses folder-tab geometry.** Its outer top corners meet the screen through
+  quarter-circle tangent curves. Individual tabs overlap at curved shoulders on both sides and
+  retain a clear brighter-to-darker gradient from left to right, including the selected tab.
+- **Validation:** the complete InkSlate and InkSheets Android unit suites pass. A new rendering
+  regression confirms that a rejected cache tile displays its source strokes rather than blank
+  paper. Physical-device feel and the historical-whiteboard migration still require this test
+  build's field confirmation.
+
 ## 1.2.2-test.349 — input shield and dense zoom fix
 
 - **An invisible tab-strip input shield is removed.** The floating tab strip used a transparent

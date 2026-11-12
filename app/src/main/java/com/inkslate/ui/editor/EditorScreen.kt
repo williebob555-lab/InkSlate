@@ -251,6 +251,9 @@ fun EditorScreen(
     var pressureCurveOpen by remember { mutableStateOf(false) }
     // A snapshot holding markedly more handwriting than the file does, found on open.
     var inkRecovery by remember { mutableStateOf<Pair<java.io.File, Int>?>(null) }
+    // Legacy-whiteboard migration must wait until the recovery guard has inspected the original
+    // state. Otherwise even a harmless metadata write could rotate out the evidence of missing ink.
+    var recoveryChecked by remember { mutableStateOf(false) }
     /**
      * Stop writing this document on our own.
      *
@@ -383,6 +386,7 @@ fun EditorScreen(
 
     LaunchedEffect(file.absolutePath, reloadNonce) {
         val generation = ++openGeneration
+        recoveryChecked = false
         // Everything cached about the old page tree has to go, or a rearranged document is drawn
         // with the previous document's page rasters. Clearing `doc` first is what stops the
         // render loop reaching a source that is about to be closed underneath it.
@@ -582,6 +586,7 @@ fun EditorScreen(
             inkRecovery = found
             writesFrozen = true
         }
+        recoveryChecked = true
     }
 
     DisposableEffect(doc, page, layout) {
@@ -657,6 +662,33 @@ fun EditorScreen(
                 "open",
                 "Measured ${d.pageCount} pages in ${System.currentTimeMillis() - started}ms"
             )
+        }
+    }
+
+    /**
+     * Whiteboards made before the unbounded flag still carry enough metadata to prove that their
+     * paper belongs to InkSlate. Upgrade them only after the saved camera has been restored and
+     * the recovery guard has inspected their original sidecar. This removes their artificial page
+     * edge without making a large notebook prepare its entire coordinate space during frame one.
+     */
+    LaunchedEffect(doc, strokesLoaded, positionRestored, recoveryChecked) {
+        val d = doc ?: return@LaunchedEffect
+        val old = d.ink.canvas ?: return@LaunchedEffect
+        if (!strokesLoaded || !positionRestored || !recoveryChecked || writesFrozen) return@LaunchedEffect
+        if (!old.paperIsOurs || old.isUnbounded) return@LaunchedEffect
+        val upgraded = old.copy(unbounded = true)
+        d.ink = d.ink.copy(canvas = upgraded)
+        host.views.forEach { it.view?.canvas = upgraded }
+        pendingWrite = true
+        writeState = WriteState.UNSAVED
+        val saved = withContext(Dispatchers.IO) { repo.saveWorking(d) }
+        if (saved) {
+            dirty = false
+            unbaked = true
+            EventLog.info("canvas", "${d.file.name}: removed legacy whiteboard edges")
+        } else {
+            dirty = true
+            EventLog.warn("canvas", "${d.file.name}: could not persist unbounded whiteboard upgrade")
         }
     }
 
@@ -2062,31 +2094,6 @@ fun EditorScreen(
                 // one tap to close, and the tray above it still switches shape.
                 val panelOpen = armedSettings != null || placedSettings != null
                 if (!panelOpen || LocalConfiguration.current.screenWidthDp >= 840) {
-                if (!com.inkslate.AppFlavor.musicView && PageSources.isPdf(d.file)) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(end = 10.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        PageControlIsland(
-                            page = page,
-                            pageCount = d.pageCount,
-                            pageBookmarked = bookmarks.any { it.page == page },
-                            onPreviousPage = { drawingView.value?.goToPage(page - 1) },
-                            onNextPage = { drawingView.value?.goToPage(page + 1) },
-                            onOpenPageNavigation = { navOpen = true },
-                            onOpenPages = { pagesOpen = true },
-                            onTogglePageBookmark = {
-                                if (bookmarks.any { it.page == page }) {
-                                    d.ink = d.ink.withBookmarkRemoved(page)
-                                    bookmarks = d.ink.bookmarks
-                                    persistWorking()
-                                } else {
-                                    bookmarkPrompt = page
-                                }
-                            }
-                        )
-                    }
-                }
                 ToolBar(
                     state = tools,
                     selectionCount = selectionCount,
@@ -2602,6 +2609,34 @@ fun EditorScreen(
 
             if (inFocus) quickWheel?.let { gesture ->
                 QuickActionWheel(state = tools, gesture = gesture)
+            }
+
+            // Page transport belongs over the page, not inside the bottom bar. Mounting the
+            // island in a full-width toolbar row reserved a conspicuous empty strip all the way
+            // to the left and defeated the reason for making it an island in the first place.
+            if (inFocus && !com.inkslate.AppFlavor.musicView &&
+                doc?.let { PageSources.isPdf(it.file) } == true
+            ) {
+                val d = doc!!
+                PageControlIsland(
+                    page = page,
+                    pageCount = d.pageCount,
+                    pageBookmarked = bookmarks.any { it.page == page },
+                    onPreviousPage = { drawingView.value?.goToPage(page - 1) },
+                    onNextPage = { drawingView.value?.goToPage(page + 1) },
+                    onOpenPageNavigation = { navOpen = true },
+                    onOpenPages = { pagesOpen = true },
+                    onTogglePageBookmark = {
+                        if (bookmarks.any { it.page == page }) {
+                            d.ink = d.ink.withBookmarkRemoved(page)
+                            bookmarks = d.ink.bookmarks
+                            persistWorking()
+                        } else {
+                            bookmarkPrompt = page
+                        }
+                    },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 10.dp, bottom = 8.dp)
+                )
             }
 
             // A page that will not rasterise used to look identical to a genuinely blank one.

@@ -339,7 +339,14 @@ fun TabStrip(
             Spacer(Modifier.width(5.dp))
             Surface(
                 modifier = Modifier.widthIn(max = tabIslandMax).fillMaxHeight(),
-                shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                // A true quarter-circle at each top corner meets the screen edge tangentially;
+                // it is the silhouette of an attached island, not a rectangle hung from it.
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = 16.dp,
+                    bottomEnd = 16.dp
+                ),
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 tonalElevation = 1.dp,
                 shadowElevation = 2.dp
@@ -361,7 +368,10 @@ fun TabStrip(
                     }
                     Row(
                         Modifier.fillMaxHeight().horizontalScroll(rememberScrollState()),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        // Folder tabs overlap at their shoulders rather than leaving a stack of
+                        // unrelated rounded buttons. The curved edge remains the divider.
+                        horizontalArrangement = Arrangement.spacedBy((-7).dp)
                     ) {
                         for ((tabIndex, tab) in tabs.withIndex()) key(tab.id) {
                             DocumentTabChip(
@@ -418,15 +428,25 @@ fun TabStrip(
     }
 }
 
-/** A top-connected tab whose curved lower shoulders make the joints readable without dividers. */
+/** A folder tab: narrow at the top, widening through quarter-curves into its neighbours. */
 private val ConnectedTabShape = GenericShape { size, _ ->
-    val shoulder = size.height * .28f
-    moveTo(0f, 0f)
-    lineTo(size.width, 0f)
-    lineTo(size.width, size.height - shoulder)
-    cubicTo(size.width, size.height - shoulder * .35f, size.width - shoulder * .35f, size.height, size.width - shoulder, size.height)
-    lineTo(shoulder, size.height)
-    cubicTo(shoulder * .35f, size.height, 0f, size.height - shoulder * .35f, 0f, size.height - shoulder)
+    val shoulder = (size.height * .32f).coerceAtMost(size.width * .22f)
+    // The 0.552 coefficient is the cubic approximation of a circular quadrant. Both sides are
+    // tangent to the flat top and flat base, like a physical divider tab in a folder.
+    val k = .5522848f
+    moveTo(shoulder, 0f)
+    lineTo(size.width - shoulder, 0f)
+    cubicTo(
+        size.width - shoulder + shoulder * k, 0f,
+        size.width - shoulder * k, size.height,
+        size.width, size.height
+    )
+    lineTo(0f, size.height)
+    cubicTo(
+        shoulder * k, size.height,
+        shoulder - shoulder * k, 0f,
+        shoulder, 0f
+    )
     close()
 }
 
@@ -446,16 +466,24 @@ private fun TabChip(
     tabCount: Int = 1
 ) {
     val step = if (tabCount <= 1) 0f else position / (tabCount - 1f)
+    // Deliberately span the full container range. The previous .90 blend was so subtle that the
+    // tabs looked flat; this reads clearly from brighter on the left to darker on the right.
     val resting = androidx.compose.ui.graphics.lerp(
         MaterialTheme.colorScheme.surfaceContainerHighest,
-        MaterialTheme.colorScheme.surfaceContainerLow,
-        step * .90f
+        MaterialTheme.colorScheme.surfaceContainerLowest,
+        step
     )
-    val background = if (selected) MaterialTheme.colorScheme.surface else resting
+    // Selection adds colour without erasing the positional gradient (and therefore muscle memory).
+    val background = if (selected) androidx.compose.ui.graphics.lerp(
+        resting,
+        MaterialTheme.colorScheme.primaryContainer,
+        .24f
+    ) else resting
     val content = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     val accent = MaterialTheme.colorScheme.primary
     Row(
         modifier
+            .zIndex(if (selected) 2f else if (focused) 1f else 0f)
             .fillMaxHeight()
             .widthIn(min = 96.dp, max = 220.dp)
             .clip(ConnectedTabShape)

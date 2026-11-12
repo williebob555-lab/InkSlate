@@ -161,6 +161,27 @@ class RenderedInkTest {
         } finally { cache.close() }
     }
 
+    @Test fun `a permanently rejected tile falls back to vectors instead of hiding saved ink`() {
+        val cache = RenderedInk({}, {})
+        val marks = (0 until 40).map { i -> stroke("rejected-$i", 15f + (i % 10) * 3f) }
+        val key = RenderedInk.Key(0, 0, 0, 0)
+        @Suppress("UNCHECKED_CAST")
+        val rejected = RenderedInk::class.java.getDeclaredField("rejected").apply {
+            isAccessible = true
+        }.get(cache) as HashMap<RenderedInk.Key, Pair<List<Stroke>, android.graphics.ColorFilter?>>
+        rejected[key] = marks to null
+        val output = image()
+        val background = Color.rgb(185, 210, 220)
+        val before = RenderStats.tileVectorFallbacks
+        try {
+            assertTrue(cache.draw(Canvas(output), 0, Box(0f, 0f, 512f, 80f), 1f,
+                StrokeRegions(marks), null, 256f, 40f, false))
+            assertTrue(RenderStats.tileVectorFallbacks > before)
+            assertNotEquals("rejected raster must not become a blank annotation layer",
+                background, output.getPixel(480, 35))
+        } finally { cache.close() }
+    }
+
     @Test fun `stationary high zoom remains on dense tile path`() {
         val callbacks = LinkedBlockingQueue<() -> Unit>()
         val cache = RenderedInk({ callbacks.add(it) }, {})

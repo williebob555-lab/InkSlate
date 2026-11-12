@@ -88,6 +88,9 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
             val retained = exact ?: tiles.entries.firstOrNull { (k, t) ->
                 k.page == page && k.x == key.x && k.y == key.y && t.matches(marks, filter)
             }?.let { (k, _) -> tiles[k] }
+            val permanentlyRejected = rejected[key]?.let { (old, treatment) ->
+                treatment === filter && old.size == marks.size && old.indices.all { old[it] === marks[it] }
+            } == true
             if (retained != null) {
                 if (exact != null) RenderStats.tileExactHits++ else RenderStats.tileRetainedHits++
                 canvas.save(); canvas.clipRect(box.left, box.top, box.right, box.bottom)
@@ -96,10 +99,11 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
                     canvas.drawBitmap(layer.bitmap, null, bitmapBox(key, retained.layers[0].bitmap.width), paint)
                 }
                 paint.xfermode = null; canvas.restore()
-            } else if (marks.size <= DIRECT_FALLBACK_STROKES) {
+            } else if (marks.size <= DIRECT_FALLBACK_STROKES || permanentlyRejected) {
                 // A handful of marks is cheaper than waiting for a bitmap and cannot create a
-                // noticeable frame stall. Dense tiles deliberately show the source page first;
-                // repainting hundreds of paths on the interface thread defeats the cache.
+                // noticeable frame stall. A tile that the background renderer cannot build must
+                // also fall back to source vectors: leaving a remembered rejection blank forever
+                // made saved annotations look as if they had disappeared.
                 RenderStats.tileVectorFallbacks++
                 drawVectors(canvas, box, marks)
             } else {
