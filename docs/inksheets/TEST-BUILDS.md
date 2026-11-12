@@ -4,6 +4,15 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **A user-controlled performance capture replaces another guessed fix.** Settings → Updates &
+  diagnostics can start a bounded capture, leave Settings while the actual problem is reproduced,
+  then stop and share one text report. It records document open and annotation-install times,
+  interface-thread stacks during stalls, total and CPU frame time, index/query/tile/vector stages,
+  delayed touch delivery, heap and ART garbage-collection counters. This build deliberately makes
+  no rendering or cache behaviour change; its purpose is to identify the field-device bottleneck.
+
+## 1.2.2-test.347 — restored page and native-file workflows
+
 - **Layer opacity is easier to operate by touch.** Mixer fader heads are now 20 dp across with a
   13 dp coloured centre, and their tracks reserve the head radius instead of clipping it at 0%
   or 100%.

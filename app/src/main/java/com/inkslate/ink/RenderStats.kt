@@ -1,5 +1,8 @@
 package com.inkslate.ink
 
+import com.inkslate.data.EventLog
+import com.inkslate.data.PerformanceDiagnostics
+
 /**
  * Lightweight instrumentation for the drawing surface.
  *
@@ -35,6 +38,20 @@ object RenderStats {
 
     /** Worst frame seen since the last reset. */
     @Volatile var worstFrameMs: Float = 0f
+    @Volatile var lastFrameCpuMs: Float = 0f
+    @Volatile var worstFrameCpuMs: Float = 0f
+    @Volatile var lastIndexUiMs: Float = 0f
+    @Volatile var worstIndexUiMs: Float = 0f
+    @Volatile var lastQueryMs: Float = 0f
+    @Volatile var worstQueryMs: Float = 0f
+    @Volatile var lastTileMs: Float = 0f
+    @Volatile var worstTileMs: Float = 0f
+    @Volatile var lastVectorMs: Float = 0f
+    @Volatile var worstVectorMs: Float = 0f
+    @Volatile var framesOver32Ms: Long = 0
+    @Volatile var framesOver100Ms: Long = 0
+    @Volatile var maxInputDelayMs: Long = 0
+    @Volatile var inputEventsOver32Ms: Long = 0
 
     /** Points in the stroke currently being drawn. */
     @Volatile var livePoints: Int = 0
@@ -98,19 +115,63 @@ object RenderStats {
     @Volatile var enabled: Boolean = false
 
     private var frames = 0L
+    private var longFrameLogs = 0
+    private var inputDelayLogs = 0
 
-    fun recordFrame(ms: Float, drawn: Int, fullRedraw: Boolean) {
+    fun recordFrame(
+        ms: Float,
+        drawn: Int,
+        fullRedraw: Boolean,
+        cpuMs: Float = 0f,
+        indexMs: Float = 0f,
+        queryMs: Float = 0f,
+        tileMs: Float = 0f,
+        vectorMs: Float = 0f
+    ) {
         lastFrameMs = ms
         drawnStrokes = drawn
         lastFrameFullRedraw = fullRedraw
         if (ms > worstFrameMs) worstFrameMs = ms
+        lastFrameCpuMs = cpuMs; if (cpuMs > worstFrameCpuMs) worstFrameCpuMs = cpuMs
+        lastIndexUiMs = indexMs; if (indexMs > worstIndexUiMs) worstIndexUiMs = indexMs
+        lastQueryMs = queryMs; if (queryMs > worstQueryMs) worstQueryMs = queryMs
+        lastTileMs = tileMs; if (tileMs > worstTileMs) worstTileMs = tileMs
+        lastVectorMs = vectorMs; if (vectorMs > worstVectorMs) worstVectorMs = vectorMs
+        if (ms >= 32f) framesOver32Ms++
+        if (ms >= 100f) framesOver100Ms++
         frames++
         // exponential mean: no history buffer, and recent frames dominate
         averageFrameMs = if (frames <= 1) ms else averageFrameMs * 0.92f + ms * 0.08f
+        if (PerformanceDiagnostics.active && ms >= 50f && longFrameLogs < 40) {
+            longFrameLogs++
+            EventLog.warn(
+                "frame",
+                "${"%.1f".format(ms)}ms cpu=${"%.1f".format(cpuMs)} " +
+                    "index=${"%.1f".format(indexMs)} query=${"%.1f".format(queryMs)} " +
+                    "tiles=${"%.1f".format(tileMs)} vectors=${"%.1f".format(vectorMs)} " +
+                    "strokes=$drawn/$totalStrokes full=$fullRedraw"
+            )
+        }
+    }
+
+    fun recordInputDelay(ms: Long) {
+        if (ms > maxInputDelayMs) maxInputDelayMs = ms
+        if (ms >= 32L) inputEventsOver32Ms++
+        if (PerformanceDiagnostics.active && ms >= 100L && inputDelayLogs < 20) {
+            inputDelayLogs++
+            EventLog.warn("input", "Touch event waited ${ms}ms before the interface handled it")
+        }
     }
 
     fun reset() {
         worstFrameMs = 0f
+        lastFrameCpuMs = 0f; worstFrameCpuMs = 0f
+        lastIndexUiMs = 0f; worstIndexUiMs = 0f
+        lastQueryMs = 0f; worstQueryMs = 0f
+        lastTileMs = 0f; worstTileMs = 0f
+        lastVectorMs = 0f; worstVectorMs = 0f
+        framesOver32Ms = 0; framesOver100Ms = 0
+        maxInputDelayMs = 0; inputEventsOver32Ms = 0
         averageFrameMs = 0f
         cacheHits = 0
         cacheMisses = 0
@@ -132,6 +193,8 @@ object RenderStats {
         lastDocumentOpenMs = 0
         worstDocumentOpenMs = 0
         frames = 0
+        longFrameLogs = 0
+        inputDelayLogs = 0
     }
 
     val cacheHitRate: Float
@@ -169,5 +232,17 @@ object RenderStats {
         val rt = Runtime.getRuntime()
         append("heap ").append((rt.totalMemory() - rt.freeMemory()) / 1048576).append("MB / ")
         append(rt.maxMemory() / 1048576).append("MB")
+    }
+
+    fun diagnosticSummary(): String = buildString {
+        appendLine("Rendering summary")
+        appendLine(summary())
+        appendLine("frames=$frames over32ms=$framesOver32Ms over100ms=$framesOver100Ms")
+        appendLine(
+            "worstStagesMs cpu=${"%.1f".format(worstFrameCpuMs)} " +
+                "index=${"%.1f".format(worstIndexUiMs)} query=${"%.1f".format(worstQueryMs)} " +
+                "tiles=${"%.1f".format(worstTileMs)} vectors=${"%.1f".format(worstVectorMs)}"
+        )
+        appendLine("input maxDelayMs=$maxInputDelayMs over32ms=$inputEventsOver32Ms")
     }
 }

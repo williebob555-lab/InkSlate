@@ -507,10 +507,19 @@ fun EditorScreen(
             // Flattening a large legacy notebook walks every page and can allocate a sizeable
             // reference list. It has no UI dependency, so doing it on the composition thread is
             // exactly the kind of invisible preparation that made menus stop scrolling.
+            val flattenStarted = android.os.SystemClock.elapsedRealtime()
             val loaded = withContext(Dispatchers.Default) { d.allStrokes() }
+            val flattenMs = android.os.SystemClock.elapsedRealtime() - flattenStarted
             if (doc === d && !strokesLoaded) {
+                val installStarted = android.os.SystemClock.elapsedRealtime()
                 model.setStrokes(loaded)
+                val installMs = android.os.SystemClock.elapsedRealtime() - installStarted
                 strokesLoaded = true
+                EventLog.info(
+                    "ink-load",
+                    "${d.file.name}: ${loaded.size} marks flattened ${flattenMs}ms, " +
+                        "installed on interface ${installMs}ms"
+                )
             }
         }
     }

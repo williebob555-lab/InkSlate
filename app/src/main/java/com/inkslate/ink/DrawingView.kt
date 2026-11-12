@@ -3215,12 +3215,18 @@ class DrawingView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val frameStart = System.nanoTime()
+        val frameCpuStart = android.os.Debug.threadCpuTimeNanos()
+        var queryNs = 0L
+        var tileNs = 0L
+        var vectorNs = 0L
         var drawnCount = 0
         val drawnPages = ArrayList<Int>(8)
         canvas.drawColor(pageFilter.backdropColor)
         if (slots.isEmpty()) return
 
+        val indexStarted = System.nanoTime()
         rebuildPageIndex()
+        val indexNs = System.nanoTime() - indexStarted
 
         // Read the damaged region BEFORE the canvas is transformed, so it is in view space and
         // can be mapped to document space exactly once. Reading it afterwards yields document
@@ -3357,7 +3363,14 @@ class DrawingView @JvmOverloads constructor(
                 viewportDoc.right - slot.originX + slot.cropLeft,
                 viewportDoc.bottom - slot.originY + slot.cropTop
             )
-            val onPage = if (enhancementsReady) strokeRegions[slot.index]?.query(com.inkslate.core.Box(localViewport.left, localViewport.top, localViewport.right, localViewport.bottom)).orEmpty() else emptyList()
+            val queryStarted = System.nanoTime()
+            val onPage = if (enhancementsReady) strokeRegions[slot.index]?.query(
+                com.inkslate.core.Box(
+                    localViewport.left, localViewport.top,
+                    localViewport.right, localViewport.bottom
+                )
+            ).orEmpty() else emptyList()
+            queryNs += System.nanoTime() - queryStarted
             val focus = floatArrayOf(inkFocusX, inkFocusY)
             viewToPage.mapPoints(focus)
             val regionIndex = strokeRegions[slot.index]
@@ -3382,13 +3395,18 @@ class DrawingView @JvmOverloads constructor(
                         fullViewportDoc.top - slot.originY + slot.cropTop,
                         fullViewportDoc.right - slot.originX + slot.cropLeft,
                         fullViewportDoc.bottom - slot.originY + slot.cropTop)
-                    tiles.draw(canvas, slot.index, wholeView, currentScale(), regionIndex,
+                    val tileStarted = System.nanoTime()
+                    val result = tiles.draw(canvas, slot.index, wholeView, currentScale(), regionIndex,
                         pageFilter.filter, focus[0] - slot.originX + slot.cropLeft,
                         focus[1] - slot.originY + slot.cropTop, cameraMoving, visibleLayerMask)
+                    tileNs += System.nanoTime() - tileStarted
+                    result
                 }
             if (!cached) {
+                val vectorStarted = System.nanoTime()
                 if (layered) drawLayeredStrokes(canvas, onPage, pageFilters)
                 else StrokeRasteriser.drawAll(canvas, onPage)
+                vectorNs += System.nanoTime() - vectorStarted
             }
             drawnCount += onPage.size
             live?.let { pts ->
@@ -3533,10 +3551,17 @@ class DrawingView @JvmOverloads constructor(
         RenderStats.livePoints = live?.size ?: 0
         RenderStats.pageCount = slots.size
         RenderStats.pagesResident = slots.count { it.bitmap != null }
+        val frameMs = (System.nanoTime() - frameStart) / 1_000_000f
+        val cpuMs = (android.os.Debug.threadCpuTimeNanos() - frameCpuStart) / 1_000_000f
         RenderStats.recordFrame(
-            (System.nanoTime() - frameStart) / 1_000_000f,
+            frameMs,
             drawnCount,
-            fullRedraw = clip.width() >= width && clip.height() >= height
+            fullRedraw = clip.width() >= width && clip.height() >= height,
+            cpuMs = cpuMs,
+            indexMs = indexNs / 1_000_000f,
+            queryMs = queryNs / 1_000_000f,
+            tileMs = tileNs / 1_000_000f,
+            vectorMs = vectorNs / 1_000_000f
         )
         RenderStats.pagesVisible = drawnPages.size
     }
@@ -3705,6 +3730,9 @@ class DrawingView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        RenderStats.recordInputDelay(
+            (android.os.SystemClock.uptimeMillis() - event.eventTime).coerceAtLeast(0L)
+        )
         inkFocusX = event.x; inkFocusY = event.y
         if(event.actionMasked==MotionEvent.ACTION_DOWN || event.actionMasked==MotionEvent.ACTION_MOVE)com.inkslate.core.RenderGate.touch(1800)
         val action = event.actionMasked

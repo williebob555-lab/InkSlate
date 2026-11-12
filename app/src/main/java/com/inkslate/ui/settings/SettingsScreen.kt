@@ -62,6 +62,7 @@ import com.inkslate.data.AppPeers
 import com.inkslate.data.CrashLog
 import com.inkslate.data.EventLog
 import com.inkslate.data.FileRepo
+import com.inkslate.data.PerformanceDiagnostics
 import com.inkslate.ink.*
 import com.inkslate.ink.RenderStats
 import com.inkslate.data.DeviceId
@@ -94,6 +95,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     var viewingCrash by remember { mutableStateOf<String?>(null) }
     var statsTick by remember { mutableStateOf(0) }
     var showAllEvents by remember { mutableStateOf(false) }
+    var performanceCapture by remember { mutableStateOf(PerformanceDiagnostics.active) }
     var calibratingScribble by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
@@ -481,6 +483,36 @@ fun SettingsScreen(onBack: () -> Unit) {
             if (!musicSettings || category == "Updates & diagnostics") {
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             SectionHeader("Diagnostics")
+
+            Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("Performance capture", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        if (performanceCapture)
+                            "Recording. Leave Settings, reproduce the freeze, then return here and stop."
+                        else
+                            "Records stage timings, delayed touch events, memory, frame gaps and the " +
+                                "interface stack while it is blocked.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = {
+                        if (performanceCapture) {
+                            val report = PerformanceDiagnostics.stop(context)
+                            performanceCapture = false
+                            statsTick++
+                            PerformanceDiagnostics.share(context, report)
+                        } else {
+                            PerformanceDiagnostics.start(context)
+                            performanceCapture = true
+                            showAllEvents = true
+                            statsTick++
+                        }
+                    }) {
+                        Text(if (performanceCapture) "Stop and share report" else "Start performance capture")
+                    }
+                }
+            }
 
             // ---- live rendering stats ----
             Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {

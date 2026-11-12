@@ -42,6 +42,17 @@ object TurnClock {
     @Volatile private var mainBeat = 0L
     @Volatile private var samplerStarted = false
     @Volatile private var lastStackReport = 0L
+    @Volatile private var diagnosticCapture = false
+
+    fun setDiagnosticCapture(active: Boolean) {
+        ensureStallSampler()
+        diagnosticCapture = active
+        if (active) {
+            mainBeat = android.os.SystemClock.uptimeMillis()
+            stalls = 0
+            watchFrames()
+        }
+    }
 
     @Synchronized
     private fun ensureStallSampler() {
@@ -52,7 +63,9 @@ object TurnClock {
         mainBeat = android.os.SystemClock.uptimeMillis()
         Thread({
             while (true) {
-                if (android.os.SystemClock.uptimeMillis() < watchUntil && pingPending.compareAndSet(false, true)) {
+                if ((diagnosticCapture || android.os.SystemClock.uptimeMillis() < watchUntil) &&
+                    pingPending.compareAndSet(false, true)
+                ) {
                     handler.post {
                         mainBeat = android.os.SystemClock.uptimeMillis()
                         pingPending.set(false)
@@ -61,7 +74,9 @@ object TurnClock {
                 try { Thread.sleep(50) } catch (_: InterruptedException) { return@Thread }
                 val now = android.os.SystemClock.uptimeMillis()
                 val lag = now - mainBeat
-                if (now < watchUntil && pingPending.get() && lag >= 150 && now - lastStackReport >= 1_000) {
+                if ((diagnosticCapture || now < watchUntil) && pingPending.get() && lag >= 150 &&
+                    now - lastStackReport >= 1_000
+                ) {
                     lastStackReport = now
                     val useful = main.thread.stackTrace
                         .filterNot { it.className.startsWith("java.lang.Thread") }
@@ -104,7 +119,9 @@ object TurnClock {
                     }
                 }
                 lastFrameNs = frameNs
-                if (android.os.SystemClock.uptimeMillis() < watchUntil) choreographer.postFrameCallback(this)
+                if (diagnosticCapture || android.os.SystemClock.uptimeMillis() < watchUntil) {
+                    choreographer.postFrameCallback(this)
+                }
                 else watching = false
             }
         })
