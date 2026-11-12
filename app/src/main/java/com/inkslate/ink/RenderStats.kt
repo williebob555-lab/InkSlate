@@ -52,6 +52,13 @@ object RenderStats {
     @Volatile var framesOver100Ms: Long = 0
     @Volatile var maxInputDelayMs: Long = 0
     @Volatile var inputEventsOver32Ms: Long = 0
+    /** Input funnel counters used to tell interception apart from a drawing/render failure. */
+    @Volatile var windowTouchEvents: Long = 0
+    @Volatile var windowTouchDowns: Long = 0
+    @Volatile var windowTouchesHandled: Long = 0
+    @Volatile var drawingTouchEvents: Long = 0
+    @Volatile var drawingTouchDowns: Long = 0
+    @Volatile var toolEdits: Long = 0
 
     /** Points in the stroke currently being drawn. */
     @Volatile var livePoints: Int = 0
@@ -163,6 +170,23 @@ object RenderStats {
         }
     }
 
+    fun recordWindowTouch(action: Int, handled: Boolean) {
+        if (!PerformanceDiagnostics.active) return
+        windowTouchEvents++
+        if (action == android.view.MotionEvent.ACTION_DOWN) windowTouchDowns++
+        if (handled) windowTouchesHandled++
+    }
+
+    fun recordDrawingTouch(action: Int) {
+        if (!PerformanceDiagnostics.active) return
+        drawingTouchEvents++
+        if (action == android.view.MotionEvent.ACTION_DOWN) drawingTouchDowns++
+    }
+
+    fun recordToolEdit() {
+        if (PerformanceDiagnostics.active) toolEdits++
+    }
+
     fun reset() {
         worstFrameMs = 0f
         lastFrameCpuMs = 0f; worstFrameCpuMs = 0f
@@ -172,6 +196,8 @@ object RenderStats {
         lastVectorMs = 0f; worstVectorMs = 0f
         framesOver32Ms = 0; framesOver100Ms = 0
         maxInputDelayMs = 0; inputEventsOver32Ms = 0
+        windowTouchEvents = 0; windowTouchDowns = 0; windowTouchesHandled = 0
+        drawingTouchEvents = 0; drawingTouchDowns = 0; toolEdits = 0
         averageFrameMs = 0f
         cacheHits = 0
         cacheMisses = 0
@@ -244,5 +270,10 @@ object RenderStats {
                 "tiles=${"%.1f".format(worstTileMs)} vectors=${"%.1f".format(worstVectorMs)}"
         )
         appendLine("input maxDelayMs=$maxInputDelayMs over32ms=$inputEventsOver32Ms")
+        appendLine(
+            "inputFunnel window=$windowTouchEvents events/$windowTouchDowns downs " +
+                "handled=$windowTouchesHandled drawing=$drawingTouchEvents events/" +
+                "$drawingTouchDowns downs toolEdits=$toolEdits"
+        )
     }
 }

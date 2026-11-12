@@ -68,7 +68,9 @@ class MainActivity : ComponentActivity() {
             event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
             com.inkslate.core.RenderGate.touch(3000)
         }
-        return super.dispatchTouchEvent(event)
+        val handled = super.dispatchTouchEvent(event)
+        com.inkslate.ink.RenderStats.recordWindowTouch(event.actionMasked, handled)
+        return handled
     }
 
     override fun onResume() {

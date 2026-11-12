@@ -2,14 +2,31 @@
 
 Newest first. These notes describe changes made, not confirmation that every reported device issue is resolved. Performance and remaining toolbar reports are still open. Historical entries are changelogs; only the latest installers are retained on the test release.
 
-## Next test build
+## 1.2.2-test.349 — input shield and dense zoom fix
 
-- **A user-controlled performance capture replaces another guessed fix.** Settings → Updates &
+- **An invisible tab-strip input shield is removed.** The floating tab strip used a transparent
+  Material surface across its overlay bounds. That surface still participated in touch handling,
+  so an open tab could prevent the document, toolbar and even Home from receiving input while the
+  close button inside the strip remained usable. The overlay is now layout-only; only its visible
+  Home, tab and fullscreen islands own touch targets.
+- **Dense pages stay tiled while stationary at higher zoom.** The field capture showed Exam 2
+  spending 939 ms rebuilding 6,733 vector outlines in one interface frame. A saved view above
+  1.25× had disabled the dense tile path unless the camera was moving. Higher-resolution tiles are
+  now admitted within the existing byte budget, including after the gesture stops.
+- **The performance capture now traces the input funnel.** Its report separately counts touch
+  events entering the app window, events reaching the drawing surface and toolbar edits. A future
+  capture can therefore distinguish interception from a stroke/render failure instead of reporting
+  a misleading zero input delay when the drawing view received no event.
+- **Validation:** both Android variants compile. The focused dense-render and workspace-layout
+  suites pass, including a stationary 2.4× dense-page regression.
+
+## 1.2.2-test.348 — field performance capture
+
+- **A user-controlled performance capture replaced another guessed fix.** Settings → Updates &
   diagnostics can start a bounded capture, leave Settings while the actual problem is reproduced,
   then stop and share one text report. It records document open and annotation-install times,
   interface-thread stacks during stalls, total and CPU frame time, index/query/tile/vector stages,
-  delayed touch delivery, heap and ART garbage-collection counters. This build deliberately makes
-  no rendering or cache behaviour change; its purpose is to identify the field-device bottleneck.
+  delayed touch delivery, heap and ART garbage-collection counters.
 
 ## 1.2.2-test.347 — restored page and native-file workflows
 

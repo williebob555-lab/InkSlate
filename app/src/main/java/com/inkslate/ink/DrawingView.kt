@@ -3388,7 +3388,7 @@ class DrawingView @JvmOverloads constructor(
             val cameraMoving = gesturing || !scroller.isFinished
             val cached = cacheEligible && enhancementsReady && regionIndex != null &&
                 strokesByPage[slot.index].orEmpty().size >= 80 &&
-                (currentScale() <= 1.25f || cameraMoving) && run {
+                run {
                     val tiles = renderedInk ?: RenderedInk({ callback -> post { callback() } }, { postInvalidateOnAnimation() }).also { renderedInk = it }
                     val wholeView = Box(
                         fullViewportDoc.left - slot.originX + slot.cropLeft,
@@ -3730,6 +3730,7 @@ class DrawingView @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        RenderStats.recordDrawingTouch(event.actionMasked)
         RenderStats.recordInputDelay(
             (android.os.SystemClock.uptimeMillis() - event.eventTime).coerceAtLeast(0L)
         )

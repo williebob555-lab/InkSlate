@@ -55,7 +55,11 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
         val x0 = floor(viewport.left / SIZE).toInt(); val x1 = floor(viewport.right / SIZE).toInt()
         val y0 = floor(viewport.top / SIZE).toInt(); val y1 = floor(viewport.bottom / SIZE).toInt()
         if ((x1.toLong() - x0 + 1) * (y1.toLong() - y0 + 1) !in 1..256) return false
-        var level = ceil(ln(scale.toDouble()) / ln(2.0)).toInt().coerceIn(-5, 0)
+        // A stationary zoomed view must remain on the tile path. Capping this at 1x caused the
+        // caller to abandon tiles above 1.25x and synchronously rebuild thousands of outlines.
+        // Admit sharper levels here; the byte-budget loop below steps back down when the visible
+        // working set would be too large.
+        var level = ceil(ln(scale.toDouble()) / ln(2.0)).toInt().coerceIn(-5, MAX_LEVEL)
         val positions = (x0..x1).flatMap { x -> (y0..y1).map { y -> Key(page, x, y, level) } }
             .sortedBy { val dx = (it.x + .5f) * SIZE - focusX; val dy = (it.y + .5f) * SIZE - focusY; dx * dx + dy * dy }
         val mask = AnnotationLayers.mixerMask(visibleLayers)
@@ -152,6 +156,7 @@ internal class RenderedInk(private val deliver: (() -> Unit) -> Unit, private va
 
     companion object {
         internal const val SIZE = 512f
+        internal const val MAX_LEVEL = 2
         private const val BLEED = 3
         private const val DIRECT_FALLBACK_STROKES = 8
         internal fun box(key: Key) = Box(key.x * SIZE, key.y * SIZE, (key.x + 1) * SIZE, (key.y + 1) * SIZE)

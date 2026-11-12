@@ -336,6 +336,7 @@ class ToolState(private val context: Context) {
 
     /** Mutate the active profile and let the UI know. */
     fun edit(block: (ToolConfig) -> Unit) {
+        com.inkslate.ink.RenderStats.recordToolEdit()
         block(active)
         revision++
         persist()
@@ -343,6 +344,7 @@ class ToolState(private val context: Context) {
 
     /** Mutate a particular input profile, used when a temporary tool must restore its owner. */
     fun editMode(mode: InputMode, block: (ToolConfig) -> Unit) {
+        com.inkslate.ink.RenderStats.recordToolEdit()
         block(configFor(mode))
         revision++
         persist()

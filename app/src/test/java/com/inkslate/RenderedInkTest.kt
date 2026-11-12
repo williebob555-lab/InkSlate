@@ -161,6 +161,28 @@ class RenderedInkTest {
         } finally { cache.close() }
     }
 
+    @Test fun `stationary high zoom remains on dense tile path`() {
+        val callbacks = LinkedBlockingQueue<() -> Unit>()
+        val cache = RenderedInk({ callbacks.add(it) }, {})
+        val marks = (0 until 120).map { i -> stroke("zoomed-$i", (i % 24) * 3f) }
+        val beforeCold = RenderStats.tileColdMisses
+        val beforeVectors = RenderStats.tileVectorFallbacks
+        try {
+            assertTrue(
+                cache.draw(
+                    Canvas(image()), 0, Box(0f, 0f, 512f, 80f), 2.4f,
+                    StrokeRegions(marks), null, 256f, 40f, moving = false
+                )
+            )
+            assertTrue(RenderStats.tileColdMisses > beforeCold)
+            assertEquals(
+                "stationary high zoom must not fall back to bulk vectors",
+                beforeVectors,
+                RenderStats.tileVectorFallbacks
+            )
+        } finally { cache.close() }
+    }
+
     @Test fun `tile cache honours the visible annotation channels`() {
         val cache = RenderedInk({}, {})
         val hidden = (0 until 20).map { i ->

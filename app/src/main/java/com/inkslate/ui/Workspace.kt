@@ -302,8 +302,16 @@ fun TabStrip(
         }
     }
 
-    Surface(color = Color.Transparent) {
-        BoxWithConstraints(modifier.fillMaxWidth().height(48.dp)) {
+    // This island is overlaid directly on the app's root Surface. A Material Surface blocks
+    // touches behind its whole measured bounds even when its colour is transparent. Keeping a
+    // transparent full-width Surface here therefore made an invisible input shield; after the
+    // strip moved into the root overlay that shield could be measured as the entire screen, which
+    // is why only controls inside the strip (notably a tab's close button) remained reachable.
+    // Layout-only boxes do not own pointer input. Only the visible Home/tab/fullscreen Surfaces
+    // below are interactive, so every genuinely open part of the top edge belongs to the page or
+    // Home screen underneath it.
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.TopStart) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height(48.dp)) {
         // On a narrow portrait screen, document actions outrank showing a whole tab label. The
         // tab contents scroll inside their island; allowing the island itself to overlap the
         // actions made both sets of buttons unreliable.
