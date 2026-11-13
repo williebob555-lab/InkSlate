@@ -63,6 +63,7 @@ android {
         // Home - the documents, folders and filing - is shared source too: see library-ui/README.md.
         getByName("main") {
             kotlin.directories.add(rootProject.file("library-ui/src/main/kotlin").path)
+            assets.srcDir(rootProject.file("config"))
         }
         getByName("inksheets") {
             kotlin.directories.add(rootProject.file("sheets-ui/src/main/kotlin").path)

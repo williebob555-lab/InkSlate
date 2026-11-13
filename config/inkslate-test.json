@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "summary": "Floating top pills, connected fullscreen tabs, usable mixer faders and drifting-loop scribble recognition.",
+  "chrome": {
+    "tabMinWidthDp": 96,
+    "tabMaxWidthDp": 220,
+    "tabContentInsetDp": 8,
+    "floatingTopGapDp": 4,
+    "tabHeightDp": 44,
+    "tabShoulderFraction": 0.32,
+    "selectedTint": 0.24
+  },
+  "mixer": {
+    "visibilityHeightDp": 24,
+    "actionHeightDp": 28,
+    "minimumFaderHeightDp": 48
+  },
+  "wheel": {
+    "actionSizeDp": 40,
+    "mainRadiusDp": 54,
+    "activationRadiusDp": 44,
+    "colorRadiusDp": 108,
+    "colorDotDp": 27,
+    "sizeTrackStartDp": 74,
+    "sizeTrackLengthDp": 190,
+    "colorArcDegrees": 58,
+    "submenuEntryDegrees": 15,
+    "palette": ["#111827", "#2563EB", "#7C3AED", "#DC2626", "#F59E0B", "#16A34A", "#0891B2", "#FDE047", "#FFFFFF"]
+  },
+  "scribble": {
+    "maxCorridorRatio": 0.85,
+    "minTraversals": 3,
+    "minSpan": 4,
+    "minTravelRatio": 3.4,
+    "allowDrifting": true
+  },
+  "theme": {
+    "darkAccent": "#3B82F6",
+    "lightAccent": "#1D4ED8",
+    "darkBackground": "#14171B",
+    "lightBackground": "#F6F7F9"
+  }
+}

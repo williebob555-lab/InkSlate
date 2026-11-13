@@ -61,6 +61,7 @@ fun UpdateSection() {
     val scope = rememberCoroutineScope()
     val installed = remember { AppUpdates.installedVersion(context) }
     var phase by remember { mutableStateOf<Phase>(Phase.Idle) }
+    var testBuilds by remember { mutableStateOf(AppUpdates.testChannelEnabled(context)) }
 
     // A download running when this screen goes away has nowhere to report to, so it is asked to
     // stop rather than left writing to a cache nobody will look at.
@@ -68,6 +69,7 @@ fun UpdateSection() {
     DisposableEffect(Unit) { onDispose { alive = false } }
 
     SectionHeader("Updates")
+    if (appName == "InkSlate") DesignUpdateSection(testBuilds)
 
     Text(
         "$appName is installed by hand, so it cannot update itself in the background. This asks " +
@@ -90,7 +92,6 @@ fun UpdateSection() {
 
     // Off by default, and the only way a pre-release can be seen at all: the endpoint the stable
     // channel asks does not return them, so this is a genuine opt-in rather than a filter.
-    var testBuilds by remember { mutableStateOf(AppUpdates.testChannelEnabled(context)) }
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp, top = 6.dp),
         verticalAlignment = Alignment.CenterVertically,

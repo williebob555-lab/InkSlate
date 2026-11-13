@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -1997,43 +1998,48 @@ fun EditorScreen(
     // tab, and undo/redo are already below. The transparent full-width box positions the island
     // but does not paint a bar across the page.
     val compactTopBar: @Composable () -> Unit = {
-        if (!immersive.isFullscreen) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .height(44.dp)
-                    .padding(end = 47.dp)
-                    .zIndex(21f),
-                contentAlignment = Alignment.CenterEnd
+        val chrome = com.inkslate.data.LocalDesignConfig.current.chrome
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(top = if (immersive.isFullscreen) 0.dp else chrome.floatingTopGapDp.dp)
+                .height(chrome.tabHeightDp.dp)
+                .padding(end = 47.dp)
+                .zIndex(21f),
+            contentAlignment = Alignment.CenterEnd
+        ) {
+            Surface(
+                modifier = Modifier.height(chrome.tabHeightDp.dp),
+                shape = if (immersive.isFullscreen) com.inkslate.ui.TopConnectedIslandShape
+                    else RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                tonalElevation = 1.dp,
+                shadowElevation = 2.dp
             ) {
-                Surface(
-                    shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    tonalElevation = 1.dp,
-                    shadowElevation = 2.dp
+                Row(
+                    Modifier.fillMaxHeight().padding(horizontal = if (immersive.isFullscreen) 14.dp else 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { saveByRule() }, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                Icons.Default.Save,
-                                "Save into the document",
-                                tint = if (writeState == WriteState.SAVED)
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                else MaterialTheme.colorScheme.primary
-                            )
+                    IconButton(onClick = { saveByRule() }, modifier = Modifier.size(40.dp)) {
+                        Icon(
+                            Icons.Default.Save,
+                            "Save into the document",
+                            tint = if (writeState == WriteState.SAVED)
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    if (windowWidthDp >= 360f) {
+                        IconButton(onClick = { searchOpen = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Search, "Find in document")
                         }
-                        if (windowWidthDp >= 360f) {
-                            IconButton(onClick = { searchOpen = true }, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.Default.Search, "Find in document")
-                            }
+                    }
+                    Box {
+                        IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.MoreVert, "Document actions")
                         }
-                        Box {
-                            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(40.dp)) {
-                                Icon(Icons.Default.MoreVert, "Document actions")
-                            }
-                            documentMenu()
-                        }
+                        documentMenu()
                     }
                 }
             }
@@ -2384,9 +2390,9 @@ fun EditorScreen(
                                     pointer = androidx.compose.ui.geometry.Offset(x, y),
                                     actions = visibleActions(tools.quickWheelActions, current),
                                     current = current,
-                                    activationRadiusPx = 44f * density.density,
-                                    sizeTrackStartPx = 74f * density.density,
-                                    sizeTrackLengthPx = 190f * density.density,
+                                    activationRadiusPx = com.inkslate.core.DesignConfig.current.wheel.activationRadiusDp * density.density,
+                                    sizeTrackStartPx = com.inkslate.core.DesignConfig.current.wheel.sizeTrackStartDp * density.density,
+                                    sizeTrackLengthPx = com.inkslate.core.DesignConfig.current.wheel.sizeTrackLengthDp * density.density,
                                     sizeLadder = ladder
                                 )
                             }
@@ -2402,9 +2408,9 @@ fun EditorScreen(
                                     pointer = androidx.compose.ui.geometry.Offset(x, y),
                                     actions = actions,
                                     current = current,
-                                    activationRadiusPx = 44f * density.density,
-                                    sizeTrackStartPx = 74f * density.density,
-                                    sizeTrackLengthPx = 190f * density.density,
+                                    activationRadiusPx = com.inkslate.core.DesignConfig.current.wheel.activationRadiusDp * density.density,
+                                    sizeTrackStartPx = com.inkslate.core.DesignConfig.current.wheel.sizeTrackStartDp * density.density,
+                                    sizeTrackLengthPx = com.inkslate.core.DesignConfig.current.wheel.sizeTrackLengthDp * density.density,
                                     sizeLadder = ladder
                                 )
                                 quickWheel = null
@@ -2769,6 +2775,14 @@ fun EditorScreen(
     }
 
     androidx.compose.runtime.SideEffect {
+        host.prepareDesignReload = {
+            check(!restructuring && selfWrites == 0) { "A document is being saved or rearranged. Try again in a moment." }
+            check(strokesLoaded && recoveryChecked && !writesFrozen) { "A document has not finished loading safely." }
+            syncPage()
+            doc?.let { document ->
+                check(withContext(Dispatchers.IO) { repo.saveWorkingQuietly(document) }) { "Could not save a working copy. Design was not changed." }
+            }
+        }
         host.topBar = if (com.inkslate.AppFlavor.musicView) topBar else compactTopBar
         host.bottomBar = bottomBar
         host.pane = pane

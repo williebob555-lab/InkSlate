@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.inkslate.data.FileRepo
@@ -37,14 +38,22 @@ class MainActivity : ComponentActivity() {
         storageGranted = hasStorageAccess()
         handleIncoming(intent)
 
+        val designUpdates = com.inkslate.data.DesignUpdates(applicationContext)
+
         setContent {
-            InkSlateTheme {
-                AppRoot(
-                    storageGranted = storageGranted,
-                    onRequestStorage = { requestStorageAccess() },
-                    openRequest = pendingOpen,
-                    onOpenHandled = { pendingOpen = null }
-                )
+            CompositionLocalProvider(
+                com.inkslate.data.LocalDesignConfig provides designUpdates.active,
+                com.inkslate.data.LocalDesignUpdates provides designUpdates
+            ) {
+                InkSlateTheme {
+                    AppRoot(
+                        storageGranted = storageGranted,
+                        onRequestStorage = { requestStorageAccess() },
+                        openRequest = pendingOpen,
+                        onOpenHandled = { pendingOpen = null }
+                    )
+                    if (packageName == "com.inkslate") com.inkslate.ui.settings.DesignUpdatePrompt()
+                }
             }
         }
     }

@@ -82,19 +82,27 @@ internal fun tabIslandMaxWidthDp(
     fullscreenControl: Boolean
 ): Float {
     val reserved = 38f + 5f + endReservedDp + if (fullscreenControl) 43f else 0f
-    return (screenWidthDp - reserved - 8f).coerceAtLeast(84f)
+    return (screenWidthDp - reserved - 8f).coerceAtLeast(0f)
 }
 
 /** Find moves into the document menu on very narrow screens; Save and More stay one tap away. */
-internal fun compactActionIslandWidthDp(screenWidthDp: Float): Float =
-    if (screenWidthDp < 360f) 86f else 126f
+internal fun compactActionIslandWidthDp(screenWidthDp: Float, connected: Boolean = false): Float =
+    (if (screenWidthDp < 360f) 80f else 120f) + if (connected) 28f else 6f
+
+/** The next gradient fills the space below the preceding tab's decorative right shoulder. */
+internal fun tabStripSpacingDp(connected: Boolean, heightDp: Float, shoulderFraction: Float): Float =
+    if (connected) -heightDp * shoulderFraction else 4f
+
+/** Earlier shoulders cover later backgrounds; selection must never reverse that paint order. */
+internal fun tabStackZIndex(position: Int, tabCount: Int, dragging: Boolean): Float =
+    (if (dragging) tabCount + 1 else tabCount - position).toFloat()
 
 /**
  * A strip attached to the top edge: wide where it meets the screen and tucked inward below.
  * This is the inverse of a rounded rectangle. Its shoulders are the concave quarter-turn the
  * user sketched, rather than convex corners that make the island look like a floating pill.
  */
-private val TopConnectedIslandShape = GenericShape { size, _ ->
+internal val TopConnectedIslandShape = GenericShape { size, _ ->
     val r = size.height * .34f
     val bottom = size.height * .24f
     val k = .5522848f
@@ -215,6 +223,9 @@ class DocumentHost(val immersive: ImmersiveController) {
     /** The app bar for this document: its name, where it stands, and its own actions. */
     var topBar by mutableStateOf<(@Composable () -> Unit)?>(null)
 
+    /** Flush work before a design update is applied, without closing the document or its undo stack. */
+    var prepareDesignReload: (suspend () -> Unit)? = null
+
     /** Page navigation, the shapes tray and the tools. */
     var bottomBar by mutableStateOf<(@Composable () -> Unit)?>(null)
 
@@ -302,6 +313,10 @@ fun TabStrip(
     onMoveTab: (Int, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
+    val chrome = com.inkslate.data.LocalDesignConfig.current.chrome
+    val tabSpacingPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        tabStripSpacingDp(fullscreen, chrome.tabHeightDp, chrome.tabShoulderFraction).dp.toPx()
+    }
     // A tab being dragged along the strip, and how far it sits from its own slot. It changes places
     // with a neighbour once it is more than halfway over it, so the finger and the tab stay together.
     var draggingId by remember { mutableStateOf<String?>(null) }
@@ -313,8 +328,8 @@ fun TabStrip(
         while (true) {
             val i = tabs.indexOfFirst { it.id == id }
             if (i < 0) return
-            val next = tabs.getOrNull(i + 1)?.let { widths[it.id] }
-            val prev = tabs.getOrNull(i - 1)?.let { widths[it.id] }
+            val next = tabs.getOrNull(i + 1)?.let { widths[it.id]?.plus(tabSpacingPx) }
+            val prev = tabs.getOrNull(i - 1)?.let { widths[it.id]?.plus(tabSpacingPx) }
             if (dragOffset > 0 && next != null && dragOffset > next / 2f) {
                 move(i, i + 1); dragOffset -= next
             } else if (dragOffset < 0 && prev != null && -dragOffset > prev / 2f) {
@@ -332,7 +347,7 @@ fun TabStrip(
     // below are interactive, so every genuinely open part of the top edge belongs to the page or
     // Home screen underneath it.
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.TopStart) {
-        BoxWithConstraints(Modifier.fillMaxWidth().height(48.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().height((chrome.tabHeightDp + chrome.floatingTopGapDp * 2).dp)) {
         // On a narrow portrait screen, document actions outrank showing a whole tab label. The
         // tab contents scroll inside their island; allowing the island itself to overlap the
         // actions made both sets of buttons unreliable.
@@ -342,7 +357,9 @@ fun TabStrip(
             onToggleFullscreen != null
         ).dp
         Row(
-            Modifier.fillMaxWidth().height(44.dp).padding(horizontal = 4.dp),
+            Modifier.fillMaxWidth()
+                .padding(top = if (fullscreen) 0.dp else chrome.floatingTopGapDp.dp)
+                .height(chrome.tabHeightDp.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
@@ -357,20 +374,21 @@ fun TabStrip(
                     Icon(Icons.Default.Home, "Home", modifier = Modifier.size(19.dp))
                 }
             }
-            // Almost kiss the Home circle: the circle's right quadrant and the island's left
-            // shoulder then read as one intentional pair instead of two unrelated controls.
-            Spacer(Modifier.width(1.dp))
+            // The fullscreen shoulder almost kisses Home; windowed pills get a small clear gap.
+            Spacer(Modifier.width(if (fullscreen) 1.dp else 5.dp))
             Surface(
                 modifier = Modifier.widthIn(max = tabIslandMax).fillMaxHeight(),
-                shape = TopConnectedIslandShape,
+                shape = if (fullscreen) TopConnectedIslandShape else RoundedCornerShape(50),
                 color = MaterialTheme.colorScheme.surfaceContainer,
                 tonalElevation = 1.dp,
                 shadowElevation = 2.dp
             ) {
                 Row(
-                    // Keep the plus in the island's curved nose. Only the far end needs inset for
-                    // the matching shoulder; padding both ends pushed it needlessly from Home.
-                    Modifier.padding(end = 8.dp),
+                    // Reserve the outer shoulders independently of the individual tab shapes.
+                    Modifier.padding(
+                        start = if (fullscreen) 14.dp else 4.dp,
+                        end = if (fullscreen) 14.dp else 4.dp
+                    ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Opening another document sits beside Home, where it is found.
@@ -391,16 +409,19 @@ fun TabStrip(
                     Row(
                         Modifier.fillMaxHeight().horizontalScroll(rememberScrollState()),
                         verticalAlignment = Alignment.CenterVertically,
-                        // Adjacent shapes meet at the top edge. Negative spacing made the later
-                        // tab's gradient physically paint over the previous tab and let the first
-                        // tab intrude into the add control.
-                        horizontalArrangement = Arrangement.spacedBy(0.dp)
+                        // Overlap just the decorative shoulder. Earlier tabs paint above later
+                        // ones, so the next gradient fills its gutter without covering any label.
+                        // The first tab remains wholly after the separate Add control.
+                        horizontalArrangement = Arrangement.spacedBy(
+                            tabStripSpacingDp(fullscreen, chrome.tabHeightDp, chrome.tabShoulderFraction).dp
+                        )
                     ) {
                         for ((tabIndex, tab) in tabs.withIndex()) key(tab.id) {
                             DocumentTabChip(
                                 tab = tab,
                                 position = tabIndex,
                                 tabCount = tabs.size,
+                                connected = fullscreen,
                                 dragOffset = if (draggingId == tab.id) dragOffset else null,
                                 onWidth = { widths[tab.id] = it },
                                 onDragStart = { draggingId = tab.id; dragOffset = 0f },
@@ -452,8 +473,10 @@ fun TabStrip(
 }
 
 /** A folder tab connected to the top strip, then narrowing into the label below it. */
-private val ConnectedTabShape = GenericShape { size, _ ->
-    val shoulder = (size.height * .32f).coerceAtMost(size.width * .22f)
+internal fun connectedTabShape(first: Boolean, shoulderFraction: Float) = GenericShape { size, _ ->
+    // Use the same shoulder width as the strip overlap. The old width-relative cap could make
+    // a short filename's shoulder narrower than the overlap and hide the next tab's contents.
+    val shoulder = (size.height * shoulderFraction).coerceAtMost(size.width * .5f)
     val bottom = size.height * .12f
     val k = .5522848f
     moveTo(0f, 0f)
@@ -469,14 +492,21 @@ private val ConnectedTabShape = GenericShape { size, _ ->
         size.width - shoulder - bottom * k, size.height,
         size.width - shoulder - bottom, size.height
     )
-    lineTo(shoulder + bottom, size.height)
-    cubicTo(
-        shoulder + bottom * k, size.height,
-        shoulder, size.height - bottom * k,
-        shoulder, size.height - bottom
-    )
-    lineTo(shoulder, shoulder)
-    cubicTo(shoulder, shoulder - shoulder * k, shoulder * k, 0f, 0f, 0f)
+    if (first) {
+        lineTo(shoulder + bottom, size.height)
+        cubicTo(
+            shoulder + bottom * k, size.height,
+            shoulder, size.height - bottom * k,
+            shoulder, size.height - bottom
+        )
+        lineTo(shoulder, shoulder)
+        cubicTo(shoulder, shoulder - shoulder * k, shoulder * k, 0f, 0f, 0f)
+    } else {
+        // The preceding tab already owns this boundary's shoulder. A second left shoulder
+        // creates a notch which cuts through the next document's icon and name.
+        lineTo(0f, size.height)
+        lineTo(0f, 0f)
+    }
     close()
 }
 
@@ -493,8 +523,10 @@ private fun TabChip(
     /** Replaces the plain tap and long-press when the chip handles its own touches. */
     gestures: Modifier? = null,
     position: Int = 0,
-    tabCount: Int = 1
+    tabCount: Int = 1,
+    connected: Boolean = false
 ) {
+    val chrome = com.inkslate.data.LocalDesignConfig.current.chrome
     val step = if (tabCount <= 1) 0f else position / (tabCount - 1f)
     // Deliberately span the full container range. The previous .90 blend was so subtle that the
     // tabs looked flat; this reads clearly from brighter on the left to darker on the right.
@@ -507,7 +539,7 @@ private fun TabChip(
     val background = if (selected) androidx.compose.ui.graphics.lerp(
         resting,
         MaterialTheme.colorScheme.primaryContainer,
-        .24f
+        chrome.selectedTint
     ) else resting
     val content = if (selected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
     val accent = MaterialTheme.colorScheme.primary
@@ -515,8 +547,8 @@ private fun TabChip(
         modifier
             .zIndex(if (selected) 2f else if (focused) 1f else 0f)
             .fillMaxHeight()
-            .widthIn(min = 96.dp, max = 220.dp)
-            .clip(ConnectedTabShape)
+            .widthIn(min = chrome.tabMinWidthDp.dp, max = chrome.tabMaxWidthDp.dp)
+            .clip(if (connected) connectedTabShape(position == 0, chrome.tabShoulderFraction) else RoundedCornerShape(50))
             .background(background)
             // The document the bars belong to, marked the way a focused field is: a line under it.
             .drawBehind {
@@ -526,7 +558,14 @@ private fun TabChip(
                 }
             }
             .then(gestures ?: Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick))
-            .padding(horizontal = 10.dp),
+            // The shape's shoulders occupy real width. Keep both the PDF icon and close button
+            // inside its narrowest body; clipping a gradient must never clip the tab's content.
+            .padding(
+                start = (chrome.tabContentInsetDp + if (connected && position == 0)
+                    chrome.tabHeightDp * chrome.tabShoulderFraction else if (connected) 0f else 6f).dp,
+                end = (chrome.tabContentInsetDp + if (connected)
+                    chrome.tabHeightDp * chrome.tabShoulderFraction else 6f).dp
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -548,6 +587,7 @@ private fun DocumentTabChip(
     tab: DocTab,
     position: Int,
     tabCount: Int,
+    connected: Boolean,
     /** How far the tab has been dragged from its slot, or null when it is not being dragged. */
     dragOffset: Float?,
     onWidth: (Int) -> Unit,
@@ -617,7 +657,7 @@ private fun DocumentTabChip(
     Box(
         Modifier
             .onSizeChanged { onWidth(it.width) }
-            .zIndex(if (dragOffset != null) 1f else 0f)
+            .zIndex(tabStackZIndex(position, tabCount, dragOffset != null))
             .graphicsLayer {
                 translationX = dragOffset ?: 0f
                 if (dragOffset != null) shadowElevation = 6.dp.toPx()
@@ -629,6 +669,7 @@ private fun DocumentTabChip(
             onClick = onSelect,
             position = position,
             tabCount = tabCount,
+            connected = connected,
             gestures = gestures,
             label = tab.title ?: tab.file.name,
             leading = { if(!AppFlavor.musicView) Icon(icon, null, modifier = Modifier.size(16.dp)) },

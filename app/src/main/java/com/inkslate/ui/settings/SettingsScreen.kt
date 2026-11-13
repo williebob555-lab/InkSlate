@@ -366,7 +366,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 )
                 Text(
                     "Far left requires a long seven-turn scratch. Far right accepts a short " +
-                        "two-turn scratch. Dense shading is protected at every setting.",
+                        "two-turn scratch. Broad shading stays ink; a scratch erases only where it crosses existing marks. Undo restores it.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

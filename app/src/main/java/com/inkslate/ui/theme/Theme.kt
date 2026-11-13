@@ -6,6 +6,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import com.inkslate.core.DesignConfig
+import com.inkslate.data.LocalDesignConfig
 
 private val Ink = Color(0xFF3B82F6)
 private val InkDim = Color(0xFF1D4ED8)
@@ -47,8 +49,16 @@ fun InkSlateTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
+    val theme = LocalDesignConfig.current.theme
+    val colors = if (darkTheme) DarkColors.copy(
+        primary = Color(DesignConfig.argb(theme.darkAccent)),
+        background = Color(DesignConfig.argb(theme.darkBackground))
+    ) else LightColors.copy(
+        primary = Color(DesignConfig.argb(theme.lightAccent)),
+        background = Color(DesignConfig.argb(theme.lightBackground))
+    )
     MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
+        colorScheme = colors,
         content = content
     )
 }

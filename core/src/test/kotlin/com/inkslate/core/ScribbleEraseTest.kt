@@ -6,6 +6,49 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScribbleEraseTest {
+    // Hand-traced control points matching the tall, slanted loops in the attached screenshot.
+    // These spread sideways far enough that positional PCA used to follow the drift instead.
+    private fun driftingLoops(scale: Float = 1f, angle: Float = 0f): List<InkPoint> {
+        val trace = listOf(
+            0f to 52f, 18f to 4f, 23f to 0f, 21f to 12f,
+            12f to 58f, 36f to 4f, 43f to -2f, 41f to 10f,
+            26f to 57f, 53f to 8f, 61f to 4f, 61f to 17f,
+            43f to 65f
+        )
+        val c = kotlin.math.cos(angle)
+        val s = kotlin.math.sin(angle)
+        return trace.map { (x, y) -> InkPoint((x * c - y * s) * scale, (x * s + y * c) * scale, 2f) }
+    }
+
+    @Test fun `sideways drifting tall loops match screenshot scribbles`() {
+        assertTrue(ScribbleErase.isScribble(driftingLoops()))
+    }
+
+    @Test fun `drifting loops work diagonally horizontally and at small size`() {
+        listOf(0f, .8f, 1.57f, 2.5f).forEach { angle ->
+            listOf(.2f, 1f, 3f).forEach { scale ->
+                assertTrue("scale=$scale angle=$angle", ScribbleErase.isScribble(driftingLoops(scale, angle)))
+            }
+        }
+    }
+
+    @Test fun `design config can disable the drifting recogniser`() {
+        val before = DesignConfig.current
+        try {
+            DesignConfig.install(before.copy(scribble = before.scribble.copy(allowDrifting = false)))
+            assertFalse(ScribbleErase.isScribble(driftingLoops()))
+        } finally {
+            DesignConfig.install(before)
+        }
+    }
+
+    @Test fun `ordinary m and w are not long repeated scratches`() {
+        val m = listOf(0f to 20f, 0f to 0f, 10f to 20f, 20f to 0f, 30f to 20f)
+            .map { (x, y) -> InkPoint(x, y, 2f) }
+        assertFalse(ScribbleErase.isScribble(m))
+        assertFalse(ScribbleErase.isScribble(m.map { it.copy(y = -it.y) }))
+    }
+
     @Test fun `back and forth scratch is a scribble`() {
         val points = buildList {
             repeat(7) { pass ->

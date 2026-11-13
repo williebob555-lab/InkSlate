@@ -222,6 +222,15 @@ fun AppRoot(
     val immersive = rememberImmersive()
 
     val tabs = remember { mutableStateListOf<DocTab>() }
+    val designUpdates = com.inkslate.data.LocalDesignUpdates.current
+    androidx.compose.runtime.DisposableEffect(designUpdates, tabs) {
+        designUpdates.prepareReload = {
+            tabs.filter { it.loaded && !it.closeRequested.value }.forEach { tab ->
+                checkNotNull(tab.host.prepareDesignReload) { "A document is still loading. Try again in a moment." }.invoke()
+            }
+        }
+        onDispose { designUpdates.prepareReload = null }
+    }
     // Told whenever a tab opens or closes: InkSheets stops a closed song's recording.
     androidx.compose.runtime.LaunchedEffect(tabs) {
         androidx.compose.runtime.snapshotFlow { tabs.filter { !it.closeRequested.value }.map { it.file } }
@@ -728,9 +737,8 @@ fun AppRoot(
                         else -> null
                     },
                     fullscreen = immersive.isFullscreen,
-                    endReserved = if (!com.inkslate.AppFlavor.musicView && !homeShown &&
-                        !immersive.isFullscreen
-                    ) compactActionIslandWidthDp(windowWidthDp).dp else 0.dp
+                    endReserved = if (!com.inkslate.AppFlavor.musicView && !homeShown)
+                        compactActionIslandWidthDp(windowWidthDp, immersive.isFullscreen).dp else 0.dp
                 )
             }
 
@@ -738,7 +746,13 @@ fun AppRoot(
             // of the same top edge. They are deliberately drawn separately from the tab island:
             // the transparent space between them belongs to the page and receives page touches.
             if (!com.inkslate.AppFlavor.musicView && !homeShown && focusedTab != null) {
-                HostBar(focusedTab.host) { it.topBar }
+                // Surface propagates its full-screen minimum constraints to direct children.
+                // A height(44.dp) action bar placed there became screen-high and centered its
+                // controls halfway down the document. This layout-only overlay releases those
+                // minimums and anchors the actual action pill to the same top edge as the tabs.
+                Box(Modifier.fillMaxSize().zIndex(21f), contentAlignment = Alignment.TopEnd) {
+                    HostBar(focusedTab.host) { it.topBar }
+                }
             }
 
             // Every open document, whether or not any of it is on screen. Each keeps its marks,

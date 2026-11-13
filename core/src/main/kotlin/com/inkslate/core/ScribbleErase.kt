@@ -64,7 +64,9 @@ object ScribbleErase {
         // Dense fill advances its return strokes across an area. A scratch keeps returning through
         // one corridor. This scale-free ratio closes the old loophole where every fill smaller
         // than an absolute 14 document units bypassed the protection.
-        if (minorSpan / majorSpan > lerp(.40f, .58f, s)) return false
+        if (minorSpan / majorSpan > lerp(.40f, .58f, s)) {
+            return isDriftingScratch(sampled, s)
+        }
 
         // Count completed end-to-end trips, not every local direction change. Hooks, letters and
         // digitiser jitter may reverse often, but they do not repeatedly cross opposite zones of
@@ -87,7 +89,72 @@ object ScribbleErase {
                 side = reached
             }
         }
-        return traversals >= lerpInt(6, 2, s)
+        return traversals >= lerpInt(6, 2, s) || isDriftingScratch(sampled, s)
+    }
+
+    /**
+     * Long, narrow loops can march sideways while the pen keeps scratching up and down. Spatial
+     * PCA then follows that sideways march, losing the very reversals we need to recognise. Use
+     * the direction of travel instead: long up/down segments dominate regardless of their drift.
+     *
+     * A parallel hatch fill also has a strong travel direction. Keep this branch restricted to
+     * elongated strokes: broad fills and ordinary lines of handwriting remain ink. A narrow
+     * hatch and a scratch can be identical geometrically, which is why the caller still requires
+     * a hit on existing ink and why recognition remains optional and undoable.
+     */
+    private fun isDriftingScratch(points: List<Point>, sensitivity: Float): Boolean {
+        val tuning = DesignConfig.current.scribble
+        if (!tuning.allowDrifting) return false
+        var xx = 0f
+        var xy = 0f
+        var yy = 0f
+        for (i in 1 until points.size) {
+            val dx = points[i].x - points[i - 1].x
+            val dy = points[i].y - points[i - 1].y
+            xx += dx * dx
+            xy += dx * dy
+            yy += dy * dy
+        }
+        val energy = xx + yy
+        if (energy < 1f) return false
+        // Loops with a distinct long axis, not circles or a loose collection of pen movements.
+        val directionality = hypot(xx - yy, 2f * xy) / energy
+        if (directionality < .65f) return false
+        val angle = .5f * atan2(2f * xy, xx - yy)
+        val axisX = cos(angle)
+        val axisY = sin(angle)
+        val major = points.map { it.x * axisX + it.y * axisY }
+        val minor = points.map { -it.x * axisY + it.y * axisX }
+        val low = percentile(major, .04f)
+        val high = percentile(major, .96f)
+        val span = high - low
+        if (span < lerp(16f, tuning.minSpan, sensitivity)) return false
+        val across = percentile(minor, .96f) - percentile(minor, .04f)
+        if (across / span > tuning.maxCorridorRatio) return false
+
+        val share = lerp(.78f, .48f, sensitivity)
+        val lowerZone = (low + high - span * share) / 2f
+        val upperZone = (low + high + span * share) / 2f
+        var side = 0
+        var traversals = 0
+        var travel = 0f
+        for (i in points.indices) {
+            val next = when {
+                major[i] <= lowerZone -> -1
+                major[i] >= upperZone -> 1
+                else -> 0
+            }
+            if (next != 0) {
+                if (side != 0 && side != next) traversals++
+                side = next
+            }
+            if (i > 0) {
+                travel += kotlin.math.abs(major[i] - major[i - 1])
+            }
+        }
+        if (traversals < lerpInt(7, tuning.minTraversals, sensitivity)) return false
+        if (travel / span < tuning.minTravelRatio) return false
+        return true
     }
 
     /** Lowest working setting, plus a little margin for the next less-perfect attempt. */
