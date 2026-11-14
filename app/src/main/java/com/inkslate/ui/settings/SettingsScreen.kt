@@ -4,7 +4,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import android.view.MotionEvent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,8 +47,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +78,7 @@ import com.inkslate.data.DocumentRepo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -365,8 +367,20 @@ fun SettingsScreen(onBack: () -> Unit) {
                     enabled = tools.scribbleErase
                 )
                 Text(
-                    "Far left requires a long seven-turn scratch. Far right accepts a short " +
-                        "two-turn scratch. Broad shading stays ink; a scratch erases only where it crosses existing marks. Undo restores it.",
+                    "Minimum scratch speed: ${tools.scribbleMinimumSpeedDpPerSecond.roundToInt()} dp/s",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = tools.scribbleMinimumSpeedDpPerSecond,
+                    onValueChange = tools::updateScribbleMinimumSpeed,
+                    valueRange = ScribbleErase.MINIMUM_ALLOWED_SPEED_DP_PER_SECOND..ScribbleErase.MAXIMUM_ALLOWED_SPEED_DP_PER_SECOND,
+                    enabled = tools.scribbleErase
+                )
+                Text(
+                    "Low sensitivity requires a long seven-turn scratch. High sensitivity accepts a short " +
+                        "two-turn scratch. Slow strokes stay ink regardless of shape. Calibrate at your natural " +
+                        "scratch speed. Speed is measured on screen, independently of zoom. A scratch erases " +
+                        "only where it crosses existing marks. Undo restores it.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -766,8 +780,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     if (calibratingScribble) {
         ScribbleCalibrationDialog(
             current = tools.scribbleSensitivity,
+            currentMinimumSpeed = tools.scribbleMinimumSpeedDpPerSecond,
             onApply = {
-                tools.updateScribbleSensitivity(it)
+                tools.updateScribbleSensitivity(it.sensitivity)
+                tools.updateScribbleMinimumSpeed(it.minimumSpeedDpPerSecond)
                 tools.scribbleErase = true
                 tools.persistNow()
                 calibratingScribble = false
@@ -777,20 +793,33 @@ fun SettingsScreen(onBack: () -> Unit) {
     }
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun ScribbleCalibrationDialog(
     current: Float,
-    onApply: (Float) -> Unit,
+    currentMinimumSpeed: Float,
+    onApply: (ScribbleErase.Calibration) -> Unit,
     onDismiss: () -> Unit
 ) {
-    // Keep one stable collection for the lifetime of pointerInput. A list held in mutableStateOf
-    // is captured when the gesture coroutine starts; appending with `points = points + position`
-    // can therefore rebuild from that stale snapshot on every pointer event and leave calibration
-    // with only its last sample. The state list is both live inside the coroutine and observable by
-    // Canvas, so what the user sees is exactly what the recogniser receives.
+    // Capture the same raw monotonic timestamps/history as the drawing view. Drag detectors start
+    // after touch slop and omit pen-up duration, which would make calibration faster than runtime.
     val points = remember { mutableStateListOf<Offset>() }
-    var recommendation by remember { mutableStateOf<Float?>(null) }
+    val motion = remember { ArrayList<ScribbleErase.MotionSample>() }
+    var activePointerId by remember { mutableStateOf<Int?>(null) }
+    var recommendation by remember { mutableStateOf<ScribbleErase.Calibration?>(null) }
+    var observedSpeed by remember { mutableStateOf<Float?>(null) }
     var attempted by remember { mutableStateOf(false) }
+    val density = LocalDensity.current.density
+    fun capture(event: MotionEvent, index: Int) {
+        for (h in 0 until event.historySize) {
+            val x = event.getHistoricalX(index, h)
+            val y = event.getHistoricalY(index, h)
+            points.add(Offset(x, y))
+            motion.add(ScribbleErase.MotionSample(x / density, y / density, event.getHistoricalEventTime(h)))
+        }
+        points.add(Offset(event.getX(index), event.getY(index)))
+        motion.add(ScribbleErase.MotionSample(event.getX(index) / density, event.getY(index) / density, event.eventTime))
+    }
     val guide = MaterialTheme.colorScheme.onSurface.copy(alpha = .42f)
     val ink = MaterialTheme.colorScheme.primary
     AlertDialog(
@@ -798,31 +827,48 @@ private fun ScribbleCalibrationDialog(
         title = { Text("Calibrate scribble erase") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Scratch naturally back and forth across the line, then lift your pen.")
+                Text("Scratch quickly at your natural erasing speed across the line, then lift your pen. " +
+                    "This measures both the shape and minimum speed; slow writing stays ink.")
                 Canvas(
                     Modifier
                         .fillMaxWidth()
                         .heightIn(min = 180.dp, max = 180.dp)
                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = {
+                        .pointerInteropFilter { event ->
+                            when (event.actionMasked) {
+                                MotionEvent.ACTION_DOWN -> {
                                     points.clear()
-                                    points.add(it)
+                                    motion.clear()
+                                    activePointerId = event.getPointerId(0)
                                     recommendation = null
+                                    observedSpeed = null
                                     attempted = false
-                                },
-                                onDragEnd = {
-                                    attempted = true
-                                    recommendation = ScribbleErase.calibratedSensitivity(
-                                        points.map { InkPoint(it.x, it.y, 1f) }
-                                    )
-                                },
-                                onDragCancel = { points.clear() }
-                            ) { change, _ ->
-                                change.consume()
-                                points.add(change.position)
+                                    capture(event, 0)
+                                }
+                                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+                                    val index = activePointerId?.let(event::findPointerIndex) ?: -1
+                                    if (index >= 0) {
+                                        capture(event, index)
+                                        if (event.actionMasked == MotionEvent.ACTION_UP) {
+                                            attempted = true
+                                            observedSpeed = ScribbleErase.speedDpPerSecond(motion)
+                                            recommendation = ScribbleErase.calibrate(
+                                                points.map { InkPoint(it.x / density, it.y / density, 1f) }, motion
+                                            )
+                                            activePointerId = null
+                                        }
+                                    }
+                                }
+                                MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_POINTER_DOWN -> {
+                                    points.clear()
+                                    motion.clear()
+                                    activePointerId = null
+                                    recommendation = null
+                                    observedSpeed = null
+                                    attempted = false
+                                }
                             }
+                            true
                         }
                 ) {
                     drawLine(
@@ -837,9 +883,13 @@ private fun ScribbleCalibrationDialog(
                 }
                 Text(
                     when {
-                        recommendation != null -> "Recommended: ${scribbleSensitivityLabel(recommendation!!)}"
-                        attempted -> "That was not recognised even at maximum. Try a shorter, tighter back-and-forth scratch."
-                        else -> "Current: ${scribbleSensitivityLabel(current)}"
+                        recommendation != null -> "Measured: ${recommendation!!.observedSpeedDpPerSecond.roundToInt()} dp/s. " +
+                            "Recommended: ${scribbleSensitivityLabel(recommendation!!.sensitivity)}, " +
+                            "minimum ${recommendation!!.minimumSpeedDpPerSecond.roundToInt()} dp/s."
+                        attempted && observedSpeed != null && observedSpeed!! < ScribbleErase.MINIMUM_ALLOWED_SPEED_DP_PER_SECOND ->
+                            "That stroke was too slow (${observedSpeed!!.roundToInt()} dp/s). Try a quicker scratch."
+                        attempted -> "That was not recognised. Try a quicker, tighter back-and-forth scratch."
+                        else -> "Current: ${scribbleSensitivityLabel(current)}, minimum ${currentMinimumSpeed.roundToInt()} dp/s."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (attempted && recommendation == null) MaterialTheme.colorScheme.error

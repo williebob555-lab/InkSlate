@@ -49,6 +49,15 @@ class DesignConfigTest {
         assertThrows(IllegalArgumentException::class.java) {
             defaults.copy(scribble = defaults.scribble.copy(minTraversals = 1)).validated()
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            defaults.copy(scribble = defaults.scribble.copy(minimumSpeedDpPerSecond = 0f)).validated()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            defaults.copy(wheel = defaults.wheel.copy(layerTrackStartDp = 0f)).validated()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            defaults.copy(wheel = defaults.wheel.copy(layerLaneHalfAngleDegrees = Float.NaN)).validated()
+        }
     }
 
     @Test fun `palettes require supported colors and a usable number of choices`() {

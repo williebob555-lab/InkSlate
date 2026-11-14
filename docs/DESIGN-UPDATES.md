@@ -37,14 +37,35 @@ for all subscribers, publish its previous values under a **new, higher** revisio
 | --- | --- |
 | `chrome` | Tab minimum/maximum width, content inset, top gap, height, fullscreen shoulder proportion, selected tint |
 | `mixer` | Visibility header height, action-row height, minimum desired fader height |
-| `wheel` | Action size, main/activation/palette radii, palette-dot size, size-track start/length, color/submenu angles, palette colors |
-| `scribble` | Drifting-loop recognizer enable, corridor ratio, traversal count, minimum span, travel ratio |
+| `wheel` | Action size, main/activation/palette radii, palette-dot size, size-track start/length, color/submenu angles, palette colors, layer-lane start/length/angle/half-angle |
+| `scribble` | Drifting-loop recognizer enable, corridor ratio, traversal count, minimum span, travel ratio, default minimum pen speed |
 | `theme` | Light/dark accent and background colors |
 
 Dimensions ending in `Dp` use density-independent pixels. Scribble `minSpan` is in
 document coordinates. Colors accept `#RRGGBB` or `#AARRGGBB`. The existing personal
 scribble sensitivity still applies; design tuning does not overwrite tool preferences
 or layer/document contents.
+
+The layer pen occupies the bottom-right wheel lane. Pull outward to choose layer 1,
+then 2, then 3. Releasing arms that layer exclusively, reveals it, and restores its
+opacity if it was zero, while preserving other layers' visibility and faders.
+Scribble speed is measured in screen dp per second, independently of document zoom.
+Until calibrated, the minimum follows `scribble.minimumSpeedDpPerSecond`; a personal
+calibration or manual speed adjustment takes precedence and survives relaunches.
+Calibration measures both the shape sensitivity and the speed of the sample.
+
+Note Grid now previews section resizing during an unfinished stroke. This preview
+does not alter the saved document; lifting the pen commits the stroke and section
+layout in one undo step, and cancelling discards the preview. Editing or erasing
+content fits each section to everything left inside it, with the preset's original
+column width and row height as minimums. Neighboring content moves with its section.
+Explicit rows and columns remain present when empty. Committed layouts carry a
+`modifiedAt` clock so reopening or syncing with an older, larger layout cannot undo
+an intentional shrink. Legacy grids without clocks retain their original merge rule.
+
+Revision 2 adds these capabilities and requires the accompanying code changes.
+Install its matching app build before accepting this revision; earlier apps safely
+reject its unsupported keys and retain their current design.
 
 Scribbling on an empty page stays ink. Erasing requires crossing editable ink on a
 visible, nonzero-opacity annotation layer. Marks baked into the original PDF are not
@@ -69,5 +90,7 @@ recognition/rendering code or introduce a new UI component. Those changes need a
 Run `:core:test`, `:app:testInkslateDebugUnitTest`, and `:app:assembleInkslateDebug`.
 The core suite validates the repository JSON; Android tests cover revision selection,
 deferred updates, persistence/reset behavior, mixer height budgets and top-bar budgets.
+Note Grid integration tests also cover preview isolation, cancellation, committing neighbour
+movement, shrinking after deletion, and restoring content and layout together with undo/redo.
 Check the tablet in portrait/landscape and both fullscreen states before approving a
 design, particularly after changing chrome geometry or recognition thresholds.

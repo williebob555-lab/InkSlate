@@ -2,10 +2,89 @@ package com.inkslate.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ScribbleEraseTest {
+    private fun timed(points: List<InkPoint>, durationMillis: Long): List<ScribbleErase.MotionSample> =
+        points.mapIndexed { index, p ->
+            ScribbleErase.MotionSample(p.x, p.y, 1000L + durationMillis * index / (points.size - 1))
+        }
+
+    @Test fun `same scratch erases only at sufficient speed even at maximum sensitivity`() {
+        val points = driftingLoops()
+        assertTrue(ScribbleErase.isScribble(points, timed(points, 400L), 1f, 240f))
+        assertFalse(ScribbleErase.isScribble(points, timed(points, 6000L), 1f, 240f))
+    }
+
+    @Test fun `missing zero duration backward or nonfinite motion fails closed`() {
+        val points = driftingLoops()
+        val fast = timed(points, 400L)
+        listOf(
+            emptyList(), fast.take(1), timed(points, 0L), fast.reversed(),
+            fast.mapIndexed { i, p -> if (i == 3) p.copy(xDp = Float.NaN) else p }
+        ).forEach { motion ->
+            assertNull(ScribbleErase.speedDpPerSecond(motion))
+            assertFalse(ScribbleErase.isScribble(points, motion, 1f, 240f))
+        }
+    }
+
+    @Test fun `pausing before pen up counts toward scratch speed`() {
+        val points = driftingLoops()
+        val fast = timed(points, 400L)
+        val paused = fast + fast.last().copy(timeMillis = fast.last().timeMillis + 6000L)
+        assertTrue(ScribbleErase.isScribble(points, fast, 1f, 240f))
+        assertFalse(ScribbleErase.isScribble(points, paused, 1f, 240f))
+    }
+
+    @Test fun `historical samples preserve speed independently of batching`() {
+        val sparse = listOf(
+            ScribbleErase.MotionSample(0f, 0f, 100L),
+            ScribbleErase.MotionSample(30f, 40f, 200L),
+            ScribbleErase.MotionSample(0f, 80f, 300L)
+        )
+        val historical = sparse.zipWithNext().flatMap { (a, b) ->
+            (0..9).map { i ->
+                val f = i / 10f
+                ScribbleErase.MotionSample(a.xDp + (b.xDp - a.xDp) * f, a.yDp + (b.yDp - a.yDp) * f,
+                    a.timeMillis + (b.timeMillis - a.timeMillis) * i / 10L)
+            }
+        } + sparse.last()
+        assertEquals(500f, ScribbleErase.speedDpPerSecond(sparse)!!, .001f)
+        assertEquals(ScribbleErase.speedDpPerSecond(sparse)!!, ScribbleErase.speedDpPerSecond(historical)!!, .001f)
+    }
+
+    @Test fun `page zoom cannot change physical speed gate`() {
+        val points = driftingLoops()
+        val physicalMotion = timed(points, 400L)
+        listOf(.2f, 1f, 3f).forEach { pageScale ->
+            val onPage = points.map { it.copy(x = it.x * pageScale, y = it.y * pageScale) }
+            assertTrue(ScribbleErase.isScribble(onPage, physicalMotion, 1f, 240f))
+            assertFalse(ScribbleErase.isScribble(onPage, timed(points, 6000L), 1f, 240f))
+        }
+    }
+
+    @Test fun `calibration saves sensitivity and speed with natural variation margin`() {
+        val points = driftingLoops()
+        val fast = timed(points, 400L)
+        val calibrated = ScribbleErase.calibrate(points, fast)
+        assertNotNull(calibrated)
+        calibrated!!
+        assertEquals(ScribbleErase.speedDpPerSecond(fast)!!, calibrated.observedSpeedDpPerSecond, .001f)
+        assertEquals(calibrated.observedSpeedDpPerSecond * .65f, calibrated.minimumSpeedDpPerSecond, .001f)
+        assertTrue(ScribbleErase.isScribble(points, fast, calibrated.sensitivity, calibrated.minimumSpeedDpPerSecond))
+        assertFalse(ScribbleErase.isScribble(points, timed(points, 1000L), calibrated.sensitivity, calibrated.minimumSpeedDpPerSecond))
+        assertNull(ScribbleErase.calibrate(points, timed(points, 10000L)))
+        assertNull(ScribbleErase.calibrate(points, emptyList()))
+    }
+
+    @Test fun `fast ordinary line still remains ink`() {
+        val points = (0..30).map { InkPoint(it.toFloat(), 0f, 2f) }
+        assertFalse(ScribbleErase.isScribble(points, timed(points, 50L), 1f, 240f))
+    }
+
     // Hand-traced control points matching the tall, slanted loops in the attached screenshot.
     // These spread sideways far enough that positional PCA used to follow the drift instead.
     private fun driftingLoops(scale: Float = 1f, angle: Float = 0f): List<InkPoint> {

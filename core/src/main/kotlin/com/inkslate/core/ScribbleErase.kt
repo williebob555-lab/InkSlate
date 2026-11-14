@@ -15,8 +15,65 @@ import kotlin.math.sin
  */
 object ScribbleErase {
     const val DEFAULT_SENSITIVITY = 0.82f
+    const val MINIMUM_ALLOWED_SPEED_DP_PER_SECOND = 80f
+    const val MAXIMUM_ALLOWED_SPEED_DP_PER_SECOND = 2000f
+
+    /** Raw, unsmoothed screen movement in density-independent pixels and monotonic input time. */
+    data class MotionSample(val xDp: Float, val yDp: Float, val timeMillis: Long)
+
+    data class Calibration(
+        val sensitivity: Float,
+        val minimumSpeedDpPerSecond: Float,
+        val observedSpeedDpPerSecond: Float
+    )
 
     /**
+     * Include pen-down, all historical samples and pen-up. The entire contact duration counts,
+     * including pauses; event batching, smoothing and document zoom cannot inflate this speed.
+     * Missing or invalid timing fails closed rather than turning a slow stroke into an eraser.
+     */
+    fun speedDpPerSecond(motion: List<MotionSample>): Float? {
+        if (motion.size < 2 || motion.any { !it.xDp.isFinite() || !it.yDp.isFinite() || it.timeMillis < 0L }) return null
+        var distance = 0.0
+        for (i in 1 until motion.size) {
+            if (motion[i].timeMillis < motion[i - 1].timeMillis) return null
+            distance += hypot(
+                (motion[i].xDp - motion[i - 1].xDp).toDouble(),
+                (motion[i].yDp - motion[i - 1].yDp).toDouble()
+            )
+        }
+        val elapsed = motion.last().timeMillis - motion.first().timeMillis
+        if (elapsed <= 0L) return null
+        val speed = (distance * 1000.0 / elapsed).toFloat()
+        return speed.takeIf { it.isFinite() }
+    }
+
+    /** Runtime recognition always checks both intent (speed) and stroke geometry. */
+    fun isScribble(
+        points: List<InkPoint>,
+        motion: List<MotionSample>,
+        sensitivity: Float = DEFAULT_SENSITIVITY,
+        minimumSpeedDpPerSecond: Float = DesignConfig.current.scribble.minimumSpeedDpPerSecond
+    ): Boolean {
+        if (!minimumSpeedDpPerSecond.isFinite() ||
+            minimumSpeedDpPerSecond !in MINIMUM_ALLOWED_SPEED_DP_PER_SECOND..MAXIMUM_ALLOWED_SPEED_DP_PER_SECOND) return false
+        val speed = speedDpPerSecond(motion) ?: return false
+        return speed >= minimumSpeedDpPerSecond && isScribble(points, sensitivity)
+    }
+
+    /** Calibrate geometry and speed together, leaving 35% speed headroom for natural variation. */
+    fun calibrate(points: List<InkPoint>, motion: List<MotionSample>): Calibration? {
+        val speed = speedDpPerSecond(motion) ?: return null
+        if (speed < MINIMUM_ALLOWED_SPEED_DP_PER_SECOND) return null
+        val sensitivity = calibratedSensitivity(points) ?: return null
+        val minimum = (speed * .65f).coerceIn(
+            MINIMUM_ALLOWED_SPEED_DP_PER_SECOND, MAXIMUM_ALLOWED_SPEED_DP_PER_SECOND
+        )
+        return Calibration(sensitivity, minimum, speed)
+    }
+
+    /**
+     * Geometry only, for calibration and geometric regressions. Erase callers use the timed overload.
      * [sensitivity] deliberately spans a very wide range. At zero this requires a long,
      * unmistakable seven-reversal scratch. At one, a short two-reversal scratch is enough when
      * it actually crosses existing ink (the caller performs that final safety check).

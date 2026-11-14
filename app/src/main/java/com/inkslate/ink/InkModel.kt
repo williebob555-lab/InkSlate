@@ -1,6 +1,7 @@
 package com.inkslate.ink
 
 import com.inkslate.data.StrokeIdGen
+import com.inkslate.core.InkCanvas
 
 /**
  * One document's marks, and the history of changes to them.
@@ -16,8 +17,13 @@ import com.inkslate.data.StrokeIdGen
  */
 class InkModel(var ids: StrokeIdGen = StrokeIdGen("local")) {
 
-    /** An undoable edit, as add/remove sets so erase-many is a single step. */
-    data class Op(val added: List<Stroke>, val removed: List<Stroke>)
+    /** Stroke sets and optional structural snapshots form one undo step across every view. */
+    data class Op(
+        val added: List<Stroke>,
+        val removed: List<Stroke>,
+        val canvasBefore: InkCanvas? = null,
+        val canvasAfter: InkCanvas? = null
+    )
 
     val strokes = ArrayList<Stroke>()
     val undoStack = ArrayList<Op>()

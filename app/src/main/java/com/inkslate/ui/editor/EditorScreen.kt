@@ -2435,6 +2435,9 @@ fun EditorScreen(
                                             else config.strokeWidth = picked
                                         }
                                     }
+                                    QuickWheelAction.LAYER_DRAW -> {
+                                        tools.selectDrawLayer(gesture.previewLayer ?: com.inkslate.core.AnnotationLayers.ONE)
+                                    }
                                     else -> when (
                                         quickWheelMainAction(actions, current, gesture.anchor, gesture.pointer)
                                     ) {
@@ -2447,6 +2450,11 @@ fun EditorScreen(
                                             config.tool = Tool.DRAW
                                         }
                                         QuickWheelAction.ERASER -> tools.edit { it.tool = Tool.ERASER }
+                                        QuickWheelAction.LAYER_DRAW -> {
+                                            if ((gesture.pointer - gesture.anchor).getDistance() >=
+                                                com.inkslate.core.DesignConfig.current.wheel.activationRadiusDp * density.density
+                                            ) tools.selectDrawLayer(com.inkslate.core.AnnotationLayers.ONE)
+                                        }
                                         QuickWheelAction.SELECT_ONCE -> {
                                             val mode = tools.activeMode
                                             val previous = tools.configFor(mode).tool

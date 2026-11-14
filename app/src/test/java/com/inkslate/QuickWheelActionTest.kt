@@ -7,10 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class QuickWheelActionTest {
-    @Test fun `compact wheel defaults contain the requested seven actions`() {
+    @Test fun `compact wheel defaults contain eight actions including layer drawing`() {
         assertEquals(QuickWheelAction.MAX_ACTIONS, QuickWheelAction.DEFAULTS.size)
         assertTrue(QuickWheelAction.SELECT_ONCE in QuickWheelAction.DEFAULTS)
         assertTrue(QuickWheelAction.UNDO in QuickWheelAction.DEFAULTS)
+        assertTrue(QuickWheelAction.LAYER_DRAW in QuickWheelAction.DEFAULTS)
+        assertEquals(3, QuickWheelAction.DEFAULTS.indexOf(QuickWheelAction.LAYER_DRAW))
         assertFalse(QuickWheelAction.REDO in QuickWheelAction.DEFAULTS)
     }
 

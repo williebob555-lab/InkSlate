@@ -39,6 +39,7 @@ enum class QuickWheelAction(val label: String) {
     PEN("Pen"),
     HIGHLIGHTER("Highlighter"),
     ERASER("Eraser"),
+    LAYER_DRAW("Draw on layer"),
     SELECT_ONCE("Select once"),
     UNDO("Undo"),
     COLOR("Colour"),
@@ -46,7 +47,7 @@ enum class QuickWheelAction(val label: String) {
     REDO("Redo");
 
     companion object {
-        const val MAX_ACTIONS = 7
+        const val MAX_ACTIONS = 8
         val DEFAULTS = entries.filter { it != REDO }
     }
 }
@@ -130,6 +131,10 @@ class ToolState(private val context: Context) {
     /** Wide 0..1 range: seven clear reversals at zero, two quick reversals at one. */
     var scribbleSensitivity by mutableStateOf(com.inkslate.core.ScribbleErase.DEFAULT_SENSITIVITY)
         private set
+    private var calibratedScribbleSpeed by mutableStateOf<Float?>(null)
+    /** Personal calibration overrides the live design default only after it has been set. */
+    val scribbleMinimumSpeedDpPerSecond: Float
+        get() = calibratedScribbleSpeed ?: com.inkslate.core.DesignConfig.current.scribble.minimumSpeedDpPerSecond
     var cropMargins by mutableStateOf(false)
     var rulerVisible by mutableStateOf(false)
     /** Mixer channels currently audible/visible. Zero deliberately shows the original file only. */
@@ -378,6 +383,21 @@ class ToolState(private val context: Context) {
         persist()
     }
 
+    /** A layer pen arms exactly one channel and makes its ink visible without muting others. */
+    fun selectDrawLayer(layer: Int) {
+        require(layer == AnnotationLayers.ONE || layer == AnnotationLayers.TWO || layer == AnnotationLayers.THREE)
+        if (active.brush == BrushType.HIGHLIGHTER) active.toggleHighlighter()
+        active.tool = Tool.DRAW
+        recordLayerMask = layer
+        visibleLayerMask = visibleLayerMask or layer
+        val index = when (layer) { AnnotationLayers.ONE -> 0; AnnotationLayers.TWO -> 1; else -> 2 }
+        if (layerOpacities[index] == 0f) {
+            layerOpacities = layerOpacities.toMutableList().also { it[index] = 1f }
+        }
+        revision++
+        persist()
+    }
+
     fun autoArmLayerOne() {
         if (recordLayerMask != 0) return
         recordLayerMask = AnnotationLayers.ONE
@@ -401,6 +421,13 @@ class ToolState(private val context: Context) {
 
     fun updateScribbleSensitivity(value: Float) {
         scribbleSensitivity = value.coerceIn(0f, 1f)
+        revision++
+        persist()
+    }
+
+    fun updateScribbleMinimumSpeed(value: Float) {
+        if (!value.isFinite()) return
+        calibratedScribbleSpeed = value.coerceIn(80f, 2000f)
         revision++
         persist()
     }
@@ -465,6 +492,7 @@ class ToolState(private val context: Context) {
         view.snapHighlighterToText = snapHighlighterToText
         view.scribbleErase = scribbleErase
         view.scribbleSensitivity = scribbleSensitivity
+        view.scribbleMinimumSpeedDpPerSecond = scribbleMinimumSpeedDpPerSecond
         view.visibleLayerMask = visibleLayerMask
         view.recordLayerMask = recordLayerMask
         view.layerOpacities = layerOpacities.toFloatArray()
@@ -640,6 +668,10 @@ class ToolState(private val context: Context) {
             .putString(K_QUICK_WHEEL_ACTIONS, quickWheelActions.joinToString(",") { it.name })
             .putBoolean(K_SCRIBBLE_ERASE, scribbleErase)
             .putFloat(K_SCRIBBLE_SENSITIVITY, scribbleSensitivity)
+            .apply {
+                calibratedScribbleSpeed?.let { putFloat(K_SCRIBBLE_SPEED, it) }
+                    ?: remove(K_SCRIBBLE_SPEED)
+            }
             .putInt(K_VISIBLE_LAYERS, visibleLayerMask)
             .putInt(K_RECORD_LAYERS, recordLayerMask)
             .putString(K_LAYER_OPACITIES, layerOpacities.joinToString(","))
@@ -683,11 +715,20 @@ class ToolState(private val context: Context) {
             ?.take(QuickWheelAction.MAX_ACTIONS)
             ?.ifEmpty { null }
             ?: QuickWheelAction.DEFAULTS
+        if (!sp.getBoolean(K_LAYER_WHEEL_MIGRATED, false)) {
+            val selected = quickWheelActions.toSet() + QuickWheelAction.LAYER_DRAW
+            quickWheelActions = QuickWheelAction.entries.filter { it in selected }.take(QuickWheelAction.MAX_ACTIONS)
+            sp.edit().putBoolean(K_LAYER_WHEEL_MIGRATED, true)
+                .putString(K_QUICK_WHEEL_ACTIONS, quickWheelActions.joinToString(",") { it.name }).apply()
+        }
         scribbleErase = sp.getBoolean(K_SCRIBBLE_ERASE, false)
         scribbleSensitivity = sp.getFloat(
             K_SCRIBBLE_SENSITIVITY,
             com.inkslate.core.ScribbleErase.DEFAULT_SENSITIVITY
         ).coerceIn(0f, 1f)
+        calibratedScribbleSpeed = if (sp.contains(K_SCRIBBLE_SPEED)) {
+            sp.getFloat(K_SCRIBBLE_SPEED, 240f).takeIf { it.isFinite() }?.coerceIn(80f, 2000f)
+        } else null
         visibleLayerMask = AnnotationLayers.mixerMask(
             sp.getInt(K_VISIBLE_LAYERS, sp.getInt(K_ACTIVE_LAYERS, AnnotationLayers.ONE))
         )
@@ -744,8 +785,10 @@ class ToolState(private val context: Context) {
         private const val K_SNAP_TEXT = "snap_text"
         private const val K_QUICK_WHEEL = "quick_action_wheel"
         private const val K_QUICK_WHEEL_ACTIONS = "quick_action_wheel_actions"
+        private const val K_LAYER_WHEEL_MIGRATED = "layer_quick_wheel_migrated"
         private const val K_SCRIBBLE_ERASE = "scribble_erase"
         private const val K_SCRIBBLE_SENSITIVITY = "scribble_sensitivity"
+        private const val K_SCRIBBLE_SPEED = "scribble_minimum_speed_dp_per_second"
         private const val K_ACTIVE_LAYERS = "annotation_layers"
         private const val K_VISIBLE_LAYERS = "visible_annotation_layers"
         private const val K_RECORD_LAYERS = "record_annotation_layers"

@@ -39,6 +39,10 @@ data class DesignConfig(
         val sizeTrackLengthDp: Float = 190f,
         val colorArcDegrees: Float = 58f,
         val submenuEntryDegrees: Float = 15f,
+        val layerTrackStartDp: Float = 74f,
+        val layerTrackLengthDp: Float = 120f,
+        val layerEntryAngleDegrees: Float = 45f,
+        val layerLaneHalfAngleDegrees: Float = 22f,
         val palette: List<String> = listOf("#111827", "#2563EB", "#7C3AED", "#DC2626", "#F59E0B", "#16A34A", "#0891B2", "#FDE047", "#FFFFFF")
     )
     @Serializable data class Scribble(
@@ -46,7 +50,8 @@ data class DesignConfig(
         val minTraversals: Int = 3,
         val minSpan: Float = 4f,
         val minTravelRatio: Float = 3.4f,
-        val allowDrifting: Boolean = true
+        val allowDrifting: Boolean = true,
+        val minimumSpeedDpPerSecond: Float = 240f
     )
     @Serializable data class Theme(
         val darkAccent: String = "#3B82F6",
@@ -74,11 +79,14 @@ data class DesignConfig(
             range(colorRadiusDp, mainRadiusDp + 20f, 200f); range(colorDotDp, 16f, 40f)
             range(sizeTrackStartDp, activationRadiusDp, 150f); range(sizeTrackLengthDp, 60f, 300f)
             range(colorArcDegrees, 20f, 90f); range(submenuEntryDegrees, 5f, 35f)
+            range(layerTrackStartDp, activationRadiusDp, 150f); range(layerTrackLengthDp, 60f, 240f)
+            range(layerEntryAngleDegrees, -180f, 180f); range(layerLaneHalfAngleDegrees, 5f, 35f)
             require(palette.size in 2..16); palette.forEach(::argb)
         }
         with(scribble) {
             range(maxCorridorRatio, .3f, 2f); require(minTraversals in 2..8)
             range(minSpan, 2f, 30f); range(minTravelRatio, 2f, 10f)
+            range(minimumSpeedDpPerSecond, 80f, 2000f)
         }
         with(theme) { listOf(darkAccent, lightAccent, darkBackground, lightBackground).forEach(::argb) }
     }

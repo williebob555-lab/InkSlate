@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": 1,
-  "summary": "Floating top pills, connected fullscreen tabs, usable mixer faders and drifting-loop scribble recognition.",
+  "revision": 2,
+  "summary": "Open note-grid edges with live resizing and content-aware shrinking, calibrated scribble speed and an outward layer-drawing lane on the quick wheel.",
   "chrome": {
     "tabMinWidthDp": 96,
     "tabMaxWidthDp": 220,
@@ -26,6 +26,10 @@
     "sizeTrackLengthDp": 190,
     "colorArcDegrees": 58,
     "submenuEntryDegrees": 15,
+    "layerTrackStartDp": 74,
+    "layerTrackLengthDp": 120,
+    "layerEntryAngleDegrees": 45,
+    "layerLaneHalfAngleDegrees": 22,
     "palette": ["#111827", "#2563EB", "#7C3AED", "#DC2626", "#F59E0B", "#16A34A", "#0891B2", "#FDE047", "#FFFFFF"]
   },
   "scribble": {
@@ -33,7 +37,8 @@
     "minTraversals": 3,
     "minSpan": 4,
     "minTravelRatio": 3.4,
-    "allowDrifting": true
+    "allowDrifting": true,
+    "minimumSpeedDpPerSecond": 240
   },
   "theme": {
     "darkAccent": "#3B82F6",
