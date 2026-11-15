@@ -14,7 +14,8 @@ class WorkspaceLayoutBudgetTest {
         val tabs = tabIslandMaxWidthDp(width, actions, fullscreenControl = true)
         val occupied = 38f + 5f + tabs + 8f + actions + 43f
         assertTrue("top islands must fit within the viewport", occupied <= width)
-        assertEquals(140f, tabs, .001f)
+        // Automatic saving frees the former Save button's 40 dp for tabs.
+        assertEquals(180f, tabs, .001f)
     }
 
     @Test fun `very narrow layout preserves controls and scrolls tab contents`() {
@@ -22,7 +23,7 @@ class WorkspaceLayoutBudgetTest {
         val actions = compactActionIslandWidthDp(width)
         val tabs = tabIslandMaxWidthDp(width, actions, fullscreenControl = true)
         val occupied = 38f + 5f + tabs + 8f + actions + 43f
-        assertEquals(100f, tabs, .001f)
+        assertEquals(140f, tabs, .001f)
         assertTrue(occupied <= width)
     }
 
