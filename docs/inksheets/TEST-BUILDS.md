@@ -4,6 +4,15 @@ Newest first. These notes describe changes made, not confirmation that every rep
 
 ## Next test build
 
+- **Filters move freely over infinite whiteboards.** Dragging, resizing, and two-finger transforms no longer stop at the original PDF page boundary. New filters appear in the current view at its zoom; fixed-page documents retain their page limits.
+- **Shape comes before size when creating a document.** Size and page-count controls appear only for Fixed pages. Infinite whiteboards no longer offer a misleading starting size or inherit a hidden fixed-page selection.
+- **Layer faders use the full mixer height.** Visibility, Write, and Filter buttons sit to the left of each fader, with thin vertical separators between layers. Width and button geometry are configurable and account for enlarged text.
+- **The document menu is reorganized.** Share and Export are prominent; View & appearance, History, and File options open within the same bounded menu. Reading-style selection uses proper checkmarks instead of padded text.
+- **Save buttons are removed from editor chrome and the menu.** Automatic writing continues; checkpoints, history, sharing, and export remain. The compact tab strip regains the removed button's reserved space.
+- **Validation:** 124 related core, native Android drawing/gesture, and desktop Compose tests passed. Menu/form layouts pass all twelve workspace sizes in both themes; fader geometry and interactions pass narrow, wide, and enlarged-text checks. Both apps compile and the InkSlate debug APK packages. Physical-tablet feel still needs field confirmation.
+
+## 1.2.2-test.355 - contextual selection and stamp controls
+
 - **Selection actions have a new contextual bar.** Object names, labeled Duplicate/Delete/Done actions, and a responsive property lane replace the old fixed row. Android selections span the complete toolbar width above the mixer. Narrow layouts offer an explicit control for more properties.
 - **Edit the selection without changing the drawing pen.** Color and weight come from the selected objects; mixed values are explicit. Stamp edits retain their settings and differentiated line weights. Text and pictures expose the actions relevant to them.
 - **Stamp placement uses the same controls.** Choosing a stamp replaces the chooser with its properties and a repeated-placement indicator, rather than stacking contextual surfaces.

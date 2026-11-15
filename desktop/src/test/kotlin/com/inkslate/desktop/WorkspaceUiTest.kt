@@ -115,7 +115,8 @@ class WorkspaceUiTest {
 
             // Open the first document from Home.
             onAllNodes(hasText("Alpha", substring = true), useUnmergedTree = true).onFirst().performClick()
-            waitFor("Alpha to open") { count("Close Alpha.pdf") == 1 && count("Save into the document") == 1 }
+            waitFor("Alpha to open") { count("Close Alpha.pdf") == 1 && count("Document actions") == 1 }
+            assertEquals("automatic saving needs no persistent Save button", 0, count("Save into the document"))
             waitFor("Alpha's pages") { shortcuts.save != null }
             shot("1-alpha")
 
@@ -132,7 +133,7 @@ class WorkspaceUiTest {
             onNode(hasText("Open to the side"), useUnmergedTree = true).performClick()
             waitFor("the split") { count("Close split view") == 1 }
             shot("4-split-two-documents")
-            assertEquals("one app bar for the workspace, not one per document", 1, count("Save into the document"))
+            assertEquals("one app bar for the workspace, not one per document", 1, count("Document actions"))
             assertEquals("one set of tools for the workspace", 1, count("Ruler"))
             assertEquals("one page bar for the workspace", 1, count("Next page"))
 
@@ -173,7 +174,7 @@ class WorkspaceUiTest {
             onNode(hasText("Open a second view to the side"), useUnmergedTree = true).performClick()
             waitFor("Beta twice") { count("Showing in both halves") == 1 }
             shot("5-split-same-document")
-            assertEquals(1, count("Save into the document"))
+            assertEquals(1, count("Document actions"))
             assertEquals(1, count("Ruler"))
 
             // Ink drawn into the right half is ink in the document - so it shows in the left half
@@ -194,7 +195,7 @@ class WorkspaceUiTest {
             onNodeWithContentDescription("Close split view").performClick()
             waitFor("one pane again") { count("Close split view") == 0 }
             shot("8-single")
-            assertEquals(1, count("Save into the document"))
+            assertEquals(1, count("Document actions"))
         }
     }
 }

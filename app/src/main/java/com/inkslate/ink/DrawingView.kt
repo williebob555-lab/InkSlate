@@ -668,10 +668,13 @@ class DrawingView @JvmOverloads constructor(
         if (existing >= 0) {
             layerFilters.removeAt(existing)
         } else {
-            val w = pageWidthPt * .58f
-            val h = pageHeightPt * .34f
-            val cx = pageWidthPt / 2f
-            val cy = pageHeightPt / 2f
+            val infinite = canvas?.isUnbounded == true
+            val scale = currentScale().coerceAtLeast(.001f)
+            val centre = if (infinite) viewCenterInPage() else floatArrayOf(pageWidthPt / 2f, pageHeightPt / 2f)
+            val w = (if (infinite) width / scale else pageWidthPt) * .58f
+            val h = (if (infinite) height / scale else pageHeightPt) * .34f
+            val cx = centre[0]
+            val cy = centre[1]
             layerFilters.add(LayerFilter(currentPage, layer, cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f))
         }
         onLayerFiltersChanged?.invoke(layerFiltersMask())
@@ -1085,8 +1088,10 @@ class DrawingView @JvmOverloads constructor(
         val y = tmpPts[1]
         val dx = x - filterGrabAt[0]
         val dy = y - filterGrabAt[1]
+        val infinite = canvas?.isUnbounded == true
         val next = if (filterGrabHandle == FILTER_MOVE) {
-            var moved = old.moved(dx, dy)
+            val moved = old.moved(dx, dy)
+            if (infinite) moved else {
             val shiftX = when {
                 moved.left < 0f -> -moved.left
                 moved.right > pageWidthPt -> pageWidthPt - moved.right
@@ -1098,6 +1103,7 @@ class DrawingView @JvmOverloads constructor(
                 else -> 0f
             }
             moved.moved(shiftX, shiftY)
+            }
         } else {
             var l = old.left
             var t = old.top
@@ -1111,7 +1117,7 @@ class DrawingView @JvmOverloads constructor(
                 FILTER_TOP, FILTER_TOP_LEFT, FILTER_TOP_RIGHT -> t = y
                 FILTER_BOTTOM, FILTER_BOTTOM_LEFT, FILTER_BOTTOM_RIGHT -> b = y
             }
-            old.withBounds(
+            if (infinite) old.withBounds(l, t, r, b) else old.withBounds(
                 l.coerceIn(0f, pageWidthPt), t.coerceIn(0f, pageHeightPt),
                 r.coerceIn(0f, pageWidthPt), b.coerceIn(0f, pageHeightPt)
             )
@@ -1183,7 +1189,8 @@ class DrawingView @JvmOverloads constructor(
             focusY - filterTransformFocus[1],
             scale,
             pageW,
-            pageH
+            pageH,
+            bounded = canvas?.isUnbounded != true
         )
         renderedInk?.close(); renderedInk = null
         invalidate()

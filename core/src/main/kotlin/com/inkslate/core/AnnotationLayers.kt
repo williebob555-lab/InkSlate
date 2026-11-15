@@ -84,8 +84,16 @@ data class LayerFilter(
         scale: Float,
         pageWidth: Float,
         pageHeight: Float,
-        minimum: Float = 24f
+        minimum: Float = 24f,
+        bounded: Boolean = true
     ): LayerFilter {
+        if (!bounded) {
+            val newWidth = (width * scale).coerceAtLeast(minimum)
+            val newHeight = (height * scale).coerceAtLeast(minimum)
+            val newLeft = left + width / 2f + focusDx - newWidth / 2f
+            val newTop = top + height / 2f + focusDy - newHeight / 2f
+            return copy(left = newLeft, top = newTop, right = newLeft + newWidth, bottom = newTop + newHeight)
+        }
         val pageW = pageWidth.coerceAtLeast(minimum)
         val pageH = pageHeight.coerceAtLeast(minimum)
         val newWidth = (width * scale).coerceIn(minimum, pageW)

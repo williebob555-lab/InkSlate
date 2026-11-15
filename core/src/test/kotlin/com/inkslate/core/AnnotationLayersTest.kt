@@ -114,4 +114,20 @@ class AnnotationLayersTest {
     @Test fun `every nonempty layer combination has a distinct colour`() {
         assertEquals(7, (1..7).map(AnnotationLayers::colour).toSet().size)
     }
+
+    @Test fun `infinite filter pinch ignores seed page bounds in every direction`() {
+        val original = LayerFilter(0, 2, 40f, 50f, 140f, 110f)
+        val negative = original.pinched(-1500f, -2500f, 3f, 200f, 160f, bounded = false)
+        assertEquals(300f, negative.width, .001f)
+        assertEquals(180f, negative.height, .001f)
+        assertEquals(-1410f, (negative.left + negative.right) / 2f, .001f)
+        assertEquals(-2420f, (negative.top + negative.bottom) / 2f, .001f)
+        val positive = original.pinched(5000f, 7000f, 10f, 200f, 160f, bounded = false)
+        assertEquals(1000f, positive.width, .001f)
+        assertTrue(positive.left > 200f)
+        assertTrue(positive.top > 160f)
+        val small = original.pinched(-1000f, 1000f, .001f, 200f, 160f, bounded = false)
+        assertEquals(24f, small.width, .001f)
+        assertEquals(24f, small.height, .001f)
+    }
 }

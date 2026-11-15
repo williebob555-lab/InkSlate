@@ -36,7 +36,7 @@ for all subscribers, publish its previous values under a **new, higher** revisio
 | Section | Editable design values |
 | --- | --- |
 | `chrome` | Tab minimum/maximum width, content inset, top gap, height, fullscreen shoulder proportion, selected tint |
-| `mixer` | Visibility header height, action-row height, minimum desired fader height |
+| `mixer` | Visibility-button height, action-button height, minimum desired fader height, control width, minimum channel width, separator spacing and reserved pen width |
 | `wheel` | Action size, main/activation/palette radii, palette-dot size, size-track start/length, color/submenu angles, palette colors, layer-lane start/length/angle/half-angle |
 | `scribble` | Drifting-loop recognizer enable, corridor ratio, traversal count, minimum span, travel ratio, default minimum pen speed |
 | `noteGrid` | Section-control size, touch-target size, edge offset |
@@ -126,3 +126,26 @@ Note Grid integration tests also cover preview isolation, cancellation, committi
 movement, shrinking after deletion, and restoring content and layout together with undo/redo.
 Check the tablet in portrait/landscape and both fullscreen states before approving a
 design, particularly after changing chrome geometry or recognition thresholds.
+
+## Revision 5 - whiteboard and editor controls
+
+Layer controls now sit to the left of each full-height opacity fader, with a vertical separator
+between channels. `mixer.controlWidthDp`, `minimumChannelWidthDp`, and `channelGapDp` tune the
+horizontal geometry; `minimumPenWidthDp` controls when the mixer moves below the pen controls.
+The minimum channel width must leave at least 28 dp beyond the control
+column. Button dimensions scale with text size. Existing visibility/action heights now apply to
+the side buttons, rather than consuming slider travel. The fader takes the complete channel height.
+
+Infinite whiteboards no longer clamp filter dragging, corner resizing or two-finger movement and
+scaling to the seed PDF page. New filters are centred in the current viewport and sized for its
+zoom. Fixed PDF pages retain their page constraints. Filters still override local viewing/writing.
+
+New-document Shape comes before size and page count; only Fixed pages exposes those controls.
+Infinite whiteboards use a neutral preview and an internal default PDF seed, independently of the
+last selected fixed-page size. Neither is a limit on the whiteboard.
+
+The document menu now groups View & appearance, History and File options in one bounded menu,
+with Share/Export prominent and selected reading styles marked consistently. Save buttons are
+removed from editor chrome and the menu; automatic writing, checkpoints, export and sharing remain.
+
+Revision 5 needs its matching app build; older apps reject its new keys and keep their last design.

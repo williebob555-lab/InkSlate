@@ -77,13 +77,40 @@ fun NewDocumentDialog(
                         Modifier
                             .padding(start = 12.dp)
                             .height(58.dp)
-                            .aspectRatio(size.width / size.height)
+                            .aspectRatio(if (canvas) 1.4f else size.width / size.height)
                             .clip(RoundedCornerShape(4.dp))
                             .border(
                                 1.dp,
                                 MaterialTheme.colorScheme.outline,
                                 RoundedCornerShape(4.dp)
                             )
+                    )
+                }
+
+                OptionLabel("Shape")
+                OptionWrapRow {
+                    OptionChip("Fixed pages", !canvas) { canvas = false }
+                    OptionChip("Infinite whiteboard", canvas) { canvas = true }
+                }
+
+                if (canvas) {
+                    Text(
+                        "No page edges or fixed size.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    OptionLabel("Size")
+                    OptionWrapRow {
+                        PageSize.entries.forEach { p ->
+                            OptionChip(p.label, size == p) { size = p }
+                        }
+                    }
+                    OptionLabel("Pages: $pages")
+                    Slider(
+                        value = pages.toFloat(),
+                        onValueChange = { pages = it.toInt().coerceAtLeast(1) },
+                        valueRange = 1f..50f
                     )
                 }
 
@@ -102,33 +129,7 @@ fun NewDocumentDialog(
                     onPickColour = { target, _ -> picking = target }
                 )
 
-                OptionLabel(if (canvas) "Starting size" else "Size")
-                OptionWrapRow {
-                    PageSize.entries.forEach { p ->
-                        OptionChip(p.label, size == p) { size = p }
-                    }
-                }
 
-                OptionLabel("Shape")
-                OptionWrapRow {
-                    OptionChip("Fixed pages", !canvas) { canvas = false }
-                    OptionChip("Canvas, grows as you write", canvas) { canvas = true }
-                }
-                if (canvas) {
-                    Text(
-                        "One page that gets bigger whenever you write near an edge. It is still " +
-                            "an ordinary PDF, so it opens and syncs like everything else.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    OptionLabel("Pages: $pages")
-                    Slider(
-                        value = pages.toFloat(),
-                        onValueChange = { pages = it.toInt().coerceAtLeast(1) },
-                        valueRange = 1f..50f
-                    )
-                }
             }
         },
         confirmButton = {
@@ -138,7 +139,7 @@ fun NewDocumentDialog(
                     onCreate(
                         BlankDocumentFactory.Spec(
                             name = name,
-                            pageSize = size,
+                            pageSize = if (canvas) PageSize.LETTER else size,
                             background = paper.background,
                             pageCount = if (canvas) 1 else pages,
                             paperColor = paper.paperColor,

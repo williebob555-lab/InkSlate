@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "revision": 4,
-  "summary": "Roomier action-wheel spacing, explicit Note Grid section controls, live resizing and movable duplicates with Select once.",
+  "revision": 5,
+  "summary": "Full-height layer faders, unbounded whiteboard filters and clearer document controls.",
   "noteGrid": {
     "controlSizeDp": 28,
     "touchTargetSizeDp": 40,
@@ -19,7 +19,11 @@
   "mixer": {
     "visibilityHeightDp": 24,
     "actionHeightDp": 28,
-    "minimumFaderHeightDp": 48
+    "minimumFaderHeightDp": 48,
+    "controlWidthDp": 34,
+    "minimumChannelWidthDp": 62,
+    "channelGapDp": 6,
+    "minimumPenWidthDp": 220
   },
   "wheel": {
     "actionSizeDp": 40,

@@ -1,4 +1,7 @@
 package com.inkslate.desktop
+import com.inkslate.editor.DocumentMenuAction as MenuAction
+import com.inkslate.editor.DocumentMenuSection as MenuSection
+import androidx.compose.material.icons.filled.*
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -1654,17 +1657,6 @@ fun EditorScreen(
                 // The same button the tablet has, in the same place: a control that says
                 // "keep this, now" rather than a menu entry two taps away. Tinted while
                 // there is something not yet in the document.
-                IconButton(onClick = { save() }) {
-                    Icon(
-                        Icons.Default.Save,
-                        "Save into the document",
-                        tint = if (writeState == WriteState.SAVED) {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        }
-                    )
-                }
                 IconButton(onClick = ::undoOnce, enabled = undo.isNotEmpty()) {
                     Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
                 }
@@ -1684,141 +1676,71 @@ fun EditorScreen(
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, "More")
+                        Icon(Icons.Default.MoreVert, "Document actions")
                     }
-                    DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-                        DropdownMenuItem(
-                            text = { Text("Save into the document") },
-                            onClick = { menuOpen = false; save() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Share...") },
-                            onClick = { menuOpen = false; shareDocument() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Export...") },
-                            onClick = { menuOpen = false; exportOpen = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Checkpoint this version") },
-                            onClick = { menuOpen = false; checkpoint() }
-                        )
-                        if ((source?.pageCount ?: 0) == 1 && DesktopSources.isPdf(file)) {
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (ink.canvas != null) "Back to a fixed page"
-                                        else "Make this a canvas that grows"
-                                    )
-                                },
-                                onClick = {
-                                    menuOpen = false
-                                    val src = source
-                                    ink = if (ink.canvas != null) {
-                                        ink.copy(canvas = null)
-                                    } else {
-                                        val dim = src?.pageDim(0)
-                                        ink.copy(
-                                            canvas = com.inkslate.core.InkCanvas.startingAt(
-                                                dim?.width ?: 612f,
-                                                dim?.height ?: 792f
-                                            )
-                                        )
+                    com.inkslate.editor.DocumentActionsMenu(
+                        expanded = menuOpen, onDismiss = { menuOpen = false }, fileName = file.name,
+                        status = writeState.label,
+                        primary = listOf(
+                            MenuAction("Share", Icons.Default.Share, { menuOpen = false; shareDocument() }),
+                            MenuAction("Export", Icons.Default.FileDownload, { menuOpen = false; exportOpen = true })
+                        ),
+                        quick = listOf(
+                            MenuAction("Find in document", Icons.Default.Search, { menuOpen = false; searchOpen = true }),
+                            MenuAction("Pages", Icons.Default.ViewModule, { menuOpen = false; pagesOpen = true })
+                        ),
+                        sections = listOf(
+                            MenuSection("View & appearance", Icons.Default.ColorLens, listOf(
+                                MenuAction("Fit page", Icons.Default.AspectRatio, { menuOpen = false; viewport.fit(viewport.content) }),
+                                MenuAction("Fit width", Icons.Default.ZoomIn, { menuOpen = false; viewport.fitWidth(viewport.content) }),
+                                MenuAction("Reset view", Icons.Default.Refresh, {
+                                    menuOpen = false; viewport.stop(); viewport.restore(1f, 0f, 0f); goToPage(page)
+                                }),
+                                MenuAction("Trim page margins", Icons.Default.Crop, {
+                                    menuOpen = false; tools.cropMargins = !tools.cropMargins
+                                }, selected = tools.cropMargins)
+                            ) + PageFilter.entries.map { option ->
+                                MenuAction(option.label, Icons.Default.ColorLens, { menuOpen = false; pageFilter = option },
+                                    selected = pageFilter == option)
+                            }),
+                            MenuSection("History", Icons.Default.History, listOf(
+                                MenuAction("Create checkpoint", Icons.Default.BookmarkAdd, { menuOpen = false; checkpoint() }),
+                                MenuAction("Version history", Icons.Default.History, { menuOpen = false; versionsOpen = true })
+                            )),
+                            MenuSection("File options", Icons.Default.Settings, buildList {
+                                add(MenuAction("Rules for this file", Icons.Default.Tune, { menuOpen = false; fileRulesOpen = true }))
+                                add(MenuAction("Measure save speed", Icons.Default.Speed, {
+                                    menuOpen = false; benchRunning = true
+                                    scope.launch {
+                                        val report = withContext(Dispatchers.IO) {
+                                            SaveBenchmark.run(file, ink, prefs.effectiveFor(file.absolutePath).inkFormat)
+                                        }
+                                        benchRunning = false; benchReport = report
                                     }
-                                    dirty = true
-                                }
-                            )
-                        }
-                        DropdownMenuItem(
-                            text = { Text("Version history...") },
-                            onClick = { menuOpen = false; versionsOpen = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Rules for this file") },
-                            onClick = { menuOpen = false; fileRulesOpen = true }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Measure save speed") },
-                            onClick = {
-                                menuOpen = false
-                                benchRunning = true
-                                scope.launch {
-                                    val text = withContext(Dispatchers.IO) {
-                                        SaveBenchmark.run(
-                                            file, ink,
-                                            prefs.effectiveFor(file.absolutePath).inkFormat
-                                        )
-                                    }
-                                    benchRunning = false
-                                    benchReport = text
-                                }
-                            }
-                        )
-                        if (tools.rulerVisible) {
-                            DropdownMenuItem(
-                                text = { Text("Snap the ruler to 15°") },
-                                onClick = {
-                                    menuOpen = false
-                                    tools.ruler = tools.ruler?.snappedToAngle(15f)
-                                }
-                            )
-                        }
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (tools.cropMargins) "✓  Trim page margins"
-                                    else "      Trim page margins"
+                                }))
+                                if ((source?.pageCount ?: 0) == 1 && DesktopSources.isPdf(file)) add(
+                                    MenuAction(if (ink.canvas != null) "Use fixed pages" else "Allow canvas to grow", Icons.Default.AspectRatio, {
+                                        menuOpen = false
+                                        ink = if (ink.canvas != null) ink.copy(canvas = null) else {
+                                            val dim = source?.pageDim(0)
+                                            ink.copy(canvas = com.inkslate.core.InkCanvas.startingAt(dim?.width ?: 612f, dim?.height ?: 792f))
+                                        }
+                                        dirty = true
+                                    })
                                 )
-                            },
-                            onClick = { menuOpen = false; tools.cropMargins = !tools.cropMargins }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Fit page") },
-                            onClick = {
-                                menuOpen = false
-                                viewport.fit(viewport.content)
+                                if (tools.rulerVisible) add(MenuAction("Snap ruler to 15°", Icons.Default.Straighten, {
+                                    menuOpen = false; tools.ruler = tools.ruler?.snappedToAngle(15f)
+                                }))
+                            })
+                        ),
+                        clear = MenuAction("Clear this page", Icons.Default.DeleteOutline, {
+                            menuOpen = false
+                            val before = strokes.filter { it.pageIndex == page }
+                            if (before.isNotEmpty()) {
+                                strokes.applyEdit(before, emptyList()); pushOp(Op.removed(before)); selection = emptySet()
                             }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Fit width") },
-                            onClick = { menuOpen = false; viewport.fitWidth(viewport.content) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Reset view") },
-                            onClick = {
-                                menuOpen = false
-                                viewport.stop()
-                                viewport.restore(1f, 0f, 0f)
-                                goToPage(page)
-                            }
-                        )
-                        // The page arrangement lives in the Pages sheet, as on the tablet.
-                        HorizontalDivider()
-                        PageFilter.entries.forEach { option ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (pageFilter == option) "✓  " + option.label
-                                        else "      " + option.label
-                                    )
-                                },
-                                onClick = { menuOpen = false; pageFilter = option }
-                            )
-                        }
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Clear this page") },
-                            onClick = {
-                                menuOpen = false
-                                val before = strokes.filter { it.pageIndex == page }
-                                if (before.isNotEmpty()) {
-                                    strokes.applyEdit(before, emptyList())
-                                    pushOp(Op.removed(before))
-                                    selection = emptySet()
-                                }
-                            }
-                        )
-                    }
+                        })
+                    )
                 }
             }
         )

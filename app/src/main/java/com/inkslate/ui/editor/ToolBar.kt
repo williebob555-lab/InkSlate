@@ -119,32 +119,16 @@ import kotlin.math.roundToInt
 import com.inkslate.core.InputMode
 import com.inkslate.core.StylusButtonAction
 import com.inkslate.core.AnnotationLayers
+import com.inkslate.core.DesignConfig
 import com.inkslate.data.LocalDesignConfig
 
 /** Width budget for the three touch channels; kept pure so narrow layouts stay regression-tested. */
-internal fun layerMixerWidthDp(screenWidthDp: Float): Float = if (screenWidthDp < 600f) {
-    (screenWidthDp * .42f).coerceIn(168f, 210f)
-} else {
-    (screenWidthDp * .24f).coerceIn(220f, 280f)
-}
-
-/** Fixed controls yield their height before the fader does on a short landscape toolbar. */
-internal data class LayerMixerHeights(val visibility: Float, val actions: Float, val fader: Float)
-
-internal fun layerMixerHeights(
-    availableHeightDp: Float,
-    visibilityHeightDp: Float,
-    actionHeightDp: Float,
-    minimumFaderHeightDp: Float
-): LayerMixerHeights {
-    val available = availableHeightDp.coerceAtLeast(0f)
-    val reservedFader = minimumFaderHeightDp.coerceAtMost(available * .5f)
-    val desiredControls = visibilityHeightDp + actionHeightDp
-    val scale = if (desiredControls <= 0f) 0f
-        else ((available - reservedFader) / desiredControls).coerceIn(0f, 1f)
-    val visibility = visibilityHeightDp * scale
-    val actions = actionHeightDp * scale
-    return LayerMixerHeights(visibility, actions, available - visibility - actions)
+internal fun layerMixerWidthDp(screenWidthDp: Float, config: DesignConfig.Mixer = DesignConfig.current.mixer, fontScale: Float = 1f): Float {
+    val desired = if (screenWidthDp < 600f) (screenWidthDp * .42f).coerceIn(168f, 210f)
+        else (screenWidthDp * .24f).coerceIn(220f, 280f)
+    val extraControlWidth = config.controlWidthDp * (fontScale.coerceAtLeast(1f) - 1f)
+    val minimum = 3 * (config.minimumChannelWidthDp + extraControlWidth) + 2 * (config.channelGapDp + 1f) + 8f
+    return maxOf(desired, minimum)
 }
 /** Everything the toolbar needs to drive, gathered so the signature stays readable. */
 class ToolBarActions(
@@ -246,10 +230,21 @@ fun ToolBar(
     // Height, not width, is what makes the three channels easy to operate with the other hand.
     // Keep enough room for a fingertip per channel without pushing colours into a horizontal
     // scroller on ordinary tablets.
-    val mixerWidth = layerMixerWidthDp(windowWidthDp).dp
     val mixerConfig = LocalDesignConfig.current.mixer
-    val mixerMinimum = (mixerConfig.visibilityHeightDp + mixerConfig.actionHeightDp +
-        mixerConfig.minimumFaderHeightDp + 8f).dp.coerceAtMost(screenHeight * .55f)
+    val mixerWidth = layerMixerWidthDp(windowWidthDp, mixerConfig, density.fontScale).dp
+    val mixerMinimum = (maxOf((mixerConfig.visibilityHeightDp + 2 * mixerConfig.actionHeightDp) * density.fontScale.coerceAtLeast(1f),
+        mixerConfig.minimumFaderHeightDp) + 8f).dp.coerceAtMost(screenHeight * .55f)
+    val stackMixer = windowWidthDp - mixerWidth.value - 8f < mixerConfig.minimumPenWidthDp
+    val mixerPanel: @Composable (Modifier) -> Unit = { modifier ->
+        LayerMixerBlock(
+            state = state, filterMask = actions.layerFiltersMask,
+            onVisibility = { layer -> change { state.toggleLayerVisibility(layer) } },
+            onRecord = { layer -> change { state.toggleLayerRecord(layer) } },
+            onOpacity = { layer, value -> change { state.setLayerOpacity(layer, value, save = false) } },
+            onOpacityFinished = state::persistNow, onFilter = actions.onToggleLayerFilter,
+            modifier = modifier
+        )
+    }
     Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
         Column(Modifier.fillMaxWidth().heightIn(max = screenHeight * .55f)) {
             // ---- selection actions, shown only while something is selected ----
@@ -276,14 +271,14 @@ fun ToolBar(
             }
 
 
-        Box(Modifier.fillMaxWidth()) {
+        Box(Modifier.fillMaxWidth().then(if (stackMixer) Modifier.weight(1f, fill = false) else Modifier)) {
             Column(
                 Modifier
                     .fillMaxWidth()
                     // The mixer is a full-height sibling, not another row. Reserving its exact
                     // column here guarantees that neither side can overlap the other at any size.
-                    .padding(end = mixerWidth + 8.dp)
-                    .heightIn(min = mixerMinimum, max = screenHeight * 0.55f)
+                    .padding(end = if (stackMixer) 0.dp else mixerWidth + 8.dp)
+                    .heightIn(min = if (stackMixer) 0.dp else mixerMinimum, max = screenHeight * 0.55f)
                     .verticalScroll(rememberScrollState())
             ) {
 
@@ -761,24 +756,12 @@ fun ToolBar(
             }
             }
 
-            // A mixer works like a channel strip: it keeps the whole toolbar height instead of
-            // being squeezed into whichever row happened to have room. The main column reserved
-            // this width above, so every control remains independent and fingertip-sized.
-            Box(Modifier.matchParentSize().padding(top = 4.dp, end = 6.dp, bottom = 4.dp)) {
-                LayerMixerBlock(
-                    state = state,
-                    filterMask = actions.layerFiltersMask,
-                    onVisibility = { layer -> change { state.toggleLayerVisibility(layer) } },
-                    onRecord = { layer -> change { state.toggleLayerRecord(layer) } },
-                    onOpacity = { layer, value ->
-                        change { state.setLayerOpacity(layer, value, save = false) }
-                    },
-                    onOpacityFinished = state::persistNow,
-                    onFilter = actions.onToggleLayerFilter,
-                    modifier = Modifier.align(Alignment.CenterEnd).width(mixerWidth).fillMaxHeight()
-                )
+            if (!stackMixer) Box(Modifier.matchParentSize().padding(top = 4.dp, end = 6.dp, bottom = 4.dp)) {
+                mixerPanel(Modifier.align(Alignment.CenterEnd).width(mixerWidth).fillMaxHeight())
             }
         }
+            if (stackMixer) mixerPanel(Modifier.fillMaxWidth().height(mixerMinimum + 8.dp)
+                .padding(horizontal = 6.dp, vertical = 4.dp))
         }
     }
 }
@@ -942,200 +925,19 @@ private fun LayerMixerBlock(
     onFilter: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .62f),
-        shape = RoundedCornerShape(13.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .38f))
-    ) {
-        BoxWithConstraints {
-        val config = LocalDesignConfig.current.mixer
-        val heights = layerMixerHeights(
-            (maxHeight.value - 8f).coerceAtLeast(0f),
-            config.visibilityHeightDp, config.actionHeightDp, config.minimumFaderHeightDp
-        )
-        Row(
-            Modifier.fillMaxWidth().fillMaxHeight().padding(horizontal = 5.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            listOf(AnnotationLayers.ONE, AnnotationLayers.TWO, AnnotationLayers.THREE)
-                .forEachIndexed { index, layer ->
-                    LayerChannel(
-                        label = (index + 1).toString(),
-                        layer = layer,
-                        visible = (state.visibleLayerMask and layer) != 0,
-                        armed = (state.recordLayerMask and layer) != 0,
-                        opacity = state.layerOpacities[index],
-                        filterShown = (filterMask and layer) != 0,
-                        onVisibility = { onVisibility(layer) },
-                        onRecord = { onRecord(layer) },
-                        onOpacity = { onOpacity(layer, it) },
-                        onOpacityFinished = onOpacityFinished,
-                        onFilter = { onFilter(layer) },
-                        modifier = Modifier.weight(1f),
-                        heights = heights
-                    )
-                }
-        }
-        }
-    }
+    com.inkslate.editor.LayerMixerPanel(
+        visibleMask = state.visibleLayerMask, recordingMask = state.recordLayerMask,
+        opacities = state.layerOpacities, filterMask = filterMask,
+        config = LocalDesignConfig.current.mixer,
+        onVisibility = onVisibility, onRecord = onRecord, onOpacity = onOpacity,
+        onOpacityFinished = onOpacityFinished, onFilter = onFilter, modifier = modifier
+    )
 }
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-@Composable
-private fun LayerChannel(
-    label: String,
-    layer: Int,
-    visible: Boolean,
-    armed: Boolean,
-    opacity: Float,
-    filterShown: Boolean,
-    onVisibility: () -> Unit,
-    onRecord: () -> Unit,
-    onOpacity: (Float) -> Unit,
-    onOpacityFinished: () -> Unit,
-    onFilter: () -> Unit,
-    modifier: Modifier = Modifier,
-    heights: LayerMixerHeights
-) {
-    val colour = Color(AnnotationLayers.colour(layer))
-    Column(
-        modifier = modifier.fillMaxHeight(),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            Modifier.fillMaxWidth().height(heights.visibility.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(colour.copy(alpha = if (visible) .24f else .045f))
-                .border(
-                    if (visible) 2.dp else 1.dp,
-                    colour.copy(alpha = if (visible) 1f else .38f),
-                    RoundedCornerShape(11.dp)
-                )
-                .clickable(onClick = onVisibility)
-                .semantics {
-                    contentDescription = "Layer $label ${if (visible) "visible" else "muted"}. " +
-                        "Tap to ${if (visible) "mute" else "show"}."
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                label,
-                color = colour.copy(alpha = if (visible) 1f else .55f),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        VerticalLayerFader(
-            opacity,
-            colour,
-            onOpacity,
-            onOpacityFinished,
-            Modifier.weight(1f).fillMaxWidth()
-        )
-        // A single compact row leaves the channel height to the fader on portrait and landscape.
-        // Stacking two 44 dp buttons previously consumed 88 dp before the slider was measured.
-        Row(Modifier.fillMaxWidth().height(heights.actions.dp)) {
-            MixerAction(
-                onClick = onRecord,
-                icon = Icons.Default.FiberManualRecord,
-                label = "Write",
-                description = if (armed) "Writing on layer $label" else "Write only on layer $label",
-                tint = if (armed) Color(0xFFEF4444)
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),
-                modifier = Modifier.weight(1f).fillMaxHeight()
-            )
-            MixerAction(
-                onClick = onFilter,
-                icon = Icons.Default.FilterAlt,
-                label = "Filter",
-                description = "${if (filterShown) "Remove" else "Place"} layer $label filter",
-                tint = if (filterShown) colour else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f).fillMaxHeight()
-            )
-        }
-    }
-}
-
-/** Independent action hit regions without Material's 48 dp layout minimum. */
-@Composable
-private fun MixerAction(
-    onClick: () -> Unit,
-    icon: ImageVector,
-    label: String,
-    description: String,
-    tint: Color,
-    modifier: Modifier
-) {
-    Box(
-        modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick)
-            .semantics { contentDescription = description },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, null, Modifier.size(13.dp), tint = tint)
-            Text(label, fontSize = 7.sp, lineHeight = 8.sp, maxLines = 1)
-        }
-    }
-}
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-@Composable
-private fun VerticalLayerFader(
-    value: Float,
-    colour: Color,
-    onValue: (Float) -> Unit,
-    onFinished: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var heightPx by remember { mutableFloatStateOf(1f) }
-    val density = LocalDensity.current
-    val knobRadiusPx = with(density) { 10.dp.toPx() }
-    val innerRadiusPx = with(density) { 6.5.dp.toPx() }
-    val trackWidthPx = with(density) { 2.dp.toPx() }
-    fun choose(y: Float) {
-        val inset = knobRadiusPx.coerceAtMost(heightPx / 4f)
-        val usable = (heightPx - inset * 2f).coerceAtLeast(1f)
-        onValue((1f - (y - inset) / usable).coerceIn(0f, 1f))
-    }
-    val track = MaterialTheme.colorScheme.outline.copy(alpha = .42f)
-    val surface = MaterialTheme.colorScheme.surface
-    Canvas(
-        modifier
-            .onSizeChanged { heightPx = it.height.toFloat() }
-            .pointerInteropFilter { event ->
-                when (event.actionMasked) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                        choose(event.y); true
-                    }
-                    MotionEvent.ACTION_UP -> {
-                        choose(event.y); onFinished(); true
-                    }
-                    else -> false
-                }
-            }
-            .semantics { contentDescription = "${(value * 100).roundToInt()} percent opacity" }
-    ) {
-        val x = size.width / 2f
-        val top = knobRadiusPx.coerceAtMost(size.height / 4f)
-        val bottom = size.height - top
-        val knob = bottom - (bottom - top) * value.coerceIn(0f, 1f)
-        drawLine(track, Offset(x, top), Offset(x, bottom), trackWidthPx, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawLine(colour, Offset(x, knob), Offset(x, bottom), trackWidthPx * 1.45f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        drawCircle(surface, knobRadiusPx, Offset(x, knob))
-        drawCircle(colour, innerRadiusPx, Offset(x, knob))
-    }
-}
-
-// ---- pieces ------------------------------------------------------------------
-
 @Composable
 private fun Label(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelSmall,
+    Text(text, style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 10.dp, bottom = 3.dp)
-    )
+        modifier = Modifier.padding(top = 10.dp, bottom = 3.dp))
 }
 
 @Composable

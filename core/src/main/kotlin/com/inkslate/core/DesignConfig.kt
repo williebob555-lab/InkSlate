@@ -28,7 +28,11 @@ data class DesignConfig(
     @Serializable data class Mixer(
         val visibilityHeightDp: Float = 24f,
         val actionHeightDp: Float = 28f,
-        val minimumFaderHeightDp: Float = 48f
+        val minimumFaderHeightDp: Float = 48f,
+        val controlWidthDp: Float = 34f,
+        val minimumChannelWidthDp: Float = 62f,
+        val channelGapDp: Float = 6f,
+        val minimumPenWidthDp: Float = 220f
     )
     @Serializable data class Wheel(
         val actionSizeDp: Float = 40f,
@@ -79,6 +83,10 @@ data class DesignConfig(
         }
         with(mixer) {
             range(visibilityHeightDp, 20f, 32f); range(actionHeightDp, 24f, 36f); range(minimumFaderHeightDp, 40f, 100f)
+            range(controlWidthDp, 28f, 40f)
+            range(minimumChannelWidthDp, controlWidthDp + 28f, 70f)
+            range(channelGapDp, 2f, 8f)
+            range(minimumPenWidthDp, 180f, 280f)
         }
         with(wheel) {
             range(actionSizeDp, 28f, 64f); range(mainRadiusDp, 40f, 100f); range(activationRadiusDp, 20f, mainRadiusDp)

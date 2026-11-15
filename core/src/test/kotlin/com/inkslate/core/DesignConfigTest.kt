@@ -8,6 +8,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DesignConfigTest {
+    @Test fun `side controls leave room for a full height fader and reject invalid geometry`() {
+        DesignConfig().validated()
+        assertThrows(IllegalArgumentException::class.java) {
+            DesignConfig(mixer = DesignConfig.Mixer(controlWidthDp = 40f, minimumChannelWidthDp = 62f)).validated()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DesignConfig(mixer = DesignConfig.Mixer(channelGapDp = Float.NaN)).validated()
+        }
+    }
     @Test fun `section controls reject unsafe touch geometry`() {
         assertThrows(IllegalArgumentException::class.java) {
             DesignConfig(noteGrid = DesignConfig.NoteGridControls(touchTargetSizeDp = 20f)).validated()

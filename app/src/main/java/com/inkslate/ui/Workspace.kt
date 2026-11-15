@@ -85,9 +85,9 @@ internal fun tabIslandMaxWidthDp(
     return (screenWidthDp - reserved - 8f).coerceAtLeast(0f)
 }
 
-/** Find moves into the document menu on very narrow screens; Save and More stay one tap away. */
+/** Find moves into the document menu on narrow screens; automatic saving needs no reserved button. */
 internal fun compactActionIslandWidthDp(screenWidthDp: Float, connected: Boolean = false): Float =
-    (if (screenWidthDp < 360f) 80f else 120f) + if (connected) 28f else 6f
+    (if (screenWidthDp < 360f) 40f else 80f) + if (connected) 28f else 6f
 
 /** The next gradient fills the space below the preceding tab's decorative right shoulder. */
 internal fun tabStripSpacingDp(connected: Boolean, heightDp: Float, shoulderFraction: Float): Float =

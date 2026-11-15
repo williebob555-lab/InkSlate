@@ -65,7 +65,7 @@ fun NewDocumentDialog(
                         Modifier
                             .padding(start = 12.dp)
                             .height(58.dp)
-                            .aspectRatio(size.width / size.height)
+                            .aspectRatio(if (canvas) 1.4f else size.width / size.height)
                             .clip(RoundedCornerShape(4.dp))
                             .border(
                                 1.dp,
@@ -75,33 +75,25 @@ fun NewDocumentDialog(
                     )
                 }
 
-                // Before the paper, not after it. Choosing a background adds rows - a ruling
-                // colour, a spacing - which pushed this below the bottom of the dialog, so the
-                // one choice that changes what the document fundamentally is could not be seen
-                // at the moment somebody had just decided they wanted ruled paper.
                 OptionLabel("Shape")
                 OptionWrapRow {
                     OptionChip("Fixed pages", !canvas) { canvas = false }
-                    OptionChip("Canvas, grows as you write", canvas) { canvas = true }
-                }
-
-                BlankPaperOptions(style = paper, onChange = { paper = it })
-
-                OptionLabel(if (canvas) "Starting size" else "Size")
-                OptionWrapRow {
-                    PageSize.entries.forEach { p ->
-                        OptionChip(p.label, size == p) { size = p }
-                    }
+                    OptionChip("Infinite whiteboard", canvas) { canvas = true }
                 }
 
                 if (canvas) {
                     Text(
-                        "One page that gets bigger whenever you write near an edge. It is still " +
-                            "an ordinary PDF, so it opens and syncs like everything else.",
+                        "No page edges or fixed size.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
+                    OptionLabel("Size")
+                    OptionWrapRow {
+                        PageSize.entries.forEach { p ->
+                            OptionChip(p.label, size == p) { size = p }
+                        }
+                    }
                     OptionLabel("Pages: $pages")
                     Slider(
                         value = pages.toFloat(),
@@ -109,6 +101,10 @@ fun NewDocumentDialog(
                         valueRange = 1f..50f
                     )
                 }
+
+                BlankPaperOptions(style = paper, onChange = { paper = it })
+
+
             }
         },
         confirmButton = {
@@ -118,7 +114,7 @@ fun NewDocumentDialog(
                     onCreate(
                         BlankDocumentFactory.Spec(
                             name = name,
-                            pageSize = size,
+                            pageSize = if (canvas) PageSize.LETTER else size,
                             background = paper.background,
                             pageCount = if (canvas) 1 else pages,
                             autoGrow = canvas,

@@ -29,8 +29,8 @@ class TopChromeBudgetTest {
     }
 
     @Test fun `fullscreen reserves both concave shoulders beside fullscreen control`() {
-        assertEquals(148f, compactActionIslandWidthDp(800f, connected = true), .001f)
-        assertEquals(126f, compactActionIslandWidthDp(800f, connected = false), .001f)
+        assertEquals(108f, compactActionIslandWidthDp(800f, connected = true), .001f)
+        assertEquals(86f, compactActionIslandWidthDp(800f, connected = false), .001f)
     }
 
     @Test fun `all top controls fit portrait in either presentation`() {

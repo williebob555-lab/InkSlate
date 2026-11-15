@@ -1,4 +1,7 @@
 package com.inkslate.ui.editor
+import com.inkslate.editor.DocumentMenuAction as MenuAction
+import com.inkslate.editor.DocumentMenuSection as MenuSection
+import androidx.compose.material.icons.filled.*
 
 import com.inkslate.data.InkBookmark
 import android.graphics.Bitmap
@@ -1825,91 +1828,56 @@ fun EditorScreen(
     val linkSummary = com.inkslate.ui.rememberLinkSummary()
 
     val documentMenu: @Composable () -> Unit = {
-        DropdownMenu(menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
-                text = { Text("Share...") },
-                onClick = { menuOpen = false; shareDocument() }
-            )
-            DropdownMenuItem(
-                text = { Text("Export...") },
-                onClick = { menuOpen = false; exportOpen = true }
-            )
-            DropdownMenuItem(
-                text = { Text("Find in document") },
-                onClick = { menuOpen = false; searchOpen = true }
-            )
-            DropdownMenuItem(
-                text = { Text("Checkpoint this version") },
-                onClick = { menuOpen = false; checkpoint() }
-            )
-            DropdownMenuItem(
-                text = { Text("Version history...") },
-                onClick = { menuOpen = false; versionsOpen = true }
-            )
-            DropdownMenuItem(
-                text = { Text("Rules for this file") },
-                onClick = { menuOpen = false; showFileRules = true }
-            )
-            DropdownMenuItem(
-                text = { Text("Measure save speed") },
-                onClick = {
-                    menuOpen = false
-                    syncPage()
-                    benchRunning = true
-                    scope.launch {
-                        val text = withContext(Dispatchers.IO) {
-                            com.inkslate.pdf.SaveBenchmark.run(
-                                context, file, doc!!.ink,
-                                prefs.effectiveFor(file.absolutePath).inkFormat
-                            )
-                        }
-                        benchRunning = false
-                        benchReport = text
-                    }
-                }
-            )
-            PageFilter.entries.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            if (pageFilter == option) "\u2713  " + option.label
-                            else "      " + option.label
-                        )
-                    },
-                    onClick = {
+        com.inkslate.editor.DocumentActionsMenu(
+            expanded = menuOpen, onDismiss = { menuOpen = false }, fileName = file.name,
+            status = if (linkStatus == DocumentSync.Status.WRITTEN_ELSEWHERE) "Saved by linked device" else when (writeState) {
+                WriteState.SAVING -> "Saving changes…"
+                WriteState.SAVED -> "All changes saved"
+                WriteState.UNSAVED -> "Changes waiting to save"
+            },
+            primary = listOf(
+                MenuAction("Share", Icons.Default.Share, { menuOpen = false; shareDocument() }),
+                MenuAction("Export", Icons.Default.FileDownload, { menuOpen = false; exportOpen = true })
+            ),
+            quick = listOf(
+                MenuAction("Find in document", Icons.Default.Search, { menuOpen = false; searchOpen = true }),
+                MenuAction("Pages", Icons.Default.ViewModule, { menuOpen = false; pagesOpen = true })
+            ),
+            sections = listOf(
+                MenuSection("View & appearance", Icons.Default.ColorLens, listOf(
+                    MenuAction("Fit page", Icons.Default.AspectRatio, { menuOpen = false; drawingView.value?.fitToScreen() }),
+                    MenuAction("Fit width", Icons.Default.ZoomIn, { menuOpen = false; drawingView.value?.fitWidth() }),
+                    MenuAction("Reset view", Icons.Default.Refresh, { menuOpen = false; drawingView.value?.resetView() })
+                ) + PageFilter.entries.map { option ->
+                    MenuAction(option.label, Icons.Default.ColorLens, {
+                        menuOpen = false; pageFilter = option; drawingView.value?.pageFilter = option
+                    }, selected = pageFilter == option)
+                }),
+                MenuSection("History", Icons.Default.History, listOf(
+                    MenuAction("Create checkpoint", Icons.Default.BookmarkAdd, { menuOpen = false; checkpoint() }),
+                    MenuAction("Version history", Icons.Default.History, { menuOpen = false; versionsOpen = true })
+                )),
+                MenuSection("File options", Icons.Default.Settings, listOf(
+                    MenuAction("Rules for this file", Icons.Default.Tune, { menuOpen = false; showFileRules = true }),
+                    MenuAction("Measure save speed", Icons.Default.Speed, {
                         menuOpen = false
-                        pageFilter = option
-                        drawingView.value?.pageFilter = option
-                    }
-                )
-            }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Pages...") },
-                onClick = { menuOpen = false; pagesOpen = true }
-            )
-            DropdownMenuItem(
-                text = { Text("Fit page") },
-                onClick = { menuOpen = false; drawingView.value?.fitToScreen() }
-            )
-            DropdownMenuItem(
-                text = { Text("Fit width") },
-                onClick = { menuOpen = false; drawingView.value?.fitWidth() }
-            )
-            DropdownMenuItem(
-                text = { Text("Reset view") },
-                onClick = { menuOpen = false; drawingView.value?.resetView() }
-            )
-            DropdownMenuItem(
-                text = { Text("Clear active layer on this page") },
-                onClick = {
-                    menuOpen = false
-                    drawingView.value?.clearPage(); dirty = true
-                }
-            )
-        }
+                        syncPage()
+                        benchRunning = true
+                        scope.launch {
+                            val report = withContext(Dispatchers.IO) {
+                                com.inkslate.pdf.SaveBenchmark.run(context, file, doc!!.ink,
+                                    prefs.effectiveFor(file.absolutePath).inkFormat)
+                            }
+                            benchRunning = false; benchReport = report
+                        }
+                    })
+                ))
+            ),
+            clear = MenuAction("Clear active layer on this page", Icons.Default.DeleteOutline, {
+                menuOpen = false; drawingView.value?.clearPage(); dirty = true
+            })
+        )
     }
-
     val topBar: @Composable () -> Unit = {
         // In focus mode the app bar goes too, leaving only the drawing tools.
         if (!immersive.isFullscreen) {
@@ -1956,20 +1924,6 @@ fun EditorScreen(
                         short = true,
                         modifier = Modifier.align(Alignment.CenterVertically)
                     )
-                    // Back by request. It was removed when the document started being
-                    // written as you work, on the reasoning that closing is either a no-op
-                    // or the last few hundred milliseconds of it - which is true right up
-                    // until an automatic write is the thing you need to not happen. A
-                    // control that says "keep this, now" is worth its place in the bar.
-                    IconButton(onClick = { saveByRule() }) {
-                        Icon(
-                            Icons.Default.Save,
-                            "Save into the document",
-                            tint = if (writeState == WriteState.SAVED)
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.primary
-                        )
-                    }
                     IconButton(
                         onClick = { drawingView.value?.undo(); dirty = true },
                         enabled = drawingView.value?.canUndo() == true
@@ -1986,7 +1940,7 @@ fun EditorScreen(
                     }
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
-                            Icon(Icons.Default.MoreVert, "More")
+                            Icon(Icons.Default.MoreVert, "Document actions")
                         }
                         documentMenu()
                     }
@@ -1995,7 +1949,7 @@ fun EditorScreen(
         }
     }
 
-    // InkSlate's document actions share the top edge with the tab island. Only the three actions
+    // InkSlate's document actions share the top edge with the tab island. Only the document actions
     // that are not already in the drawing toolbar live here; the title is already the selected
     // tab, and undo/redo are already below. The transparent full-width box positions the island
     // but does not paint a bar across the page.
@@ -2023,15 +1977,6 @@ fun EditorScreen(
                     Modifier.fillMaxHeight().padding(horizontal = if (immersive.isFullscreen) 14.dp else 3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { saveByRule() }, modifier = Modifier.size(40.dp)) {
-                        Icon(
-                            Icons.Default.Save,
-                            "Save into the document",
-                            tint = if (writeState == WriteState.SAVED)
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            else MaterialTheme.colorScheme.primary
-                        )
-                    }
                     if (windowWidthDp >= 360f) {
                         IconButton(onClick = { searchOpen = true }, modifier = Modifier.size(40.dp)) {
                             Icon(Icons.Default.Search, "Find in document")

@@ -23,6 +23,8 @@ kotlin {
 //     ./gradlew :desktop:test -Dinkslate.pdfs="C:/Users/me/Documents"
 // Gradle keeps a -D to itself, so it has to be handed on to the tests deliberately.
 tasks.withType<Test>().configureEach {
+    // user.home does not redirect Windows' java.util.prefs registry storage.
+    systemProperty("java.util.prefs.PreferencesFactory", "com.inkslate.desktop.TestPreferencesFactory")
     // A real library to measure against, named on the command line (-Dinksheets.lib=...).
     System.getProperty("inksheets.lib")?.let {
         systemProperty("inksheets.lib", it)
