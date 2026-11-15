@@ -625,12 +625,13 @@ class DrawingView @JvmOverloads constructor(
             invalidate()
         }
 
-    /** Channels receiving new ink; zero intentionally falls back to layer one per stroke. */
+    /** Exactly one channel receives new ink; legacy combinations resolve to one channel. */
     var recordLayerMask: Int = AnnotationLayers.ONE
         set(value) {
-            val next = AnnotationLayers.mixerMask(value)
+            val next = AnnotationLayers.recordingLayer(value)
             if (field == next) return
             field = next
+            clearSelection()
         }
 
     /** Three independent mixer faders. */
@@ -680,6 +681,9 @@ class DrawingView @JvmOverloads constructor(
 
     private fun writeLayerMask(page: Int, x: Float, y: Float): Int =
         AnnotationLayers.writeMask(recordLayerMask, layerFilters, page, x, y)
+
+    private fun eraseLayerAt(page: Int, x: Float, y: Float): Int =
+        AnnotationLayers.writeMask(liveLayerMask, layerFilters, page, x, y)
 
     // ---- ruler ---------------------------------------------------------------
 
@@ -1341,6 +1345,8 @@ class DrawingView @JvmOverloads constructor(
     var onSelectionChanged: ((Int) -> Unit)? = null
     /** A selected object was moved/resized/rotated once; temporary Select may now be put away. */
     var onSelectionActionFinished: (() -> Unit)? = null
+    /** Return true after restoring the previous tool when a temporary selection is left. */
+    var onSelectionOutsideDown: (() -> Boolean)? = null
 
     /** A link was tapped - on text given one, or one already in the PDF. Opens it. */
     var onLinkTapped: ((String) -> Unit)? = null
@@ -1808,6 +1814,7 @@ class DrawingView @JvmOverloads constructor(
      * and take those away in the same step.
      */
     private var addedThisGesture = ArrayList<Stroke>()
+    private val eraseOriginals = LinkedHashMap<String, Stroke?>()
     private var noteGridEraseCells = mutableMapOf<String, NoteGrid.Cell>()
     private var lastTapTime = 0L
     private var lastTapX = 0f
@@ -2057,7 +2064,7 @@ class DrawingView @JvmOverloads constructor(
             pageHeight = paperRect.height(),
             sink = sink
         )
-        (noteGridPreview?.grid ?: c.noteGrid)?.segments(
+        displayedNoteGrid()?.segments(
             Box(canvasRect.left, canvasRect.top, canvasRect.right, canvasRect.bottom)
         )?.forEach { segment ->
             canvasRulingPaint.strokeWidth = 1.15f
@@ -2092,6 +2099,126 @@ class DrawingView @JvmOverloads constructor(
         val strokes: List<Stroke>, val cells: Map<String, NoteGrid.Cell>, val contents: List<NoteGrid.Content>
     )
     private var noteGridPreviewBase: GridPreviewBase? = null
+    private enum class GridControlKind { ADD_COLUMN, ADD_ROW, REMOVE }
+    private data class GridControl(val kind: GridControlKind, val cell: NoteGrid.Cell, val x: Float, val y: Float)
+    private var pressedGridControl: GridControl? = null
+    private val gridControlPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** Controls are screen-sized and view-only; PDFs contain just the section separators. */
+    private fun noteGridControls(): List<GridControl> {
+        if (live != null || canvas?.noteGrid == null || cropTargetId != null) return emptyList()
+        val grid = displayedNoteGrid() ?: return emptyList()
+        val density = resources.displayMetrics.density
+        val design = com.inkslate.core.DesignConfig.current.noteGrid
+        val offset = design.edgeOffsetDp * density
+        val radius = design.controlSizeDp * density / 2f
+        val page = slots.firstOrNull()?.index ?: 0
+        val origin = originOf(page)
+        val result = ArrayList<GridControl>()
+        fun control(kind: GridControlKind, cell: NoteGrid.Cell, x: Float, y: Float, dx: Float, dy: Float) {
+            val p = floatArrayOf(x + origin[0], y + origin[1])
+            pageToView.mapPoints(p)
+            val sx = p[0] + dx; val sy = p[1] + dy
+            if (sx >= -radius && sx <= width + radius && sy >= -radius && sy <= height + radius) {
+                result += GridControl(kind, cell, sx, sy)
+            }
+        }
+        val removable = grid.rows.size > 1 || grid.rows.any { it.columns.size > 1 }
+        var top = 0f
+        grid.rows.forEachIndexed { rowIndex, row ->
+            val rowWidth = row.columns.sum()
+            control(GridControlKind.ADD_COLUMN, NoteGrid.Cell(rowIndex, row.columns.lastIndex),
+                rowWidth, top + row.height / 2f, offset, 0f)
+            control(GridControlKind.ADD_ROW, NoteGrid.Cell(rowIndex, 0),
+                rowWidth / 2f, top + row.height, 0f, if (rowIndex == grid.rows.lastIndex) offset else 0f)
+            if (removable && row.height * currentScale() >= radius * 3f) {
+                var left = 0f
+                row.columns.forEachIndexed { column, w ->
+                    if (w * currentScale() >= radius * 3f) {
+                        control(GridControlKind.REMOVE, NoteGrid.Cell(rowIndex, column),
+                            left + w, top, -offset, offset)
+                    }
+                    left += w
+                }
+            }
+            top += row.height
+        }
+        return result
+    }
+
+    private fun gridControlAt(x: Float, y: Float): GridControl? {
+        val radius = com.inkslate.core.DesignConfig.current.noteGrid.touchTargetSizeDp * resources.displayMetrics.density / 2f
+        return noteGridControls().minByOrNull { hypot(x - it.x, y - it.y) }
+            ?.takeIf { hypot(x - it.x, y - it.y) <= radius }
+    }
+
+    private fun drawNoteGridControls(target: Canvas) {
+        val controls = noteGridControls()
+        if (controls.isEmpty()) return
+        val radius = com.inkslate.core.DesignConfig.current.noteGrid.controlSizeDp * resources.displayMetrics.density / 2f
+        val accent = com.inkslate.core.DesignConfig.argb(com.inkslate.core.DesignConfig.current.theme.lightAccent)
+        controls.forEach { control ->
+            gridControlPaint.style = Paint.Style.FILL
+            gridControlPaint.color = Color.WHITE
+            target.drawCircle(control.x, control.y, radius, gridControlPaint)
+            gridControlPaint.style = Paint.Style.STROKE
+            gridControlPaint.strokeWidth = resources.displayMetrics.density
+            gridControlPaint.color = if (control.kind == GridControlKind.REMOVE) Color.rgb(180, 55, 55) else accent
+            target.drawCircle(control.x, control.y, radius, gridControlPaint)
+            gridControlPaint.style = Paint.Style.FILL
+            gridControlPaint.textAlign = Paint.Align.CENTER
+            gridControlPaint.textSize = radius * 1.5f
+            val metrics = gridControlPaint.fontMetrics
+            target.drawText(if (control.kind == GridControlKind.REMOVE) "−" else "+",
+                control.x, control.y - (metrics.ascent + metrics.descent) / 2f, gridControlPaint)
+        }
+    }
+
+    internal fun addNoteGridColumn(row: Int) {
+        val grid = displayedNoteGrid() ?: return
+        editNoteGrid(grid.addColumn(row))
+    }
+
+    internal fun addNoteGridRow(afterRow: Int) {
+        val grid = displayedNoteGrid() ?: return
+        editNoteGrid(grid.addRow(afterRow), insertedRow = afterRow + 1)
+    }
+
+    internal fun removeNoteGridSection(cell: NoteGrid.Cell) {
+        val grid = displayedNoteGrid() ?: return
+        editNoteGrid(grid.removeCell(cell))
+    }
+
+    /** A structural edit never erases ink; insertion carries later rows down as one undo step. */
+    private fun editNoteGrid(next: NoteGrid, insertedRow: Int? = null) {
+        val before = canvas ?: return
+        val grid = displayedNoteGrid() ?: return
+        if (next == grid) return
+        abandonGridPreview()
+        val stamp = maxOf(now(), (before.noteGrid?.modifiedAt ?: 0L) + 1L)
+        val removed = ArrayList<Stroke>(); val added = ArrayList<Stroke>()
+        if (insertedRow != null) {
+            val page = slots.firstOrNull()?.index ?: 0
+            for (index in strokes.indices) {
+                val stroke = strokes[index]
+                if (stroke.pageIndex != page || gridCell(grid, stroke).row < insertedRow) continue
+                val moved = stroke.transformed(Matrix().apply { setTranslate(0f, next.rows[insertedRow].height) }, stroke.id)
+                    .copy(updatedUtc = stamp)
+                removed += stroke; added += moved; strokes[index] = moved
+            }
+        }
+        val after = before.copy(noteGrid = next.copy(modifiedAt = stamp))
+        canvas = after
+        recordOp(Op(added, removed, canvasBefore = before, canvasAfter = after))
+        onCanvasGrew?.invoke(after)
+        changed()
+    }
+
+    /** Old empty notebooks can still contain the structural layout left by earlier builds. */
+    private fun displayedNoteGrid(): NoteGrid? = noteGridPreview?.grid ?: canvas?.noteGrid?.let { grid ->
+        val page = slots.firstOrNull()?.index ?: 0
+        if (grid.manualSections || strokes.any { it.pageIndex == page }) grid else grid.cleared()
+    }
 
     private fun clearNoteGridPreview() {
         noteGridPreview = null
@@ -2121,7 +2248,8 @@ class DrawingView @JvmOverloads constructor(
     private fun refreshNoteGridPreview() {
         if (!noteGridPreviewDirty) return
         noteGridPreviewDirty = false
-        val grid = canvas?.noteGrid ?: return
+        val savedGrid = canvas?.noteGrid ?: return
+        val grid = if (savedGrid.manualSections || strokes.any { it.pageIndex == livePage }) savedGrid else savedGrid.cleared()
         val points = live?.takeIf { it.isNotEmpty() } ?: return
         if (livePage != (slots.firstOrNull()?.index ?: 0)) return
         val cell = liveNoteGridCell ?: grid.cellAt(points.first().x, points.first().y).also { liveNoteGridCell = it }
@@ -2561,6 +2689,14 @@ class DrawingView @JvmOverloads constructor(
     fun selectionCount() = selection.size
     fun selectedStrokes(): List<Stroke> = strokes.filter { it.id in selection }
 
+    /** A transferred selection keeps its channel even when the next pen contact resolves a filter. */
+    private fun selectedLayer(): Int {
+        val masks = selectedStrokes().map { AnnotationLayers.normalise(it.layerMask) }.distinct()
+        val only = masks.singleOrNull()
+        return if (only != null && Integer.bitCount(only) == 1) only
+            else AnnotationLayers.recordingLayer(liveLayerMask)
+    }
+
     private fun now() = System.currentTimeMillis()
 
     fun undo() {
@@ -2580,10 +2716,7 @@ class DrawingView @JvmOverloads constructor(
     }
 
     fun clearPage() {
-        if (strokes.isEmpty()) return
-        val removed = ArrayList(strokes)
-        strokes.clear()
-        pushOp(Op(emptyList(), removed))
+        removeFromLayer(strokes.filter { it.pageIndex == currentPage }, recordLayerMask)
         clearSelection(); changed()
     }
 
@@ -2593,28 +2726,82 @@ class DrawingView @JvmOverloads constructor(
     }
 
     fun selectAll() {
-        selection.clear(); strokes.forEach { selection.add(it.id) }
+        liveLayerMask = AnnotationLayers.recordingLayer(recordLayerMask)
+        selection.clear()
+        strokes.filter { (AnnotationLayers.normalise(it.layerMask) and liveLayerMask) != 0 }
+            .forEach { selection.add(it.id) }
         onSelectionChanged?.invoke(selection.size); invalidate()
     }
 
     fun deleteSelection() {
         if (selection.isEmpty()) return
-        val removed = selectedStrokes()
-        strokes.removeAll(removed.toSet())
-        pushOp(Op(emptyList(), removed))
+        removeFromLayer(selectedStrokes(), selectedLayer())
         clearSelection(); changed()
+    }
+
+    /** Shared legacy objects keep their id and geometry in the untouched layers. */
+    private fun removeFromLayer(targets: List<Stroke>, layer: Int) {
+        val targetIds = targets.mapTo(HashSet()) { it.id }
+        val channel = AnnotationLayers.recordingLayer(layer)
+        val removed = ArrayList<Stroke>(); val added = ArrayList<Stroke>()
+        for (index in strokes.indices.reversed()) {
+            val stroke = strokes[index]
+            if (stroke.id !in targetIds || (AnnotationLayers.normalise(stroke.layerMask) and channel) == 0) continue
+            removed += stroke
+            val remaining = AnnotationLayers.withoutLayer(stroke.layerMask, channel)
+            if (remaining == 0) strokes.removeAt(index) else {
+                val retained = stroke.copy(layerMask = remaining, updatedUtc = maxOf(now(), stroke.updatedUtc + 1L))
+                strokes[index] = retained
+                added += retained
+            }
+        }
+        if (removed.isNotEmpty()) pushOp(Op(added, removed))
     }
 
     fun duplicateSelection() {
         if (selection.isEmpty()) return
         val m = Matrix().apply { setTranslate(14f, 14f) }
+        val targetLayer = selectedLayer()
         val copies = Stamps.regroup(
-            selectedStrokes().map { it.transformed(m, ids.next()).copy(updatedUtc = now()) }
+            selectedStrokes().map { it.transformed(m, ids.next()).copy(
+                layerMask = targetLayer, updatedUtc = now()) }
         ) { ids.next() }
         strokes.addAll(copies)
         growCanvasForAll(copies)
         pushOp(Op(copies, emptyList()))
         selection.clear(); copies.forEach { selection.add(it.id) }
+        onSelectionChanged?.invoke(selection.size); changed()
+    }
+
+    fun transferSelectionLayer(target: Int, copy: Boolean) {
+        val edit = com.inkslate.core.SelectionLayers.transfer(selectedStrokes(), selectedLayer(), target,
+            copy, now()) { ids.next() }
+        if (edit.added.isEmpty() && edit.removed.isEmpty()) return
+        replaceStrokes(edit.removed, edit.added)
+        selection.clear(); edit.selected.forEach { selection.add(it.id) }
+        liveLayerMask = AnnotationLayers.recordingLayer(target)
+        pushOp(Op(edit.added, edit.removed))
+        onSelectionChanged?.invoke(selection.size); changed()
+    }
+
+    /** Direct properties belong to the selected object, including a stamp's stored settings. */
+    fun restyleSelectedAppearance(color: Int?, width: Float?) {
+        val before = selectedStrokes()
+        if (before.isEmpty()) return
+        val channel = selectedLayer()
+        val untouched = before.mapNotNull { s ->
+            val remaining = AnnotationLayers.withoutLayer(s.layerMask, channel)
+            if (remaining == 0) null else s.copy(layerMask = remaining, updatedUtc = maxOf(now(), s.updatedUtc + 1))
+        }
+        val editable = before.map { s ->
+            s.copy(id = if (AnnotationLayers.withoutLayer(s.layerMask, channel) != 0) ids.next() else s.id,
+                layerMask = channel)
+        }.let { if (untouched.isEmpty()) it else Stamps.regroup(it) { ids.next() } }
+        val after = com.inkslate.core.SelectionAppearance.restyle(editable, color, width, now()) { ids.next() }
+        replaceStrokes(before, untouched + after)
+        selection.clear(); after.forEach { selection.add(it.id) }
+        growCanvasForAll(after)
+        pushOp(Op(untouched + after, before))
         onSelectionChanged?.invoke(selection.size); changed()
     }
 
@@ -2903,7 +3090,8 @@ class DrawingView @JvmOverloads constructor(
     fun copySelection(): Int {
         val sel = selectedStrokes()
         if (sel.isEmpty()) return 0
-        InkClipboard.put(sel, pageWidthPt, pageHeightPt)
+        val targetLayer = selectedLayer()
+        InkClipboard.put(sel.map { it.copy(layerMask = targetLayer) }, pageWidthPt, pageHeightPt)
         return sel.size
     }
 
@@ -2922,12 +3110,15 @@ class DrawingView @JvmOverloads constructor(
     fun paste(): Int {
         if (InkClipboard.isEmpty) return 0
         val c = viewCenterInPage()
+        val target = writeLayerMask(livePage, c[0], c[1])
         val pasted = Stamps.regroup(InkClipboard.paste(ids, c[0], c[1], pageWidthPt, pageHeightPt)) { ids.next() }
+            .map { it.copy(layerMask = target) }
         if (pasted.isEmpty()) return 0
         strokes.addAll(pasted)
         growCanvasForAll(pasted)
         pushOp(Op(pasted, emptyList()))
         selection.clear(); pasted.forEach { selection.add(it.id) }
+        liveLayerMask = target
         tool = Tool.SELECT
         onSelectionChanged?.invoke(selection.size)
         changed()
@@ -2949,9 +3140,9 @@ class DrawingView @JvmOverloads constructor(
     fun deleteStroke(target: Stroke) {
         val i = strokes.indexOfFirst { it.id == target.id }
         if (i < 0) return
-        val removed = strokes.removeAt(i)
-        selection.remove(removed.id)
-        pushOp(Op(emptyList(), listOf(removed)))
+        val bounds = target.bounds()
+        removeFromLayer(listOf(strokes[i]), writeLayerMask(target.pageIndex, bounds.centerX(), bounds.centerY()))
+        selection.remove(target.id)
         onSelectionChanged?.invoke(selection.size)
         changed()
     }
@@ -3473,6 +3664,8 @@ class DrawingView @JvmOverloads constructor(
 
         drawSelectionChrome(canvas)
 
+        drawNoteGridControls(canvas)
+
         drawRuler(canvas)
 
         eraserCursor?.let { c ->
@@ -3820,6 +4013,32 @@ class DrawingView @JvmOverloads constructor(
             return true
         }
 
+        pressedGridControl?.let { control ->
+            if (event.pointerCount >= 2) {
+                pressedGridControl = null
+            } else {
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    pressedGridControl = null
+                    val radius = com.inkslate.core.DesignConfig.current.noteGrid.touchTargetSizeDp * resources.displayMetrics.density / 2f
+                    if (action == MotionEvent.ACTION_UP && hypot(event.x - control.x, event.y - control.y) <= radius) {
+                        when (control.kind) {
+                            GridControlKind.ADD_COLUMN -> addNoteGridColumn(control.cell.row)
+                            GridControlKind.ADD_ROW -> addNoteGridRow(control.cell.row)
+                            GridControlKind.REMOVE -> removeNoteGridSection(control.cell)
+                        }
+                    }
+                }
+                return true
+            }
+        }
+        if (action == MotionEvent.ACTION_DOWN && quickTool != MotionEvent.TOOL_TYPE_ERASER && quickButton == 0) {
+            gridControlAt(event.x, event.y)?.let {
+                pressedGridControl = it
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+        }
+
         // A music tool in hand: one finger or the pen selects bars, cleans them up - it neither
         // writes nor turns the page. A second finger lets it go, and moves the page as ever.
         if (musicTouch(event)) return true
@@ -3952,12 +4171,18 @@ class DrawingView @JvmOverloads constructor(
             if (heldButton > 0 && buttonAction.isHeld) configForButton(heldButton) else null
         val forceErase = toolType == MotionEvent.TOOL_TYPE_ERASER ||
             buttonAction == StylusButtonAction.ERASE
-        val t = when {
+        var t = when {
             forceErase -> Tool.ERASER
             buttonAction == StylusButtonAction.PROFILE -> configForButton(heldButton).tool
             buttonAction.heldTool != null -> buttonAction.heldTool!!
             else -> tool
         }
+
+        // A one-shot selection remains editable until the next contact outside its frame.
+        // Restore before dispatch so that very contact starts the previous tool's gesture.
+        if (action == MotionEvent.ACTION_DOWN && isStylus && t == Tool.SELECT &&
+            leaveTemporarySelection(event.getX(idx), event.getY(idx))
+        ) t = tool
 
         when (action) {
             MotionEvent.ACTION_DOWN -> {
@@ -4618,6 +4843,7 @@ class DrawingView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        pressedGridControl = null
         // Home, Settings and another tab should not compete with an invisible document. The
         // index is derived state, so dropping an unfinished request is safe; it is rebuilt after
         // this view is attached again.
@@ -5041,6 +5267,7 @@ class DrawingView @JvmOverloads constructor(
         var hits: HashSet<String>? = null
         var replacements: ArrayList<Stroke>? = null
         val partial = config.eraserMode == EraserMode.PARTIAL
+        // The base target is latched, but filters still override it locally along the path.
 
         // The area the eraser covered this frame. Testing a stroke's bounds against it first
         // turns "is this stroke anywhere near the eraser" from one test per interpolated step
@@ -5051,32 +5278,47 @@ class DrawingView @JvmOverloads constructor(
         for (s in candidates) {
             if (!RectF.intersects(StrokeRasteriser.boundsOf(s), swath)) continue
 
-            var touched = false
+            var touchedLayers = 0
             var i = 0
             while (i + 1 < pagePoints.size) {
                 val x = pagePoints[i]
                 val y = pagePoints[i + 1]
-                val targetLayers = writeLayerMask(livePage, x, y)
-                if ((AnnotationLayers.normalise(s.layerMask) and targetLayers) != 0 &&
+                val targetLayer = eraseLayerAt(livePage, x, y)
+                if ((AnnotationLayers.normalise(s.layerMask) and targetLayer) != 0 &&
                     s.hitTest(x, y, liveEraser)
-                ) { touched = true; break }
+                ) touchedLayers = touchedLayers or targetLayer
                 i += 2
             }
-            if (!touched) continue
+            if (touchedLayers == 0) continue
 
+            val split = partial && s.kind == StrokeKind.FREEHAND && s.points.size > 1
+            val pieces = ArrayList<Stroke>()
+            var editedLayers = 0
+            for (targetLayer in intArrayOf(AnnotationLayers.ONE, AnnotationLayers.TWO, AnnotationLayers.THREE)) {
+                if ((touchedLayers and targetLayer) == 0) continue
+                val targetStroke = s.copy(layerMask = targetLayer)
+                val fragments = if (split) splitAroundEraser(targetStroke, swathPath!!, swath) else emptyList()
+                if (split && fragments.size == 1 && fragments[0] == targetStroke) continue
+                editedLayers = editedLayers or targetLayer
+                pieces.addAll(fragments)
+            }
+            if (editedLayers == 0) continue
+            val remaining = AnnotationLayers.normalise(s.layerMask) and editedLayers.inv() and AnnotationLayers.ALL
+            val fresh = buildList {
+                if (remaining != 0) add(s.copy(layerMask = remaining, updatedUtc = maxOf(now(), s.updatedUtc + 1L)))
+                addAll(pieces)
+            }
+            if (!eraseOriginals.containsKey(s.id)) eraseOriginals[s.id] = s
+            fresh.forEach { if (!eraseOriginals.containsKey(it.id)) eraseOriginals[it.id] = null }
             val set = hits ?: HashSet<String>().also { hits = it }
             set.add(s.id)
             erasedThisGesture.add(s)
 
-            // Only freehand ink can be rubbed out in part. Half a table or half a text box is not
-            // a thing, so those come away whole however the eraser is set.
-            if (partial && s.kind == StrokeKind.FREEHAND && s.points.size > 1) {
-                val pieces = splitAroundEraser(s, swathPath!!, swath)
-                noteGridEraseCells[s.id]?.let { cell -> pieces.forEach { noteGridEraseCells[it.id] = cell } }
-                if (pieces.isNotEmpty()) {
-                    val into = replacements ?: ArrayList<Stroke>().also { replacements = it }
-                    into.addAll(pieces)
-                }
+            // Keep other memberships intact; partial fragments belong only to the erased layer.
+            if (fresh.isNotEmpty()) {
+                noteGridEraseCells[s.id]?.let { cell -> fresh.forEach { noteGridEraseCells[it.id] = cell } }
+                val into = replacements ?: ArrayList<Stroke>().also { replacements = it }
+                into.addAll(fresh)
             }
         }
 
@@ -5125,13 +5367,15 @@ class DrawingView @JvmOverloads constructor(
         for (p in pts) {
             var inside = false
             if (p.x >= swath.left && p.x <= swath.right &&
-                p.y >= swath.top && p.y <= swath.bottom
+                p.y >= swath.top && p.y <= swath.bottom &&
+                (layerFilters.isEmpty() || eraseLayerAt(s.pageIndex, p.x, p.y) == s.layerMask)
             ) {
                 var i = 0
                 while (i + 3 < path.size) {
                     if (distanceSqToSegment(
                             p.x, p.y, path[i], path[i + 1], path[i + 2], path[i + 3]
-                        ) <= reach2
+                        ) <= reach2 && eraseSegmentTargets(s.layerMask, s.pageIndex, p.x, p.y,
+                            path[i], path[i + 1], path[i + 2], path[i + 3])
                     ) { inside = true; break }
                     i += 2
                 }
@@ -5139,7 +5383,8 @@ class DrawingView @JvmOverloads constructor(
                 if (!inside && path.size == 2) {
                     val dx = p.x - path[0]
                     val dy = p.y - path[1]
-                    inside = dx * dx + dy * dy <= reach2
+                    inside = dx * dx + dy * dy <= reach2 &&
+                        eraseLayerAt(s.pageIndex, path[0], path[1]) == s.layerMask
                 }
             }
             if (inside) {
@@ -5161,6 +5406,16 @@ class DrawingView @JvmOverloads constructor(
         return survivors.map { run ->
             s.copy(id = ids.next(), points = run, updatedUtc = now)
         }
+    }
+
+    /** Do not connect eraser samples across a filter into the wrong recording layer. */
+    private fun eraseSegmentTargets(layer: Int, page: Int, px: Float, py: Float,
+        ax: Float, ay: Float, bx: Float, by: Float): Boolean {
+        if (layerFilters.isEmpty()) return true
+        val dx = bx - ax; val dy = by - ay
+        val length2 = dx * dx + dy * dy
+        val t = if (length2 < 1e-6f) 0f else (((px - ax) * dx + (py - ay) * dy) / length2).coerceIn(0f, 1f)
+        return eraseLayerAt(page, ax + t * dx, ay + t * dy) == layer
     }
 
     /** Everything the eraser could possibly have touched this frame, in page coordinates. */
@@ -5240,6 +5495,17 @@ class DrawingView @JvmOverloads constructor(
         }
 
     // ---- selection gestures --------------------------------------------------
+
+    private fun leaveTemporarySelection(vx: Float, vy: Float): Boolean {
+        val finish = onSelectionOutsideDown ?: return false
+        if (selection.isEmpty() || handleAt(vx, vy) != Grab.NONE) return false
+        val bounds = selectionBounds() ?: return false
+        toDoc(vx, vy)
+        if (bounds.contains(tmpPts[0], tmpPts[1])) return false
+        if (!finish()) return false
+        clearSelection()
+        return true
+    }
 
     private fun beginSelectGesture(e: MotionEvent, doubleTap: Boolean) {
         toPage(e.x, e.y)
@@ -5868,12 +6134,12 @@ class DrawingView @JvmOverloads constructor(
      * back half-erased pieces the user never saw stay.
      */
     private fun pushEraseOp() {
-        val addedIds = addedThisGesture.map { it.id }.toHashSet()
-        val removedIds = erasedThisGesture.map { it.id }.toHashSet()
-        val netAdded = addedThisGesture.filterNot { it.id in removedIds }
-        val netRemoved = erasedThisGesture.filterNot { it.id in addedIds }
+        val final = strokes.filter { it.id in eraseOriginals }.associateBy { it.id }
+        val netAdded = final.values.filter { it != eraseOriginals[it.id] }
+        val netRemoved = eraseOriginals.values.filterNotNull().filter { it != final[it.id] }
         erasedThisGesture.clear()
         addedThisGesture.clear()
+        eraseOriginals.clear()
         if (netAdded.isNotEmpty() || netRemoved.isNotEmpty()) {
             pushOp(Op(netAdded, netRemoved), noteGridEraseCells)
         }
@@ -5881,6 +6147,7 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun rememberEraseGridCells() {
+        eraseOriginals.clear()
         val grid = canvas?.noteGrid
         noteGridEraseCells = if (grid == null) mutableMapOf() else strokes.associateTo(LinkedHashMap()) {
             it.id to gridCell(grid, it)
@@ -5910,11 +6177,12 @@ class DrawingView @JvmOverloads constructor(
     /** Fit final contents once per edit and include all neighbour movement in that same undo. */
     private fun fitNoteGridOp(op: Op, overrides: Map<String, NoteGrid.Cell>): Op {
         val current = canvas ?: return op
-        val grid = current.noteGrid ?: return op
+        val savedGrid = current.noteGrid ?: return op
         val page = slots.firstOrNull()?.index ?: 0
         val beforeById = strokes.associateByTo(LinkedHashMap()) { it.id }
         op.added.forEach { beforeById.remove(it.id) }
         op.removed.forEach { beforeById[it.id] = it }
+        val grid = if (savedGrid.manualSections || beforeById.values.any { it.pageIndex == page }) savedGrid else savedGrid.cleared()
         val cells = strokes.filter { it.pageIndex == page }.associate { stroke ->
             stroke.id to (overrides[stroke.id] ?: gridCell(grid, stroke))
         }
@@ -5932,7 +6200,7 @@ class DrawingView @JvmOverloads constructor(
         val finalById = strokes.associateBy { it.id }
         val added = strokes.filter { beforeById[it.id] != it }
         val removed = beforeById.values.filter { finalById[it.id] != it }
-        val structuralChange = fit.grid != grid
+        val structuralChange = fit.grid != savedGrid
         if (!structuralChange) return Op(added, removed)
         val afterCanvas = current.copy(noteGrid = fit.grid.copy(modifiedAt = stamp))
         canvas = afterCanvas
@@ -5941,8 +6209,11 @@ class DrawingView @JvmOverloads constructor(
     }
 
     private fun pushOp(op: Op, cellOverrides: Map<String, NoteGrid.Cell> = emptyMap()) {
-        val fitted = fitNoteGridOp(op, cellOverrides)
-        undoStack.add(fitted)
+        recordOp(fitNoteGridOp(op, cellOverrides))
+    }
+
+    private fun recordOp(op: Op) {
+        undoStack.add(op)
         if (undoStack.size > 200) undoStack.removeAt(0)
         redoStack.clear()
     }

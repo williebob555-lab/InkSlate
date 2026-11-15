@@ -98,6 +98,9 @@ class ToolBarActions(
     val onRedo: () -> Unit = {},
     val canUndo: Boolean = false,
     val canRedo: Boolean = false,
+    val selectionProperties: com.inkslate.core.SelectionProperties? = null,
+    val selectionEditing: Boolean = false,
+    val onTransferSelectionLayer: ((Int, Boolean) -> Unit)? = null,
     val onRestyleSelection: (Int?, Float?) -> Unit = { _, _ -> },
     val onDeleteSelection: () -> Unit = {},
     val onDuplicateSelection: () -> Unit = {},
@@ -169,54 +172,25 @@ fun ToolBar(
 
             // ---- selection actions, shown only while something is selected ----
             AnimatedVisibility(visible = selectionCount > 0) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "$selectionCount selected",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.weight(1f)
+                val properties = actions.selectionProperties ?: com.inkslate.core.SelectionProperties(
+                    "$selectionCount selected", selectionCount, null, null, false, false, null)
+                com.inkslate.editor.ContextActionBar(
+                    properties = properties,
+                    editing = actions.selectionEditing,
+                    actions = com.inkslate.editor.ContextActions(
+                        restyle = actions.onRestyleSelection,
+                        duplicate = actions.onDuplicateSelection,
+                        delete = actions.onDeleteSelection,
+                        done = actions.onClearSelection,
+                        copy = actions.onCopySelection,
+                        cut = actions.onCutSelection,
+                        edit = actions.onEditStamp ?: actions.onEditText,
+                        editLabel = if (actions.onEditText != null) "Edit text" else "Edit settings",
+                        crop = if (actions.canCrop) actions.onBeginCrop else null,
+                        savePicture = if (actions.canCrop) actions.onSavePicture else null,
+                        transferLayer = actions.onTransferSelectionLayer
                     )
-                    IconButton(onClick = { actions.onRestyleSelection(cfg.color, null) }) {
-                        Icon(Icons.Default.BorderColor, "Apply current colour")
-                    }
-                    actions.onEditText?.let { edit ->
-                        IconButton(onClick = edit) { Icon(Icons.Default.Edit, "Edit text") }
-                    }
-                    actions.onEditStamp?.let { edit ->
-                        IconButton(onClick = edit) { Icon(Icons.Default.Tune, "Change this stamp") }
-                    }
-                    IconButton(onClick = actions.onCopySelection) {
-                        Icon(Icons.Default.ContentCopy, "Copy")
-                    }
-                    IconButton(onClick = actions.onCutSelection) {
-                        Icon(Icons.Default.ContentCut, "Cut")
-                    }
-                    if (actions.canCrop) {
-                        IconButton(onClick = actions.onBeginCrop) {
-                            Icon(Icons.Default.Crop, "Crop this picture")
-                        }
-                        actions.onSavePicture?.let { save ->
-                            IconButton(onClick = save) {
-                                Icon(Icons.Default.SaveAlt, "Save this picture as a PNG")
-                            }
-                        }
-                    }
-                    IconButton(onClick = actions.onDuplicateSelection) {
-                        Icon(Icons.Default.Layers, "Duplicate")
-                    }
-                    IconButton(onClick = actions.onDeleteSelection) {
-                        Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
-                    }
-                    IconButton(onClick = actions.onClearSelection) {
-                        Icon(Icons.Default.Close, "Done selecting")
-                    }
-                }
+                )
             }
 
             // ---- colour and presets, always visible ----

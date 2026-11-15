@@ -1539,7 +1539,11 @@ class DocumentRepo(private val context: Context) {
             val sourceForExport = if (exportCanvas != null && doc.ink.canvas?.isUnbounded == true) {
                 File.createTempFile("inkslate-whiteboard-", ".pdf", context.cacheDir).also {
                     snapshot = it
-                    CanvasPaper.writeSnapshot(it, exportCanvas)
+                    val grid = exportCanvas.noteGrid
+                    val snapshotCanvas = if (grid != null && !grid.manualSections && doc.ink.pages["0"].isNullOrEmpty()) {
+                        exportCanvas.copy(noteGrid = grid.cleared())
+                    } else exportCanvas
+                    CanvasPaper.writeSnapshot(it, snapshotCanvas)
                 }
             } else {
                 matchCanvasPaper(doc)

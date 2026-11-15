@@ -36,6 +36,42 @@ class LayerDrawStateTest {
         DesignConfig.install(originalDesign)
     }
 
+    @Test fun `selecting a recording layer disarms the previous layer without changing visibility`() {
+        preferences.edit().putInt("visible_annotation_layers", AnnotationLayers.ALL)
+            .putString("annotation_layer_opacities", "0.35,0.4,0.65").commit()
+        val state = ToolState(context)
+        assertEquals(AnnotationLayers.ONE, state.recordLayerMask)
+        state.toggleLayerRecord(AnnotationLayers.TWO)
+        assertEquals(AnnotationLayers.TWO, state.recordLayerMask)
+        assertEquals(AnnotationLayers.ALL, state.visibleLayerMask)
+        assertEquals(listOf(.35f, .4f, .65f), state.layerOpacities)
+        assertEquals(AnnotationLayers.TWO, ToolState(context).recordLayerMask)
+        state.toggleLayerRecord(AnnotationLayers.THREE)
+        assertEquals(AnnotationLayers.THREE, state.recordLayerMask)
+    }
+
+    @Test fun `tapping the selected recording layer keeps it selected`() {
+        val state = ToolState(context)
+        state.toggleLayerRecord(AnnotationLayers.TWO)
+        state.toggleLayerRecord(AnnotationLayers.TWO)
+        assertEquals(AnnotationLayers.TWO, state.recordLayerMask)
+        assertEquals(AnnotationLayers.TWO, preferences.getInt("record_annotation_layers", 0))
+        assertEquals(AnnotationLayers.TWO, ToolState(context).recordLayerMask)
+    }
+
+    @Test fun `legacy simultaneous recording masks are migrated and saved as one layer`() {
+        preferences.edit().putInt("record_annotation_layers", AnnotationLayers.ALL)
+            .putInt("visible_annotation_layers", AnnotationLayers.ALL).commit()
+        val state = ToolState(context)
+        assertEquals(AnnotationLayers.ONE, state.recordLayerMask)
+        assertEquals(AnnotationLayers.ONE, preferences.getInt("record_annotation_layers", 0))
+        assertEquals(AnnotationLayers.ALL, state.visibleLayerMask)
+        assertEquals(AnnotationLayers.ONE, ToolState(context).recordLayerMask)
+        preferences.edit().putInt("record_annotation_layers", 0).commit()
+        assertEquals(AnnotationLayers.ONE, ToolState(context).recordLayerMask)
+        assertEquals(AnnotationLayers.ONE, preferences.getInt("record_annotation_layers", 0))
+    }
+
     @Test fun `layer pen replaces multi record while retaining other visibility and faders`() {
         preferences.edit()
             .putInt("record_annotation_layers", AnnotationLayers.ALL)

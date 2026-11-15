@@ -2666,7 +2666,11 @@ object Stamps {
             }
         }
         val box = currentBox(tag, strokes) ?: return strokes
-        return build(kind, box, strokes.first().pageIndex, o, tag.group, nextId)
+        // Rebuilding changes geometry, not ownership. In particular, editing a graph moved to
+        // another layer must not silently put its replacement strokes back on layer one.
+        return build(kind, box, strokes.first().pageIndex, o, tag.group, nextId).map {
+            it.copy(layerMask = strokes.first().layerMask)
+        }
     }
 
     /**

@@ -1302,6 +1302,8 @@ fun EditorScreen(
 
     /** Opening the tray puts the last shape back in hand, so "another one of those" is one tap. */
     fun openTray() {
+        finishOneShotSelection()
+        drawingView.value?.clearSelection()
         trayOpen = true
         traySymbols = false
         if (armedItem == null) tools.stampShelf.lastKind?.let(::armKind)
@@ -1899,7 +1901,7 @@ fun EditorScreen(
                 onClick = { menuOpen = false; drawingView.value?.resetView() }
             )
             DropdownMenuItem(
-                text = { Text("Clear this page") },
+                text = { Text("Clear active layer on this page") },
                 onClick = {
                     menuOpen = false
                     drawingView.value?.clearPage(); dirty = true
@@ -2051,14 +2053,32 @@ fun EditorScreen(
             // navigationBarsPadding keeps the toolbar clear of the gesture bar, which
             // otherwise sits directly on top of the tool buttons
             Column(Modifier.navigationBarsPadding()) {
-                if (trayOpen) {
+                if (selectionCount == 0 && !trayOpen && armedSettings == null) (armedItem as? DrawingView.Placement.StampItem)?.let { stamp ->
+                    com.inkslate.editor.ContextActionBar(
+                        properties = com.inkslate.core.SelectionProperties(stamp.kind.label, 1,
+                            stamp.options.color, stamp.options.weight, true, true, null),
+                        placing = true,
+                        actions = com.inkslate.editor.ContextActions(
+                            restyle = { color, weight ->
+                                val options = tools.stampOptionsFor(stamp.kind).let {
+                                    it.copy(color = color ?: it.color, weight = weight ?: it.weight)
+                                }
+                                tools.editStampShelf { it.withOptions(stamp.kind, options) }
+                                drawingView.value?.armStamp(stamp.kind, options)
+                            },
+                            done = ::closeTray,
+                            edit = { endPlacedSettings(); armedSettings = stamp.kind }
+                        )
+                    )
+                }
+                if (trayOpen && selectionCount == 0) {
                     val placement = armedItem
                     ShapeTray(
                         shelf = tools.stampShelf,
                         armed = (placement as? DrawingView.Placement.StampItem)?.kind,
                         armedText = (placement as? DrawingView.Placement.TextItem)?.text,
                         symbols = traySymbols,
-                        onArm = ::armKind,
+                        onArm = { kind -> armKind(kind); trayOpen = false },
                         onDisarm = {
                             trayDisarming = true
                             drawingView.value?.disarmPlacement()
@@ -2139,10 +2159,22 @@ fun EditorScreen(
                                 bookmarkPrompt = page
                             }
                         },
-                        onRestyleSelection = { color, width ->
-                            drawingView.value?.restyleSelection(newColor = color, newWidth = width)
+                        selectionEditing = placedSettings != null,
+                        selectionProperties = com.inkslate.core.SelectionProperties.of(
+                            drawingView.value?.selectedStrokes().orEmpty()),
+                        onTransferSelectionLayer = { layer, copy ->
+                            endPlacedSettings()
+                            drawingView.value?.transferSelectionLayer(layer, copy)
+                            if (tools.visibleLayerMask and layer == 0) tools.toggleLayerVisibility(layer)
+                            val index = Integer.numberOfTrailingZeros(layer)
+                            if (tools.layerOpacities[index] == 0f) tools.setLayerOpacity(layer, 1f)
+                            tools.applyTo(drawingView.value)
                             dirty = true; undoTick++
-                            finishOneShotSelection()
+                        },
+                        onRestyleSelection = { color, width ->
+                            endPlacedSettings()
+                            drawingView.value?.restyleSelectedAppearance(color, width)
+                            dirty = true; undoTick++
                         },
                         onDeleteSelection = {
                             drawingView.value?.deleteSelection(); dirty = true; undoTick++
@@ -2150,11 +2182,9 @@ fun EditorScreen(
                         },
                         onDuplicateSelection = {
                             drawingView.value?.duplicateSelection(); dirty = true; undoTick++
-                            finishOneShotSelection()
                         },
                         onCopySelection = {
                             val n = drawingView.value?.copySelection() ?: 0
-                            finishOneShotSelection()
                             scope.launch {
                                 snackbar.showSnackbar("Copied $n object${if (n == 1) "" else "s"}")
                             }
@@ -2188,7 +2218,7 @@ fun EditorScreen(
                             tools.applyTo(drawingView.value)
                         },
                         onEditPressureCurve = { pressureCurveOpen = true },
-                        onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                        onToggleShapes = { if (trayOpen && selectionCount == 0) closeTray() else openTray() },
                         // Text selected: Edit opens it in the text editor, where its words, look
                         // and link are changed.
                         onEditText = selectedText?.let { t ->
@@ -2552,8 +2582,11 @@ fun EditorScreen(
                                 }
                                 if (armedItem != null) symbolPlaced = true
                             }
-                            view.onSelectionActionFinished = {
-                                if (oneShotSelection?.view === view) finishOneShotSelection()
+                            view.onSelectionOutsideDown = {
+                                if (oneShotSelection?.view === view) {
+                                    finishOneShotSelection()
+                                    true
+                                } else false
                             }
                             view.onStampSized = { kind, width ->
                                 tools.editStampShelf {

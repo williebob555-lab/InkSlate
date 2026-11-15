@@ -2,7 +2,17 @@
 
 Newest first. These notes describe changes made, not confirmation that every reported device issue is resolved. Performance and remaining toolbar reports are still open. Historical entries are changelogs; only the latest installers are retained on the test release.
 
-## Next test build — edge-free canvases and compact workspace
+## Next test build
+
+- **Selection actions have a new contextual bar.** Object names, labeled Duplicate/Delete/Done actions, and a responsive property lane replace the old fixed row. Android selections span the complete toolbar width above the mixer. Narrow layouts offer an explicit control for more properties.
+- **Edit the selection without changing the drawing pen.** Color and weight come from the selected objects; mixed values are explicit. Stamp edits retain their settings and differentiated line weights. Text and pictures expose the actions relevant to them.
+- **Stamp placement uses the same controls.** Choosing a stamp replaces the chooser with its properties and a repeated-placement indicator, rather than stacking contextual surfaces.
+- **Android layer actions distinguish Move from Copy.** Results remain selected; untouched memberships survive. The global recording layer stays unchanged, and rebuilt stamps retain their layer.
+- **Select once keeps duplicates and property edits movable.** An outside pen contact resumes the previous tool immediately.
+- **The accompanying pending InkSlate fixes are included:** explicit Note Grid add/merge controls, roomier wheel spacing, exclusive layer recording, and isolated deletion/erasing of older shared ink. Filters retain their local viewing and writing overrides.
+- **Validation:** 110 related tests passed. The visual pass rendered 104 states across 13 sizes and both app themes, with representative layouts inspected and fixed-label geometry checked. Both apps compile; the InkSlate debug APK packages. Physical-tablet interaction still needs field confirmation.
+
+## 1.2.2-test.350 and subsequent InkSlate refinements - edge-free canvases and compact workspace
 
 - **Existing InkSlate whiteboards become genuinely unbounded.** Older app-created canvases are
   migrated only after their saved camera position and missing-ink recovery checks finish, so the

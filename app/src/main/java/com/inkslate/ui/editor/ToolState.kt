@@ -140,7 +140,7 @@ class ToolState(private val context: Context) {
     /** Mixer channels currently audible/visible. Zero deliberately shows the original file only. */
     var visibleLayerMask by mutableStateOf(AnnotationLayers.ONE)
         private set
-    /** Record-armed channels. Zero auto-arms Layer 1 as soon as a stroke begins. */
+    /** Exactly one layer receives new ink, independently of which layers are visible. */
     var recordLayerMask by mutableStateOf(AnnotationLayers.ONE)
         private set
     /** Independent channel faders, retained separately from mute/visibility. */
@@ -377,8 +377,9 @@ class ToolState(private val context: Context) {
     }
 
     fun toggleLayerRecord(layer: Int) {
-        val bit = AnnotationLayers.normalise(layer).let { it and -it }
-        recordLayerMask = AnnotationLayers.mixerMask(recordLayerMask xor bit)
+        val bit = AnnotationLayers.recordingLayer(layer)
+        if (recordLayerMask == bit) return
+        recordLayerMask = bit
         revision++
         persist()
     }
@@ -732,9 +733,11 @@ class ToolState(private val context: Context) {
         visibleLayerMask = AnnotationLayers.mixerMask(
             sp.getInt(K_VISIBLE_LAYERS, sp.getInt(K_ACTIVE_LAYERS, AnnotationLayers.ONE))
         )
-        recordLayerMask = AnnotationLayers.mixerMask(
-            sp.getInt(K_RECORD_LAYERS, visibleLayerMask)
-        )
+        val savedRecordingLayer = sp.getInt(K_RECORD_LAYERS, visibleLayerMask)
+        recordLayerMask = AnnotationLayers.recordingLayer(savedRecordingLayer)
+        if (!sp.contains(K_RECORD_LAYERS) || savedRecordingLayer != recordLayerMask) {
+            sp.edit().putInt(K_RECORD_LAYERS, recordLayerMask).apply()
+        }
         layerOpacities = sp.getString(K_LAYER_OPACITIES, null)
             ?.split(',')?.mapNotNull { it.toFloatOrNull()?.coerceIn(0f, 1f) }
             ?.takeIf { it.size == 3 } ?: listOf(1f, 1f, 1f)

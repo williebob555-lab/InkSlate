@@ -13,6 +13,7 @@ data class DesignConfig(
     val mixer: Mixer = Mixer(),
     val wheel: Wheel = Wheel(),
     val scribble: Scribble = Scribble(),
+    val noteGrid: NoteGridControls = NoteGridControls(),
     val theme: Theme = Theme()
 ) {
     @Serializable data class Chrome(
@@ -59,6 +60,11 @@ data class DesignConfig(
         val darkBackground: String = "#14171B",
         val lightBackground: String = "#F6F7F9"
     )
+    @Serializable data class NoteGridControls(
+        val controlSizeDp: Float = 28f,
+        val touchTargetSizeDp: Float = 40f,
+        val edgeOffsetDp: Float = 20f
+    )
 
     /** Reject a whole candidate instead of silently installing a partly broken design. */
     fun validated(): DesignConfig = apply {
@@ -89,6 +95,11 @@ data class DesignConfig(
             range(minimumSpeedDpPerSecond, 80f, 2000f)
         }
         with(theme) { listOf(darkAccent, lightAccent, darkBackground, lightBackground).forEach(::argb) }
+        with(noteGrid) {
+            range(controlSizeDp, 20f, 48f)
+            range(touchTargetSizeDp, controlSizeDp, 64f)
+            range(edgeOffsetDp, controlSizeDp / 2f, 48f)
+        }
     }
 
     companion object {

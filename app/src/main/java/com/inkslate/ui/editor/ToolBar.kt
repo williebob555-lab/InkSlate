@@ -160,6 +160,9 @@ class ToolBarActions(
     val onNextPage: () -> Unit,
     val onOpenPageNavigation: () -> Unit,
     val onTogglePageBookmark: () -> Unit,
+    val selectionProperties: com.inkslate.core.SelectionProperties? = null,
+    val selectionEditing: Boolean = false,
+    val onTransferSelectionLayer: ((Int, Boolean) -> Unit)? = null,
     val onRestyleSelection: (Int?, Float?) -> Unit,
     val onDeleteSelection: () -> Unit,
     val onDuplicateSelection: () -> Unit,
@@ -248,6 +251,31 @@ fun ToolBar(
     val mixerMinimum = (mixerConfig.visibilityHeightDp + mixerConfig.actionHeightDp +
         mixerConfig.minimumFaderHeightDp + 8f).dp.coerceAtMost(screenHeight * .55f)
     Surface(tonalElevation = 3.dp, shadowElevation = 8.dp) {
+        Column(Modifier.fillMaxWidth().heightIn(max = screenHeight * .55f)) {
+            // ---- selection actions, shown only while something is selected ----
+            AnimatedVisibility(visible = selectionCount > 0 && !cropping) {
+                val properties = actions.selectionProperties ?: com.inkslate.core.SelectionProperties(
+                    "$selectionCount selected", selectionCount, null, null, false, false, null)
+                com.inkslate.editor.ContextActionBar(
+                    properties = properties,
+                    editing = actions.selectionEditing,
+                    actions = com.inkslate.editor.ContextActions(
+                        restyle = actions.onRestyleSelection,
+                        duplicate = actions.onDuplicateSelection,
+                        delete = actions.onDeleteSelection,
+                        done = actions.onClearSelection,
+                        copy = actions.onCopySelection,
+                        cut = actions.onCutSelection,
+                        edit = actions.onEditStamp ?: actions.onEditText,
+                        editLabel = if (actions.onEditText != null) "Edit text" else "Edit settings",
+                        crop = if (canCrop) actions.onBeginCrop else null,
+                        savePicture = if (canCrop) actions.onSavePicture else null,
+                        transferLayer = actions.onTransferSelectionLayer
+                    )
+                )
+            }
+
+
         Box(Modifier.fillMaxWidth()) {
             Column(
                 Modifier
@@ -284,59 +312,6 @@ fun ToolBar(
                     TextButton(onClick = actions.onResetCrop) { Text("Whole picture") }
                     TextButton(onClick = actions.onCancelCrop) { Text("Cancel") }
                     TextButton(onClick = actions.onApplyCrop) { Text("Crop") }
-                }
-            }
-
-            // ---- selection actions, shown only while something is selected ----
-            AnimatedVisibility(visible = selectionCount > 0 && !cropping) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "$selectionCount selected",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = { actions.onRestyleSelection(cfg.color, null) }) {
-                        Icon(Icons.Default.BorderColor, "Apply current colour")
-                    }
-                    actions.onEditText?.let { edit ->
-                        IconButton(onClick = edit) { Icon(Icons.Default.Edit, "Edit text") }
-                    }
-                    actions.onEditStamp?.let { edit ->
-                        IconButton(onClick = edit) { Icon(Icons.Default.Tune, "Change this stamp") }
-                    }
-                    IconButton(onClick = actions.onCopySelection) {
-                        Icon(Icons.Default.ContentCopy, "Copy")
-                    }
-                    IconButton(onClick = actions.onCutSelection) {
-                        Icon(Icons.Default.ContentCut, "Cut")
-                    }
-                    if (canCrop) {
-                        IconButton(onClick = actions.onBeginCrop) {
-                            Icon(Icons.Default.Crop, "Crop this picture")
-                        }
-                        actions.onSavePicture?.let { save ->
-                            IconButton(onClick = save) {
-                                Icon(Icons.Default.SaveAlt, "Save this picture as a PNG")
-                            }
-                        }
-                    }
-                    IconButton(onClick = actions.onDuplicateSelection) {
-                        Icon(Icons.Default.Layers, "Duplicate")
-                    }
-                    IconButton(onClick = actions.onDeleteSelection) {
-                        Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
-                    }
-                    // One tap out of a selection, rather than hunting for empty space to tap.
-                    IconButton(onClick = actions.onClearSelection) {
-                        Icon(Icons.Default.Close, "Done selecting")
-                    }
                 }
             }
 
@@ -804,6 +779,7 @@ fun ToolBar(
                 )
             }
         }
+        }
     }
 }
 
@@ -1064,7 +1040,7 @@ private fun LayerChannel(
                 onClick = onRecord,
                 icon = Icons.Default.FiberManualRecord,
                 label = "Write",
-                description = "Layer $label ${if (armed) "writing on" else "writing off"}",
+                description = if (armed) "Writing on layer $label" else "Write only on layer $label",
                 tint = if (armed) Color(0xFFEF4444)
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .5f),
                 modifier = Modifier.weight(1f).fillMaxHeight()

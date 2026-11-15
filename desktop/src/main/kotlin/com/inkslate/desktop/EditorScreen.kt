@@ -1002,6 +1002,7 @@ fun EditorScreen(
 
     /** Opening the tray puts the last shape back in hand, so "another one of those" is one click. */
     fun openTray() {
+        selection = emptySet()
         trayOpen = true
         traySymbols = false
         if (!tools.hasArmed) tools.stampShelf.lastKind?.let(::armKind)
@@ -1487,7 +1488,7 @@ fun EditorScreen(
         shortcuts.zoomIn = { viewport.zoomBy(1.2f, viewport.centreOfView()) }
         shortcuts.zoomOut = { viewport.zoomBy(1f / 1.2f, viewport.centreOfView()) }
         shortcuts.resetZoom = { viewport.fitWidth(viewport.content) }
-        shortcuts.shapes = { if (trayOpen) closeTray() else openTray() }
+        shortcuts.shapes = { if (trayOpen && selection.isEmpty()) closeTray() else openTray() }
         // Pedals and page keys. A turn this document cannot make (past its last page) returns
         // false, and InkSheets takes it as a turn to the next song.
         if (positionRestored) {
@@ -1839,7 +1840,23 @@ fun EditorScreen(
                     onToggleBookmark = ::toggleBookmark
                 )
             }
-            if (trayOpen) {
+            if (selection.isEmpty() && !trayOpen && armedSettings == null) tools.armedStamp?.let { (kind, options) ->
+                com.inkslate.editor.ContextActionBar(
+                    properties = com.inkslate.core.SelectionProperties(kind.label, 1,
+                        options.color, options.weight, true, true, null),
+                    placing = true,
+                    actions = com.inkslate.editor.ContextActions(
+                        restyle = { color, weight ->
+                            val next = options.copy(color = color ?: options.color, weight = weight ?: options.weight)
+                            tools.editStampShelf { it.withOptions(kind, next) }
+                            tools.arm(kind, next)
+                        },
+                        done = ::closeTray,
+                        edit = { endPlacedSettings(); armedSettings = kind }
+                    )
+                )
+            }
+            if (trayOpen && selection.isEmpty()) {
                 // Read so the tray follows what is in hand, which is not itself Compose state.
                 @Suppress("UNUSED_VARIABLE") val tick = tools.armedTick
                 ShapeTray(
@@ -1847,7 +1864,7 @@ fun EditorScreen(
                     armed = tools.armedStamp?.first,
                     armedText = tools.armedText,
                     symbols = traySymbols,
-                    onArm = ::armKind,
+                    onArm = { kind -> armKind(kind); trayOpen = false },
                     onDisarm = { tools.disarm() },
                     onOpenLibrary = { libraryOpen = true },
                     onSettingsFor = { kind ->
@@ -1899,14 +1916,16 @@ fun EditorScreen(
                     onRedo = ::redoOnce,
                     canUndo = undo.isNotEmpty(),
                     canRedo = redo.isNotEmpty(),
+                    selectionEditing = placedSettings != null,
+                    selectionProperties = com.inkslate.core.SelectionProperties.of(selected()),
                     onRestyleSelection = { colour, width ->
-                        replaceSelection {
-                            it.copy(
-                                color = colour ?: it.color,
-                                baseWidth = width ?: it.baseWidth,
-                                updatedUtc = System.currentTimeMillis()
-                            )
-                        }
+                        endPlacedSettings()
+                        val before = selected()
+                        val after = com.inkslate.core.SelectionAppearance.restyle(
+                            before, colour, width, System.currentTimeMillis(), ::nextId)
+                        strokes.applyEdit(before, after)
+                        pushOp(Op(before, after))
+                        selection = after.map { it.id }.toSet()
                     },
                     onDeleteSelection = ::deleteSelection,
                     onDuplicateSelection = ::duplicateSelection,
@@ -1921,7 +1940,7 @@ fun EditorScreen(
                     onPaste = ::paste,
                     canPaste = Clipboard.contents.isNotEmpty(),
                     onPickCustomColour = { pickingColour = true },
-                    onToggleShapes = { if (trayOpen) closeTray() else openTray() },
+                    onToggleShapes = { if (trayOpen && selection.isEmpty()) closeTray() else openTray() },
                     // One text box selected: Edit opens it in the text editor - its words,
                     // look and link.
                     onEditText = selected().singleOrNull()?.takeIf { it.kind == Stroke.Kind.TEXT }?.let { t -> { editingText = t } },

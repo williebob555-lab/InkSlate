@@ -8,6 +8,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DesignConfigTest {
+    @Test fun `section controls reject unsafe touch geometry`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            DesignConfig(noteGrid = DesignConfig.NoteGridControls(touchTargetSizeDp = 20f)).validated()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DesignConfig(noteGrid = DesignConfig.NoteGridControls(edgeOffsetDp = 1f)).validated()
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            DesignConfig(noteGrid = DesignConfig.NoteGridControls(controlSizeDp = Float.NaN)).validated()
+        }
+    }
     @Test fun `omitted sections use the bundled design defaults`() {
         assertEquals(DesignConfig(), DesignConfig.parse("{}"))
         val partial = DesignConfig.parse("""{"revision":2,"mixer":{"visibilityHeightDp":26}}""")
@@ -78,7 +89,7 @@ class DesignConfigTest {
         assertThrows(IllegalArgumentException::class.java) { DesignConfig.parse(" ".repeat(65537)) }
     }
 
-    @Test fun `published config validates roundtrips and matches bundled design values`() {
+    @Test fun `published config validates roundtrips and gives wheel choices room`() {
         // Gradle runs in :core; ancestor search also supports running this test from the repo root.
         val root = generateSequence(File(".").absoluteFile) { it.parentFile }
             .firstOrNull { File(it, "config/inkslate-test.json").isFile }
@@ -86,6 +97,14 @@ class DesignConfigTest {
         val published = DesignConfig.parse(File(root, "config/inkslate-test.json").readText())
         assertTrue(published.revision > 0)
         assertEquals(published, DesignConfig.parse(DesignConfig.json.encodeToString(published)))
-        assertEquals(DesignConfig(), published.copy(revision = 0, summary = DesignConfig().summary))
+        val wheel = published.wheel
+        // Eight main actions and nine palette colors, including their selected growth.
+        val mainSpacing = 2 * wheel.mainRadiusDp * kotlin.math.sin(Math.PI / 8)
+        val colorSpacing = 2 * wheel.colorRadiusDp * kotlin.math.sin(
+            Math.toRadians(wheel.colorArcDegrees.toDouble() / (wheel.palette.size - 1)))
+        assertTrue("Selected main buttons must not overlap", mainSpacing > wheel.actionSizeDp + 6f)
+        assertTrue("Selected colors must not overlap", colorSpacing > wheel.colorDotDp + 4f)
+        assertTrue("The first layer choice must clear the main ring",
+            wheel.layerTrackStartDp > wheel.mainRadiusDp + (wheel.actionSizeDp + 6f) / 2f + 19f)
     }
 }

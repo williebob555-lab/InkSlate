@@ -18,6 +18,53 @@ import org.robolectric.annotation.GraphicsMode
 @Config(sdk = [35], manifest = Config.NONE)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class NoteGridDrawingTest {
+    private fun displayed(view: DrawingView) = DrawingView::class.java.getDeclaredMethod("displayedNoteGrid")
+        .apply { isAccessible = true }.invoke(view) as NoteGrid
+
+    @Test fun `deleting the final annotation removes separators and undo restores the sections`() {
+        val view = view()
+        val original = view.canvas!!.noteGrid!!
+        val mark = stroke("last", 380f, 420f)
+        view.setStrokes(listOf(mark))
+        view.selectAll()
+        view.deleteSelection()
+        assertEquals(listOf(NoteGridRow()), view.canvas!!.noteGrid!!.rows)
+        assertTrue(displayed(view).segments(com.inkslate.core.Box(0f, 0f, 1000f, 1000f)).isEmpty())
+        view.undo()
+        assertEquals(original.rows, view.canvas!!.noteGrid!!.rows)
+        assertEquals(listOf(mark), view.strokesSnapshot())
+        view.redo()
+        assertEquals(listOf(NoteGridRow()), view.canvas!!.noteGrid!!.rows)
+        assertTrue(view.strokesSnapshot().isEmpty())
+    }
+
+    @Test fun `reopening an empty legacy grid displays no old separators without changing saved data`() {
+        val view = view()
+        val saved = view.canvas
+        view.setStrokes(emptyList())
+        assertEquals(listOf(NoteGridRow()), displayed(view).rows)
+        assertEquals(saved, view.canvas)
+        view.setStrokes(listOf(stroke("hidden", 380f, 420f)))
+        view.visibleLayerMask = 0
+        assertEquals(saved!!.noteGrid, displayed(view))
+    }
+
+    @Test fun `drawing again on a cleared legacy grid does not resurrect unused sections`() {
+        val view = view()
+        view.setStrokes(emptyList())
+        set(view, "live", arrayListOf(InkPoint(20f, 20f, 2f), InkPoint(40f, 40f, 2f)))
+        call(view, "updateNoteGridPreview")
+        call(view, "refreshNoteGridPreview")
+        assertEquals(listOf(NoteGridRow()), displayed(view).rows)
+        DrawingView::class.java.getDeclaredMethod("commitLive", Boolean::class.javaPrimitiveType)
+            .apply { isAccessible = true }.invoke(view, false)
+        assertEquals(listOf(NoteGridRow()), view.canvas!!.noteGrid!!.rows)
+        assertEquals(1, view.strokesSnapshot().size)
+        view.undo()
+        assertTrue(view.strokesSnapshot().isEmpty())
+        assertEquals(listOf(NoteGridRow()), displayed(view).rows)
+    }
+
     private fun view() = DrawingView(RuntimeEnvironment.getApplication()).apply {
         canvas = InkCanvas.startingAt(600f, 800f, background = "NOTE_GRID", ownPaper = true)
             .copy(noteGrid = NoteGrid(rows = listOf(NoteGridRow(220f, listOf(360f, 360f)))))

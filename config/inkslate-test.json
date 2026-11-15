@@ -1,7 +1,12 @@
 {
   "schemaVersion": 1,
-  "revision": 2,
-  "summary": "Open note-grid edges with live resizing and content-aware shrinking, calibrated scribble speed and an outward layer-drawing lane on the quick wheel.",
+  "revision": 4,
+  "summary": "Roomier action-wheel spacing, explicit Note Grid section controls, live resizing and movable duplicates with Select once.",
+  "noteGrid": {
+    "controlSizeDp": 28,
+    "touchTargetSizeDp": 40,
+    "edgeOffsetDp": 20
+  },
   "chrome": {
     "tabMinWidthDp": 96,
     "tabMaxWidthDp": 220,
@@ -18,16 +23,16 @@
   },
   "wheel": {
     "actionSizeDp": 40,
-    "mainRadiusDp": 54,
-    "activationRadiusDp": 44,
-    "colorRadiusDp": 108,
+    "mainRadiusDp": 72,
+    "activationRadiusDp": 52,
+    "colorRadiusDp": 144,
     "colorDotDp": 27,
-    "sizeTrackStartDp": 74,
-    "sizeTrackLengthDp": 190,
+    "sizeTrackStartDp": 120,
+    "sizeTrackLengthDp": 210,
     "colorArcDegrees": 58,
     "submenuEntryDegrees": 15,
-    "layerTrackStartDp": 74,
-    "layerTrackLengthDp": 120,
+    "layerTrackStartDp": 120,
+    "layerTrackLengthDp": 144,
     "layerEntryAngleDegrees": 45,
     "layerLaneHalfAngleDegrees": 22,
     "palette": ["#111827", "#2563EB", "#7C3AED", "#DC2626", "#F59E0B", "#16A34A", "#0891B2", "#FDE047", "#FFFFFF"]

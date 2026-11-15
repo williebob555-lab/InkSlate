@@ -39,6 +39,7 @@ for all subscribers, publish its previous values under a **new, higher** revisio
 | `mixer` | Visibility header height, action-row height, minimum desired fader height |
 | `wheel` | Action size, main/activation/palette radii, palette-dot size, size-track start/length, color/submenu angles, palette colors, layer-lane start/length/angle/half-angle |
 | `scribble` | Drifting-loop recognizer enable, corridor ratio, traversal count, minimum span, travel ratio, default minimum pen speed |
+| `noteGrid` | Section-control size, touch-target size, edge offset |
 | `theme` | Light/dark accent and background colors |
 
 Dimensions ending in `Dp` use density-independent pixels. Scribble `minSpan` is in
@@ -59,13 +60,44 @@ does not alter the saved document; lifting the pen commits the stroke and sectio
 layout in one undo step, and cancelling discards the preview. Editing or erasing
 content fits each section to everything left inside it, with the preset's original
 column width and row height as minimums. Neighboring content moves with its section.
-Explicit rows and columns remain present when empty. Committed layouts carry a
+Sections are now explicit: use the right-edge **+** to append a column to that row,
+or the **+** below a row to insert a new section underneath. Drawing outside the
+current layout enlarges the last existing section instead of creating more sections.
+The **−** in a section removes its separator by merging its space into a neighbor;
+ink stays in place. Adding a row moves later rows and their ink downward. Every section
+edit is undoable together with any ink movement. The final section remains open.
+
+Manually created sections are saved with `manualSections=true` and remain when empty
+until explicitly removed. Older automatic grids still clear stale separators when all
+annotations have been deleted. Controls only appear in the editor and never in exports.
+Committed layouts carry a
 `modifiedAt` clock so reopening or syncing with an older, larger layout cannot undo
 an intentional shrink. Legacy grids without clocks retain their original merge rule.
 
-Revision 2 adds these capabilities and requires the accompanying code changes.
+Revision 3 adds explicit section controls and requires the accompanying code changes.
+Revision 4 enlarges the main wheel radius from 54 to 72 dp and the color radius from
+108 to 144 dp. Size and layer lanes start at 120 dp so their controls clear the main
+ring; longer tracks spread out size stops and layer choices. These spacing values
+are configuration-driven. This file also includes revision 3's new section controls,
+so it should be published with their matching app build.
 Install its matching app build before accepting this revision; earlier apps safely
 reject its unsupported keys and retain their current design.
+
+Select once keeps a duplicated selection movable until the pen lands outside its
+frame and handles. That contact clears selection and immediately starts the previous
+tool. Ordinary persistent Select continues to select normally.
+
+Recording is exclusive to one layer. Mixer Write buttons switch the recording layer;
+they never arm several layers or leave recording unarmed. Legacy multi-layer recording
+preferences select their lowest valid layer on upgrade; visibility and faders stay independent.
+Shared legacy annotations retain their other memberships when deleted, cut or erased from
+one layer. Partial erasing keeps a full original on untouched layers and fragments only on
+the edited layer. An erase gesture retains its normal target from pen-down; filters continue
+to override that target locally along its path. Filter views still override the ordinary
+visible-layer selection inside their bounds, without changing global mixer settings;
+per-layer opacity keeps its existing fader behavior.
+Duplicating and pasting create ink only on the current target layer. Clear active layer on
+this page leaves other layers and other pages intact. These behavior fixes need an app build.
 
 Scribbling on an empty page stays ink. Erasing requires crossing editable ink on a
 visible, nonzero-opacity annotation layer. Marks baked into the original PDF are not

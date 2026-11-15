@@ -10,8 +10,17 @@ object AnnotationLayers {
     const val ALL = ONE or TWO or THREE
 
     fun normalise(mask: Int): Int = (mask and ALL).takeIf { it != 0 } ?: ONE
+    /** New ink records into exactly one channel, including when loading a legacy multi-record mask. */
+    fun recordingLayer(mask: Int): Int {
+        val valid = mask and ALL
+        return if (valid == 0) ONE else valid and -valid
+    }
     /** Mixer masks may be completely muted; stroke membership may not. */
     fun mixerMask(mask: Int): Int = mask and ALL
+
+    /** Remove only one channel from legacy shared ink; zero means no memberships remain. */
+    fun withoutLayer(membership: Int, target: Int): Int =
+        normalise(membership) and recordingLayer(target).inv() and ALL
 
     /** Effective fader level for a stroke in one or more channels, or null when fully muted. */
     fun mixedOpacity(membership: Int, visibleMask: Int, levels: List<Float>): Float? {
@@ -24,13 +33,17 @@ object AnnotationLayers {
         return level.coerceIn(0f, 1f)
     }
 
-    /** Filters override the viewport target wherever they contain the pen. */
+    /** Filters choose one recording channel; overlapping filters prefer the viewport's active one. */
     fun writeMask(viewportMask: Int, filters: Iterable<LayerFilter>, page: Int, x: Float, y: Float): Int {
+        val active = recordingLayer(viewportMask)
         var inside = 0
         for (filter in filters) {
-            if (filter.pageIndex == page && filter.contains(x, y)) inside = inside or filter.layerMask
+            if (filter.pageIndex == page && filter.contains(x, y)) inside = inside or mixerMask(filter.layerMask)
         }
-        return if (inside == 0) normalise(viewportMask) else normalise(inside)
+        return when {
+            inside == 0 || (inside and active) != 0 -> active
+            else -> recordingLayer(inside)
+        }
     }
 
     /** Stable UI colours for every possible combination; independent of drawing-ink colour. */

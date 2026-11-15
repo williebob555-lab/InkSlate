@@ -16,13 +16,59 @@ class AnnotationLayersTest {
         assertEquals(5, InkDocument.parse(combined.serialize())!!.strokesOn(0).single().layerMask)
     }
 
-    @Test fun `filters replace viewport target and overlaps combine`() {
+    @Test fun `filters replace viewport target and overlaps choose one deterministic channel`() {
         val two = LayerFilter(0, AnnotationLayers.TWO, 10f, 10f, 80f, 80f)
         val three = LayerFilter(0, AnnotationLayers.THREE, 40f, 40f, 100f, 100f)
         assertEquals(AnnotationLayers.ONE, AnnotationLayers.writeMask(1, listOf(two, three), 0, 5f, 5f))
         assertEquals(AnnotationLayers.TWO, AnnotationLayers.writeMask(1, listOf(two, three), 0, 20f, 20f))
-        assertEquals(AnnotationLayers.TWO or AnnotationLayers.THREE,
+        assertEquals(AnnotationLayers.TWO,
             AnnotationLayers.writeMask(1, listOf(two, three), 0, 50f, 50f))
+        assertEquals(AnnotationLayers.TWO,
+            AnnotationLayers.writeMask(1, listOf(three, two), 0, 50f, 50f))
+    }
+
+    @Test fun `overlapping filters prefer the active recording channel when present`() {
+        val two = LayerFilter(0, AnnotationLayers.TWO, 0f, 0f, 100f, 100f)
+        val three = two.copy(layerMask = AnnotationLayers.THREE)
+        for (filters in listOf(listOf(two, three), listOf(three, two))) {
+            assertEquals(AnnotationLayers.THREE,
+                AnnotationLayers.writeMask(AnnotationLayers.THREE, filters, 0, 50f, 50f))
+            assertEquals(AnnotationLayers.TWO,
+                AnnotationLayers.writeMask(AnnotationLayers.TWO, filters, 0, 50f, 50f))
+        }
+    }
+
+    @Test fun `legacy recording combinations select their lowest valid channel`() {
+        for (mask in listOf(0, 8, Int.MIN_VALUE)) {
+            assertEquals(AnnotationLayers.ONE, AnnotationLayers.recordingLayer(mask))
+        }
+        assertEquals(AnnotationLayers.ONE, AnnotationLayers.recordingLayer(AnnotationLayers.ALL))
+        assertEquals(AnnotationLayers.TWO, AnnotationLayers.recordingLayer(AnnotationLayers.TWO or AnnotationLayers.THREE))
+        assertEquals(AnnotationLayers.THREE, AnnotationLayers.recordingLayer(8 or AnnotationLayers.THREE))
+        for (mask in 0..31) {
+            val layer = AnnotationLayers.writeMask(mask, emptyList(), 0, 5f, 5f)
+            assertTrue(layer == AnnotationLayers.ONE || layer == AnnotationLayers.TWO || layer == AnnotationLayers.THREE)
+        }
+    }
+
+    @Test fun `invalid and other page filters do not override recording target`() {
+        val invalid = LayerFilter(0, 8, 0f, 0f, 100f, 100f)
+        val otherPage = invalid.copy(pageIndex = 1, layerMask = AnnotationLayers.ONE)
+        assertEquals(AnnotationLayers.THREE,
+            AnnotationLayers.writeMask(AnnotationLayers.THREE, listOf(invalid, otherPage), 0, 50f, 50f))
+        val shared = invalid.copy(layerMask = AnnotationLayers.ONE or AnnotationLayers.THREE)
+        assertEquals(AnnotationLayers.THREE,
+            AnnotationLayers.writeMask(AnnotationLayers.THREE, listOf(shared), 0, 50f, 50f))
+    }
+
+    @Test fun `removing one channel preserves remaining legacy shared memberships`() {
+        assertEquals(AnnotationLayers.ONE or AnnotationLayers.THREE,
+            AnnotationLayers.withoutLayer(AnnotationLayers.ALL, AnnotationLayers.TWO))
+        assertEquals(0, AnnotationLayers.withoutLayer(AnnotationLayers.TWO, AnnotationLayers.TWO))
+        assertEquals(AnnotationLayers.THREE,
+            AnnotationLayers.withoutLayer(AnnotationLayers.THREE, AnnotationLayers.TWO))
+        assertEquals(AnnotationLayers.ALL, AnnotationLayers.normalise(AnnotationLayers.ALL))
+        assertEquals(AnnotationLayers.ALL, AnnotationLayers.mixerMask(AnnotationLayers.ALL))
     }
 
     @Test fun `mixer may mute everything while writing still falls back to layer one`() {
